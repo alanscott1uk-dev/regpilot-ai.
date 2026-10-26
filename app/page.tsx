@@ -30,6 +30,7 @@ export default function Home() {
   const [feedback,setFeedback] = useState("");
   const [showForm,setShowForm] = useState(false);
   const [workspace,setWorkspace] = useState(defaultWorkspace());
+  const [department,setDepartment] = useState("All departments");
   useEffect(()=>{
     function load(){try{const raw=localStorage.getItem(WORKSPACE_KEY);setWorkspace(raw?parseWorkspace(JSON.parse(raw))||defaultWorkspace():defaultWorkspace());}catch{setWorkspace(defaultWorkspace());}}
     load();window.addEventListener("focus",load);return ()=>window.removeEventListener("focus",load);
@@ -46,7 +47,7 @@ export default function Home() {
     setReady(true);
   }, []);
   useEffect(() => { if (ready) { try { window.localStorage.setItem(KEY,JSON.stringify(items)); } catch {} } },[items,ready]);
-  const visible = useMemo(() => items.filter(x => (filter === "All" || x.status === filter) && [x.title,x.owner,x.regulator].join(" ").toLowerCase().includes(search.toLowerCase())),[items,filter,search]);
+  const visible = useMemo(() => items.filter(x => (filter === "All" || x.status === filter) && (department === "All departments" || x.owner === department) && [x.title,x.owner,x.regulator].join(" ").toLowerCase().includes(search.toLowerCase())),[items,filter,search,department]);
   const overdue = items.filter(x => isOverdue(x, todayLocal())).length;
   function saveBackup() {
     try {
@@ -103,6 +104,7 @@ export default function Home() {
         <h2 className={styles.panelTitle}>Obligation register</h2>
         <div className={styles.toolbar}>
           <input className={styles.field+" "+styles.search} aria-label="Search obligations" placeholder="Search obligations..." value={search} onChange={e=>setSearch(e.target.value)}/>
+          <select className={styles.field+" "+styles.filter} aria-label="Filter by department owner" value={department} onChange={e=>setDepartment(e.target.value)}><option>All departments</option>{workspace.departments.map(d=><option key={d} value={d}>{d}</option>)}</select>
           <select className={styles.field+" "+styles.filter} aria-label="Filter by status" value={filter} onChange={e=>setFilter(e.target.value)}>{["All","Open","In progress","Complete"].map(x=><option key={x}>{x}</option>)}</select>
           <button className={styles.button+" "+styles.outline} type="button" onClick={exportCsv}>Export CSV</button>
           <button className={styles.button+" "+styles.outline} type="button" onClick={saveBackup}>Backup JSON</button>
@@ -120,7 +122,7 @@ export default function Home() {
         {showForm&&<form className={styles.form} onSubmit={add}>
           <label className={styles.label}>Action title *<input className={styles.field} maxLength={160} required value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Review temperature SOP"/></label>
           <label className={styles.label}>Category / regulator<input className={styles.field} maxLength={80} value={regulator} onChange={e=>setRegulator(e.target.value)} placeholder="e.g. GDP"/></label>
-          <label className={styles.label}>Responsible owner *<input className={styles.field} maxLength={80} required value={owner} onChange={e=>setOwner(e.target.value)} placeholder="e.g. Quality lead"/></label>
+          <label className={styles.label}>Responsible owner / department *<input className={styles.field} list="department-suggestions" maxLength={80} required value={owner} onChange={e=>setOwner(e.target.value)} placeholder="Choose a department or enter an owner"/><datalist id="department-suggestions">{workspace.departments.map(d=><option key={d} value={d}/>)}</datalist></label>
           <label className={styles.label}>Due date *<input className={styles.field} type="date" required value={due} onChange={e=>setDue(e.target.value)}/></label>
           <label className={styles.label+" "+styles.wide}>Notes<input className={styles.field} maxLength={500} value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Optional notes"/></label>
           <div><button className={styles.button} type="submit">Save action</button></div>
