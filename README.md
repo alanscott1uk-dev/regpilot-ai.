@@ -32,3 +32,23 @@ Visit http://localhost:3000.
 3. Tamper-evident audit events and evidence attachments
 4. Regulatory source tracking, review workflow and tests
 5. AI-assisted drafting with human approval and source citations
+
+## Try the interactive prototype
+
+Run `npm install && npm run dev`, then open:
+
+- `http://localhost:3000/` — obligation register demo
+- `http://localhost:3000/prototype` — minimal action tracker with browser-local persistence and JSON backup
+
+The standalone HTML demo can also be distributed separately for offline evaluation.
+
+**Security:** These prototypes have no production authentication, encrypted cloud storage or verified audit trails. Do not enter real regulated or sensitive data. The Prisma backend modules are not yet exposed through authenticated routes.
+
+## Release checklist
+
+- [ ] Install dependencies and confirm CI build passes
+- [ ] Browser smoke-test action creation, updates, deletion and export
+- [ ] Configure real authentication and organisation membership
+- [ ] Run PostgreSQL migrations and cross-tenant tests
+- [ ] Implement evidence upload security and durable audit storage
+- [ ] Deploy to an approved hosting environment
