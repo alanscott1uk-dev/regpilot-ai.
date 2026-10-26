@@ -25,3 +25,13 @@ GOV.UK Content API documentation: https://content-api.publishing.service.gov.uk/
 Home Office controlled drugs guidance: https://www.gov.uk/guidance/controlled-drugs-domestic-licences
 
 The public API may be incomplete for some dynamically generated pages and does not directly provide all attachments.
+
+## Browser-based automatic refresh (implemented)
+
+The regulatory sources page now requests the server's GOV.UK metadata endpoint when opened, every 15 minutes while visible, and on return to the tab. It compares publication/revision timestamps against the previous successful check saved in that browser. The first check establishes a baseline and does not trigger false change alerts.
+
+This is **not** scheduled background monitoring, a regulator push subscription, a durable change history or proof that guidance materially changed. Publication metadata may change for editorial reasons. Source failures do not overwrite saved timestamps. The server may cache upstream responses, so checks are not guaranteed to be real-time.
+
+## Production monitoring requirements
+
+For monitoring when nobody is using the site, add a server-side scheduler and database snapshots, with idempotent change events and notifications. Implement source coverage validation, full-content comparison, review/approval and provenance before generating obligations. Do not use private regulator credentials or assume regulator licensing portals offer APIs.
