@@ -1,3 +1,4 @@
+import { can } from "../permissions.mjs";
 import { db } from "./db";
 import type { AuthorizedContext } from "./authorization";
 import type { ObligationStatus } from "@prisma/client";
@@ -12,11 +13,12 @@ function dateOnly(value: string) {
 }
 
 export async function listObligations(ctx: AuthorizedContext) {
+  if (!can(ctx.role, "obligation:read")) throw new Error("Forbidden");
   return db.obligation.findMany({ where: { organizationId: ctx.organizationId }, orderBy: { dueDate: "asc" }, take: 100 });
 }
 
 export async function createObligation(ctx: AuthorizedContext, input: NewObligation) {
-  if (ctx.role === "VIEWER") throw new Error("Forbidden");
+  if (!can(ctx.role, "obligation:write")) throw new Error("Forbidden");
   const title = input.title?.trim();
   const ownerName = input.ownerName?.trim();
   const category = input.category?.trim() || "Internal";
@@ -31,7 +33,7 @@ export async function createObligation(ctx: AuthorizedContext, input: NewObligat
 }
 
 export async function changeObligationStatus(ctx: AuthorizedContext, id: string, status: ObligationStatus) {
-  if (ctx.role === "VIEWER") throw new Error("Forbidden");
+  if (!can(ctx.role, "obligation:write")) throw new Error("Forbidden");
   if (!["OPEN", "IN_PROGRESS", "COMPLETE"].includes(status)) throw new Error("Invalid status");
   return db.$transaction(async tx => {
     const existing = await tx.obligation.findFirst({ where: { id, organizationId: ctx.organizationId } });
