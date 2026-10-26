@@ -3,15 +3,16 @@ import {useEffect,useState} from "react";
 import {INDUSTRIES,getIndustry,validateDepartments} from "../../lib/industry-catalog.mjs";
 import {COMPLIANCE_MODULES,recommendedModules,validModules} from "../../lib/compliance-modules.mjs";
 import styles from "../dashboard.module.css";
+import {WORKSPACE_KEY,defaultWorkspace,parseWorkspace} from "../../lib/workspace-config.mjs";
 type Config={company:string;industry:string;departments:string[];modules:string[]};
-const KEY="regpilot-company-configuration-v1";
-const initial:Config={company:"Star Medical — fictional pilot",industry:"healthcare",departments:getIndustry("healthcare").departments,modules:recommendedModules("healthcare")};
+const KEY=WORKSPACE_KEY;
+const initial:Config=defaultWorkspace();
 export default function Departments(){
  const [config,setConfig]=useState<Config>(initial);
  const [ready,setReady]=useState(false);
  const [custom,setCustom]=useState("");
  const [message,setMessage]=useState("");
- useEffect(()=>{try{const raw=localStorage.getItem(KEY);if(raw){const v:unknown=JSON.parse(raw);if(v&&typeof v==="object"){const c=v as Partial<Config>;if(typeof c.company==="string"&&c.company.length<=120&&typeof c.industry==="string"&&validateDepartments(c.departments))setConfig({...c,modules:validModules(c.modules)?c.modules!:recommendedModules(c.industry)} as Config);}}}catch{}setReady(true)},[]);
+ useEffect(()=>{try{const raw=localStorage.getItem(KEY);if(raw){const v:unknown=JSON.parse(raw);if(v&&typeof v==="object"){const c=v as Partial<Config>;const parsed=parseWorkspace(c);if(parsed)setConfig(parsed);}}}catch{}setReady(true)},[]);
  useEffect(()=>{if(ready)try{localStorage.setItem(KEY,JSON.stringify(config))}catch{setMessage("Unable to save browser-local configuration.")}},[config,ready]);
  function changeIndustry(id:string){const template=getIndustry(id);setConfig(c=>({...c,industry:template.id,departments:[...template.departments],modules:recommendedModules(template.id)}));setMessage("Industry template loaded. Review the departments before use.");}
  function addDepartment(e:React.FormEvent){e.preventDefault();const value=custom.trim();if(!value||value.length>80||config.departments.length>=40||config.departments.some(x=>x.toLowerCase()===value.toLowerCase())){setMessage("Enter a unique department name (maximum 40).");return;}setConfig(c=>({...c,departments:[...c.departments,value]}));setCustom("");setMessage("Department added.");}
