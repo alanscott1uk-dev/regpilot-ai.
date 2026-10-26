@@ -2,6 +2,7 @@
 import {useEffect,useState} from "react";
 import {parseDemoBackup} from "../../lib/demo-backup.mjs";
 import {csvEscape} from "../../lib/obligations.mjs";
+import {toPrototypeActions} from "../../fixtures/star-medical-demo.mjs";
 type Item={id:string;title:string;owner:string;due:string;done:boolean};
 const KEY="regpilot-checklist-v1";
 export default function Prototype(){
@@ -16,6 +17,10 @@ export default function Prototype(){
   if(file.size>2000000){setFeedback("Backup exceeds 2 MB limit.");return;}
   try {const restored=parseDemoBackup(await file.text());if(!window.confirm("Replace all current demo actions with "+restored.length+" imported actions?"))return;setItems(restored);setFeedback("Backup restored: "+restored.length+" actions.");}
   catch(e){setFeedback(e instanceof Error?e.message:"Import failed");}
+ }
+ function loadPilot(){
+  if(!window.confirm("Replace current local demo actions with 8 fictional Star Medical workflow examples? Export a backup first if needed."))return;
+  setItems(toPrototypeActions());setFeedback("Loaded eight fictional Star Medical pilot actions.");
  }
  function exportCsv(){
   const rows=[["Action","Owner","Due date","Complete"],...items.map(x=>[x.title,x.owner,x.due,x.done?"Yes":"No"])];
@@ -36,7 +41,8 @@ export default function Prototype(){
  <input aria-label="Owner" required maxLength={80} placeholder="Owner" value={owner} onChange={e=>setOwner(e.target.value)}/>
  <input aria-label="Due date" required type="date" value={due} onChange={e=>setDue(e.target.value)}/>
  <button>Add action</button></form>
- <button type="button" onClick={exportData}>Export JSON backup</button>
+ <button type="button" onClick={loadPilot}>Load Star Medical demo</button>
+ <button type="button" onClick={exportData} style={{marginLeft:8}}>Export JSON backup</button>
  <button type="button" onClick={exportCsv} style={{marginLeft:8}}>Export CSV</button>
  <label style={{display:"inline-block",marginLeft:12}}>Restore backup <input type="file" accept=".json,application/json" aria-label="Restore JSON backup" onChange={e=>{void importData(e.target.files?.[0]);e.target.value="";}}/></label>
  {feedback&&<p role="status">{feedback}</p>}
