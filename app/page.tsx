@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { validateObligation, isOverdue, exportObligationsCsv } from "../lib/obligations.mjs";
 import { pilot } from "../fixtures/star-medical-demo.mjs";
+import styles from "./dashboard.module.css";
 
 type Status = "Open" | "In progress" | "Complete";
 type Obligation = { id: string; title: string; regulator: string; owner: string; due: string; status: Status; notes: string };
@@ -53,45 +54,43 @@ export default function Home() {
     const url=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));
     const a=document.createElement("a");a.href=url;a.download="regpilot-obligations.csv";a.click();URL.revokeObjectURL(url);
   }
-  return <main style={{maxWidth:1100,margin:"0 auto",padding:"40px 20px",lineHeight:1.5}}>
-    <div style={{fontSize:13,color:"#1d4ed8",fontWeight:800,letterSpacing:1}}>REGPILOT AI / DEMO</div>
-    <h1 style={{fontSize:38,margin:"8px 0"}}>Compliance workspace</h1>
-    <p style={{color:"#475569"}}>Track tasks, owners, deadlines and progress in one place.</p>
-    <div role="alert" style={{padding:16,background:"#fff7ed",border:"1px solid #fdba74",borderRadius:10,margin:"20px 0"}}>
-      <strong>Prototype only.</strong> Data stays in this browser's local storage, is not backed up, and may be lost. Do not enter personal, patient, confidential or production compliance data. Examples are not regulatory requirements.
+  const counts=[["Total actions",items.length],["Open",items.filter(x=>x.status==="Open").length],["In progress",items.filter(x=>x.status==="In progress").length],["Overdue",overdue]] as const;
+  return <main className={styles.shell}>
+    <header className={styles.top}>
+      <div className={styles.brand}><span className={styles.mark}>R</span>RegPilot <span style={{color:"#3159df"}}>AI</span></div>
+      <span className={styles.pill}>DEMO WORKSPACE</span>
+    </header>
+    <section className={styles.hero}>
+      <div><div className={styles.eyebrow}>Overview / Compliance</div><h1 className={styles.heading}>Compliance workspace</h1><p className={styles.sub}>Track obligations, deadlines and ownership in one place.</p></div>
+    </section>
+    <div className={styles.notice} role="note"><strong>Prototype only.</strong> Records stay in this browser, without secure backup. Use fictional examples only — no patient, confidential or production compliance information.</div>
+    <section className={styles.stats} aria-label="Compliance summary">{counts.map(([label,count])=><div key={label} className={styles.stat}><div className={styles.statLabel}>{label}</div><div className={styles.statNumber}>{count}</div></div>)}</section>
+    <div className={styles.content}>
+      <section className={styles.panel}>
+        <h2 className={styles.panelTitle}>Obligation register</h2>
+        <div className={styles.toolbar}>
+          <input className={styles.field+" "+styles.search} aria-label="Search obligations" placeholder="Search obligations..." value={search} onChange={e=>setSearch(e.target.value)}/>
+          <select className={styles.field+" "+styles.filter} aria-label="Filter by status" value={filter} onChange={e=>setFilter(e.target.value)}>{["All","Open","In progress","Complete"].map(x=><option key={x}>{x}</option>)}</select>
+          <button className={styles.button+" "+styles.outline} type="button" onClick={exportCsv}>Export CSV</button>
+          <button className={styles.button+" "+styles.outline} type="button" onClick={loadPilot}>Load Star Medical demo</button>
+        </div>
+        {!ready?<p className={styles.empty}>Loading local records…</p>:visible.length===0?<p className={styles.empty}>No matching actions yet.</p>:<div className={styles.list}>{visible.map(x=><article className={styles.item} key={x.id}>
+          <div><span className={styles.category}>{x.regulator}</span><div className={styles.itemTitle}>{x.title}</div><div className={styles.meta}>{x.owner} · Due {x.due}{isOverdue(x,todayLocal())?" · Overdue":""}</div>{x.notes&&<div className={styles.meta}>{x.notes}</div>}</div>
+          <div className={styles.actions}><select className={styles.field+" "+styles.status} aria-label={"Status for "+x.title} value={x.status} onChange={e=>update(x.id,e.target.value as Status)}>{["Open","In progress","Complete"].map(v=><option key={v}>{v}</option>)}</select><button className={styles.delete} type="button" onClick={()=>{if(window.confirm("Delete this action?"))setItems(current=>current.filter(v=>v.id!==x.id));}}>Delete</button></div>
+        </article>)}</div>}
+      </section>
+      <section className={styles.panel}>
+        <h2 className={styles.panelTitle}>Create an action</h2>
+        <form className={styles.form} onSubmit={add}>
+          <label className={styles.label}>Action title *<input className={styles.field} maxLength={160} required value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Review temperature SOP"/></label>
+          <label className={styles.label}>Category / regulator<input className={styles.field} maxLength={80} value={regulator} onChange={e=>setRegulator(e.target.value)} placeholder="e.g. GDP"/></label>
+          <label className={styles.label}>Responsible owner *<input className={styles.field} maxLength={80} required value={owner} onChange={e=>setOwner(e.target.value)} placeholder="e.g. Quality lead"/></label>
+          <label className={styles.label}>Due date *<input className={styles.field} type="date" required value={due} onChange={e=>setDue(e.target.value)}/></label>
+          <label className={styles.label+" "+styles.wide}>Notes<input className={styles.field} maxLength={500} value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Optional notes"/></label>
+          <div><button className={styles.button} type="submit">+ Add action</button></div>
+        </form>
+      </section>
     </div>
-    <section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,margin:"24px 0"}}>
-      {([["Total",items.length],["Open",items.filter(x=>x.status==="Open").length],["In progress",items.filter(x=>x.status==="In progress").length],["Overdue",overdue]] as const).map(([label,count])=><div key={label} style={{background:"white",border:"1px solid #e2e8f0",borderRadius:12,padding:20}}><div style={{color:"#64748b"}}>{label}</div><strong style={{fontSize:30}}>{count}</strong></div>)}
-    </section>
-    <section style={{background:"white",border:"1px solid #e2e8f0",padding:22,borderRadius:12,marginBottom:22}}>
-      <h2 style={{marginTop:0}}>Add an obligation or action</h2>
-      <form onSubmit={add} style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:12}}>
-        <label>Title *<input style={field} maxLength={160} required value={title} onChange={e=>setTitle(e.target.value)} placeholder="Action title"/></label>
-        <label>Category / regulator<input style={field} maxLength={80} value={regulator} onChange={e=>setRegulator(e.target.value)} placeholder="e.g. Internal"/></label>
-        <label>Owner *<input style={field} maxLength={80} required value={owner} onChange={e=>setOwner(e.target.value)} placeholder="Responsible role"/></label>
-        <label>Due date *<input style={field} type="date" required value={due} onChange={e=>setDue(e.target.value)}/></label>
-        <label style={{gridColumn:"1 / -1"}}>Notes<input style={field} maxLength={500} value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Optional notes"/></label>
-        <div><button style={btn} type="submit">Add action</button></div>
-      </form>
-    </section>
-    <section style={{background:"white",border:"1px solid #e2e8f0",padding:22,borderRadius:12}}>
-      <h2 style={{marginTop:0}}>Obligation register</h2>
-      <div style={{display:"flex",flexWrap:"wrap",gap:10,marginBottom:18}}>
-        <input aria-label="Search obligations" style={{...field,flex:"1 1 220px",width:"auto"}} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search title, owner or category"/>
-        <select aria-label="Filter by status" style={{...field,width:"auto"}} value={filter} onChange={e=>setFilter(e.target.value)}>{["All","Open","In progress","Complete"].map(s=><option key={s}>{s}</option>)}</select>
-        <button type="button" style={btn} onClick={exportCsv}>Export CSV</button>
-        <button type="button" style={btn} onClick={loadPilot}>Load Star Medical pilot</button>
-      </div>
-      {!ready?<p>Loading local demo data…</p>:visible.length===0?<p>No matching actions.</p>:
-      <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",textAlign:"left",minWidth:680}}>
-        <thead><tr>{["Action","Category","Owner","Due","Status",""].map(h=><th key={h} style={{padding:10,borderBottom:"2px solid #e2e8f0"}}>{h}</th>)}</tr></thead>
-        <tbody>{visible.map(x=><tr key={x.id}>
-          <td style={{padding:10,borderBottom:"1px solid #e2e8f0"}}><strong>{x.title}</strong>{x.notes&&<div style={{fontSize:12,color:"#64748b"}}>{x.notes}</div>}</td>
-          <td style={{padding:10}}>{x.regulator}</td><td style={{padding:10}}>{x.owner}</td>
-          <td style={{padding:10,color:x.status!=="Complete"&&x.due<todayLocal()?"#b91c1c":undefined}}>{x.due}</td>
-          <td style={{padding:10}}><select aria-label={"Status for "+x.title} style={{...field,width:"auto"}} value={x.status} onChange={e=>update(x.id,e.target.value as Status)}>{["Open","In progress","Complete"].map(s=><option key={s}>{s}</option>)}</select></td>
-          <td style={{padding:10}}><button type="button" onClick={()=>{if(window.confirm("Delete this action?"))setItems(current=>current.filter(v=>v.id!==x.id));}} style={{background:"transparent",border:"1px solid #cbd5e1",borderRadius:6,padding:8,cursor:"pointer"}}>Delete</button></td>
-        </tr>)}</tbody></table></div>}
-    </section>
+    <p className={styles.footer}>RegPilot AI · Demonstration environment · Local browser storage only</p>
   </main>;
 }
