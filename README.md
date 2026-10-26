@@ -60,3 +60,11 @@ Open `/prototype` and select **Load Star Medical demo**. This replaces local dem
 The public repository contains only synthetic examples. The fixture does not disclose actual Star Medical security, supplier, financial or licensing records, and is not a verified MHRA/Home Office checklist.
 
 Run `npm run test` to execute the fixture, backup and obligation unit tests. A successful CI build and manual browser test are still required before describing the hosted prototype as verified.
+
+## Mobile dashboard and backups
+
+The root dashboard now uses responsive summary cards and action cards instead of a wide table. It supports CSV export and versioned JSON backup/restore. Backups are validated before replacing local data. The synthetic Star Medical pilot is available through **Load Star Medical demo**.
+
+For safe testing, use only fictional records. Local browser storage is not secure, multi-user, or backed up automatically.
+
+Run `npm run test` and check the GitHub Actions build after each change. The updated mobile interface still needs a fresh live-device smoke test.
