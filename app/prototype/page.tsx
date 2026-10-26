@@ -1,6 +1,7 @@
 "use client";
 import {useEffect,useState} from "react";
 import {parseDemoBackup} from "../../lib/demo-backup.mjs";
+import {csvEscape} from "../../lib/obligations.mjs";
 type Item={id:string;title:string;owner:string;due:string;done:boolean};
 const KEY="regpilot-checklist-v1";
 export default function Prototype(){
@@ -16,6 +17,12 @@ export default function Prototype(){
   try {const restored=parseDemoBackup(await file.text());if(!window.confirm("Replace all current demo actions with "+restored.length+" imported actions?"))return;setItems(restored);setFeedback("Backup restored: "+restored.length+" actions.");}
   catch(e){setFeedback(e instanceof Error?e.message:"Import failed");}
  }
+ function exportCsv(){
+  const rows=[["Action","Owner","Due date","Complete"],...items.map(x=>[x.title,x.owner,x.due,x.done?"Yes":"No"])];
+  const csv=rows.map(row=>row.map(csvEscape).join(",")).join("\r\n");
+  const url=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));
+  const a=document.createElement("a");a.href=url;a.download="regpilot-demo-actions.csv";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+ }
  function exportData(){const url=URL.createObjectURL(new Blob([JSON.stringify(items,null,2)],{type:"application/json"}));const a=document.createElement("a");a.href=url;a.download="regpilot-demo-backup.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
  const overdue=items.filter(x=>!x.done&&x.due<new Date().toLocaleDateString("en-CA")).length;
  return <main style={{maxWidth:850,margin:"auto",padding:30,fontFamily:"Arial,sans-serif"}}>
@@ -28,6 +35,7 @@ export default function Prototype(){
  <input aria-label="Due date" required type="date" value={due} onChange={e=>setDue(e.target.value)}/>
  <button>Add action</button></form>
  <button type="button" onClick={exportData}>Export JSON backup</button>
+ <button type="button" onClick={exportCsv} style={{marginLeft:8}}>Export CSV</button>
  <label style={{display:"inline-block",marginLeft:12}}>Restore backup <input type="file" accept=".json,application/json" aria-label="Restore JSON backup" onChange={e=>{void importData(e.target.files?.[0]);e.target.value="";}}/></label>
  {feedback&&<p role="status">{feedback}</p>}
  {!ready?<p>Loading…</p>:items.length===0?<p>No actions yet. Add your first example above.</p>:
