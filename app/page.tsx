@@ -76,6 +76,8 @@ export default function Home() {
     const url=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));
     const a=document.createElement("a");a.href=url;a.download="regpilot-obligations.csv";a.click();URL.revokeObjectURL(url);
   }
+  const completeCount=items.filter(x=>x.status==="Complete").length;
+  const completion=items.length?Math.round(completeCount/items.length*100):0;
   const counts=[["Total actions",items.length],["Open",items.filter(x=>x.status==="Open").length],["In progress",items.filter(x=>x.status==="In progress").length],["Overdue",overdue]] as const;
   return <main className={styles.shell}>
     <header className={styles.top}>
@@ -87,6 +89,7 @@ export default function Home() {
     </section>
     <div className={styles.notice} role="note"><strong>Prototype only.</strong> Records stay in this browser, without secure backup. Use fictional examples only — no patient, confidential or production compliance information.</div>
     <section className={styles.stats} aria-label="Compliance summary">{counts.map(([label,count])=><div key={label} className={styles.stat}><div className={styles.statLabel}>{label}</div><div className={styles.statNumber}>{count}</div></div>)}</section>
+    <section className={styles.progressPanel} aria-label="Completion progress"><div className={styles.progressHeader}><strong>Completion progress</strong><span>{completeCount} of {items.length} completed · {completion}%</span></div><div className={styles.progressTrack} role="progressbar" aria-valuenow={completion} aria-valuemin={0} aria-valuemax={100} aria-label="Completed compliance actions"><div className={styles.progressFill} style={{width:completion+"%"}}/></div></section>
     <div className={styles.content}>
       <section className={styles.panel}>
         <h2 className={styles.panelTitle}>Obligation register</h2>
