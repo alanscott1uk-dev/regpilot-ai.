@@ -52,3 +52,11 @@ The standalone HTML demo can also be distributed separately for offline evaluati
 - [ ] Run PostgreSQL migrations and cross-tenant tests
 - [ ] Implement evidence upload security and durable audit storage
 - [ ] Deploy to an approved hosting environment
+
+## Star Medical pilot scenario
+
+Open `/prototype` and select **Load Star Medical demo**. This replaces local demo actions with eight fictional regulated-distribution workflow examples. Export your existing JSON backup first if needed.
+
+The public repository contains only synthetic examples. The fixture does not disclose actual Star Medical security, supplier, financial or licensing records, and is not a verified MHRA/Home Office checklist.
+
+Run `npm run test` to execute the fixture, backup and obligation unit tests. A successful CI build and manual browser test are still required before describing the hosted prototype as verified.
