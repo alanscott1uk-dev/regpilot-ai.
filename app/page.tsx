@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { validateObligation, isOverdue, exportObligationsCsv } from "../lib/obligations.mjs";
 import { pilot } from "../fixtures/star-medical-demo.mjs";
 import styles from "./dashboard.module.css";
+import { exportRegisterBackup, parseRegisterBackup } from "../lib/register-backup.mjs";
 
 type Status = "Open" | "In progress" | "Complete";
 type Obligation = { id: string; title: string; regulator: string; owner: string; due: string; status: Status; notes: string };
@@ -24,6 +25,7 @@ export default function Home() {
   const [owner,setOwner] = useState("");
   const [due,setDue] = useState("");
   const [notes,setNotes] = useState("");
+  const [feedback,setFeedback] = useState("");
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(KEY);
@@ -38,6 +40,23 @@ export default function Home() {
   useEffect(() => { if (ready) { try { window.localStorage.setItem(KEY,JSON.stringify(items)); } catch {} } },[items,ready]);
   const visible = useMemo(() => items.filter(x => (filter === "All" || x.status === filter) && [x.title,x.owner,x.regulator].join(" ").toLowerCase().includes(search.toLowerCase())),[items,filter,search]);
   const overdue = items.filter(x => isOverdue(x, todayLocal())).length;
+  function saveBackup() {
+    try {
+      const data=exportRegisterBackup(items);
+      const url=URL.createObjectURL(new Blob([data],{type:"application/json"}));
+      const a=document.createElement("a");a.href=url;a.download="regpilot-register-backup.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      setFeedback("JSON backup prepared.");
+    } catch {setFeedback("Could not export backup.");}
+  }
+  async function restoreBackup(file:File|undefined) {
+    if (!file) return;
+    if (file.size>2000000) {setFeedback("Backup exceeds 2 MB.");return;}
+    try {
+      const restored=parseRegisterBackup(await file.text());
+      if (!window.confirm("Replace all current local records with "+restored.length+" backup records? Export a backup first if needed.")) return;
+      setItems(restored);setFeedback("Restored "+restored.length+" records.");
+    } catch(e) {setFeedback(e instanceof Error?e.message:"Unable to restore backup.");}
+  }
   function loadPilot() {
     if (!window.confirm("Replace local demo obligations with eight fictional Star Medical examples? Export your current CSV first.")) return;
     setItems(pilot.actions.map(x => ({ id:x.id, title:x.title, regulator:x.category, owner:x.owner, due:x.due, status:x.done ? "Complete" : "Open", notes:"Fictional pilot record — not regulatory advice" })));
@@ -72,8 +91,11 @@ export default function Home() {
           <input className={styles.field+" "+styles.search} aria-label="Search obligations" placeholder="Search obligations..." value={search} onChange={e=>setSearch(e.target.value)}/>
           <select className={styles.field+" "+styles.filter} aria-label="Filter by status" value={filter} onChange={e=>setFilter(e.target.value)}>{["All","Open","In progress","Complete"].map(x=><option key={x}>{x}</option>)}</select>
           <button className={styles.button+" "+styles.outline} type="button" onClick={exportCsv}>Export CSV</button>
+          <button className={styles.button+" "+styles.outline} type="button" onClick={saveBackup}>Backup JSON</button>
+          <label className={styles.button+" "+styles.outline} style={{display:"inline-flex",alignItems:"center",gap:6}}>Restore JSON<input aria-label="Restore JSON backup" type="file" accept=".json,application/json" style={{maxWidth:135,fontSize:11}} onChange={e=>{void restoreBackup(e.target.files?.[0]);e.target.value="";}}/></label>
           <button className={styles.button+" "+styles.outline} type="button" onClick={loadPilot}>Load Star Medical demo</button>
         </div>
+        {feedback&&<p role="status" className={styles.meta}>{feedback}</p>}
         {!ready?<p className={styles.empty}>Loading local records…</p>:visible.length===0?<p className={styles.empty}>No matching actions yet.</p>:<div className={styles.list}>{visible.map(x=><article className={styles.item} key={x.id}>
           <div><span className={styles.category}>{x.regulator}</span><div className={styles.itemTitle}>{x.title}</div><div className={styles.meta}>{x.owner} · Due {x.due}{isOverdue(x,todayLocal())?" · Overdue":""}</div>{x.notes&&<div className={styles.meta}>{x.notes}</div>}</div>
           <div className={styles.actions}><select className={styles.field+" "+styles.status} aria-label={"Status for "+x.title} value={x.status} onChange={e=>update(x.id,e.target.value as Status)}>{["Open","In progress","Complete"].map(v=><option key={v}>{v}</option>)}</select><button className={styles.delete} type="button" onClick={()=>{if(window.confirm("Delete this action?"))setItems(current=>current.filter(v=>v.id!==x.id));}}>Delete</button></div>
