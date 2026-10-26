@@ -5,6 +5,7 @@ import { validateObligation, isOverdue, exportObligationsCsv } from "../lib/obli
 type Status = "Open" | "In progress" | "Complete";
 type Obligation = { id: string; title: string; regulator: string; owner: string; due: string; status: Status; notes: string };
 const KEY = "regpilot-demo-obligations-v1";
+function todayLocal(){const d=new Date();return [d.getFullYear(),String(d.getMonth()+1).padStart(2,"0"),String(d.getDate()).padStart(2,"0")].join("-");}
 const initial: Obligation[] = [
   { id: "sample-1", title: "Review training records", regulator: "Internal", owner: "Quality lead", due: "2026-11-15", status: "Open", notes: "Illustrative example only" },
   { id: "sample-2", title: "Review supplier qualification procedure", regulator: "Internal", owner: "Operations lead", due: "2026-12-01", status: "In progress", notes: "Illustrative example only" }
@@ -34,7 +35,7 @@ export default function Home() {
   }, []);
   useEffect(() => { if (ready) { try { window.localStorage.setItem(KEY,JSON.stringify(items)); } catch {} } },[items,ready]);
   const visible = useMemo(() => items.filter(x => (filter === "All" || x.status === filter) && [x.title,x.owner,x.regulator].join(" ").toLowerCase().includes(search.toLowerCase())),[items,filter,search]);
-  const overdue = items.filter(x => isOverdue(x, new Date().toISOString().slice(0,10))).length;
+  const overdue = items.filter(x => isOverdue(x, todayLocal())).length;
   function add(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim() || !owner.trim() || !due) return;
@@ -81,7 +82,7 @@ export default function Home() {
         <tbody>{visible.map(x=><tr key={x.id}>
           <td style={{padding:10,borderBottom:"1px solid #e2e8f0"}}><strong>{x.title}</strong>{x.notes&&<div style={{fontSize:12,color:"#64748b"}}>{x.notes}</div>}</td>
           <td style={{padding:10}}>{x.regulator}</td><td style={{padding:10}}>{x.owner}</td>
-          <td style={{padding:10,color:x.status!=="Complete"&&x.due<new Date().toISOString().slice(0,10)?"#b91c1c":undefined}}>{x.due}</td>
+          <td style={{padding:10,color:x.status!=="Complete"&&x.due<todayLocal()?"#b91c1c":undefined}}>{x.due}</td>
           <td style={{padding:10}}><select aria-label={"Status for "+x.title} style={{...field,width:"auto"}} value={x.status} onChange={e=>update(x.id,e.target.value as Status)}>{["Open","In progress","Complete"].map(s=><option key={s}>{s}</option>)}</select></td>
           <td style={{padding:10}}><button type="button" onClick={()=>{if(window.confirm("Delete this action?"))setItems(current=>current.filter(v=>v.id!==x.id));}} style={{background:"transparent",border:"1px solid #cbd5e1",borderRadius:6,padding:8,cursor:"pointer"}}>Delete</button></td>
         </tr>)}</tbody></table></div>}
