@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import { validateObligation, isOverdue, exportObligationsCsv } from "../lib/obligations.mjs";
 
 type Status = "Open" | "In progress" | "Complete";
 type Obligation = { id: string; title: string; regulator: string; owner: string; due: string; status: Status; notes: string };
@@ -26,14 +27,14 @@ export default function Home() {
       if (!raw) { setItems(initial); }
       else {
         const parsed: unknown = JSON.parse(raw);
-        setItems(Array.isArray(parsed) ? parsed.filter((x): x is Obligation => typeof x?.id === "string" && typeof x?.title === "string" && ["Open","In progress","Complete"].includes(x?.status)) : initial);
+        setItems(Array.isArray(parsed) ? parsed.filter((x): x is Obligation => validateObligation(x)) : initial);
       }
     } catch { setItems(initial); }
     setReady(true);
   }, []);
   useEffect(() => { if (ready) { try { window.localStorage.setItem(KEY,JSON.stringify(items)); } catch {} } },[items,ready]);
   const visible = useMemo(() => items.filter(x => (filter === "All" || x.status === filter) && [x.title,x.owner,x.regulator].join(" ").toLowerCase().includes(search.toLowerCase())),[items,filter,search]);
-  const overdue = items.filter(x => x.status !== "Complete" && x.due && x.due < new Date().toISOString().slice(0,10)).length;
+  const overdue = items.filter(x => isOverdue(x, new Date().toISOString().slice(0,10))).length;
   function add(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim() || !owner.trim() || !due) return;
@@ -42,8 +43,7 @@ export default function Home() {
   }
   function update(id:string,status:Status) {setItems(current=>current.map(x=>x.id===id?{...x,status}:x));}
   function exportCsv() {
-    const rows=[["Title","Regulator / category","Owner","Due date","Status","Notes"],...visible.map(x=>[x.title,x.regulator,x.owner,x.due,x.status,x.notes])];
-    const csv=rows.map(row=>row.map(value=>'"'+value.replace(/"/g,'""')+'"').join(",")).join("\r\n");
+    const csv=exportObligationsCsv(visible);
     const url=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));
     const a=document.createElement("a");a.href=url;a.download="regpilot-obligations.csv";a.click();URL.revokeObjectURL(url);
   }
