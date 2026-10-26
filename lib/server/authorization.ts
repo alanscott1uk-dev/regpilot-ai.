@@ -1,5 +1,6 @@
 import { db } from "./db";
 import type { MembershipRole } from "@prisma/client";
+import { ROLES } from "../permissions.mjs";
 
 export type VerifiedIdentity = { externalId: string };
 export type AuthorizedContext = { userId: string; organizationId: string; role: MembershipRole };
@@ -17,6 +18,6 @@ export async function authorizeOrganization(
     where: { organizationId_userId: { organizationId, userId: user.id } },
     select: { role: true }
   });
-  if (!membership || !allowedRoles.includes(membership.role)) return null;
+  if (!membership || !ROLES.includes(membership.role) || !allowedRoles.includes(membership.role)) return null;
   return { userId: user.id, organizationId, role: membership.role };
 }
