@@ -1,0 +1,104 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MembershipRole {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum ObligationStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETE
+}
+
+enum ReviewStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id          String       @id @default(uuid()) @db.Uuid
+  externalId  String       @unique
+  email       String       @unique
+  createdAt   DateTime     @default(now())
+  memberships Membership[]
+  auditEvents AuditEvent[]
+}
+
+model Organization {
+  id          String       @id @default(uuid()) @db.Uuid
+  name        String
+  createdAt   DateTime     @default(now())
+  memberships Membership[]
+  obligations Obligation[]
+  evidence    Evidence[]
+  auditEvents AuditEvent[]
+}
+
+model Membership {
+  organizationId String @db.Uuid
+  userId         String @db.Uuid
+  role           MembershipRole @default(VIEWER)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@id([organizationId, userId])
+}
+
+model Obligation {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  title          String
+  category       String
+  ownerName      String
+  dueDate        DateTime         @db.Date
+  status         ObligationStatus @default(OPEN)
+  notes          String           @default("")
+  sourceUrl      String?
+  sourceCheckedAt DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  evidence       Evidence[]
+  @@index([organizationId, status, dueDate])
+}
+
+model Evidence {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  obligationId   String       @db.Uuid
+  filename       String
+  storageKey     String
+  contentType    String
+  sizeBytes      Int
+  sha256         String
+  reviewStatus   ReviewStatus @default(DRAFT)
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  obligation     Obligation   @relation(fields: [obligationId], references: [id], onDelete: Restrict)
+  @@index([organizationId, obligationId])
+}
+
+model AuditEvent {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  actorId        String       @db.Uuid
+  action         String
+  entityType     String
+  entityId       String
+  details        Json
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  actor          User         @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  @@index([organizationId, createdAt])
+}
