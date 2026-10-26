@@ -82,7 +82,7 @@ export default function Home() {
   return <main className={styles.shell}>
     <header className={styles.top}>
       <div className={styles.brand}><span className={styles.mark}>R</span>RegPilot <span style={{color:"#3159df"}}>AI</span></div>
-      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",justifyContent:"flex-end"}}><a href="/distribution" style={{fontSize:12,color:"#3159df",fontWeight:700,textDecoration:"none"}}>Distribution ↗</a><a href="/regulatory-sources" style={{fontSize:12,color:"#3159df",fontWeight:700,textDecoration:"none"}}>Regulatory sources ↗</a><span className={styles.pill}>DEMO WORKSPACE</span></div>
+      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",justifyContent:"flex-end"}}><a href="/departments" style={{fontSize:12,color:"#3159df",fontWeight:700,textDecoration:"none"}}>Departments ↗</a><a href="/distribution" style={{fontSize:12,color:"#3159df",fontWeight:700,textDecoration:"none"}}>Distribution ↗</a><a href="/regulatory-sources" style={{fontSize:12,color:"#3159df",fontWeight:700,textDecoration:"none"}}>Regulatory sources ↗</a><span className={styles.pill}>DEMO WORKSPACE</span></div>
     </header>
     <section className={styles.hero}>
       <div><div className={styles.eyebrow}>Overview / Compliance</div><h1 className={styles.heading}>Compliance workspace</h1><p className={styles.sub}>Track obligations, deadlines and ownership in one place.</p></div>
