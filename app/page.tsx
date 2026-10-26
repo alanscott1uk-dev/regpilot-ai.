@@ -26,6 +26,7 @@ export default function Home() {
   const [due,setDue] = useState("");
   const [notes,setNotes] = useState("");
   const [feedback,setFeedback] = useState("");
+  const [showForm,setShowForm] = useState(false);
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(KEY);
@@ -65,7 +66,7 @@ export default function Home() {
     e.preventDefault();
     if (!title.trim() || !owner.trim() || !due) return;
     setItems(current => [{id:crypto.randomUUID(),title:title.trim(),regulator:regulator.trim() || "Internal",owner:owner.trim(),due,status:"Open",notes:notes.trim()},...current]);
-    setTitle("");setRegulator("");setOwner("");setDue("");setNotes("");
+    setTitle("");setRegulator("");setOwner("");setDue("");setNotes("");setShowForm(false);setFeedback("Action added.");
   }
   function update(id:string,status:Status) {setItems(current=>current.map(x=>x.id===id?{...x,status}:x));}
   function exportCsv() {
@@ -102,15 +103,15 @@ export default function Home() {
         </article>)}</div>}
       </section>
       <section className={styles.panel}>
-        <h2 className={styles.panelTitle}>Create an action</h2>
-        <form className={styles.form} onSubmit={add}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}><h2 className={styles.panelTitle} style={{margin:0}}>Create an action</h2><button type="button" className={styles.button+" "+styles.outline} onClick={()=>setShowForm(v=>!v)} aria-expanded={showForm}>{showForm?"Close":"Add new +"}</button></div>
+        {showForm&&<form className={styles.form} onSubmit={add}>
           <label className={styles.label}>Action title *<input className={styles.field} maxLength={160} required value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Review temperature SOP"/></label>
           <label className={styles.label}>Category / regulator<input className={styles.field} maxLength={80} value={regulator} onChange={e=>setRegulator(e.target.value)} placeholder="e.g. GDP"/></label>
           <label className={styles.label}>Responsible owner *<input className={styles.field} maxLength={80} required value={owner} onChange={e=>setOwner(e.target.value)} placeholder="e.g. Quality lead"/></label>
           <label className={styles.label}>Due date *<input className={styles.field} type="date" required value={due} onChange={e=>setDue(e.target.value)}/></label>
           <label className={styles.label+" "+styles.wide}>Notes<input className={styles.field} maxLength={500} value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Optional notes"/></label>
-          <div><button className={styles.button} type="submit">+ Add action</button></div>
-        </form>
+          <div><button className={styles.button} type="submit">Save action</button></div>
+        </form>}
       </section>
     </div>
     <p className={styles.footer}>RegPilot AI · Demonstration environment · Local browser storage only</p>
