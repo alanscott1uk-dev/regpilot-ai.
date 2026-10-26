@@ -1,18 +1,19 @@
 "use client";
 import {useEffect,useState} from "react";
 import {INDUSTRIES,getIndustry,validateDepartments} from "../../lib/industry-catalog.mjs";
+import {COMPLIANCE_MODULES,recommendedModules,validModules} from "../../lib/compliance-modules.mjs";
 import styles from "../dashboard.module.css";
-type Config={company:string;industry:string;departments:string[]};
+type Config={company:string;industry:string;departments:string[];modules:string[]};
 const KEY="regpilot-company-configuration-v1";
-const initial:Config={company:"Star Medical — fictional pilot",industry:"healthcare",departments:getIndustry("healthcare").departments};
+const initial:Config={company:"Star Medical — fictional pilot",industry:"healthcare",departments:getIndustry("healthcare").departments,modules:recommendedModules("healthcare")};
 export default function Departments(){
  const [config,setConfig]=useState<Config>(initial);
  const [ready,setReady]=useState(false);
  const [custom,setCustom]=useState("");
  const [message,setMessage]=useState("");
- useEffect(()=>{try{const raw=localStorage.getItem(KEY);if(raw){const v:unknown=JSON.parse(raw);if(v&&typeof v==="object"){const c=v as Partial<Config>;if(typeof c.company==="string"&&c.company.length<=120&&typeof c.industry==="string"&&validateDepartments(c.departments))setConfig(c as Config);}}}catch{}setReady(true)},[]);
+ useEffect(()=>{try{const raw=localStorage.getItem(KEY);if(raw){const v:unknown=JSON.parse(raw);if(v&&typeof v==="object"){const c=v as Partial<Config>;if(typeof c.company==="string"&&c.company.length<=120&&typeof c.industry==="string"&&validateDepartments(c.departments))setConfig({...c,modules:validModules(c.modules)?c.modules!:recommendedModules(c.industry)} as Config);}}}catch{}setReady(true)},[]);
  useEffect(()=>{if(ready)try{localStorage.setItem(KEY,JSON.stringify(config))}catch{setMessage("Unable to save browser-local configuration.")}},[config,ready]);
- function changeIndustry(id:string){const template=getIndustry(id);setConfig(c=>({...c,industry:template.id,departments:[...template.departments]}));setMessage("Industry template loaded. Review the departments before use.");}
+ function changeIndustry(id:string){const template=getIndustry(id);setConfig(c=>({...c,industry:template.id,departments:[...template.departments],modules:recommendedModules(template.id)}));setMessage("Industry template loaded. Review the departments before use.");}
  function addDepartment(e:React.FormEvent){e.preventDefault();const value=custom.trim();if(!value||value.length>80||config.departments.length>=40||config.departments.some(x=>x.toLowerCase()===value.toLowerCase())){setMessage("Enter a unique department name (maximum 40).");return;}setConfig(c=>({...c,departments:[...c.departments,value]}));setCustom("");setMessage("Department added.");}
  return <main className={styles.shell}>
   <header className={styles.top}><div className={styles.brand}><span className={styles.mark}>R</span>RegPilot <span style={{color:"#3159df"}}>AI</span></div><span className={styles.pill}>DEMO WORKSPACE</span></header>
@@ -38,6 +39,7 @@ export default function Departments(){
    </form>
    {message&&<p role="status" className={styles.meta}>{message}</p>}
   </section>
+  <section className={styles.panel} style={{marginTop:18}}><h2 className={styles.panelTitle}>Compliance modules</h2><p className={styles.sub} style={{marginBottom:16}}>Choose the modules this business needs. Suggestions change with industry selection.</p><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:10}}>{COMPLIANCE_MODULES.map(m=><label key={m.id} style={{display:"flex",alignItems:"center",gap:9,border:"1px solid #e1e7f0",borderRadius:10,padding:12,fontSize:13}}><input type="checkbox" checked={config.modules.includes(m.id)} onChange={e=>setConfig(c=>({...c,modules:e.target.checked?[...c.modules,m.id]:c.modules.filter(x=>x!==m.id)}))}/>{m.name}</label>)}</div></section>
   <p className={styles.footer}>Department profiles are not yet connected to obligation assignment or authenticated organisation accounts.</p>
  </main>;
 }
