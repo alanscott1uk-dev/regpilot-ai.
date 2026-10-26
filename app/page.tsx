@@ -65,7 +65,9 @@ export default function Home() {
   function add(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim() || !owner.trim() || !due) return;
-    setItems(current => [{id:crypto.randomUUID(),title:title.trim(),regulator:regulator.trim() || "Internal",owner:owner.trim(),due,status:"Open",notes:notes.trim()},...current]);
+    const entry:Obligation={id:crypto.randomUUID(),title:title.trim(),regulator:regulator.trim() || "Internal",owner:owner.trim(),due,status:"Open",notes:notes.trim()};
+    if(!validateObligation(entry)){setFeedback("Please check the action details and due date.");return;}
+    setItems(current => [entry,...current]);
     setTitle("");setRegulator("");setOwner("");setDue("");setNotes("");setShowForm(false);setFeedback("Action added.");
   }
   function update(id:string,status:Status) {setItems(current=>current.map(x=>x.id===id?{...x,status}:x));}
