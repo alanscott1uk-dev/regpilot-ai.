@@ -24,7 +24,9 @@ export default function Prototype(){
   const a=document.createElement("a");a.href=url;a.download="regpilot-demo-actions.csv";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
  }
  function exportData(){const url=URL.createObjectURL(new Blob([JSON.stringify(items,null,2)],{type:"application/json"}));const a=document.createElement("a");a.href=url;a.download="regpilot-demo-backup.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
- const overdue=items.filter(x=>!x.done&&x.due<new Date().toLocaleDateString("en-CA")).length;
+ const localDate=new Date();
+ const today=[localDate.getFullYear(),String(localDate.getMonth()+1).padStart(2,"0"),String(localDate.getDate()).padStart(2,"0")].join("-");
+ const overdue=items.filter(x=>!x.done&&x.due<today).length;
  return <main style={{maxWidth:850,margin:"auto",padding:30,fontFamily:"Arial,sans-serif"}}>
  <p style={{color:"#2457d6",fontWeight:700}}>REGPILOT AI / LOCAL PROTOTYPE</p><h1>Compliance action tracker</h1>
  <p style={{background:"#fff4dc",padding:14,borderRadius:8}}>Demo only. No login, server storage, or regulatory verification. Do not enter real confidential or patient data.</p>
