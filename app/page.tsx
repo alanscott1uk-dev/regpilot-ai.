@@ -4,6 +4,8 @@ import { validateObligation, isOverdue, exportObligationsCsv } from "../lib/obli
 import { pilot } from "../fixtures/star-medical-demo.mjs";
 import styles from "./dashboard.module.css";
 import { exportRegisterBackup, parseRegisterBackup } from "../lib/register-backup.mjs";
+import { COMPLIANCE_MODULES } from "../lib/compliance-modules.mjs";
+import { WORKSPACE_KEY, defaultWorkspace, parseWorkspace, moduleHref } from "../lib/workspace-config.mjs";
 
 type Status = "Open" | "In progress" | "Complete";
 type Obligation = { id: string; title: string; regulator: string; owner: string; due: string; status: Status; notes: string };
@@ -27,6 +29,11 @@ export default function Home() {
   const [notes,setNotes] = useState("");
   const [feedback,setFeedback] = useState("");
   const [showForm,setShowForm] = useState(false);
+  const [workspace,setWorkspace] = useState(defaultWorkspace());
+  useEffect(()=>{
+    function load(){try{const raw=localStorage.getItem(WORKSPACE_KEY);setWorkspace(raw?parseWorkspace(JSON.parse(raw))||defaultWorkspace():defaultWorkspace());}catch{setWorkspace(defaultWorkspace());}}
+    load();window.addEventListener("focus",load);return ()=>window.removeEventListener("focus",load);
+  },[]);
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(KEY);
@@ -87,6 +94,7 @@ export default function Home() {
     <section className={styles.hero}>
       <div><div className={styles.eyebrow}>Overview / Compliance</div><h1 className={styles.heading}>Compliance workspace</h1><p className={styles.sub}>Track obligations, deadlines and ownership in one place.</p></div>
     </section>
+    <section className={styles.panel} style={{marginBottom:16}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}><div><div className={styles.eyebrow}>Current demo company</div><strong>{workspace.company||"Unnamed demo business"}</strong><div className={styles.meta}>{workspace.departments.length} departments · {workspace.modules.length} enabled modules</div></div><a href="/departments" className={styles.button+" "+styles.outline} style={{textDecoration:"none"}}>Configure workspace</a></div><div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:15}}>{COMPLIANCE_MODULES.filter(m=>workspace.modules.includes(m.id)).map(m=>{const href=moduleHref(m.id);return href?<a key={m.id} href={href} className={styles.button+" "+styles.outline} style={{textDecoration:"none"}}>{m.name}</a>:<span key={m.id} title="Module workflow is planned" style={{padding:"10px 12px",border:"1px dashed #cbd5e1",borderRadius:9,color:"#64748b",fontSize:12}}>{m.name} · Planned</span>})}</div></section>
     <div className={styles.notice} role="note"><strong>Prototype only.</strong> Records stay in this browser, without secure backup. Use fictional examples only — no patient, confidential or production compliance information.</div>
     <section className={styles.stats} aria-label="Compliance summary">{counts.map(([label,count])=><div key={label} className={styles.stat}><div className={styles.statLabel}>{label}</div><div className={styles.statNumber}>{count}</div></div>)}</section>
     <section className={styles.progressPanel} aria-label="Completion progress"><div className={styles.progressHeader}><strong>Completion progress</strong><span>{completeCount} of {items.length} completed · {completion}%</span></div><div className={styles.progressTrack} role="progressbar" aria-valuenow={completion} aria-valuemin={0} aria-valuemax={100} aria-label="Completed compliance actions"><div className={styles.progressFill} style={{width:completion+"%"}}/></div></section>
