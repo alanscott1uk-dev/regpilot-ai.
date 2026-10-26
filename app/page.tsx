@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { validateObligation, isOverdue, exportObligationsCsv } from "../lib/obligations.mjs";
+import { pilot } from "../fixtures/star-medical-demo.mjs";
 
 type Status = "Open" | "In progress" | "Complete";
 type Obligation = { id: string; title: string; regulator: string; owner: string; due: string; status: Status; notes: string };
@@ -36,6 +37,10 @@ export default function Home() {
   useEffect(() => { if (ready) { try { window.localStorage.setItem(KEY,JSON.stringify(items)); } catch {} } },[items,ready]);
   const visible = useMemo(() => items.filter(x => (filter === "All" || x.status === filter) && [x.title,x.owner,x.regulator].join(" ").toLowerCase().includes(search.toLowerCase())),[items,filter,search]);
   const overdue = items.filter(x => isOverdue(x, todayLocal())).length;
+  function loadPilot() {
+    if (!window.confirm("Replace local demo obligations with eight fictional Star Medical examples? Export your current CSV first.")) return;
+    setItems(pilot.actions.map(x => ({ id:x.id, title:x.title, regulator:x.category, owner:x.owner, due:x.due, status:x.done ? "Complete" : "Open", notes:"Fictional pilot record — not regulatory advice" })));
+  }
   function add(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim() || !owner.trim() || !due) return;
@@ -75,6 +80,7 @@ export default function Home() {
         <input aria-label="Search obligations" style={{...field,flex:"1 1 220px",width:"auto"}} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search title, owner or category"/>
         <select aria-label="Filter by status" style={{...field,width:"auto"}} value={filter} onChange={e=>setFilter(e.target.value)}>{["All","Open","In progress","Complete"].map(s=><option key={s}>{s}</option>)}</select>
         <button type="button" style={btn} onClick={exportCsv}>Export CSV</button>
+        <button type="button" style={btn} onClick={loadPilot}>Load Star Medical pilot</button>
       </div>
       {!ready?<p>Loading local demo data…</p>:visible.length===0?<p>No matching actions.</p>:
       <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",textAlign:"left",minWidth:680}}>
