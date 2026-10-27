@@ -6,7 +6,7 @@ type Org = { organization_id:string; role:string; organizations: {id:string;name
 type RecordRow = {id:string;title:string;module_id:string;status:string;due_date:string|null;owner_name:string};
 const input:React.CSSProperties={width:"100%",padding:12,border:"1px solid #cbd5e1",borderRadius:10,boxSizing:"border-box"};
 export default function BetaPage() {
- const [email,setEmail]=useState("");const [userEmail,setUserEmail]=useState<string|null>(null);
+ const [email,setEmail]=useState("");const [newOrg,setNewOrg]=useState("");const [userEmail,setUserEmail]=useState<string|null>(null);
  const [message,setMessage]=useState("");const [busy,setBusy]=useState(false);
  const [memberships,setMemberships]=useState<Org[]>([]);const [orgId,setOrgId]=useState("");
  const [records,setRecords]=useState<RecordRow[]>([]);
@@ -26,6 +26,11 @@ export default function BetaPage() {
  useEffect(()=>{load().catch(()=>setMessage("Staging connection unavailable."));const {data:{subscription}}=stagingSupabase().auth.onAuthStateChange(()=>{void load();});return()=>subscription.unsubscribe();},[]);
  useEffect(()=>{if(!orgId){setRecords([]);return;}let alive=true;stagingSupabase().from("module_records").select("id,title,module_id,status,due_date,owner_name").eq("organization_id",orgId).order("created_at",{ascending:false}).limit(100).then(({data,error})=>{if(!alive)return;if(error)setMessage(error.message);else setRecords((data??[]) as RecordRow[]);});return()=>{alive=false;};},[orgId]);
  async function signIn(e:React.FormEvent){e.preventDefault();setBusy(true);setMessage("");const {error}=await stagingSupabase().auth.signInWithOtp({email:email.trim(),options:{emailRedirectTo:window.location.origin+"/beta"}});setMessage(error?error.message:"Check your email for the sign-in link. Access to an organisation requires an invitation.");setBusy(false);}
+ async function createOrg(e:React.FormEvent){e.preventDefault();setBusy(true);setMessage("");
+  const {error}=await stagingSupabase().rpc("create_beta_organization",{p_name:newOrg.trim()});
+  if(error)setMessage(error.message);else{setNewOrg("");setMessage("Demo organisation created.");await load();}
+  setBusy(false);
+ }
  async function addRecord(e:React.FormEvent){e.preventDefault();if(!orgId)return;setBusy(true);setMessage("");
   const membership=memberships.find(m=>m.organization_id===orgId);
   if(!membership||!["OWNER","ADMIN","EDITOR"].includes(membership.role)){setMessage("You do not have edit permission.");setBusy(false);return;}
@@ -41,10 +46,16 @@ export default function BetaPage() {
    <button disabled={busy} style={{padding:12,background:"#2659df",color:"white",border:0,borderRadius:10}}>{busy?"Sending…":"Send sign-in link"}</button>
   </form>:<><div style={{background:"#fff",padding:18,borderRadius:14,border:"1px solid #dbe3ee"}}>
    <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"center",flexWrap:"wrap"}}><strong>{userEmail}</strong><button onClick={async()=>{await stagingSupabase().auth.signOut();setOrgId("");setRecords([]);setUserEmail(null);}}>Sign out</button></div>
-   {memberships.length===0?<p>You are signed in, but you have not been assigned to a beta organisation yet. Ask the administrator for an invitation.</p>:<>
+   {memberships.length===0?<p>No organisation yet. Create a synthetic test organisation below to try the beta.</p>:<>
     <label style={{display:"block",marginTop:16}}>Organisation<select style={input} value={orgId} onChange={e=>setOrgId(e.target.value)}>{memberships.map(m=><option key={m.organization_id} value={m.organization_id}>{Array.isArray(m.organizations)?m.organizations[0]?.name:m.organizations?.name??m.organization_id} ({m.role})</option>)}</select></label>
    </>}
   </div>
+  <form onSubmit={createOrg} style={{background:"white",padding:18,borderRadius:14,border:"1px solid #dbe3ee",display:"grid",gap:10,marginTop:18}}>
+   <h2 style={{margin:0,fontSize:19}}>Create test organisation</h2>
+   <p style={{fontSize:13,color:"#64748b",margin:0}}>For fictional beta data only. Maximum three organisations per account.</p>
+   <label>Organisation name<input style={input} required minLength={2} maxLength={120} value={newOrg} onChange={e=>setNewOrg(e.target.value)} placeholder="Example Trading Ltd"/></label>
+   <button disabled={busy} style={{padding:12,background:"#2659df",color:"white",border:0,borderRadius:10}}>Create organisation</button>
+  </form>
   {orgId&&<><form onSubmit={addRecord} style={{background:"white",padding:20,borderRadius:14,border:"1px solid #dbe3ee",display:"grid",gap:12,marginTop:18}}>
    <h2 style={{margin:0}}>Add staging record</h2><label>Module<select style={input} value={moduleId} onChange={e=>setModuleId(e.target.value)}><option value="suppliers">Suppliers</option><option value="licences">Licences</option><option value="audits">Audits</option><option value="training">Training</option></select></label>
    <label>Action title<input style={input} maxLength={160} required value={title} onChange={e=>setTitle(e.target.value)}/></label>
