@@ -1,5 +1,6 @@
 "use client";
 import { useMemo, useState } from "react";
+import { createModuleBackup, parseModuleBackup } from "../../lib/module-backup.mjs";
 type RecordItem = {id:string;name:string;owner:string;due:string;status:"Open"|"In progress"|"Complete";notes:string};
 export default function ModuleRegister({moduleId,moduleName,onCreateAction}:{moduleId:string;moduleName:string;onCreateAction:(item:{title:string;owner:string;due:string;status:string;category:string})=>void}) {
  const [records,setRecords]=useState<RecordItem[]>([]);
@@ -28,6 +29,12 @@ export default function ModuleRegister({moduleId,moduleName,onCreateAction}:{mod
    <div style={{display:"flex",gap:8}}><button type="submit" style={{border:0,background:"#2659df",color:"white",padding:"10px 15px",borderRadius:10,cursor:"pointer"}}>{editing?"Save changes":"Add record"}</button>{editing&&<button type="button" onClick={()=>{setEditing(null);setName("");setOwner("");setDue("");setNotes("");}}>Cancel</button>}</div>
    {message&&<p role="status" style={{fontSize:13,color:"#475569"}}>{message}</p>}
   </form>
+  <details style={{padding:14,background:"#f1f5f9",borderRadius:12}}><summary style={{cursor:"pointer",fontWeight:700}}>Demo backup and restore</summary>
+   <p style={{fontSize:13,color:"#64748b"}}>Export fictional records to JSON, or paste a previous module backup. Restoring replaces the current demo register. Never use this for confidential data.</p>
+   <button type="button" onClick={exportDemo}>Download demo backup</button>
+   <label style={{display:"block",marginTop:12}}>Paste backup JSON<textarea rows={3} value={backupText} onChange={e=>setBackupText(e.target.value)} style={input}/></label>
+   <button type="button" disabled={!backupText.trim()} onClick={restoreDemo}>Restore demo backup</button>
+  </details>
   <label>Search register<input style={input} value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search title, owner or notes"/></label>
   {visible.length===0?<div style={{border:"1px dashed #cbd5e1",borderRadius:12,padding:22,color:"#64748b"}}>No demo records yet. Add one above to try this module.</div>:visible.map(r=><article key={r.id} style={{padding:16,background:"white",border:"1px solid #e2e8f0",borderRadius:12}}>
    <div style={{display:"flex",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}><div><strong>{r.name}</strong><p style={{fontSize:13,color:"#64748b",margin:"6px 0"}}>{r.owner} · Review {r.due} · {r.status}</p>{r.notes&&<p style={{fontSize:13}}>{r.notes}</p>}</div><div style={{display:"flex",gap:7,alignItems:"start",flexWrap:"wrap"}}>
