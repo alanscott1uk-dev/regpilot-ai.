@@ -25,6 +25,7 @@ enum ReviewStatus {
   PENDING_REVIEW
   APPROVED
   REJECTED
+  EXPIRED
 }
 
 model User {
@@ -34,6 +35,7 @@ model User {
   createdAt   DateTime     @default(now())
   memberships Membership[]
   auditEvents AuditEvent[]
+  documentLinks DocumentActionLink[]
 }
 
 model Organization {
@@ -70,6 +72,8 @@ model Obligation {
   updatedAt      DateTime         @updatedAt
   organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   evidence       Evidence[]
+  documentLinks  DocumentActionLink[]
+  @@unique([id, organizationId])
   @@index([organizationId, status, dueDate])
 }
 
@@ -83,10 +87,19 @@ model Evidence {
   sizeBytes      Int
   sha256         String
   reviewStatus   ReviewStatus @default(DRAFT)
+  category       String @default("Other")
+  version        Int @default(1)
+  expiresOn      DateTime? @db.Date
+  reviewOn       DateTime? @db.Date
+  reviewedAt     DateTime?
+  reviewedById   String? @db.Uuid
+  actionLinks    DocumentActionLink[]
   createdAt      DateTime     @default(now())
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   obligation     Obligation   @relation(fields: [obligationId], references: [id], onDelete: Restrict)
+  @@unique([id, organizationId])
   @@index([organizationId, obligationId])
+  @@index([organizationId, expiresOn])
 }
 
 model AuditEvent {
@@ -101,4 +114,17 @@ model AuditEvent {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   actor          User         @relation(fields: [actorId], references: [id], onDelete: Restrict)
   @@index([organizationId, createdAt])
+}
+
+model DocumentActionLink {
+  id String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  evidenceId String @db.Uuid
+  obligationId String @db.Uuid
+  createdAt DateTime @default(now())
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  evidence Evidence @relation(fields: [evidenceId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  obligation Obligation @relation(fields: [obligationId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  @@unique([evidenceId, obligationId])
+  @@index([organizationId, obligationId])
 }
