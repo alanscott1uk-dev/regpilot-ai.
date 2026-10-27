@@ -10,7 +10,9 @@ export default function LiveWorkspace({onOpenBeta}:{onOpenBeta:()=>void}) {
  const [filter,setFilter]=useState("all");
  useEffect(()=>{
   let active=true;
-  const db=stagingSupabase();
+  if(!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY){setError("This preview needs a fresh deployment with Supabase configuration.");setState("error");return;}
+  let db;
+  try { db=stagingSupabase(); } catch {setError("Staging connection is not configured.");setState("error");return;}
   async function init(){
    const {data:{user},error:authError}=await db.auth.getUser();
    if(!active)return;
