@@ -9,6 +9,11 @@ export default function LiveWorkspace({onOpenBeta}:{onOpenBeta:()=>void}) {
  const [orgs,setOrgs]=useState<Org[]>([]);const [org,setOrg]=useState("");
  const [rows,setRows]=useState<Row[]>([]);const [error,setError]=useState("");
  const [filter,setFilter]=useState("all");
+ const [newTitle,setNewTitle]=useState("");
+ const [newOwner,setNewOwner]=useState("");
+ const [newDue,setNewDue]=useState("");
+ const [creating,setCreating]=useState(false);
+ const [showCreate,setShowCreate]=useState(false);
  const [query,setQuery]=useState("");
  const [urgency,setUrgency]=useState("all");
  const [today,setToday]=useState("2026-10-27");
@@ -49,12 +54,24 @@ export default function LiveWorkspace({onOpenBeta}:{onOpenBeta:()=>void}) {
  const visible=filterRecords(rows,{module:filter,query,urgency,today}) as Row[];
  const role=orgs.find(o=>o.organization_id===org)?.role;
  const canEdit=["OWNER","ADMIN","EDITOR"].includes(role??"");
+ async function createRecord(e:React.FormEvent<HTMLFormElement>){e.preventDefault();if(!canEdit||!org)return;setCreating(true);setError("");
+  const {data,error}=await stagingSupabase().from("module_records").insert({organization_id:org,module_id:filter==="all"?"obligations":filter,title:newTitle.trim(),owner_name:newOwner.trim(),due_date:newDue||null,status:"OPEN",notes:"",details:{}}).select("id,module_id,title,owner_name,due_date,status").single();
+  if(error)setError(error.message);else{setRows(prev=>[data as Row,...prev]);setNewTitle("");setNewOwner("");setNewDue("");setShowCreate(false);}
+  setCreating(false);
+ }
  async function changeStatus(record:Row,next:string){if(!canEdit)return;setUpdating(record.id);setError("");const {data,error}=await stagingSupabase().from("module_records").update({status:next}).eq("organization_id",org).eq("id",record.id).select("id,status").single();if(error)setError(error.message);else setRows(prev=>prev.map(r=>r.id===data.id?{...r,status:data.status}:r));setUpdating(null);}
  const modules=[...new Set(rows.map(r=>r.module_id))].sort();
  return <section style={{display:"grid",gap:16}}>
   <div style={panel}><h2 style={{marginTop:0}}>Your business records</h2><label>Organisation<select value={org} onChange={e=>setOrg(e.target.value)} style={{display:"block",padding:11,marginTop:7,width:"100%",maxWidth:440}}>{orgs.map(o=><option key={o.organization_id} value={o.organization_id}>{Array.isArray(o.organizations)?o.organizations[0]?.name:o.organizations?.name??"Organisation"} ({o.role})</option>)}</select></label></div>
   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12}}>{[["Saved records",rows.length],["Open",rows.filter(x=>x.status==="OPEN").length],["In progress",rows.filter(x=>x.status==="IN_PROGRESS").length],["Completed",rows.filter(x=>x.status==="COMPLETE").length]].map(([label,value])=><div key={label} style={panel}><div style={{fontSize:13,color:"#64748b"}}>{label}</div><strong style={{fontSize:27}}>{value}</strong></div>)}</div>
-  <div style={panel}><div style={{display:"flex",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}><h2 style={{margin:0}}>Departmental records</h2><div style={{display:"flex",gap:8}}><button onClick={()=>setReload(v=>v+1)}>Refresh</button><button onClick={onOpenBeta}>Add record</button></div></div><label style={{display:"block",marginTop:16}}>Module<select style={{display:"block",padding:10,marginTop:5,width:"100%",maxWidth:350}} value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All modules</option>{modules.map(m=><option key={m} value={m}>{m}</option>)}</select></label>
+  <div style={panel}><div style={{display:"flex",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}><h2 style={{margin:0}}>Departmental records</h2><div style={{display:"flex",gap:8}}><button onClick={()=>setReload(v=>v+1)}>Refresh</button>{canEdit&&<button onClick={()=>setShowCreate(v=>!v)}>{showCreate?"Cancel":"Add record"}</button>}</div></div><label style={{display:"block",marginTop:16}}>Module<select style={{display:"block",padding:10,marginTop:5,width:"100%",maxWidth:350}} value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All modules</option>{modules.map(m=><option key={m} value={m}>{m}</option>)}</select></label>
+   {showCreate&&canEdit&&<form onSubmit={createRecord} style={{display:"grid",gap:10,padding:16,marginTop:14,background:"#f8fafc",borderRadius:12}}>
+    <strong>Create action in {filter==="all"?"Compliance register":filter}</strong>
+    <label>Action title<input required maxLength={160} value={newTitle} onChange={e=>setNewTitle(e.target.value)} style={{display:"block",padding:10,width:"100%",boxSizing:"border-box"}}/></label>
+    <label>Responsible person or department<input required maxLength={80} value={newOwner} onChange={e=>setNewOwner(e.target.value)} style={{display:"block",padding:10,width:"100%",boxSizing:"border-box"}}/></label>
+    <label>Review date<input type="date" value={newDue} onChange={e=>setNewDue(e.target.value)} style={{display:"block",padding:10,width:"100%",boxSizing:"border-box"}}/></label>
+    <button disabled={creating} style={{padding:11,background:"#2659df",color:"white",border:0,borderRadius:10}}>{creating?"Saving…":"Save action"}</button>
+   </form>}
    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10,marginTop:12}}>
     <label>Search<input aria-label="Search records" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Title, owner or module" style={{display:"block",padding:10,width:"100%",boxSizing:"border-box",marginTop:5}}/></label>
     <label>Deadline<select aria-label="Deadline filter" value={urgency} onChange={e=>setUrgency(e.target.value)} style={{display:"block",padding:10,width:"100%",marginTop:5}}><option value="all">All deadlines</option><option value="overdue">Overdue</option><option value="due-soon">Due within 7 days</option><option value="upcoming">Due within 30 days</option><option value="undated">No date</option><option value="complete">Complete</option></select></label>
