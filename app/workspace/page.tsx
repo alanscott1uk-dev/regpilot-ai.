@@ -42,7 +42,7 @@ export default function Workspace() {
    <label style={{fontSize:12,color:"#b8c9e4"}}>Business sector<select aria-label="Business sector" value={industry} onChange={e=>setIndustry(e.target.value)} style={{display:"block",marginTop:6,width:"100%",padding:9,borderRadius:9,background:"#233657",color:"white",border:"1px solid #435679"}}><option value="all">General business</option><option value="healthcare">Healthcare & pharma</option><option value="manufacturing">Manufacturing</option><option value="food">Food</option><option value="logistics">Logistics</option><option value="construction">Construction</option><option value="retail">Retail</option><option value="hospitality">Hospitality</option></select></label>
    <nav className={s.nav} aria-label="Workspace navigation">
     {(["Overview","Actions","Documents","Intelligence"] as Tab[]).map(t=><button key={t} aria-current={tab===t?"page":undefined} onClick={()=>{setTab(t);setSelected(null);}}>{t}</button>)}
-    {groups.filter(g=>g.modules.length>0).map(g=><button key={g.id} aria-current={tab==="Modules"&&groups.find(x=>x.items.some(m=>m.id===moduleId))?.id===g.id?"page":undefined} onClick={()=>{setTab("Modules");setModuleId(g.items[0]?.id??g.modules[0]);setSelected(null);}}>{g.label}</button>)}
+    {groups.filter(g=>g.items.length>0).map(g=><button key={g.id} aria-current={tab==="Modules"&&groups.find(x=>x.items.some(m=>m.id===moduleId))?.id===g.id?"page":undefined} onClick={()=>{setTab("Modules");setModuleId(g.items[0]?.id??g.modules[0]);setSelected(null);}}>{g.label}</button>)}
    </nav>
    <div style={{fontSize:12,color:"#a6b8d6",marginTop:"auto"}}>Design preview · {dataOrigin}</div>
   </aside>
