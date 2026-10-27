@@ -7,6 +7,23 @@ export default function ModuleRegister({moduleId,moduleName,onCreateAction}:{mod
  const [name,setName]=useState(""); const [owner,setOwner]=useState(""); const [due,setDue]=useState(""); const [notes,setNotes]=useState("");
  const [query,setQuery]=useState(""); const [editing,setEditing]=useState<string|null>(null);
  const [message,setMessage]=useState("");
+ const [backupText,setBackupText]=useState("");
+ function exportDemo() {
+  try {
+   const data=createModuleBackup(moduleId,records);
+   const url=URL.createObjectURL(new Blob([data],{type:"application/json"}));
+   const link=document.createElement("a");
+   link.href=url;link.download="regpilot-"+moduleId+"-demo.json";link.click();
+   URL.revokeObjectURL(url);
+   setMessage("Demo backup downloaded.");
+  } catch { setMessage("Unable to export demo backup."); }
+ }
+ function restoreDemo() {
+  try {
+   const restored=parseModuleBackup(backupText,moduleId) as RecordItem[];
+   setRecords(restored);setEditing(null);setBackupText("");setMessage("Demo backup restored.");
+  } catch { setMessage("Invalid backup; existing records were not changed."); }
+ }
  const visible=useMemo(()=>records.filter(r=>[r.name,r.owner,r.notes].join(" ").toLowerCase().includes(query.toLowerCase())),[records,query]);
  function submit(e:React.FormEvent<HTMLFormElement>) {
   e.preventDefault();
