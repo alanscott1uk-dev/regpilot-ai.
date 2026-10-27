@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { stagingSupabase } from "../../lib/staging-supabase";
+const configured=Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY);
 type Org = { organization_id:string; role:string; organizations: {id:string;name:string} | {id:string;name:string}[] | null };
 type RecordRow = {id:string;title:string;module_id:string;status:string;due_date:string|null;owner_name:string};
 const input:React.CSSProperties={width:"100%",padding:12,border:"1px solid #cbd5e1",borderRadius:10,boxSizing:"border-box"};
@@ -23,7 +24,7 @@ export default function BetaPage() {
   setMemberships(orgs);
   setOrgId(previous=>orgs.some(x=>x.organization_id===previous)?previous:(orgs[0]?.organization_id??""));
  }
- useEffect(()=>{load().catch(()=>setMessage("Staging connection unavailable."));const {data:{subscription}}=stagingSupabase().auth.onAuthStateChange(()=>{void load();});return()=>subscription.unsubscribe();},[]);
+ useEffect(()=>{if(!configured){setMessage("This preview was built without Supabase configuration. Redeploy the branch to enable sign-in.");return;}load().catch(()=>setMessage("Staging connection unavailable."));const {data:{subscription}}=stagingSupabase().auth.onAuthStateChange(()=>{void load();});return()=>subscription.unsubscribe();},[]);
  useEffect(()=>{if(!orgId){setRecords([]);return;}let alive=true;stagingSupabase().from("module_records").select("id,title,module_id,status,due_date,owner_name").eq("organization_id",orgId).order("created_at",{ascending:false}).limit(100).then(({data,error})=>{if(!alive)return;if(error)setMessage(error.message);else setRecords((data??[]) as RecordRow[]);});return()=>{alive=false;};},[orgId]);
  async function signIn(e:React.FormEvent){e.preventDefault();setBusy(true);setMessage("");const {error}=await stagingSupabase().auth.signInWithOtp({email:email.trim(),options:{emailRedirectTo:window.location.origin+"/beta"}});setMessage(error?error.message:"Check your email for the sign-in link. Access to an organisation requires an invitation.");setBusy(false);}
  async function createOrg(e:React.FormEvent){e.preventDefault();setBusy(true);setMessage("");
@@ -41,7 +42,7 @@ export default function BetaPage() {
  return <main style={{maxWidth:850,margin:"auto",padding:"30px 18px",fontFamily:"system-ui",color:"#17233b"}}>
   <Link href="/workspace">← Workspace preview</Link><h1>RegPilot private beta</h1>
   <p style={{color:"#64748b"}}>Staging only. Do not enter confidential or regulated information.</p>
-  {!userEmail?<form onSubmit={signIn} style={{background:"white",border:"1px solid #dbe3ee",borderRadius:16,padding:22,display:"grid",gap:12}}>
+  {!configured?<section role="alert" style={{padding:20,background:"#fff4e5",border:"1px solid #f2d3a0",borderRadius:14}}><h2>Staging connection unavailable</h2><p>This preview was built before its Supabase configuration was available. A new preview deployment is required.</p></section>:!userEmail?<form onSubmit={signIn} style={{background:"white",border:"1px solid #dbe3ee",borderRadius:16,padding:22,display:"grid",gap:12}}>
    <h2 style={{margin:0}}>Sign in by email</h2><label>Email address<input style={input} type="email" required value={email} onChange={e=>setEmail(e.target.value)}/></label>
    <button disabled={busy} style={{padding:12,background:"#2659df",color:"white",border:0,borderRadius:10}}>{busy?"Sending…":"Send sign-in link"}</button>
   </form>:<><div style={{background:"#fff",padding:18,borderRadius:14,border:"1px solid #dbe3ee"}}>
