@@ -2,6 +2,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { stagingSupabase } from "../../lib/staging-supabase";
+const MODULES = [
+ ["licences","Licences & certifications"],["policies","Policies & SOPs"],["audits","Audits & inspections"],
+ ["risk","Risk management"],["safety","Health & safety"],["hr","HR compliance"],
+ ["privacy","Data protection"],["suppliers","Supplier qualification"],["imports","Imports & distribution"],
+ ["training","Training & competency"],["departments","Departments & ownership"],["reporting","Management reporting"],
+ ["regulatory","Regulatory intelligence"],["obligations","Compliance register"],["environment","Environmental compliance"]
+] as const;
 const configured=Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY);
 type Org = { organization_id:string; role:string; organizations: {id:string;name:string} | {id:string;name:string}[] | null };
 type RecordRow = {id:string;title:string;module_id:string;status:string;due_date:string|null;owner_name:string};
@@ -13,6 +20,9 @@ export default function BetaPage() {
  const [records,setRecords]=useState<RecordRow[]>([]);
  const [title,setTitle]=useState("");const [owner,setOwner]=useState("");const [moduleId,setModuleId]=useState("suppliers");
  const [due,setDue]=useState("");
+ const [recordFilter,setRecordFilter]=useState("all");
+ const [recordSearch,setRecordSearch]=useState("");
+ const visibleRecords=records.filter(r=>(recordFilter==="all"||r.module_id===recordFilter)&&[r.title,r.owner_name,r.module_id].join(" ").toLowerCase().includes(recordSearch.toLowerCase()));
  async function load() {
   const db=stagingSupabase();
   const {data:{user},error:authError}=await db.auth.getUser();
@@ -58,12 +68,12 @@ export default function BetaPage() {
    <button disabled={busy} style={{padding:12,background:"#2659df",color:"white",border:0,borderRadius:10}}>Create organisation</button>
   </form>
   {orgId&&<><form onSubmit={addRecord} style={{background:"white",padding:20,borderRadius:14,border:"1px solid #dbe3ee",display:"grid",gap:12,marginTop:18}}>
-   <h2 style={{margin:0}}>Add staging record</h2><label>Module<select style={input} value={moduleId} onChange={e=>setModuleId(e.target.value)}><option value="suppliers">Suppliers</option><option value="licences">Licences</option><option value="audits">Audits</option><option value="training">Training</option></select></label>
+   <h2 style={{margin:0}}>Add staging record</h2><label>Module<select style={input} value={moduleId} onChange={e=>setModuleId(e.target.value)}>{MODULES.map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label>
    <label>Action title<input style={input} maxLength={160} required value={title} onChange={e=>setTitle(e.target.value)}/></label>
    <label>Owner<input style={input} maxLength={80} required value={owner} onChange={e=>setOwner(e.target.value)}/></label>
    <label>Review date<input style={input} type="date" value={due} onChange={e=>setDue(e.target.value)}/></label>
    <button disabled={busy} style={{padding:12,background:"#2659df",color:"white",border:0,borderRadius:10}}>Save record</button>
-  </form><section style={{marginTop:20}}><h2>Saved records</h2>{records.length===0?<p>No records yet.</p>:records.map(r=><article key={r.id} style={{background:"white",border:"1px solid #dbe3ee",padding:14,marginBottom:10,borderRadius:12}}><strong>{r.title}</strong><div style={{color:"#64748b",fontSize:13}}>{r.module_id} · {r.owner_name} · {r.status} · {r.due_date??"No date"}</div></article>)}</section></>}
+  </form><section style={{marginTop:20}}><h2>Saved records</h2><div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:14}}><select aria-label="Filter module" style={{...input,flex:"1 1 180px"}} value={recordFilter} onChange={e=>setRecordFilter(e.target.value)}><option value="all">All modules</option>{MODULES.map(([id,label])=><option key={id} value={id}>{label}</option>)}</select><input aria-label="Search saved records" style={{...input,flex:"1 1 180px"}} value={recordSearch} onChange={e=>setRecordSearch(e.target.value)} placeholder="Search records"/></div>{visibleRecords.length===0?<p>No matching records.</p>:visibleRecords.map(r=><article key={r.id} style={{background:"white",border:"1px solid #dbe3ee",padding:14,marginBottom:10,borderRadius:12}}><strong>{r.title}</strong><div style={{color:"#64748b",fontSize:13}}>{r.module_id} · {r.owner_name} · {r.status} · {r.due_date??"No date"}</div></article>)}</section></>}
   </>}
   {message&&<p role="status" style={{padding:12,background:"#eef4ff",borderRadius:10}}>{message}</p>}
  </main>;
