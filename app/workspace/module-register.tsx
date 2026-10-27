@@ -1,6 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
 import { createModuleBackup, parseModuleBackup } from "../../lib/module-backup.mjs";
+import { fieldsForModule } from "../../lib/module-fields.mjs";
 type RecordItem = {id:string;name:string;owner:string;due:string;status:"Open"|"In progress"|"Complete";notes:string};
 export default function ModuleRegister({moduleId,moduleName,onCreateAction}:{moduleId:string;moduleName:string;onCreateAction:(item:{title:string;owner:string;due:string;status:string;category:string})=>void}) {
  const [records,setRecords]=useState<RecordItem[]>([]);
@@ -42,7 +43,10 @@ export default function ModuleRegister({moduleId,moduleName,onCreateAction}:{mod
     <label>Owner<input style={input} value={owner} maxLength={80} required onChange={e=>setOwner(e.target.value)} placeholder="Responsible department"/></label>
     <label>Review date<input style={input} type="date" value={due} required onChange={e=>setDue(e.target.value)}/></label>
    </div>
-   <label>Notes<textarea style={input} value={notes} maxLength={500} rows={2} onChange={e=>setNotes(e.target.value)}/></label>
+   {moduleFields.length>0&&<fieldset style={{border:"1px solid #e2e8f0",borderRadius:12,padding:12}}><legend style={{fontWeight:700}}>Module-specific details (demo)</legend><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))",gap:12}}>
+   {moduleFields.map(field=><label key={field.key}>{field.label}{field.type==="select"?<select style={input} value={extra[field.key]??""} onChange={e=>setExtra(prev=>({...prev,[field.key]:e.target.value}))}><option value="">Not specified</option>{field.options?.map(option=><option key={option}>{option}</option>)}</select>:<input style={input} type={field.type} value={extra[field.key]??""} onChange={e=>setExtra(prev=>({...prev,[field.key]:e.target.value}))}/>}</label>)}
+  </div><p style={{fontSize:12,color:"#64748b"}}>Additional fields are for interface testing only and are not saved in this demo register.</p></fieldset>}
+  <label>Notes<textarea style={input} value={notes} maxLength={500} rows={2} onChange={e=>setNotes(e.target.value)}/></label>
    <div style={{display:"flex",gap:8}}><button type="submit" style={{border:0,background:"#2659df",color:"white",padding:"10px 15px",borderRadius:10,cursor:"pointer"}}>{editing?"Save changes":"Add record"}</button>{editing&&<button type="button" onClick={()=>{setEditing(null);setName("");setOwner("");setDue("");setNotes("");}}>Cancel</button>}</div>
    {message&&<p role="status" style={{fontSize:13,color:"#475569"}}>{message}</p>}
   </form>
