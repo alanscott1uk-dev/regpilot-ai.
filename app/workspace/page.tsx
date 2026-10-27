@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import s from "./workspace.module.css";
 import EvidencePanel from "./evidence-panel";
+import ModuleRegister from "./module-register";
 import { navigationForIndustry } from "./navigation.mjs";
 type Tab = "Overview" | "Actions" | "Documents" | "Intelligence" | "Modules";
 const demo = [
@@ -69,6 +70,7 @@ export default function Workspace() {
     <div style={{marginTop:20,padding:18,background:"#f8fafc",borderRadius:12}}>
      <h3>{groups.flatMap(g=>g.items).find(m=>m.id===moduleId)?.name??"Select a module"}</h3>
      <p className={s.muted}>This module is part of the RegPilot roadmap. Where no live workflow is connected, no compliance status is asserted.</p>
+     <ModuleRegister key={moduleId} moduleId={moduleId} moduleName={groups.flatMap(g=>g.items).find(m=>m.id===moduleId)?.name??"Module"} onCreateAction={item=>setActions(prev=>[...prev,{id:"session-"+String(Date.now())+"-"+prev.length,...item}])}/>
      {moduleId==="obligations"?<button className={s.button} onClick={()=>setTab("Actions")}>Open action register</button>:moduleId==="policies"?<button className={s.button} onClick={()=>setTab("Documents")}>Open document library</button>:moduleId==="regulatory"?<button className={s.button} onClick={()=>setTab("Intelligence")}>Open intelligence</button>:null}
     </div>
    </section>}
