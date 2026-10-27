@@ -4,9 +4,10 @@ import Link from "next/link";
 import s from "./workspace.module.css";
 import EvidencePanel from "./evidence-panel";
 import ModuleRegister from "./module-register";
+import LiveWorkspace from "./live-workspace";
 import { navigationForIndustry } from "./navigation.mjs";
 import { actionSummary, actionPriority } from "../../lib/action-priority.mjs";
-type Tab = "Overview" | "Actions" | "Documents" | "Intelligence" | "Modules";
+type Tab = "Overview" | "Actions" | "Documents" | "Intelligence" | "Modules" | "My business";
 const demo = [
  { id:"a1",title:"Review insurance certificate",owner:"Operations",due:"15 Nov 2026",status:"Evidence required",category:"Insurance" },
  { id:"a2",title:"Update supplier qualification",owner:"Quality",due:"24 Nov 2026",status:"In progress",category:"Suppliers" },
@@ -48,7 +49,7 @@ export default function Workspace() {
    <div style={{fontSize:12,color:"#9fb2d2"}}>Compliance, made clearer.</div>
    <label style={{fontSize:12,color:"#b8c9e4"}}>Business sector<select aria-label="Business sector" value={industry} onChange={e=>setIndustry(e.target.value)} style={{display:"block",marginTop:6,width:"100%",padding:9,borderRadius:9,background:"#233657",color:"white",border:"1px solid #435679"}}><option value="all">General business</option><option value="healthcare">Healthcare & pharma</option><option value="manufacturing">Manufacturing</option><option value="food">Food</option><option value="logistics">Logistics</option><option value="construction">Construction</option><option value="retail">Retail</option><option value="hospitality">Hospitality</option></select></label>
    <nav className={s.nav} aria-label="Workspace navigation">
-    {(["Overview","Actions","Documents","Intelligence"] as Tab[]).map(t=><button key={t} aria-current={tab===t?"page":undefined} onClick={()=>{setTab(t);setSelected(null);setMenuOpen(false);}}>{t}</button>)}
+    {(["Overview","My business","Actions","Documents","Intelligence"] as Tab[]).map(t=><button key={t} aria-current={tab===t?"page":undefined} onClick={()=>{setTab(t);setSelected(null);setMenuOpen(false);}}>{t}</button>)}
     {groups.filter(g=>g.items.length>0).map(g=><button key={g.id} aria-current={tab==="Modules"&&groups.find(x=>x.items.some(m=>m.id===moduleId))?.id===g.id?"page":undefined} onClick={()=>{setTab("Modules");setModuleId(g.items[0]?.id??g.modules[0]);setSelected(null);setMenuOpen(false);}}>{g.label}</button>)}
    </nav>
    <div style={{fontSize:12,color:"#a6b8d6",marginTop:"auto"}}>Design preview · {dataOrigin}</div>
@@ -56,6 +57,7 @@ export default function Workspace() {
   </aside>
   <main className={s.content}>
    <header className={s.header}><div><div className={s.eyebrow}>Business workspace / Demo company</div><h1 className={s.heading}>{tab==="Overview"?"Your compliance, at a glance":tab}</h1><div className={s.muted}>A clearer view of what needs attention and what happens next.</div></div><Link className={s.button} href="/company-scan" style={{textDecoration:"none"}}>Scan a company ↗</Link></header>
+   {tab==="My business"&&<div style={{marginTop:24}}><LiveWorkspace onOpenBeta={()=>window.location.assign("/beta")}/></div>}
    {tab==="Overview"&&<>
     <div className={s.metrics}>
      {[["Tracked actions",String(actions.length)],["Overdue",String(priorities.overdue)],["Due in 7 days",String(priorities.urgent)],["Completed",String(priorities.complete)]].map(([label,value])=><div className={s.card} key={label}><div className={s.muted}>{label}</div><div className={s.metric}>{value}</div><span className={s.pill}>Demo</span></div>)}
