@@ -45,6 +45,7 @@ model Organization {
   obligations Obligation[]
   evidence    Evidence[]
   documentLinks DocumentActionLink[]
+  moduleRecords ModuleRecord[]
   auditEvents AuditEvent[]
 }
 
@@ -127,4 +128,22 @@ model DocumentActionLink {
   obligation Obligation @relation(fields: [obligationId, organizationId], references: [id, organizationId], onDelete: Restrict)
   @@unique([evidenceId, obligationId])
   @@index([organizationId, obligationId])
+}
+
+// Persistent department records; never expose without verified membership.
+model ModuleRecord {
+  id String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  moduleId String
+  title String
+  ownerName String
+  dueDate DateTime @db.Date
+  status ObligationStatus @default(OPEN)
+  notes String @default("")
+  details Json @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  @@unique([id, organizationId])
+  @@index([organizationId, moduleId, status, dueDate])
 }
