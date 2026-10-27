@@ -14,3 +14,7 @@ test("unknown fields and invalid select values are rejected",()=>{
  assert.equal(validateModuleDetails("suppliers",{approval:"Certified"}),false);
  assert.equal(validateModuleDetails("suppliers",{password:"secret"}),false);
 });
+
+test("optional blank fields are accepted in beta forms",()=>{
+ assert.equal(validateModuleDetails("suppliers",{approval:"",expiry:""}),true);
+});
