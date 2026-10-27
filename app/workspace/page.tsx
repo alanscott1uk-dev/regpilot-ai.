@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import s from "./workspace.module.css";
 type Tab = "Overview" | "Actions" | "Documents" | "Intelligence";
@@ -10,12 +10,26 @@ const demo = [
 ];
 export default function Workspace() {
  const [tab,setTab] = useState<Tab>("Overview");
+ const [actions,setActions] = useState(demo);
+ const [dataOrigin,setDataOrigin] = useState("Sample data");
+ useEffect(() => {
+   try {
+     const raw=window.localStorage.getItem("regpilot-demo-obligations-v1");
+     if(!raw) return;
+     const parsed: unknown=JSON.parse(raw);
+     if(!Array.isArray(parsed)) return;
+     const safe=parsed.filter((x): x is {id:string;title:string;owner:string;due:string;status:string;regulator:string}=>
+       !!x && typeof x==="object" && typeof x.id==="string" && typeof x.title==="string" && typeof x.owner==="string" && typeof x.due==="string" && typeof x.status==="string" && typeof x.regulator==="string"
+     ).map(x=>({id:x.id,title:x.title,owner:x.owner,due:x.due,status:x.status,category:x.regulator}));
+     setActions(safe);setDataOrigin("Browser demo register");
+   }catch { /* leave sample records visible if demo data is corrupt */ }
+ },[]);
  const [search,setSearch] = useState("");
  const [selected,setSelected] = useState<string|null>(null);
  const [view,setView] = useState("All");
  const [detail,setViewDetail] = useState("Overview");
- const filtered=useMemo(()=>demo.filter(x=>(view==="All"||x.status===view)&&[x.title,x.owner,x.category].join(" ").toLowerCase().includes(search.toLowerCase())),[search,view]);
- const active=demo.find(x=>x.id===selected);
+ const filtered=useMemo(()=>actions.filter(x=>(view==="All"||x.status===view)&&[x.title,x.owner,x.category].join(" ").toLowerCase().includes(search.toLowerCase())),[actions,search,view]);
+ const active=actions.find(x=>x.id===selected);
  return <div className={s.shell}>
   <aside className={s.sidebar}>
    <div className={s.brand}>reg<span>pilot</span><span style={{fontSize:12,marginLeft:5,color:"#9db1d1"}}>AI</span></div>
@@ -23,16 +37,16 @@ export default function Workspace() {
    <nav className={s.nav} aria-label="Workspace navigation">
     {(["Overview","Actions","Documents","Intelligence"] as Tab[]).map(t=><button key={t} aria-current={tab===t?"page":undefined} onClick={()=>{setTab(t);setSelected(null);}}>{t}</button>)}
    </nav>
-   <div style={{fontSize:12,color:"#a6b8d6",marginTop:"auto"}}>Design preview · sample data</div>
+   <div style={{fontSize:12,color:"#a6b8d6",marginTop:"auto"}}>Design preview · {dataOrigin}</div>
   </aside>
   <main className={s.content}>
    <header className={s.header}><div><div className={s.eyebrow}>Business workspace / Demo company</div><h1 className={s.heading}>{tab==="Overview"?"Your compliance, at a glance":tab}</h1><div className={s.muted}>A clearer view of what needs attention and what happens next.</div></div><Link className={s.button} href="/company-scan" style={{textDecoration:"none"}}>Scan a company ↗</Link></header>
    {tab==="Overview"&&<>
     <div className={s.metrics}>
-     {[["Tracked actions","3"],["Need attention","2"],["Evidence approved","0"],["Upcoming reviews","3"]].map(([label,value])=><div className={s.card} key={label}><div className={s.muted}>{label}</div><div className={s.metric}>{value}</div><span className={s.pill}>Demo</span></div>)}
+     {[["Tracked actions",String(actions.length)],["Open actions",String(actions.filter(x=>x.status==="Open").length)],["Evidence approved","0"],["In progress",String(actions.filter(x=>x.status==="In progress").length)]].map(([label,value])=><div className={s.card} key={label}><div className={s.muted}>{label}</div><div className={s.metric}>{value}</div><span className={s.pill}>Demo</span></div>)}
     </div>
     <div className={s.columns}>
-     <section className={s.card}><h2 className={s.sectionTitle}>Priority actions</h2><div className={s.muted}>Select an action to see supporting evidence.</div>{demo.map(x=><div className={s.row} key={x.id}><div><strong>{x.title}</strong><div className={s.muted}>{x.owner} · {x.due}</div></div><button className={s.button+" "+s.secondary} onClick={()=>{setTab("Actions");setSelected(x.id);}}>Review</button></div>)}</section>
+     <section className={s.card}><h2 className={s.sectionTitle}>Priority actions</h2><div className={s.muted}>Select an action to see supporting evidence.</div>{actions.map(x=><div className={s.row} key={x.id}><div><strong>{x.title}</strong><div className={s.muted}>{x.owner} · {x.due}</div></div><button className={s.button+" "+s.secondary} onClick={()=>{setTab("Actions");setSelected(x.id);}}>Review</button></div>)}</section>
      <section className={s.card}><h2 className={s.sectionTitle}>Document readiness</h2><p className={s.muted}>Keep certificates, policies and evidence linked to the actions they support.</p><div className={s.empty}>No documents uploaded in this preview.</div><button style={{marginTop:16}} className={s.button+" "+s.secondary} onClick={()=>setTab("Documents")}>Open document library</button></section>
     </div>
    </>}
@@ -42,7 +56,7 @@ export default function Workspace() {
    </div>}
    {tab==="Documents"&&<section className={s.card} style={{marginTop:24}}><h2 className={s.sectionTitle}>Document library</h2><p className={s.muted}>Planned: private uploads, categories, version history, expiry reminders and linking a file to multiple actions.</p><div className={s.empty}>Your secure document vault will appear here after authentication and storage are configured.</div></section>}
    {tab==="Intelligence"&&<section className={s.card} style={{marginTop:24}}><h2 className={s.sectionTitle}>Regulatory intelligence</h2><p className={s.muted}>Future official-source monitoring and company-specific impact analysis.</p><div className={s.empty}>No live regulatory feed connected yet. No simulated regulatory alerts are shown.</div></section>}
-   <footer className={s.footer}>Preview uses fictional records. No accounts, uploads or compliance certifications are created here.</footer>
+   <footer className={s.footer}>Preview uses browser-local demo records where available. No accounts, uploads or compliance certifications are created here.</footer>
   </main>
  </div>;
 }
