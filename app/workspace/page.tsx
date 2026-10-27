@@ -67,10 +67,20 @@ export default function Workspace() {
      <section className={s.card}><h2 className={s.sectionTitle}>Document readiness</h2><p className={s.muted}>Keep certificates, policies and evidence linked to the actions they support.</p><div className={s.empty}>No documents uploaded in this preview.</div><button style={{marginTop:16}} className={s.button+" "+s.secondary} onClick={()=>setTab("Documents")}>Open document library</button></section>
     </div>
    </>}
+   {tab==="Actions"&&<section className={s.card} style={{marginTop:18,marginBottom:16}}>
+     <strong>Saved business actions</strong>
+     <p className={s.muted}>Your authenticated records are available in My business. The action examples below are demonstration data only.</p>
+     <button className={s.button+" "+s.secondary} onClick={()=>setTab("My business")}>View saved actions</button>
+   </section>}
    {tab==="Actions"&&<div className={s.columns} style={{marginTop:24}}>
     <section className={s.card}><h2 className={s.sectionTitle}>Action register</h2><div style={{display:"flex",gap:10,margin:"16px 0",flexWrap:"wrap"}}><input className={s.field} style={{flex:"1 1 180px"}} aria-label="Search actions" placeholder="Search actions..." value={search} onChange={e=>setSearch(e.target.value)}/><select className={s.field} style={{width:"auto"}} aria-label="Filter actions" value={view} onChange={e=>setView(e.target.value)}><option>All</option><option>Evidence required</option><option>In progress</option><option>Review required</option></select></div>{filtered.length?filtered.map(x=><div className={s.row} key={x.id}><div><strong>{x.title}</strong><div className={s.muted}>{x.category} · {x.due}</div><span className={s.pill+" "+(actionPriority(x,today)==="Overdue"||actionPriority(x,today)==="Urgent"?s.amber:"")}>{actionPriority(x,today)} · {x.status}</span></div><button className={s.button+" "+s.secondary} onClick={()=>setSelected(x.id)}>Open</button></div>):<p className={s.muted}>No matching actions.</p>}</section>
     <section className={s.card}><h2 className={s.sectionTitle}>Action details</h2>{active?<><h3>{active.title}</h3><p className={s.muted}>Owner: {active.owner} · Due: {active.due}</p><div className={s.tabs}>{["Overview","Documents","Review history"].map(x=><button key={x} onClick={()=>setViewDetail(x)} aria-selected={detail===x}>{x}</button>)}</div>{detail==="Documents"?<EvidencePanel actionId={active.id}/>:detail==="Review history"?<p className={s.muted}>No review events recorded in this preview.</p>:<p className={s.muted}>Use this panel to review evidence and approve action completion once secure workflows are connected.</p>}</>:<p className={s.muted}>Select an action to view its details, documents and review history.</p>}</section>
    </div>}
+   {tab==="Modules"&&<section className={s.card} style={{marginTop:18,marginBottom:16}}>
+     <strong>Manage real business records</strong>
+     <p className={s.muted}>The forms below are demonstrations. To save records securely, open your authenticated business workspace.</p>
+     <button className={s.button+" "+s.secondary} onClick={()=>setTab("My business")}>Open My business</button>
+   </section>}
    {tab==="Modules"&&<section className={s.card} style={{marginTop:24}}>
     <h2 className={s.sectionTitle}>Business modules</h2><p className={s.muted}>Choose a department or compliance function. Availability adapts to the selected sector.</p>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10,marginTop:18}}>
