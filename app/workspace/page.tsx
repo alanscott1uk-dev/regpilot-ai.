@@ -14,7 +14,7 @@ const demo = [
  { id:"a3",title:"Review privacy information",owner:"Administration",due:"02 Dec 2026",status:"Review required",category:"Data protection" },
 ];
 export default function Workspace() {
- const [tab,setTab] = useState<Tab>("Overview");
+ const [tab,setTab] = useState<Tab>("My business");
  const [menuOpen,setMenuOpen] = useState(false);
  const [actions,setActions] = useState(demo);
  const [dataOrigin,setDataOrigin] = useState("Sample data");
@@ -52,11 +52,11 @@ export default function Workspace() {
     {(["Overview","My business","Actions","Documents","Intelligence"] as Tab[]).map(t=><button key={t} aria-current={tab===t?"page":undefined} onClick={()=>{setTab(t);setSelected(null);setMenuOpen(false);}}>{t}</button>)}
     {groups.filter(g=>g.items.length>0).map(g=><button key={g.id} aria-current={tab==="Modules"&&groups.find(x=>x.items.some(m=>m.id===moduleId))?.id===g.id?"page":undefined} onClick={()=>{setTab("Modules");setModuleId(g.items[0]?.id??g.modules[0]);setSelected(null);setMenuOpen(false);}}>{g.label}</button>)}
    </nav>
-   <div style={{fontSize:12,color:"#a6b8d6",marginTop:"auto"}}>Design preview · {dataOrigin}</div>
+   <div style={{fontSize:12,color:"#a6b8d6",marginTop:"auto"}}>{tab==="My business"?"Authenticated staging workspace":"Design preview · "+dataOrigin}</div>
    </div>
   </aside>
   <main className={s.content}>
-   <header className={s.header}><div><div className={s.eyebrow}>Business workspace / Demo company</div><h1 className={s.heading}>{tab==="Overview"?"Your compliance, at a glance":tab}</h1><div className={s.muted}>A clearer view of what needs attention and what happens next.</div></div><Link className={s.button} href="/company-scan" style={{textDecoration:"none"}}>Scan a company ↗</Link></header>
+   <header className={s.header}><div><div className={s.eyebrow}>{tab==="My business"?"Business workspace / Staging":"RegPilot / Demonstration workspace"}</div><h1 className={s.heading}>{tab==="Overview"?"Your compliance, at a glance":tab}</h1><div className={s.muted}>A clearer view of what needs attention and what happens next.</div></div><Link className={s.button} href="/company-scan" style={{textDecoration:"none"}}>Scan a company ↗</Link></header>
    {tab==="My business"&&<div style={{marginTop:24}}><LiveWorkspace onOpenBeta={()=>window.location.assign("/beta")}/></div>}
    {tab==="Overview"&&<>
     <div className={s.metrics}>
