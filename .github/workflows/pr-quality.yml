@@ -1,0 +1,28 @@
+name: Pull request quality checks
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      DATABASE_URL: postgresql://regpilot:dummy@localhost:5432/regpilot?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Unit tests
+        run: npm test
+      - name: Prisma schema validation
+        run: npm run db:validate
+      - name: Generate Prisma client
+        run: npm run db:generate
+      - name: TypeScript and Next.js build
+        run: npm run build
