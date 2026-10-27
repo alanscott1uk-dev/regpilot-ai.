@@ -20,3 +20,6 @@ This module supports general documentation across sectors: policies, SOPs, licen
 
 ## Production requirements
 Organisation-scoped private object storage, verified users and department permissions, document version history, review assignments, approval signatures, expiry notifications, secure file inspection and backup/recovery.
+
+## Obligation linkage
+Document metadata can optionally reference an action ID from the browser-local compliance register. The document page displays the linked action title when that action is present. Links are not database foreign keys and may become orphaned when an action is deleted or browser storage is cleared. There is no audit-grade evidence chain or verification of the uploaded content.
