@@ -5,6 +5,7 @@ import s from "./workspace.module.css";
 import EvidencePanel from "./evidence-panel";
 import ModuleRegister from "./module-register";
 import { navigationForIndustry } from "./navigation.mjs";
+import { actionSummary, actionPriority } from "../../lib/action-priority.mjs";
 type Tab = "Overview" | "Actions" | "Documents" | "Intelligence" | "Modules";
 const demo = [
  { id:"a1",title:"Review insurance certificate",owner:"Operations",due:"15 Nov 2026",status:"Evidence required",category:"Insurance" },
@@ -36,6 +37,9 @@ export default function Workspace() {
  const groups = navigationForIndustry(industry);
  const filtered=useMemo(()=>actions.filter(x=>(view==="All"||x.status===view)&&[x.title,x.owner,x.category].join(" ").toLowerCase().includes(search.toLowerCase())),[actions,search,view]);
  const active=actions.find(x=>x.id===selected);
+ const [today,setToday]=useState("2026-10-27");
+ useEffect(()=>{const d=new Date();setToday([d.getFullYear(),String(d.getMonth()+1).padStart(2,"0"),String(d.getDate()).padStart(2,"0")].join("-"));},[]);
+ const priorities=actionSummary(actions,today);
  return <div className={s.shell}>
   <aside className={s.sidebar}>
    <div className={s.brand}>reg<span>pilot</span><span style={{fontSize:12,marginLeft:5,color:"#9db1d1"}}>AI</span></div>
@@ -51,7 +55,7 @@ export default function Workspace() {
    <header className={s.header}><div><div className={s.eyebrow}>Business workspace / Demo company</div><h1 className={s.heading}>{tab==="Overview"?"Your compliance, at a glance":tab}</h1><div className={s.muted}>A clearer view of what needs attention and what happens next.</div></div><Link className={s.button} href="/company-scan" style={{textDecoration:"none"}}>Scan a company ↗</Link></header>
    {tab==="Overview"&&<>
     <div className={s.metrics}>
-     {[["Tracked actions",String(actions.length)],["Open actions",String(actions.filter(x=>x.status==="Open").length)],["Evidence approved","0"],["In progress",String(actions.filter(x=>x.status==="In progress").length)]].map(([label,value])=><div className={s.card} key={label}><div className={s.muted}>{label}</div><div className={s.metric}>{value}</div><span className={s.pill}>Demo</span></div>)}
+     {[["Tracked actions",String(actions.length)],["Overdue",String(priorities.overdue)],["Due in 7 days",String(priorities.urgent)],["Completed",String(priorities.complete)]].map(([label,value])=><div className={s.card} key={label}><div className={s.muted}>{label}</div><div className={s.metric}>{value}</div><span className={s.pill}>Demo</span></div>)}
     </div>
     <div className={s.columns}>
      <section className={s.card}><h2 className={s.sectionTitle}>Priority actions</h2><div className={s.muted}>Select an action to see supporting evidence.</div>{actions.map(x=><div className={s.row} key={x.id}><div><strong>{x.title}</strong><div className={s.muted}>{x.owner} · {x.due}</div></div><button className={s.button+" "+s.secondary} onClick={()=>{setTab("Actions");setSelected(x.id);}}>Review</button></div>)}</section>
@@ -59,7 +63,7 @@ export default function Workspace() {
     </div>
    </>}
    {tab==="Actions"&&<div className={s.columns} style={{marginTop:24}}>
-    <section className={s.card}><h2 className={s.sectionTitle}>Action register</h2><div style={{display:"flex",gap:10,margin:"16px 0",flexWrap:"wrap"}}><input className={s.field} style={{flex:"1 1 180px"}} aria-label="Search actions" placeholder="Search actions..." value={search} onChange={e=>setSearch(e.target.value)}/><select className={s.field} style={{width:"auto"}} aria-label="Filter actions" value={view} onChange={e=>setView(e.target.value)}><option>All</option><option>Evidence required</option><option>In progress</option><option>Review required</option></select></div>{filtered.length?filtered.map(x=><div className={s.row} key={x.id}><div><strong>{x.title}</strong><div className={s.muted}>{x.category} · {x.due}</div><span className={s.pill+" "+(x.status==="Evidence required"?s.amber:"")}>{x.status}</span></div><button className={s.button+" "+s.secondary} onClick={()=>setSelected(x.id)}>Open</button></div>):<p className={s.muted}>No matching actions.</p>}</section>
+    <section className={s.card}><h2 className={s.sectionTitle}>Action register</h2><div style={{display:"flex",gap:10,margin:"16px 0",flexWrap:"wrap"}}><input className={s.field} style={{flex:"1 1 180px"}} aria-label="Search actions" placeholder="Search actions..." value={search} onChange={e=>setSearch(e.target.value)}/><select className={s.field} style={{width:"auto"}} aria-label="Filter actions" value={view} onChange={e=>setView(e.target.value)}><option>All</option><option>Evidence required</option><option>In progress</option><option>Review required</option></select></div>{filtered.length?filtered.map(x=><div className={s.row} key={x.id}><div><strong>{x.title}</strong><div className={s.muted}>{x.category} · {x.due}</div><span className={s.pill+" "+(actionPriority(x,today)==="Overdue"||actionPriority(x,today)==="Urgent"?s.amber:"")}>{actionPriority(x,today)} · {x.status}</span></div><button className={s.button+" "+s.secondary} onClick={()=>setSelected(x.id)}>Open</button></div>):<p className={s.muted}>No matching actions.</p>}</section>
     <section className={s.card}><h2 className={s.sectionTitle}>Action details</h2>{active?<><h3>{active.title}</h3><p className={s.muted}>Owner: {active.owner} · Due: {active.due}</p><div className={s.tabs}>{["Overview","Documents","Review history"].map(x=><button key={x} onClick={()=>setViewDetail(x)} aria-selected={detail===x}>{x}</button>)}</div>{detail==="Documents"?<EvidencePanel actionId={active.id}/>:detail==="Review history"?<p className={s.muted}>No review events recorded in this preview.</p>:<p className={s.muted}>Use this panel to review evidence and approve action completion once secure workflows are connected.</p>}</>:<p className={s.muted}>Select an action to view its details, documents and review history.</p>}</section>
    </div>}
    {tab==="Modules"&&<section className={s.card} style={{marginTop:24}}>
