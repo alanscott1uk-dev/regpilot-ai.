@@ -14,6 +14,7 @@ export default function LiveWorkspace({onOpenBeta}:{onOpenBeta:()=>void}) {
  const [newDue,setNewDue]=useState("");
  const [creating,setCreating]=useState(false);
  const [showCreate,setShowCreate]=useState(false);
+ const [selectedRecord,setSelectedRecord]=useState<string|null>(null);
  const [query,setQuery]=useState("");
  const [urgency,setUrgency]=useState("all");
  const [today,setToday]=useState("2026-10-27");
@@ -52,6 +53,7 @@ export default function LiveWorkspace({onOpenBeta}:{onOpenBeta:()=>void}) {
  if(state==="signed-out"||state==="no-org")return <section style={panel}><h2>{state==="signed-out"?"Sign in to RegPilot":"Create your test organisation"}</h2><p>Access saved records and departmental modules from one secure staging workspace.</p><button onClick={onOpenBeta} style={{padding:12,border:0,borderRadius:10,background:"#2659df",color:"white"}}>Open account setup</button></section>;
  if(state==="error")return <section style={panel} role="alert"><h2>Unable to load workspace</h2><p>{error}</p></section>;
  const visible=filterRecords(rows,{module:filter,query,urgency,today}) as Row[];
+ const selected=rows.find(r=>r.id===selectedRecord);
  const role=orgs.find(o=>o.organization_id===org)?.role;
  const canEdit=["OWNER","ADMIN","EDITOR"].includes(role??"");
  async function createRecord(e:React.FormEvent<HTMLFormElement>){e.preventDefault();if(!canEdit||!org)return;setCreating(true);setError("");
@@ -76,9 +78,16 @@ export default function LiveWorkspace({onOpenBeta}:{onOpenBeta:()=>void}) {
     <label>Search<input aria-label="Search records" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Title, owner or module" style={{display:"block",padding:10,width:"100%",boxSizing:"border-box",marginTop:5}}/></label>
     <label>Deadline<select aria-label="Deadline filter" value={urgency} onChange={e=>setUrgency(e.target.value)} style={{display:"block",padding:10,width:"100%",marginTop:5}}><option value="all">All deadlines</option><option value="overdue">Overdue</option><option value="due-soon">Due within 7 days</option><option value="upcoming">Due within 30 days</option><option value="undated">No date</option><option value="complete">Complete</option></select></label>
    </div>
+   {selected&&<aside style={{border:"1px solid #c7d8ff",background:"#f4f7ff",borderRadius:14,padding:16,marginTop:16}} aria-label="Selected action details">
+    <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"center"}}><h3 style={{margin:0}}>{selected.title}</h3><button onClick={()=>setSelectedRecord(null)}>Close</button></div>
+    <p style={{fontSize:13,color:"#475569"}}>Owner: {selected.owner_name} · Module: {selected.module_id} · Due: {selected.due_date??"Not set"}</p>
+    <strong>Supporting evidence</strong>
+    <p style={{fontSize:13,color:"#64748b"}}>Secure document uploads are not yet enabled. Evidence review is not operational in this beta.</p>
+    <button onClick={onOpenBeta}>Open record management</button>
+   </aside>}
    {error&&<p role="alert" style={{color:"#b91c1c"}}>{error}</p>}
    <p style={{fontSize:13,color:"#64748b"}}>{visible.length} of {rows.length} records · Ordered by due date and urgency</p>
-   {visible.length===0?<p style={{color:"#64748b"}}>No saved records for this selection.</p>:visible.map(r=><article key={r.id} style={{padding:"15px 0",borderBottom:"1px solid #e2e8f0"}}><strong>{r.title}</strong><div style={{fontSize:13,color:"#64748b"}}>{r.module_id} · {r.owner_name} · {r.due_date??"No review date"} · {recordUrgency(r,today).replace("-"," ")}</div>{canEdit?<label style={{display:"block",marginTop:10,fontSize:13}}>Status <select aria-label={"Status for "+r.title} value={r.status} disabled={updating===r.id} onChange={e=>void changeStatus(r,e.target.value)}><option value="OPEN">Open</option><option value="IN_PROGRESS">In progress</option><option value="COMPLETE">Complete</option></select></label>:<span style={{fontSize:12}}>Status: {r.status}</span>}</article>)}
+   {visible.length===0?<p style={{color:"#64748b"}}>No saved records for this selection.</p>:visible.map(r=><article key={r.id} style={{padding:"15px 0",borderBottom:"1px solid #e2e8f0"}}><button onClick={()=>setSelectedRecord(r.id)} style={{background:"transparent",border:0,padding:0,fontWeight:750,color:"#2144a4",cursor:"pointer",textAlign:"left"}}>{r.title}</button><div style={{fontSize:13,color:"#64748b"}}>{r.module_id} · {r.owner_name} · {r.due_date??"No review date"} · {recordUrgency(r,today).replace("-"," ")}</div>{canEdit?<label style={{display:"block",marginTop:10,fontSize:13}}>Status <select aria-label={"Status for "+r.title} value={r.status} disabled={updating===r.id} onChange={e=>void changeStatus(r,e.target.value)}><option value="OPEN">Open</option><option value="IN_PROGRESS">In progress</option><option value="COMPLETE">Complete</option></select></label>:<span style={{fontSize:12}}>Status: {r.status}</span>}</article>)}
   </div>
  </section>;
 }
