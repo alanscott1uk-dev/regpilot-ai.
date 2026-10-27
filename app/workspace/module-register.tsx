@@ -9,6 +9,8 @@ export default function ModuleRegister({moduleId,moduleName,onCreateAction}:{mod
  const [query,setQuery]=useState(""); const [editing,setEditing]=useState<string|null>(null);
  const [message,setMessage]=useState("");
  const [backupText,setBackupText]=useState("");
+ const [extra,setExtra]=useState<Record<string,string>>({});
+ const moduleFields=fieldsForModule(moduleId);
  function exportDemo() {
   try {
    const data=createModuleBackup(moduleId,records);
