@@ -35,7 +35,6 @@ model User {
   createdAt   DateTime     @default(now())
   memberships Membership[]
   auditEvents AuditEvent[]
-  documentLinks DocumentActionLink[]
 }
 
 model Organization {
@@ -45,6 +44,7 @@ model Organization {
   memberships Membership[]
   obligations Obligation[]
   evidence    Evidence[]
+  documentLinks DocumentActionLink[]
   auditEvents AuditEvent[]
 }
 
