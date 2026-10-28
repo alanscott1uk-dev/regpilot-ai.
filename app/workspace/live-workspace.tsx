@@ -4,11 +4,12 @@ import { stagingSupabase } from "../../lib/staging-supabase";
 import { filterRecords, recordUrgency } from "../../lib/record-workspace.mjs";
 type Org = {organization_id:string;role:string;organizations:{name:string}|{name:string}[]|null};
 type Row = {id:string;module_id:string;title:string;owner_name:string;due_date:string|null;status:string;details?:Record<string,string>};
-export default function LiveWorkspace({onOpenBeta}:{onOpenBeta:()=>void}) {
+export default function LiveWorkspace({onOpenBeta,moduleFilter}:{onOpenBeta:()=>void;moduleFilter?:string}) {
  const [state,setState]=useState<"loading"|"signed-out"|"no-org"|"ready"|"error">("loading");
  const [orgs,setOrgs]=useState<Org[]>([]);const [org,setOrg]=useState("");
  const [rows,setRows]=useState<Row[]>([]);const [error,setError]=useState("");
- const [filter,setFilter]=useState("all");
+ const [filter,setFilter]=useState(moduleFilter??"all");
+ useEffect(()=>{setFilter(moduleFilter??"all");setShowCreate(false);},[moduleFilter]);
  const [newTitle,setNewTitle]=useState("");
  const [newOwner,setNewOwner]=useState("");
  const [newDue,setNewDue]=useState("");
@@ -64,7 +65,7 @@ export default function LiveWorkspace({onOpenBeta}:{onOpenBeta:()=>void}) {
   setCreating(false);
  }
  async function changeStatus(record:Row,next:string){if(!canEdit)return;setUpdating(record.id);setError("");const {data,error}=await stagingSupabase().from("module_records").update({status:next}).eq("organization_id",org).eq("id",record.id).select("id,status").single();if(error)setError(error.message);else setRows(prev=>prev.map(r=>r.id===data.id?{...r,status:data.status}:r));setUpdating(null);}
- const modules=[...new Set(rows.map(r=>r.module_id))].sort();
+ const modules=[...new Set([...rows.map(r=>r.module_id),...(moduleFilter?[moduleFilter]:[])])].sort();
  return <section style={{display:"grid",gap:16}}>
   <div style={panel}><h2 style={{marginTop:0}}>Your business records</h2><label>Organisation<select value={org} onChange={e=>setOrg(e.target.value)} style={{display:"block",padding:11,marginTop:7,width:"100%",maxWidth:440}}>{orgs.map(o=><option key={o.organization_id} value={o.organization_id}>{Array.isArray(o.organizations)?o.organizations[0]?.name:o.organizations?.name??"Organisation"} ({o.role})</option>)}</select></label></div>
   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12}}>{[["Saved records",rows.length],["Open",rows.filter(x=>x.status==="OPEN").length],["In progress",rows.filter(x=>x.status==="IN_PROGRESS").length],["Completed",rows.filter(x=>x.status==="COMPLETE").length]].map(([label,value])=><div key={label} style={panel}><div style={{fontSize:13,color:"#64748b"}}>{label}</div><strong style={{fontSize:27}}>{value}</strong></div>)}</div>
