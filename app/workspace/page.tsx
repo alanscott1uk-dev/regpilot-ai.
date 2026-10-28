@@ -67,35 +67,22 @@ export default function Workspace() {
      <section className={s.card}><h2 className={s.sectionTitle}>Document readiness</h2><p className={s.muted}>Keep certificates, policies and evidence linked to the actions they support.</p><div className={s.empty}>No documents uploaded in this preview.</div><button style={{marginTop:16}} className={s.button+" "+s.secondary} onClick={()=>setTab("Documents")}>Open document library</button></section>
     </div>
    </>}
-   {tab==="Actions"&&<section className={s.card} style={{marginTop:18,marginBottom:16}}>
-     <strong>Saved business actions</strong>
-     <p className={s.muted}>Your authenticated records are available in My business. The action examples below are demonstration data only.</p>
-     <button className={s.button+" "+s.secondary} onClick={()=>setTab("My business")}>View saved actions</button>
-   </section>}
-   {tab==="Actions"&&<div className={s.columns} style={{marginTop:24}}>
-    <section className={s.card}><h2 className={s.sectionTitle}>Action register</h2><div style={{display:"flex",gap:10,margin:"16px 0",flexWrap:"wrap"}}><input className={s.field} style={{flex:"1 1 180px"}} aria-label="Search actions" placeholder="Search actions..." value={search} onChange={e=>setSearch(e.target.value)}/><select className={s.field} style={{width:"auto"}} aria-label="Filter actions" value={view} onChange={e=>setView(e.target.value)}><option>All</option><option>Evidence required</option><option>In progress</option><option>Review required</option></select></div>{filtered.length?filtered.map(x=><div className={s.row} key={x.id}><div><strong>{x.title}</strong><div className={s.muted}>{x.category} · {x.due}</div><span className={s.pill+" "+(actionPriority(x,today)==="Overdue"||actionPriority(x,today)==="Urgent"?s.amber:"")}>{actionPriority(x,today)} · {x.status}</span></div><button className={s.button+" "+s.secondary} onClick={()=>setSelected(x.id)}>Open</button></div>):<p className={s.muted}>No matching actions.</p>}</section>
-    <section className={s.card}><h2 className={s.sectionTitle}>Action details</h2>{active?<><h3>{active.title}</h3><p className={s.muted}>Owner: {active.owner} · Due: {active.due}</p><div className={s.tabs}>{["Overview","Documents","Review history"].map(x=><button key={x} onClick={()=>setViewDetail(x)} aria-selected={detail===x}>{x}</button>)}</div>{detail==="Documents"?<EvidencePanel actionId={active.id}/>:detail==="Review history"?<p className={s.muted}>No review events recorded in this preview.</p>:<p className={s.muted}>Use this panel to review evidence and approve action completion once secure workflows are connected.</p>}</>:<p className={s.muted}>Select an action to view its details, documents and review history.</p>}</section>
-   </div>}
-   {tab==="Modules"&&<section className={s.card} style={{marginTop:18,marginBottom:16}}>
-     <strong>Manage real business records</strong>
-     <p className={s.muted}>The forms below are demonstrations. To save records securely, open your authenticated business workspace.</p>
-     <button className={s.button+" "+s.secondary} onClick={()=>setTab("My business")}>Open My business</button>
-   </section>}
+   {tab==="Actions"&&<div style={{marginTop:24}}><LiveWorkspace onOpenBeta={()=>window.location.assign("/beta")} moduleFilter="obligations"/></div>}
    {tab==="Modules"&&<section className={s.card} style={{marginTop:24}}>
-    <h2 className={s.sectionTitle}>Business modules</h2><p className={s.muted}>Choose a department or compliance function. Availability adapts to the selected sector.</p>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10,marginTop:18}}>
-     {groups.flatMap(g=>g.items).map(m=><button key={m.id} onClick={()=>setModuleId(m.id)} aria-pressed={moduleId===m.id} style={{textAlign:"left",border:moduleId===m.id?"2px solid #2659df":"1px solid #dbe3ee",borderRadius:12,background:moduleId===m.id?"#eef4ff":"#fff",padding:14,cursor:"pointer",fontWeight:700,color:"#203454"}}>{m.name}</button>)}
+    <h2 className={s.sectionTitle}>Compliance modules</h2>
+    <p className={s.muted}>Select a module to manage authenticated organisation records. Specialist approval and document-upload features remain restricted until validated.</p>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))",gap:10,margin:"16px 0"}}>
+    {groups.flatMap(g=>g.items).map(m=><button key={m.id} onClick={()=>setModuleId(m.id)} aria-pressed={moduleId===m.id} className={s.button+" "+(moduleId===m.id?"":s.secondary)}>{m.name}</button>)}
     </div>
-    <div style={{marginTop:20,padding:18,background:"#f8fafc",borderRadius:12}}>
-     <h3>{groups.flatMap(g=>g.items).find(m=>m.id===moduleId)?.name??"Select a module"}</h3>
-     <p className={s.muted}>This module is part of the RegPilot roadmap. Where no live workflow is connected, no compliance status is asserted.</p>
-     <ModuleRegister key={moduleId} moduleId={moduleId} moduleName={groups.flatMap(g=>g.items).find(m=>m.id===moduleId)?.name??"Module"} onCreateAction={item=>setActions(prev=>[...prev,{id:"session-"+String(Date.now())+"-"+prev.length,...item}])}/>
-     {moduleId==="obligations"?<button className={s.button} onClick={()=>setTab("Actions")}>Open action register</button>:moduleId==="policies"?<button className={s.button} onClick={()=>setTab("Documents")}>Open document library</button>:moduleId==="regulatory"?<button className={s.button} onClick={()=>setTab("Intelligence")}>Open intelligence</button>:null}
-    </div>
+    <LiveWorkspace key={moduleId} moduleFilter={moduleId} onOpenBeta={()=>window.location.assign("/beta")}/>
    </section>}
-   {tab==="Documents"&&<section className={s.card} style={{marginTop:24}}><h2 className={s.sectionTitle}>Document library</h2><p className={s.muted}>Planned: private uploads, categories, version history, expiry reminders and linking a file to multiple actions.</p><EvidencePanel/></section>}
+   {tab==="Documents"&&<section style={{marginTop:24}}>
+    <h2 className={s.sectionTitle}>Policies & SOP register</h2>
+    <p className={s.muted}>Authenticated document-control metadata. Secure file uploads, signatures and approvals are not yet enabled.</p>
+    <LiveWorkspace moduleFilter="policies" onOpenBeta={()=>window.location.assign("/beta")}/>
+   </section>}
    {tab==="Intelligence"&&<section className={s.card} style={{marginTop:24}}><h2 className={s.sectionTitle}>Regulatory intelligence</h2><p className={s.muted}>Future official-source monitoring and company-specific impact analysis.</p><div className={s.empty}>No live regulatory feed connected yet. No simulated regulatory alerts are shown.</div></section>}
-   <footer className={s.footer}>Preview uses browser-local demo records where available. No accounts, uploads or compliance certifications are created here.</footer>
+   <footer className={s.footer}>Authenticated registers use staging Supabase. Regulatory intelligence and evidence uploads are not yet operational. No regulatory certification is provided.</footer>
   </main>
  </div>;
 }
