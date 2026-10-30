@@ -13,10 +13,11 @@ export default function DocumentMetadata({orgId,actionId,canEdit}:{orgId:string;
  })().catch(()=>{if(active)setError("Unable to load linked document metadata.");});return()=>{active=false;};},[orgId,actionId]);
  async function add(e:React.FormEvent){e.preventDefault();if(!canEdit||!orgId||!actionId)return;setBusy(true);setError("");
  const db=stagingSupabase();
- const {data:doc,error:createError}=await db.from("document_records").insert({organization_id:orgId,filename:name.trim(),category,expires_on:expiry||null,review_status:"DRAFT",version:1}).select("id,filename,category,review_status,version,expires_on").single();
- if(createError){setError(createError.message);setBusy(false);return;}
- const {error:linkError}=await db.from("document_action_links").insert({organization_id:orgId,document_id:doc.id,action_id:actionId});
- if(linkError){setError("Metadata created but not linked: "+linkError.message);}else{setItems(p=>[...p,doc as DocumentRow]);setName("");setExpiry("");}
+ const {data:documentId,error:createError}=await db.rpc("create_linked_document_metadata",{p_organization_id:orgId,p_action_id:actionId,p_filename:name.trim(),p_category:category,p_expires_on:expiry||null});
+ if(createError){setError(createError.message);}else{
+  setItems(p=>[...p,{id:documentId as string,filename:name.trim(),category,review_status:"DRAFT",version:1,expires_on:expiry||null}]);
+  setName("");setExpiry("");
+ }
  setBusy(false);
  }
  return <section style={{display:"grid",gap:10,marginTop:12}}>
