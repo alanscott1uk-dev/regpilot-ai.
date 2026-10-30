@@ -56,7 +56,7 @@ export default function LiveWorkspace({onOpenBeta,moduleFilter}:{onOpenBeta:()=>
  },[org,reload]);
  const panel:React.CSSProperties={padding:20,border:"1px solid #dbe3ee",borderRadius:16,background:"white"};
  if(state==="loading")return <section style={panel} aria-live="polite">Loading your business workspace…</section>;
- if(state==="signed-out"||state==="no-org")return <section style={panel}><h2>{state==="signed-out"?"Sign in to RegPilot":"Create your test organisation"}</h2><p>Access saved records and departmental modules from one secure staging workspace.</p><button onClick={onOpenBeta} style={{padding:12,border:0,borderRadius:10,background:"#2659df",color:"white"}}>Open account setup</button></section>;
+ if(state==="signed-out"||state==="no-org")return <section style={panel}><h2>{state==="signed-out"?"Sign in to EAGNEXIS AI":"Create your test organisation"}</h2><p>Access saved records and departmental modules from one secure staging workspace.</p><button onClick={onOpenBeta} style={{padding:12,border:0,borderRadius:10,background:"#2659df",color:"white"}}>Open account setup</button></section>;
  if(state==="error")return <section style={panel} role="alert"><h2>Unable to load workspace</h2><p>{error}</p></section>;
  const visible=filterRecords(rows,{module:filter,query,urgency,today}) as Row[];
  const selected=rows.find(r=>r.id===selectedRecord);
