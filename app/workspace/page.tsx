@@ -78,11 +78,11 @@ export default function Workspace() {
    </section>}
    {tab==="Documents"&&<section style={{marginTop:24}}>
     <h2 className={s.sectionTitle}>Policies & SOP register</h2>
-    <p className={s.muted}>Authenticated document-control metadata. Secure file uploads, signatures and approvals are not yet enabled.</p>
+    <p className={s.muted}>Register a test document against an SOP or compliance task, then upload a fictional PDF or image to private quarantine. Real document approval is not yet available.</p>
     <LiveWorkspace moduleFilter="policies" onOpenBeta={()=>window.location.assign("/beta")}/>
    </section>}
    {tab==="Intelligence"&&<section className={s.card} style={{marginTop:24}}><h2 className={s.sectionTitle}>Regulatory intelligence</h2><p className={s.muted}>Future official-source monitoring and company-specific impact analysis.</p><div className={s.empty}>No live regulatory feed connected yet. No simulated regulatory alerts are shown.</div></section>}
-   <footer className={s.footer}>Authenticated registers use staging Supabase. Regulatory intelligence and evidence uploads are not yet operational. No regulatory certification is provided.</footer>
+   <footer className={s.footer}>Authenticated registers use staging Supabase. Regulatory intelligence is not yet operational. Test uploads are quarantine-only and are not approved evidence. No regulatory certification is provided.</footer>
   </main>
  </div>;
 }
