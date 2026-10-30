@@ -25,6 +25,7 @@ export default function LiveWorkspace({onOpenBeta,moduleFilter}:{onOpenBeta:()=>
  const [advanced,setAdvanced]=useState(false);
  const [helpOpen,setHelpOpen]=useState(false);
  const [guideOpen,setGuideOpen]=useState(false);
+ const [documentPicker,setDocumentPicker]=useState(false);
  const [profileOpen,setProfileOpen]=useState(false);
  const [selectedRecord,setSelectedRecord]=useState<string|null>(null);
  const [query,setQuery]=useState("");
@@ -90,6 +91,13 @@ export default function LiveWorkspace({onOpenBeta,moduleFilter}:{onOpenBeta:()=>
    {attention.length>0?<div style={{marginTop:12}}>{attention.slice(0,3).map(r=><button key={r.id} onClick={()=>setSelectedRecord(r.id)} style={{display:"block",width:"100%",textAlign:"left",background:"white",border:"1px solid #dbe3ee",borderRadius:10,padding:12,marginTop:7}}>{r.title} · {recordUrgency(r,today).replace("-"," ")}</button>)}</div>:<p style={{fontSize:14,marginBottom:0}}>No saved tasks are due within the next seven days or overdue.</p>}
    </div>}
   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12}}>{[["Saved records",rows.length],["Open",rows.filter(x=>x.status==="OPEN").length],["In progress",rows.filter(x=>x.status==="IN_PROGRESS").length],["Completed",rows.filter(x=>x.status==="COMPLETE").length]].map(([label,value])=><div key={label} style={panel}><div style={{fontSize:13,color:"#64748b"}}>{label}</div><strong style={{fontSize:27}}>{value}</strong></div>)}</div>
+  {moduleFilter==="policies"&&<section style={{padding:16,borderRadius:14,background:"#eef4ff",border:"1px solid #c7d8ff"}}>
+   <h2 style={{margin:"0 0 6px",fontSize:20}}>Add a test document</h2>
+   <p style={{fontSize:14,margin:"0 0 10px"}}>Choose which task or SOP the document belongs to. You'll then be guided through registration and test upload.</p>
+   <button type="button" onClick={()=>setDocumentPicker(v=>!v)} aria-expanded={documentPicker} style={{padding:12,borderRadius:10,border:0,background:"#2659df",color:"#fff"}}>{documentPicker?"Hide task selection":"Choose a task to upload to"}</button>
+   {documentPicker&&<div style={{display:"grid",gap:8,marginTop:12}}>{rows.length?rows.map(r=><button key={r.id} onClick={()=>{setSelectedRecord(r.id);setDocumentPicker(false);}} style={{padding:12,textAlign:"left",border:"1px solid #cbd5e1",borderRadius:10,background:"#fff"}}>{r.title} — {r.module_id}</button>):<p>No tasks yet. Choose Add task below first.</p>}</div>}
+   <p style={{fontSize:12,color:"#64748b",marginBottom:0}}>Fictional files only. Uploads are quarantined and not approved evidence.</p>
+  </section>}
   <div style={panel}><div style={{display:"flex",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}><h2 style={{margin:0}}>Your tasks and records</h2><div style={{display:"flex",gap:8}}><button onClick={()=>setReload(v=>v+1)}>Refresh</button>{canEdit&&<button onClick={()=>setShowCreate(v=>!v)}>{showCreate?"Cancel":"Add task"}</button>}</div></div><label style={{display:"block",marginTop:16}}>Module<select style={{display:"block",padding:10,marginTop:5,width:"100%",maxWidth:350}} value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All modules</option>{modules.map(m=><option key={m} value={m}>{m}</option>)}</select></label>
    {advanced&&<div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:14}}><button type="button" onClick={()=>{setFilter("policies");setShowCreate(false);}}>Policies &amp; SOPs</button><button type="button" onClick={()=>{setFilter("suppliers");setShowCreate(false);}}>Suppliers</button><button type="button" onClick={()=>{setFilter("licences");setShowCreate(false);}}>Licences</button></div>}
    {showCreate&&canEdit&&<form onSubmit={createRecord} style={{display:"grid",gap:10,padding:16,marginTop:14,background:"#f8fafc",borderRadius:12}}>
