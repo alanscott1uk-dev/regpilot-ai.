@@ -20,7 +20,7 @@ export default function AssistantPanel({organizationId}:{organizationId:string})
  <form onSubmit={e=>void ask(e)} style={{display:"grid",gap:10}}>
  <label htmlFor="eagnexis-question" style={{fontWeight:600,fontSize:14}}>What would you like help with?</label>
  <textarea id="eagnexis-question" value={question} maxLength={1200} rows={3} onChange={e=>setQuestion(e.target.value)} placeholder="For example: How should I organise a supplier qualification review?" style={{padding:12,borderRadius:10,border:"1px solid #cbd5e1",width:"100%",boxSizing:"border-box",font:"inherit"}}/>
- <button disabled={busy||question.trim().length<3} type="submit" style={{padding:12,border:0,borderRadius:10,background:"#2659df",color:"#fff",fontWeight:700,opacity:busy?.6:1}}>{busy?"Thinking…":"Ask question"}</button>
+ <button disabled={busy||question.trim().length<3} type="submit" style={{padding:12,border:0,borderRadius:10,background:"#2659df",color:"#fff",fontWeight:700,opacity:busy?0.6:1}}>{busy?"Thinking…":"Ask question"}</button>
  </form>
  {error&&<p role="alert" style={{color:"#991b1b",margin:0}}>{error}</p>}
  {answer&&<div aria-live="polite" style={{padding:14,borderRadius:10,background:"#f1f5f9",whiteSpace:"pre-wrap",lineHeight:1.6}}>{answer}</div>}
