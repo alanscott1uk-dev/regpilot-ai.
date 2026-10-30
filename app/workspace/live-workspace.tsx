@@ -20,6 +20,7 @@ export default function LiveWorkspace({onOpenBeta,moduleFilter}:{onOpenBeta:()=>
  const [showCreate,setShowCreate]=useState(false);
  const [advanced,setAdvanced]=useState(false);
  const [helpOpen,setHelpOpen]=useState(false);
+ const [guideOpen,setGuideOpen]=useState(false);
  const [selectedRecord,setSelectedRecord]=useState<string|null>(null);
  const [query,setQuery]=useState("");
  const [urgency,setUrgency]=useState("all");
@@ -97,10 +98,20 @@ export default function LiveWorkspace({onOpenBeta,moduleFilter}:{onOpenBeta:()=>
     <label>Search<input aria-label="Search records" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Title, owner or module" style={{display:"block",padding:10,width:"100%",boxSizing:"border-box",marginTop:5}}/></label>
     <label>Deadline<select aria-label="Deadline filter" value={urgency} onChange={e=>setUrgency(e.target.value)} style={{display:"block",padding:10,width:"100%",marginTop:5}}><option value="all">All deadlines</option><option value="overdue">Overdue</option><option value="due-soon">Due within 7 days</option><option value="upcoming">Due within 30 days</option><option value="undated">No date</option><option value="complete">Complete</option></select></label>
    </div>}
+   {selected&&guideOpen&&<section aria-label="Guided next steps" style={{padding:16,marginTop:12,border:"1px solid #cbd5e1",borderRadius:12,background:"#fff"}}>
+    <h3 style={{margin:"0 0 8px"}}>What should I do next?</h3>
+    <ol style={{paddingLeft:22,lineHeight:1.8,fontSize:14}}>
+     <li>Check the task owner and review date.</li>
+     <li>Open the linked document register below and check for missing or expired information.</li>
+     <li>If evidence is needed, register its details. Secure file uploads are not yet available.</li>
+     <li>Update the task status when the work is done. Evidence approval is separate.</li>
+    </ol>
+    <p style={{fontSize:12,color:"#64748b",marginBottom:0}}>This is general workflow guidance, not a determination of regulatory compliance.</p>
+   </section>}
    {selected&&<aside style={{border:"1px solid #c7d8ff",background:"#f4f7ff",borderRadius:14,padding:16,marginTop:16}} aria-label="Selected action details">
-    <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"center"}}><h3 style={{margin:0}}>{selected.title}</h3><button onClick={()=>setSelectedRecord(null)}>Close</button></div>
+    <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"center"}}><h3 style={{margin:0}}>{selected.title}</h3><button onClick={()=>{setSelectedRecord(null);setGuideOpen(false);}}>Close</button></div>
     <p style={{fontSize:13,color:"#475569"}}>Owner: {selected.owner_name} · Module: {selected.module_id} · Due: {selected.due_date??"Not set"}</p>
-    <strong>Supporting evidence — {selected.evidence_status==="APPROVED"?"Approved":selected.evidence_status==="PENDING_REVIEW"?"Pending review":selected.evidence_status==="REJECTED"?"Rejected":"Not submitted"}</strong>
+    <button type="button" onClick={()=>setGuideOpen(v=>!v)} aria-expanded={guideOpen} style={{display:"block",padding:10,marginBottom:12,borderRadius:9,border:"1px solid #cbd5e1",background:"#fff"}}>{guideOpen?"Hide next steps":"Guide me through this task"}</button><strong>Supporting evidence — {selected.evidence_status==="APPROVED"?"Approved":selected.evidence_status==="PENDING_REVIEW"?"Pending review":selected.evidence_status==="REJECTED"?"Rejected":"Not submitted"}</strong>
     <p style={{fontSize:13,color:"#64748b"}}>Secure document uploads and reviewer approvals are not yet enabled. A completed action is not evidence of regulatory compliance.</p>
     <DocumentMetadata orgId={org} actionId={selected.id} canEdit={canEdit} moduleId={selected.module_id}/>
     <button onClick={onOpenBeta}>Open record management</button>
