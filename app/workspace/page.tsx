@@ -44,7 +44,7 @@ export default function Workspace() {
  const priorities=actionSummary(actions,today);
  return <div className={s.shell}>
   <aside className={s.sidebar}>
-   <div className={s.mobileTop}><div className={s.brand}>reg<span>pilot</span><span style={{fontSize:12,marginLeft:5,color:"#9db1d1"}}>AI</span></div><button className={s.mobileToggle} type="button" aria-expanded={menuOpen} aria-controls="workspace-menu" onClick={()=>setMenuOpen(v=>!v)}>{menuOpen?"Close menu":"☰ Menu"}</button></div>
+   <div className={s.mobileTop}><div className={s.brand}>EAG<span>NEXIS</span><span style={{fontSize:12,marginLeft:5,color:"#9db1d1"}}>AI</span></div><button className={s.mobileToggle} type="button" aria-expanded={menuOpen} aria-controls="workspace-menu" onClick={()=>setMenuOpen(v=>!v)}>{menuOpen?"Close menu":"☰ Menu"}</button></div>
    <div id="workspace-menu" className={s.mobileMenu} data-open={menuOpen}>
    <div style={{fontSize:12,color:"#9fb2d2"}}>Compliance, made clearer.</div>
    <label style={{fontSize:12,color:"#b8c9e4"}}>Business sector<select aria-label="Business sector" value={industry} onChange={e=>setIndustry(e.target.value)} style={{display:"block",marginTop:6,width:"100%",padding:9,borderRadius:9,background:"#233657",color:"white",border:"1px solid #435679"}}><option value="all">General business</option><option value="healthcare">Healthcare & pharma</option><option value="manufacturing">Manufacturing</option><option value="food">Food</option><option value="logistics">Logistics</option><option value="construction">Construction</option><option value="retail">Retail</option><option value="hospitality">Hospitality</option></select></label>
@@ -56,7 +56,7 @@ export default function Workspace() {
    </div>
   </aside>
   <main className={s.content}>
-   <header className={s.header}><div><div className={s.eyebrow}>{tab==="My business"?"Business workspace / Staging":"RegPilot / Demonstration workspace"}</div><h1 className={s.heading}>{tab==="Overview"?"Your compliance, at a glance":tab}</h1><div className={s.muted}>A clearer view of what needs attention and what happens next.</div></div><Link className={s.button} href="/company-scan" style={{textDecoration:"none"}}>Scan a company ↗</Link></header>
+   <header className={s.header}><div><div className={s.eyebrow}>{tab==="My business"?"Business workspace / Staging":"EAGNEXIS AI / Demonstration workspace"}</div><h1 className={s.heading}>{tab==="Overview"?"Your compliance, at a glance":tab}</h1><div className={s.muted}>A clearer view of what needs attention and what happens next.</div></div><Link className={s.button} href="/company-scan" style={{textDecoration:"none"}}>Scan a company ↗</Link></header>
    {tab==="My business"&&<div style={{marginTop:24}}><LiveWorkspace onOpenBeta={()=>window.location.assign("/beta")}/></div>}
    {tab==="Overview"&&<>
     <div className={s.metrics}>
