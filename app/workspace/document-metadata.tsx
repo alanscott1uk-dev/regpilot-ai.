@@ -25,15 +25,17 @@ export default function DocumentMetadata({orgId,actionId,canEdit,moduleId}:{orgI
  const today=new Date().toISOString().slice(0,10);
  const assessment=assessEvidenceGap({moduleId,documents:items,today});
  return <section style={{display:"grid",gap:10,marginTop:12}}>
- <strong>Linked document register</strong>
+ <h3 style={{margin:"0 0 4px"}}>Documents for this task</h3>
+ <p style={{fontSize:13,color:"#475569",margin:0}}>To upload a test document, first give it a name below. Then select the file in the new document card.</p>
  <div style={{padding:12,border:"1px solid #dbe3ee",borderRadius:10,background:"#f8fafc"}}><strong>Evidence checklist · {assessment.overall.replaceAll("_"," ").toLowerCase()}</strong>{assessment.findings.map((x:{category:string;status:string})=><div key={x.category} style={{fontSize:13,marginTop:5}}>{x.category}: {x.status.replaceAll("_"," ").toLowerCase()}</div>)}<p style={{fontSize:12,color:"#64748b",marginBottom:0}}>{assessment.notice}</p></div>
- <p style={{fontSize:13,color:"#64748b",margin:0}}>Metadata only. No file has been uploaded or verified. These entries cannot serve as approved evidence.</p>
+ <p style={{fontSize:12,color:"#64748b",margin:0}}>Test uploads are stored in private quarantine and are not approved evidence.</p>
  {items.length===0?<p style={{fontSize:13,color:"#64748b"}}>No linked documents registered.</p>:items.map(x=><article key={x.id} style={{padding:10,border:"1px solid #dbe3ee",borderRadius:10}}><strong>{x.filename}</strong><div style={{fontSize:12,color:"#64748b"}}>{x.category} · Version {x.version} · {x.review_status} · Expiry: {x.expires_on??"Not set"}</div>{canEdit&&<QuarantineUpload orgId={orgId} documentId={x.id}/>}</article>)}
- {canEdit&&<form onSubmit={add} style={{display:"grid",gap:8}}>
- <label>Document description<input required maxLength={180} value={name} onChange={e=>setName(e.target.value)} placeholder="Supplier GMP certificate (metadata only)" style={{display:"block",padding:10,width:"100%",boxSizing:"border-box"}}/></label>
+ {canEdit&&<form onSubmit={add} style={{display:"grid",gap:10,padding:14,border:"1px solid #c7d8ff",borderRadius:12,background:"#f4f7ff"}}>
+ <strong>Step 1 — Register a test document</strong>
+ <label>Document description<input required maxLength={180} value={name} onChange={e=>setName(e.target.value)} placeholder="Example: Test supplier certificate" style={{display:"block",padding:10,width:"100%",boxSizing:"border-box"}}/></label>
  <label>Category<select value={category} onChange={e=>setCategory(e.target.value)} style={{display:"block",padding:10,width:"100%"}}>{["Supplier certificate","Policy / SOP","Licence","Audit report","Other"].map(x=><option key={x}>{x}</option>)}</select></label>
  <label>Expiry date<input type="date" value={expiry} onChange={e=>setExpiry(e.target.value)} style={{display:"block",padding:10,width:"100%"}}/></label>
- <button disabled={busy} style={{padding:11,background:"#2659df",color:"white",border:0,borderRadius:9}}>{busy?"Saving…":"Link document metadata"}</button>
+ <button disabled={busy} style={{padding:11,background:"#2659df",color:"white",border:0,borderRadius:9}}>{busy?"Saving…":"Continue to file upload"}</button>
  </form>}
  {error&&<p role="alert" style={{color:"#b91c1c"}}>{error}</p>}
  </section>;
