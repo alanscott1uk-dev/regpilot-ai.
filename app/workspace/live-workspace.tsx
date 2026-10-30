@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { stagingSupabase } from "../../lib/staging-supabase";
 import DocumentMetadata from "./document-metadata";
 import OrganisationProfile from "./organisation-profile";
+import AssistantPanel from "./assistant-panel";
 import {guideForModule} from "../../lib/workflow-guides.mjs";
 import {suggestRecordNextSteps} from "../../lib/record-next-steps.mjs";
 import {regulatoryReferencesForModule} from "../../lib/regulatory-references.mjs";
@@ -27,6 +28,7 @@ export default function LiveWorkspace({onOpenBeta,moduleFilter}:{onOpenBeta:()=>
  const [guideOpen,setGuideOpen]=useState(false);
  const [documentPicker,setDocumentPicker]=useState(false);
  const [profileOpen,setProfileOpen]=useState(false);
+ const [assistantOpen,setAssistantOpen]=useState(false);
  const [selectedRecord,setSelectedRecord]=useState<string|null>(null);
  const [query,setQuery]=useState("");
  const [urgency,setUrgency]=useState("all");
@@ -80,6 +82,7 @@ export default function LiveWorkspace({onOpenBeta,moduleFilter}:{onOpenBeta:()=>
  const missingEvidence=rows.filter(r=>r.evidence_status!=="APPROVED").length;
  return <section style={{display:"grid",gap:16}}>
   <div style={panel}><h2 style={{marginTop:0}}>Your business records</h2><p style={{color:"#64748b",fontSize:14}}>See what needs attention, add a task, or review your documents.</p><label style={{display:"flex",alignItems:"center",gap:9,fontSize:14,marginBottom:14}}><input type="checkbox" checked={advanced} onChange={e=>setAdvanced(e.target.checked)}/> Show advanced controls</label><button type="button" onClick={()=>setHelpOpen(v=>!v)} aria-expanded={helpOpen} style={{padding:10,marginBottom:12,display:"block",width:"100%",maxWidth:340,textAlign:"left",border:"1px solid #cbd5e1",borderRadius:9,background:"#f8fafc"}}>{helpOpen?"Hide help":"Need help getting started?"}</button>{helpOpen&&<section aria-label="Getting started guide" style={{padding:14,background:"#eef4ff",borderRadius:12,marginBottom:14}}><strong>Getting started — three easy steps</strong><ol style={{paddingLeft:20,lineHeight:1.8}}><li>Choose your business using the organisation menu.</li><li>Select Add task and describe what needs doing.</li><li>Open a saved task to see its details and linked document register.</li></ol><p style={{fontSize:13,marginBottom:0}}>A completed task does not mean regulatory compliance has been verified. Evidence must be reviewed separately.</p></section>}<label>Organisation<select value={org} onChange={e=>setOrg(e.target.value)} style={{display:"block",padding:11,marginTop:7,width:"100%",maxWidth:440,boxSizing:"border-box",borderRadius:10,border:"1px solid #cbd5e1",background:"#fff"}}>{orgs.map(o=><option key={o.organization_id} value={o.organization_id}>{Array.isArray(o.organizations)?o.organizations[0]?.name:o.organizations?.name??"Organisation"} ({o.role})</option>)}</select></label></div>
+  {!moduleFilter&&<><button type="button" onClick={()=>setAssistantOpen(v=>!v)} aria-expanded={assistantOpen} style={{padding:14,border:0,borderRadius:12,background:"#172d57",color:"#fff",fontWeight:700,textAlign:"left"}}>{assistantOpen?"Hide EAGNEXIS assistant":"Ask EAGNEXIS AI — Get guidance"}</button>{assistantOpen&&<AssistantPanel organizationId={org}/>}</>}
   {!moduleFilter&&<><button type="button" onClick={()=>setProfileOpen(v=>!v)} aria-expanded={profileOpen} style={{padding:12,border:"1px solid #cbd5e1",borderRadius:11,background:"#fff",textAlign:"left"}}>{profileOpen?"Hide business profile":"Set up business activities & location"}</button>{profileOpen&&<OrganisationProfile orgId={org} canEdit={canEdit}/>}</>}
   {!moduleFilter&&<div style={{padding:18,borderRadius:16,background:"#eef4ff",border:"1px solid #c7d8ff"}}>
    <h2 style={{margin:"0 0 6px",fontSize:22}}>What needs your attention?</h2>
