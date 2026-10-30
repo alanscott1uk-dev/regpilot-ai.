@@ -49,14 +49,13 @@ export default function Workspace() {
    <div style={{fontSize:12,color:"#9fb2d2"}}>Compliance, made clearer.</div>
    <label style={{fontSize:12,color:"#b8c9e4"}}>Business sector<select aria-label="Business sector" value={industry} onChange={e=>setIndustry(e.target.value)} style={{display:"block",marginTop:6,width:"100%",padding:9,borderRadius:9,background:"#233657",color:"white",border:"1px solid #435679"}}><option value="all">General business</option><option value="healthcare">Healthcare & pharma</option><option value="manufacturing">Manufacturing</option><option value="food">Food</option><option value="logistics">Logistics</option><option value="construction">Construction</option><option value="retail">Retail</option><option value="hospitality">Hospitality</option></select></label>
    <nav className={s.nav} aria-label="Workspace navigation">
-    {(["Overview","My business","Actions","Documents","Intelligence"] as Tab[]).map(t=><button key={t} aria-current={tab===t?"page":undefined} onClick={()=>{setTab(t);setSelected(null);setMenuOpen(false);}}>{t}</button>)}
-    {groups.filter(g=>g.items.length>0).map(g=><button key={g.id} aria-current={tab==="Modules"&&groups.find(x=>x.items.some(m=>m.id===moduleId))?.id===g.id?"page":undefined} onClick={()=>{setTab("Modules");setModuleId(g.items[0]?.id??g.modules[0]);setSelected(null);setMenuOpen(false);}}>{g.label}</button>)}
+    {([{tab:"My business",label:"Home"},{tab:"Actions",label:"My tasks"},{tab:"Documents",label:"Documents"},{tab:"Modules",label:"More tools"},{tab:"Intelligence",label:"Regulatory updates"}] as {tab:Tab;label:string}[]).map(item=><button key={item.tab} aria-current={tab===item.tab?"page":undefined} onClick={()=>{setTab(item.tab);setSelected(null);setMenuOpen(false);}}>{item.label}</button>)}
    </nav>
    <div style={{fontSize:12,color:"#a6b8d6",marginTop:"auto"}}>{tab==="My business"?"Authenticated staging workspace":"Design preview · "+dataOrigin}</div>
    </div>
   </aside>
   <main className={s.content}>
-   <header className={s.header}><div><div className={s.eyebrow}>{tab==="My business"?"Business workspace / Staging":"EAGNEXIS AI / Demonstration workspace"}</div><h1 className={s.heading}>{tab==="Overview"?"Your compliance, at a glance":tab}</h1><div className={s.muted}>A clearer view of what needs attention and what happens next.</div></div><Link className={s.button} href="/company-scan" style={{textDecoration:"none"}}>Scan a company ↗</Link></header>
+   <header className={s.header}><div><div className={s.eyebrow}>{tab==="My business"?"Business workspace / Staging":"EAGNEXIS AI / Demonstration workspace"}</div><h1 className={s.heading}>{tab==="My business"?"Your business dashboard":tab==="Actions"?"My tasks":tab==="Modules"?"More tools":tab==="Intelligence"?"Regulatory updates":tab}</h1><div className={s.muted}>A clearer view of what needs attention and what happens next.</div></div><Link className={s.button+" "+s.secondary} href="/company-scan" style={{textDecoration:"none"}}>Company lookup</Link></header>
    {tab==="My business"&&<div style={{marginTop:24}}><LiveWorkspace onOpenBeta={()=>window.location.assign("/beta")}/></div>}
    {tab==="Overview"&&<>
     <div className={s.metrics}>
@@ -77,8 +76,8 @@ export default function Workspace() {
     <LiveWorkspace key={moduleId} moduleFilter={moduleId} onOpenBeta={()=>window.location.assign("/beta")}/>
    </section>}
    {tab==="Documents"&&<section style={{marginTop:24}}>
-    <h2 className={s.sectionTitle}>Policies & SOP register</h2>
-    <p className={s.muted}>Register a test document against an SOP or compliance task, then upload a fictional PDF or image to private quarantine. Real document approval is not yet available.</p>
+    <h2 className={s.sectionTitle}>Your documents</h2>
+    <p className={s.muted}>For test uploads: 1. Select a saved document-related task below. 2. Register the document. 3. Choose a sample file and upload to quarantine. Only use fictional files; scanning and approval are not ready.</p>
     <LiveWorkspace moduleFilter="policies" onOpenBeta={()=>window.location.assign("/beta")}/>
    </section>}
    {tab==="Intelligence"&&<section className={s.card} style={{marginTop:24}}><h2 className={s.sectionTitle}>Regulatory intelligence</h2><p className={s.muted}>Future official-source monitoring and company-specific impact analysis.</p><div className={s.empty}>No live regulatory feed connected yet. No simulated regulatory alerts are shown.</div></section>}
