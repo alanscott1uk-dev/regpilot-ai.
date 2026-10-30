@@ -1,8 +1,9 @@
 "use client";
 import {useEffect,useState} from "react";
 import {stagingSupabase} from "../../lib/staging-supabase";
+import {assessEvidenceGap} from "../../lib/evidence-gap.mjs";
 type DocumentRow={id:string;filename:string;category:string;review_status:string;version:number;expires_on:string|null};
-export default function DocumentMetadata({orgId,actionId,canEdit}:{orgId:string;actionId:string;canEdit:boolean}){
+export default function DocumentMetadata({orgId,actionId,canEdit,moduleId}:{orgId:string;actionId:string;canEdit:boolean;moduleId:string}){
  const [items,setItems]=useState<DocumentRow[]>([]),[name,setName]=useState(""),[category,setCategory]=useState("Supplier certificate"),[expiry,setExpiry]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState("");
  useEffect(()=>{let active=true;setItems([]);if(!orgId||!actionId)return;const db=stagingSupabase();
  (async()=>{const {data:links,error:linkError}=await db.from("document_action_links").select("document_id").eq("organization_id",orgId).eq("action_id",actionId);
@@ -20,8 +21,11 @@ export default function DocumentMetadata({orgId,actionId,canEdit}:{orgId:string;
  }
  setBusy(false);
  }
+ const today=new Date().toISOString().slice(0,10);
+ const assessment=assessEvidenceGap({moduleId,documents:items,today});
  return <section style={{display:"grid",gap:10,marginTop:12}}>
  <strong>Linked document register</strong>
+ <div style={{padding:12,border:"1px solid #dbe3ee",borderRadius:10,background:"#f8fafc"}}><strong>Evidence checklist · {assessment.overall.replaceAll("_"," ").toLowerCase()}</strong>{assessment.findings.map((x:{category:string;status:string})=><div key={x.category} style={{fontSize:13,marginTop:5}}>{x.category}: {x.status.replaceAll("_"," ").toLowerCase()}</div>)}<p style={{fontSize:12,color:"#64748b",marginBottom:0}}>{assessment.notice}</p></div>
  <p style={{fontSize:13,color:"#64748b",margin:0}}>Metadata only. No file has been uploaded or verified. These entries cannot serve as approved evidence.</p>
  {items.length===0?<p style={{fontSize:13,color:"#64748b"}}>No linked documents registered.</p>:items.map(x=><article key={x.id} style={{padding:10,border:"1px solid #dbe3ee",borderRadius:10}}><strong>{x.filename}</strong><div style={{fontSize:12,color:"#64748b"}}>{x.category} · Version {x.version} · {x.review_status} · Expiry: {x.expires_on??"Not set"}</div></article>)}
  {canEdit&&<form onSubmit={add} style={{display:"grid",gap:8}}>
