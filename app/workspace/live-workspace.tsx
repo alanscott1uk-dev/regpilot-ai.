@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { stagingSupabase } from "../../lib/staging-supabase";
 import DocumentMetadata from "./document-metadata";
+import {guideForModule} from "../../lib/workflow-guides.mjs";
 import { filterRecords, recordUrgency } from "../../lib/record-workspace.mjs";
 type Org = {organization_id:string;role:string;organizations:{name:string}|{name:string}[]|null};
 type Row = {id:string;module_id:string;title:string;owner_name:string;due_date:string|null;status:string;evidence_status:string;details?:Record<string,string>};
@@ -99,12 +100,9 @@ export default function LiveWorkspace({onOpenBeta,moduleFilter}:{onOpenBeta:()=>
     <label>Deadline<select aria-label="Deadline filter" value={urgency} onChange={e=>setUrgency(e.target.value)} style={{display:"block",padding:10,width:"100%",marginTop:5}}><option value="all">All deadlines</option><option value="overdue">Overdue</option><option value="due-soon">Due within 7 days</option><option value="upcoming">Due within 30 days</option><option value="undated">No date</option><option value="complete">Complete</option></select></label>
    </div>}
    {selected&&guideOpen&&<section aria-label="Guided next steps" style={{padding:16,marginTop:12,border:"1px solid #cbd5e1",borderRadius:12,background:"#fff"}}>
-    <h3 style={{margin:"0 0 8px"}}>What should I do next?</h3>
+    <h3 style={{margin:"0 0 8px"}}>{guideForModule(selected.module_id).title}</h3>
     <ol style={{paddingLeft:22,lineHeight:1.8,fontSize:14}}>
-     <li>Check the task owner and review date.</li>
-     <li>Open the linked document register below and check for missing or expired information.</li>
-     <li>If evidence is needed, register its details. Secure file uploads are not yet available.</li>
-     <li>Update the task status when the work is done. Evidence approval is separate.</li>
+     {guideForModule(selected.module_id).steps.map((step:string,i:number)=><li key={i}>{step}</li>)}
     </ol>
     <p style={{fontSize:12,color:"#64748b",marginBottom:0}}>This is general workflow guidance, not a determination of regulatory compliance.</p>
    </section>}
