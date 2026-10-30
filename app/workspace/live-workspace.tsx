@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { stagingSupabase } from "../../lib/staging-supabase";
 import { filterRecords, recordUrgency } from "../../lib/record-workspace.mjs";
 type Org = {organization_id:string;role:string;organizations:{name:string}|{name:string}[]|null};
-type Row = {id:string;module_id:string;title:string;owner_name:string;due_date:string|null;status:string;details?:Record<string,string>};
+type Row = {id:string;module_id:string;title:string;owner_name:string;due_date:string|null;status:string;evidence_status:string;details?:Record<string,string>};
 export default function LiveWorkspace({onOpenBeta,moduleFilter}:{onOpenBeta:()=>void;moduleFilter?:string}) {
  const [state,setState]=useState<"loading"|"signed-out"|"no-org"|"ready"|"error">("loading");
  const [orgs,setOrgs]=useState<Org[]>([]);const [org,setOrg]=useState("");
@@ -46,7 +46,7 @@ export default function LiveWorkspace({onOpenBeta,moduleFilter}:{onOpenBeta:()=>
  useEffect(()=>{
   if(!org){setRows([]);return;}
   let active=true;
-  stagingSupabase().from("module_records").select("id,module_id,title,owner_name,due_date,status,details").eq("organization_id",org).order("created_at",{ascending:false}).limit(100).then(({data,error})=>{
+  stagingSupabase().from("module_records").select("id,module_id,title,owner_name,due_date,status,evidence_status,details").eq("organization_id",org).order("created_at",{ascending:false}).limit(100).then(({data,error})=>{
    if(!active)return;if(error){setError(error.message);setState("error");}else setRows((data??[]) as Row[]);
   });
   return()=>{active=false;};
@@ -60,7 +60,7 @@ export default function LiveWorkspace({onOpenBeta,moduleFilter}:{onOpenBeta:()=>
  const role=orgs.find(o=>o.organization_id===org)?.role;
  const canEdit=["OWNER","ADMIN","EDITOR"].includes(role??"");
  async function createRecord(e:React.FormEvent<HTMLFormElement>){e.preventDefault();if(!canEdit||!org)return;setCreating(true);setError("");
-  const {data,error}=await stagingSupabase().from("module_records").insert({organization_id:org,module_id:filter==="all"?"obligations":filter,title:newTitle.trim(),owner_name:newOwner.trim(),due_date:newDue||null,status:"OPEN",notes:"",details:filter==="policies"?{documentCode:sopCode.trim(),revision:sopRevision.trim(),reviewDate:newDue}:{} }).select("id,module_id,title,owner_name,due_date,status").single();
+  const {data,error}=await stagingSupabase().from("module_records").insert({organization_id:org,module_id:filter==="all"?"obligations":filter,title:newTitle.trim(),owner_name:newOwner.trim(),due_date:newDue||null,status:"OPEN",notes:"",details:filter==="policies"?{documentCode:sopCode.trim(),revision:sopRevision.trim(),reviewDate:newDue}:{} }).select("id,module_id,title,owner_name,due_date,status,evidence_status").single();
   if(error)setError(error.message);else{setRows(prev=>[data as Row,...prev]);setNewTitle("");setNewOwner("");setNewDue("");setSopCode("");setSopRevision("");setShowCreate(false);}
   setCreating(false);
  }
@@ -86,13 +86,13 @@ export default function LiveWorkspace({onOpenBeta,moduleFilter}:{onOpenBeta:()=>
    {selected&&<aside style={{border:"1px solid #c7d8ff",background:"#f4f7ff",borderRadius:14,padding:16,marginTop:16}} aria-label="Selected action details">
     <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"center"}}><h3 style={{margin:0}}>{selected.title}</h3><button onClick={()=>setSelectedRecord(null)}>Close</button></div>
     <p style={{fontSize:13,color:"#475569"}}>Owner: {selected.owner_name} · Module: {selected.module_id} · Due: {selected.due_date??"Not set"}</p>
-    <strong>Supporting evidence</strong>
-    <p style={{fontSize:13,color:"#64748b"}}>Secure document uploads are not yet enabled. Evidence review is not operational in this beta.</p>
+    <strong>Supporting evidence — {selected.evidence_status==="APPROVED"?"Approved":selected.evidence_status==="PENDING_REVIEW"?"Pending review":selected.evidence_status==="REJECTED"?"Rejected":"Not submitted"}</strong>
+    <p style={{fontSize:13,color:"#64748b"}}>Secure document uploads and reviewer approvals are not yet enabled. A completed action is not evidence of regulatory compliance.</p>
     <button onClick={onOpenBeta}>Open record management</button>
    </aside>}
    {error&&<p role="alert" style={{color:"#b91c1c"}}>{error}</p>}
    <p style={{fontSize:13,color:"#64748b"}}>{visible.length} of {rows.length} records · Ordered by due date and urgency</p>
-   {visible.length===0?<p style={{color:"#64748b"}}>No saved records for this selection.</p>:visible.map(r=><article key={r.id} style={{padding:"15px 0",borderBottom:"1px solid #e2e8f0"}}><button onClick={()=>setSelectedRecord(r.id)} style={{background:"transparent",border:0,padding:0,fontWeight:750,color:"#2144a4",cursor:"pointer",textAlign:"left"}}>{r.title}</button><div style={{fontSize:13,color:"#64748b"}}>{r.module_id} · {r.owner_name} {r.module_id==="policies"&&r.details?.documentCode?" · "+r.details.documentCode+" rev "+(r.details.revision??""):""} · {r.due_date??"No review date"} · {recordUrgency(r,today).replace("-"," ")}</div>{canEdit?<label style={{display:"block",marginTop:10,fontSize:13}}>Status <select aria-label={"Status for "+r.title} value={r.status} disabled={updating===r.id} onChange={e=>void changeStatus(r,e.target.value)}><option value="OPEN">Open</option><option value="IN_PROGRESS">In progress</option><option value="COMPLETE">Complete</option></select></label>:<span style={{fontSize:12}}>Status: {r.status}</span>}</article>)}
+   {visible.length===0?<p style={{color:"#64748b"}}>No saved records for this selection.</p>:visible.map(r=><article key={r.id} style={{padding:"15px 0",borderBottom:"1px solid #e2e8f0"}}><button onClick={()=>setSelectedRecord(r.id)} style={{background:"transparent",border:0,padding:0,fontWeight:750,color:"#2144a4",cursor:"pointer",textAlign:"left"}}>{r.title}</button><div style={{fontSize:13,color:"#64748b"}}>{r.module_id} · {r.owner_name} {r.module_id==="policies"&&r.details?.documentCode?" · "+r.details.documentCode+" rev "+(r.details.revision??""):""} · {r.due_date??"No review date"} · {recordUrgency(r,today).replace("-"," ")} · Evidence: {r.evidence_status==="APPROVED"?"approved":r.evidence_status==="PENDING_REVIEW"?"pending review":r.evidence_status==="REJECTED"?"rejected":"not submitted"}</div>{canEdit?<label style={{display:"block",marginTop:10,fontSize:13}}>Status <select aria-label={"Status for "+r.title} value={r.status} disabled={updating===r.id} onChange={e=>void changeStatus(r,e.target.value)}><option value="OPEN">Open</option><option value="IN_PROGRESS">In progress</option><option value="COMPLETE">Complete</option></select></label>:<span style={{fontSize:12}}>Status: {r.status}</span>}</article>)}
   </div>
  </section>;
 }
