@@ -22,7 +22,7 @@ export default function QuarantineUpload({orgId,documentId}:{orgId:string;docume
    const {error:uploadError}=await db.storage.from("eagnexis-quarantine").upload(objectPath,file,{contentType:file.type,upsert:false});
    if(uploadError)throw new Error("Quarantine upload failed. Intake remains pending; do not retry repeatedly. "+uploadError.message);
    setMessage("File received in isolated quarantine. It is NOT scanned, approved or available as evidence.");
-   setFile(null);if(e.currentTarget instanceof HTMLFormElement)e.currentTarget.reset();
+   setFile(null);
   }catch(error){setMessage(error instanceof Error?error.message:"Unable to upload test file.");}
   finally{setBusy(false);}
  }
@@ -30,7 +30,7 @@ export default function QuarantineUpload({orgId,documentId}:{orgId:string;docume
  <strong>Upload a test file to quarantine</strong>
  <p style={{fontSize:12,color:"#64748b",margin:0}}>Staging only. Use fictional documents, never personal, confidential or regulated information. Files cannot be downloaded or approved yet.</p>
  <label style={{fontSize:13}}>Choose a PDF, PNG or JPEG (up to 10 MB)<input type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" onChange={e=>setFile(e.target.files?.[0]??null)} style={{display:"block",marginTop:8,maxWidth:"100%"}}/></label>
- <button type="submit" disabled={!file||busy} style={{padding:11,border:0,borderRadius:9,background:"#2659df",color:"white",opacity:!file||busy?.6:1}}>{busy?"Uploading…":"Upload test file"}</button>
+ <button type="submit" disabled={!file||busy} style={{padding:11,border:0,borderRadius:9,background:"#2659df",color:"white",opacity:(!file||busy)?0.6:1}}>{busy?"Uploading…":"Upload test file"}</button>
  {message&&<p role="status" style={{fontSize:13,margin:0}}>{message}</p>}
  </form>;
 }
