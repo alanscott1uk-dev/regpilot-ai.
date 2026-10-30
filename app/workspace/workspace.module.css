@@ -3,3 +3,16 @@
 .mobileTop{display:none}.mobileToggle{border:1px solid #405477;border-radius:11px;background:#243b61;color:white;padding:10px 13px;font-weight:700;cursor:pointer;min-height:44px}.mobileToggle:focus-visible{outline:3px solid #73d7e8;outline-offset:2px}.mobileMenu{display:contents}.nav button{min-height:44px;transition:background .15s ease}.nav button:hover{background:#304569;color:white}.card{overflow-wrap:anywhere}.card button{min-height:40px}.row button{flex-shrink:0}.sectionTitle{letter-spacing:-.3px}.header{padding-bottom:6px}.content{min-width:0}
 @media(max-width:949px){.sidebar{gap:0;padding:14px 16px}.mobileTop{display:flex;align-items:center;justify-content:space-between;gap:12px}.mobileMenu{display:none}.mobileMenu[data-open="true"]{display:grid;gap:12px;padding-top:15px}.nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));overflow:visible;gap:7px}.nav button{white-space:normal;text-align:center;font-size:13px}.content{padding:22px 16px 60px}.header{align-items:flex-start}.heading{font-size:28px}.metrics{margin:18px 0}}
 @media(max-width:480px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.metric{font-size:26px}.card{padding:15px;border-radius:14px}.nav{grid-template-columns:repeat(2,minmax(0,1fr))}.row{gap:9px}.row button{padding:9px 11px}.header .button{width:100%;text-align:center}.columns{gap:12px}}
+
+/* Compact mobile header: scan is a secondary action, not a full-width banner. */
+@media(max-width:680px){
+ .content{padding:18px 14px 52px}
+ .header{gap:9px}
+ .header .button{width:auto;display:inline-flex;align-items:center;justify-content:center;padding:10px 13px;font-size:13px;min-height:44px}
+ .heading{margin:3px 0 4px}
+ .sidebar{padding:12px 14px}
+ .brand{font-size:21px}
+ .mobileToggle{font-size:13px}
+ .eyebrow{letter-spacing:.65px}
+ .muted{line-height:1.45}
+}
