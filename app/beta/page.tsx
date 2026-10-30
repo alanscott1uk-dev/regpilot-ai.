@@ -62,7 +62,7 @@ export default function BetaPage() {
   setSavingId(null);
  }
  return <main style={{maxWidth:850,margin:"auto",padding:"30px 18px",fontFamily:"system-ui",color:"#17233b"}}>
-  <Link href="/workspace">← Workspace preview</Link><h1>RegPilot private beta</h1>
+  <Link href="/workspace">← Workspace preview</Link><h1>EAGNEXIS AI private beta</h1>
   <p style={{color:"#64748b"}}>Staging only. Do not enter confidential or regulated information.</p>
   {!configured?<section role="alert" style={{padding:20,background:"#fff4e5",border:"1px solid #f2d3a0",borderRadius:14}}><h2>Staging connection unavailable</h2><p>This preview was built before its Supabase configuration was available. A new preview deployment is required.</p></section>:!userEmail?<form onSubmit={signIn} style={{background:"white",border:"1px solid #dbe3ee",borderRadius:16,padding:22,display:"grid",gap:12}}>
    <h2 style={{margin:0}}>Sign in by email</h2><label>Email address<input style={input} type="email" required value={email} onChange={e=>setEmail(e.target.value)}/></label>
