@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { stagingSupabase } from "../../lib/staging-supabase";
 import DocumentMetadata from "./document-metadata";
 import {guideForModule} from "../../lib/workflow-guides.mjs";
+import {suggestRecordNextSteps} from "../../lib/record-next-steps.mjs";
 import { filterRecords, recordUrgency } from "../../lib/record-workspace.mjs";
 type Org = {organization_id:string;role:string;organizations:{name:string}|{name:string}[]|null};
 type Row = {id:string;module_id:string;title:string;owner_name:string;due_date:string|null;status:string;evidence_status:string;details?:Record<string,string>};
@@ -108,6 +109,7 @@ export default function LiveWorkspace({onOpenBeta,moduleFilter}:{onOpenBeta:()=>
    </section>}
    {selected&&<aside style={{border:"1px solid #c7d8ff",background:"#f4f7ff",borderRadius:14,padding:16,marginTop:16}} aria-label="Selected action details">
     <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"center"}}><h3 style={{margin:0}}>{selected.title}</h3><button onClick={()=>{setSelectedRecord(null);setGuideOpen(false);}}>Close</button></div>
+    <div style={{padding:12,borderRadius:10,background:"#fff",border:"1px solid #dbe3ee",margin:"10px 0"}}><strong>Suggested next steps</strong>{suggestRecordNextSteps(selected,today).map((x:{id:string;text:string})=><p key={x.id} style={{fontSize:13,margin:"8px 0"}}>{x.text}</p>)}</div>
     <p style={{fontSize:13,color:"#475569"}}>Owner: {selected.owner_name} · Module: {selected.module_id} · Due: {selected.due_date??"Not set"}</p>
     <button type="button" onClick={()=>setGuideOpen(v=>!v)} aria-expanded={guideOpen} style={{display:"block",padding:10,marginBottom:12,borderRadius:9,border:"1px solid #cbd5e1",background:"#fff"}}>{guideOpen?"Hide next steps":"Guide me through this task"}</button><strong>Supporting evidence — {selected.evidence_status==="APPROVED"?"Approved":selected.evidence_status==="PENDING_REVIEW"?"Pending review":selected.evidence_status==="REJECTED"?"Rejected":"Not submitted"}</strong>
     <p style={{fontSize:13,color:"#64748b"}}>Secure document uploads and reviewer approvals are not yet enabled. A completed action is not evidence of regulatory compliance.</p>
