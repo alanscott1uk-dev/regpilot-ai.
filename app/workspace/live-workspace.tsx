@@ -89,7 +89,7 @@ export default function LiveWorkspace({onOpenBeta,moduleFilter}:{onOpenBeta:()=>
     <p style={{fontSize:13,color:"#475569"}}>Owner: {selected.owner_name} · Module: {selected.module_id} · Due: {selected.due_date??"Not set"}</p>
     <strong>Supporting evidence — {selected.evidence_status==="APPROVED"?"Approved":selected.evidence_status==="PENDING_REVIEW"?"Pending review":selected.evidence_status==="REJECTED"?"Rejected":"Not submitted"}</strong>
     <p style={{fontSize:13,color:"#64748b"}}>Secure document uploads and reviewer approvals are not yet enabled. A completed action is not evidence of regulatory compliance.</p>
-    <DocumentMetadata orgId={org} actionId={selected.id} canEdit={canEdit}/>
+    <DocumentMetadata orgId={org} actionId={selected.id} canEdit={canEdit} moduleId={selected.module_id}/>
     <button onClick={onOpenBeta}>Open record management</button>
    </aside>}
    {error&&<p role="alert" style={{color:"#b91c1c"}}>{error}</p>}
