@@ -54,7 +54,8 @@ export default function Assurance(){
    if(!r.ok)throw new Error("Official source check unavailable");
    const json:unknown=await r.json();
    if(!json||typeof json!=="object"||!("results" in json)||!Array.isArray(json.results))throw new Error("Invalid source result");
-   setState(s=>({...s,sources:json.results,sourcesLoaded:true}));
+   const results=(json as {results:unknown[]}).results;
+   setState(s=>({...s,sources:results,sourcesLoaded:true}));
   }catch{setSourceError("Official source check unavailable. Existing decisions are shown but source versions cannot be independently compared.");setState(s=>({...s,sources:[],sourcesLoaded:false}))}
   finally{setLoading(false)}
  },[]);
