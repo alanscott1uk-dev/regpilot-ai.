@@ -2,6 +2,8 @@
 import {useEffect,useMemo,useState} from "react";
 import {validateObligation,isValidDate} from "../../lib/obligations.mjs";
 import {validDocumentMetadata} from "../../lib/document-categories.mjs";
+import {parseControls,CONTROL_KEY} from "../../lib/controls.mjs";
+import type {ControlRecord} from "../../lib/controls.mjs";
 import {WORKSPACE_KEY,defaultWorkspace,parseWorkspace} from "../../lib/workspace-config.mjs";
 import {operationalQueue,operationsSummary,exportOperationsCsv,ACTIVITY_KEY,addOperationalEvent,validOperationalEvents} from "../../lib/operational-triage.mjs";
 import type {TriageRow,OperationalEvent} from "../../lib/operational-triage.mjs";
@@ -33,6 +35,7 @@ export default function Workbench(){
  const [ready,setReady]=useState(false);
  const [items,setItems]=useState<Action[]>([]);
  const [documents,setDocuments]=useState<unknown[]>([]);
+ const [controls,setControls]=useState<ControlRecord[]>([]);
  const [events,setEvents]=useState<OperationalEvent[]>([]);
  const [company,setCompany]=useState("Demo workspace");
  const [selectedId,setSelectedId]=useState("");
@@ -52,6 +55,7 @@ export default function Workbench(){
   setReady(true);
   function refreshLinked(){
    try{const v=JSON.parse(localStorage.getItem(DOCUMENTS_KEY)||"[]");setDocuments(Array.isArray(v)?v.filter(validDocumentMetadata):[]);}catch{setDocuments([]);}
+   try{setControls(parseControls(localStorage.getItem(CONTROL_KEY)||"[]"));}catch{setControls([]);}
    try{const raw=localStorage.getItem(WORKSPACE_KEY);const v=raw?parseWorkspace(JSON.parse(raw)):defaultWorkspace();setCompany(v?.company||"Demo workspace");}catch{setCompany("Demo workspace");}
   }
   refreshLinked();
@@ -82,7 +86,7 @@ export default function Workbench(){
   if(selected)setDraft({status:selected.status,owner:selected.owner,due:selected.due,notes:selected.notes,sourceUrl:selected.sourceUrl||"",sourceCheckedAt:selected.sourceCheckedAt||"",completionRationale:selected.completionRationale||""});
  },[selectedId,items]);
  const today=localDate();
- const queue=useMemo(()=>operationalQueue(items,documents,today),[items,documents,today]);
+ const queue=useMemo(()=>operationalQueue(items,documents,today,controls),[items,documents,controls,today]);
  const stats=useMemo(()=>operationsSummary(queue),[queue]);
  const visible=useMemo(()=>queue.filter(x=>
   (filter==="all"||(filter==="priority"&&x.status!=="Complete"&&(x.level!=="routine"||x.state!=="evidence-linked"))||(filter==="week"&&x.status!=="Complete"&&x.daysRemaining!==null&&x.daysRemaining<=7)||(filter==="exceptions"&&x.completionException)||(filter==="evidence"&&x.status!=="Complete"&&x.state!=="evidence-linked")||(filter==="complete"&&x.status==="Complete"))&&

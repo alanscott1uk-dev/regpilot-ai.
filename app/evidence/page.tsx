@@ -3,6 +3,7 @@ import {useEffect,useMemo,useState} from "react";
 import styles from "../dashboard.module.css";
 import {validateObligation} from "../../lib/obligations.mjs";
 import {validDocumentMetadata} from "../../lib/document-categories.mjs";
+import {parseControls,CONTROL_KEY} from "../../lib/controls.mjs";
 import {evidenceCoverage,evidenceCoverageSummary} from "../../lib/evidence-coverage.mjs";
 import type {CoverageRow} from "../../lib/evidence-coverage.mjs";
 const ACTION_KEY="regpilot-demo-obligations-v1";
@@ -25,7 +26,7 @@ export default function Evidence(){
   try{
    const a=JSON.parse(localStorage.getItem(ACTION_KEY)||"[]");
    const d=JSON.parse(localStorage.getItem(DOCUMENT_KEY)||"[]");
-   setRows(evidenceCoverage(Array.isArray(a)?a.filter(validateObligation):[],Array.isArray(d)?d.filter(validDocumentMetadata):[],localToday()));
+   setRows(evidenceCoverage(Array.isArray(a)?a.filter(validateObligation):[],Array.isArray(d)?d.filter(validDocumentMetadata):[],localToday(),parseControls(localStorage.getItem(CONTROL_KEY)||"[]")));
   }catch{setRows([]);}
   setLoaded(true);
  }
