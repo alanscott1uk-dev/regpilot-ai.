@@ -45,7 +45,7 @@ export async function listAiReviewRecords(ctx:AuthorizedContext){
   where:{organizationId:ctx.organizationId},
   orderBy:{createdAt:"desc"},take:50
  });
- return records.map(r=>displayReview(r,false));
+ return records.map(r=>({...displayReview(r,false),integrityOk:reviewContentHash(r.result)===r.resultSha256}));
 }
 export async function readAiReviewRecord(ctx:AuthorizedContext,id:string){
  if(!stableReviewId(id))throw new ReviewStoreError("Invalid review ID",400);
@@ -58,8 +58,9 @@ export async function updateAiReviewDecision(ctx:AuthorizedContext,id:string,raw
  if(!stableReviewId(id))throw new ReviewStoreError("Invalid review ID",400);
  return db.$transaction(async tx=>{
   const found=await tx.aiReview.findFirst({where:{id,organizationId:ctx.organizationId},
-   select:{id:true,createdById:true,status:true,version:true,resultSha256:true}});
+   select:{id:true,createdById:true,status:true,version:true,resultSha256:true,result:true}});
   if(!found)throw new ReviewStoreError("Review not found",404);
+  if(reviewContentHash(found.result)!==found.resultSha256)throw new ReviewStoreError("Stored AI output integrity check failed",409);
   const decision=validateReviewDecision(raw,ctx,found.createdById);
   if(found.status!=="PENDING_REVIEW")throw new ReviewStoreError("This AI review has already been checked",409);
   const changed=await tx.aiReview.updateMany({

@@ -42,6 +42,7 @@ model User {
   auditEvents AuditEvent[]
   aiReviewsCreated AiReview[] @relation("AiReviewCreator")
   aiReviewsChecked AiReview[] @relation("AiReviewReviewer")
+  aiDailyUsage AiDailyUsage[]
 }
 
 model Organization {
@@ -53,6 +54,7 @@ model Organization {
   evidence    Evidence[]
   auditEvents AuditEvent[]
   aiReviews AiReview[]
+  aiDailyUsage AiDailyUsage[]
 }
 
 model Membership {
@@ -123,6 +125,8 @@ model AiDailyUsage {
   count          Int      @default(0)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+  user           User @relation(fields:[userId],references:[id],onDelete:Restrict)
   @@unique([organizationId, userId, day])
   @@index([organizationId, day])
 }
