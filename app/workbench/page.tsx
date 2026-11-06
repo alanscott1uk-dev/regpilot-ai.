@@ -172,6 +172,15 @@ export default function Workbench(){
       <div className={ui.full}><button className={ui.primary} type="submit">Create action</button></div>
      </form>
     </section>}
+   <section className={ui.quickStart} aria-label="Guided setup">
+    <div className={ui.quickHead}><div><span>GET STARTED</span><h2>Your first four steps</h2><p>Follow this path to experience the demo from start to review. Each step shows where your records are used.</p></div><span className={ui.quickCount}>{(items.length>0?1:0)+(documents.length>0?1:0)+(controls.length>0?1:0)} / 3 RECORDING STEPS</span></div>
+    <div className={ui.quickGrid}>
+     <button type="button" className={ui.quickStep} onClick={()=>{setShowCreate(true);setMessage("Enter a task title, responsible owner and due date in the form above.");}}><span className={ui.quickNum}>01</span><strong>Record a task</strong><small>{items.length?"Work items recorded":"Name the work and its owner"}</small><span className={ui.quickIcon}>{items.length?"✓":"→"}</span></button>
+     <a href="/documents" className={ui.quickStep}><span className={ui.quickNum}>02</span><strong>Add supporting evidence</strong><small>{documents.length?"Document records present":"Record or attach a demo file"}</small><span className={ui.quickIcon}>{documents.length?"✓":"→"}</span></a>
+     <a href="/controls" className={ui.quickStep}><span className={ui.quickNum}>03</span><strong>Connect a control</strong><small>{controls.length?"Shared control recorded":"Reuse evidence across tasks"}</small><span className={ui.quickIcon}>{controls.length?"✓":"→"}</span></a>
+     <a href="/assurance" className={ui.quickStep}><span className={ui.quickNum}>04</span><strong>Review the gaps</strong><small>Export a review pack (not a certificate)</small><span className={ui.quickIcon}>→</span></a>
+    </div>
+   </section>
    <div className={ui.dashboardSectionTitle}><div><span>OVERVIEW</span><h2>Today at a glance</h2></div><a href="/evidence">Explore evidence gaps ↗</a></div>
    <div className={ui.stats}>
     <div><span>Open attention items</span><strong>{stats.needsAttention}</strong><small>Includes overdue, upcoming and evidence gaps</small></div>
