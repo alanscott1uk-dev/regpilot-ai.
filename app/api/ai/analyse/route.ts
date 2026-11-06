@@ -42,7 +42,7 @@ export async function POST(request:Request){
    if(!evidenceConfigured())return json({error:"Private evidence vault not configured"},503);
    const stored=await downloadEvidence(ctx,input.evidenceId);
    if(stored.bytes.byteLength>2_000_000)return json({error:"AI currently supports private evidence PDFs up to 2 MB"},413);
-   aiInput={...input,fileBytes:stored.bytes};
+   aiInput={...input,fileBytes:Uint8Array.from(stored.bytes)};
   }
   requestId=await reserveAiRequest(ctx,input.mode);
   const ai=await runRegPilotAi(aiInput,official);
