@@ -34,3 +34,11 @@ Tests and builds should never invoke or bill a model.
 
 ## Human-reviewed amendments
 The schema also supports up to three draft policy paragraphs with rationale and source-excerpt fields. No edits are committed automatically. Users may copy proposed wording or export a JSON review; both require independent human assessment.
+
+## Next development batch — Human review inbox
+
+A new optional `retainDraft` selection saves only the generated AI result (including short excerpts and proposed amendments) to a tenant-scoped PostgreSQL `AiReview` record with SHA-256 digest. Original PDF bytes and submitted document text are **not** stored by the review service. This is not privacy anonymisation; result excerpts can still contain input details.
+
+Saved drafts start `PENDING_REVIEW`. A different authenticated `OWNER` or `ADMIN` in the same organisation can mark a draft `REVIEWED` or `NEEDS_CHANGES` with a written rationale. These labels describe a human review of the AI draft, **not regulatory certification or formal evidence approval**. Writes are version-checked and audit events are created transactionally. Hash checking helps detect accidental changes to the stored result but is not cryptographic non-repudiation because an administrator could alter the database.
+
+The staging PostgreSQL migration and cross-tenant end-to-end tests remain an activation prerequisite; no customer data should be submitted or stored. Retention, deletion/export controls, audit append-only enforcement and backups remain to be implemented before production use.

@@ -20,6 +20,12 @@ enum ObligationStatus {
   COMPLETE
 }
 
+enum AiReviewState {
+  PENDING_REVIEW
+  REVIEWED
+  NEEDS_CHANGES
+}
+
 enum ReviewStatus {
   DRAFT
   PENDING_REVIEW
@@ -34,6 +40,8 @@ model User {
   createdAt   DateTime     @default(now())
   memberships Membership[]
   auditEvents AuditEvent[]
+  aiReviewsCreated AiReview[] @relation("AiReviewCreator")
+  aiReviewsChecked AiReview[] @relation("AiReviewReviewer")
 }
 
 model Organization {
@@ -44,6 +52,7 @@ model Organization {
   obligations Obligation[]
   evidence    Evidence[]
   auditEvents AuditEvent[]
+  aiReviews AiReview[]
 }
 
 model Membership {
@@ -116,4 +125,31 @@ model AiDailyUsage {
   updatedAt      DateTime @updatedAt
   @@unique([organizationId, userId, day])
   @@index([organizationId, day])
+}
+
+
+// Stores model-generated draft OUTPUT only when the user explicitly opts in.
+// No original PDF bytes, prompt, source document, or patient data belong here.
+model AiReview {
+  id               String        @id @default(uuid()) @db.Uuid
+  organizationId   String        @db.Uuid
+  createdById      String        @db.Uuid
+  requestId        String        @unique @db.Uuid
+  mode             String
+  modelId          String
+  sourceUrl        String?
+  result           Json
+  resultSha256     String        @db.VarChar(64)
+  status           AiReviewState @default(PENDING_REVIEW)
+  reviewerId       String?       @db.Uuid
+  reviewerNotes    String        @default("")
+  reviewedAt       DateTime?
+  version          Int           @default(1)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  organization     Organization  @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+  creator          User          @relation("AiReviewCreator",fields:[createdById],references:[id],onDelete:Restrict)
+  reviewer         User?         @relation("AiReviewReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+  @@index([organizationId,status,createdAt])
+  @@index([organizationId,createdAt])
 }
