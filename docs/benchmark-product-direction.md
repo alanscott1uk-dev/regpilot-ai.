@@ -1,0 +1,49 @@
+# RegPilot AI — November 2026 benchmark and next-stage product plan
+
+## Competitive benchmark
+
+- **Vanta**: strongest overall product model for connected compliance operations, automated testing, evidence workflows, integrations and a polished interface. Reference: https://www.vanta.com/products/automated-compliance
+- **CUBE RegPlatform**: benchmark for continuous regulatory intelligence, verified source lineage, applicability, obligations, impact and audit-ready decisions. Reference: https://www.cube.global/products/regplatform
+- **Sprinto**: benchmark for guided task execution, evidence gap analysis, templates, auditor workflows and remediation automation. Reference: https://sprinto.com/pricing/
+- **ISMS.online**: useful UK-market reference for guided onboarding, sector-relevant guidance and connected management frameworks. Reference: https://www.isms.online/platform/
+
+## RegPilot positioning
+
+UK SME-first, cross-sector compliance operations with plain-language action guidance; broad coverage must be built incrementally, not promised before verified content exists. Do not imply regulatory completeness or accuracy without source coverage, monitoring SLAs and expert review.
+
+## Shipped in this iteration
+
+1. Redesigned premium responsive command centre (dark-violet hero, genuine metadata coverage ring, explicit demo indicator, simplified actions).
+2. Official source-watch signal on the home screen (live metadata check, not legal change verification).
+3. Regulatory intelligence inbox with source-version keyed human applicability assessment (not auto-classification), impact rating, owner and target date.
+4. Conversion of an approved-by-user "action required" assessment into a draft work item linking the primary source and user-entered review date.
+5. Unit tests for source URL restrictions, review versioning, applicability rationale and action creation.
+
+## Remaining gaps to meet Vanta / CUBE / Sprinto
+
+### Priority 0 — prerequisite for live use
+- Trusted user sessions, tenant membership, least privilege and cross-tenant tests.
+- Persistent PostgreSQL records with versioned migrations and reliable backup/restore.
+- Protected evidence storage, malware scanning, immutable artifact hashes, retention policies and signed file access.
+- Server-side append-only/tamper-evident audit history and reviewer approvals.
+- Security, privacy, accessibility, production monitoring and incident-response readiness.
+
+### Priority 1 — genuinely useful AI engine
+- UK primary-source ingestion by regulator and sector, with licensing, version identification and publication metadata.
+- Human-reviewed applicability and effective date extraction; evidence and source passage citations.
+- Document parsing and requirement-to-control mapping with uncertainty indicators.
+- Draft corrective actions, reusable evidence mapping, version comparisons and owner confirmation.
+- No automatic "compliant" verdicts or silent changes to source-to-obligation relationships.
+
+### Priority 2 — market differentiation
+- Plain-English onboarding for UK sole traders, SMEs and regulated specialists.
+- Sector-pack rollout only after professional verification (initially one focused pack, then adjacent industries).
+- API connectors, scheduled notifications, reviewer portals and audit exports.
+- Published pricing and onboarding cost lower than enterprise-focused providers.
+- Usability test with non-technical operators: create a task, review a source, link evidence, record outcome without training.
+
+## Truthful product metrics
+The command-centre ring means **percent of work items with document metadata marked as current, approved and containing an attachment**. It is not a compliance rate, a file-integrity check, or a real-time risk score. The official-source signal reports publication metadata only and does not identify legal amendments or guarantee completeness.
+
+## Release gate
+No real customer, supplier, employee or patient data until secure backend and validation gates above are completed. The staging Supabase project was discovered but returned connection timeouts; no database or security configuration was changed in this iteration.
