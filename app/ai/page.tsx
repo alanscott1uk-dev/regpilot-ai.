@@ -1,6 +1,8 @@
 "use client";
 import {useCallback,useEffect,useState} from "react";
 import {browserAuth} from "../../lib/client/supabase-auth";
+import {readDemoCertificateFile} from "../../lib/demo-certificate-files.mjs";
+import {validDocumentMetadata} from "../../lib/document-categories.mjs";
 import {REGULATORY_SOURCES} from "../../lib/regulatory-sources.mjs";
 import {validateObligation} from "../../lib/obligations.mjs";
 import shell from "../workbench/workbench.module.css";
@@ -24,6 +26,7 @@ export default function AiStudio(){
  const [mode,setMode]=useState<Mode>("document");
  const [documentText,setDocumentText]=useState("");
  const [file,setFile]=useState<File|null>(null);
+ const [selectedDocument,setSelectedDocument]=useState("");
  const [question,setQuestion]=useState("");
  const [businessContext,setBusinessContext]=useState("");
  const [sourceId,setSourceId]=useState("");
@@ -106,6 +109,25 @@ export default function AiStudio(){
    setAccepted(prev=>[...prev,index]);setMessage("Draft action added to this browser's demo register, not to a secure company database.");
   }catch{setMessage("Unable to save demo task in browser storage");}
  }
+ useEffect(()=>{
+  const params=new URLSearchParams(window.location.search);
+  const requestedSource=params.get("sourceId");
+  if(requestedSource&&REGULATORY_SOURCES.some(s=>s.id===requestedSource))setSourceId(requestedSource);
+  const requestedDoc=params.get("documentId");
+  if(requestedDoc){
+   try{
+    const stored:unknown=JSON.parse(localStorage.getItem("regpilot-document-library-v1")||"[]");
+    if(!Array.isArray(stored))return;
+    const doc=stored.filter(validDocumentMetadata).find(x=>x.id===requestedDoc);
+    if(!doc)return;
+    setMode("document");setSelectedDocument(doc.title);
+    void readDemoCertificateFile("document-"+doc.id).then((f:any)=>{
+     if(f?.blob&&f.type==="application/pdf")setFile(new File([f.blob],f.name,{type:"application/pdf"}));
+     else setMessage("Document metadata loaded. Only a stored demo PDF can be imported for analysis; paste text for other formats.");
+    }).catch(()=>setMessage("Could not read the local demo file."));
+   }catch{}
+  }
+ },[]);
  const working=busy||!authReady;
  const canRun=user&&orgId&&feature===true;
  return <div className={shell.app}>
@@ -141,6 +163,7 @@ export default function AiStudio(){
       <label>UK business context (fictional)<textarea rows={2} maxLength={2500} value={businessContext} onChange={e=>setBusinessContext(e.target.value)} placeholder="Example: Small wholesale business reviewing supplier procedures."/></label>
       <label>Official GOV.UK source<select value={sourceId} onChange={e=>setSourceId(e.target.value)} required={mode==="change"}><option value="">No official source selected</option>{REGULATORY_SOURCES.map(s=><option key={s.id} value={s.id}>{s.agency}: {s.title}</option>)}</select></label>
       {(mode==="document"||mode==="assistant")&&<label>{mode==="document"?"Policy/document text (fictional)":"Relevant policy or context (optional)"}<textarea rows={5} maxLength={16000} value={documentText} onChange={e=>setDocumentText(e.target.value)} placeholder="Paste non-sensitive example policy text…"/></label>}
+      {mode==="document"&&selectedDocument&&<p className={ui.hint}>Selected document from demo library: <strong>{selectedDocument}</strong>. Review the content before sending it to an external model provider.</p>}
       {mode==="document"&&<label>Or upload a non-sensitive example PDF (max 2 MB)<input type="file" accept="application/pdf,.pdf" onChange={e=>setFile(e.target.files?.[0]||null)}/></label>}
       {mode!=="document"&&<label>Your question<input maxLength={1500} value={question} onChange={e=>setQuestion(e.target.value)} placeholder="What could this change affect?"/></label>}
       {mode==="document"&&<label>Question (optional)<input maxLength={1500} value={question} onChange={e=>setQuestion(e.target.value)} placeholder="Which sections might need review?"/></label>}

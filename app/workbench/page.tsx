@@ -122,6 +122,7 @@ export default function Workbench(){
    <div className={ui.sideCaption}>WORKSPACE</div>
    <nav className={ui.sideNav} aria-label="Main navigation">
     <a className={ui.active} aria-current="page" href="/workbench">◉ &nbsp;Today&apos;s work</a>
+    <a href="/ai">✦ &nbsp;AI review studio</a>
     <a href="/register">▤ &nbsp;Action register</a>
     <a href="/documents">▣ &nbsp;Documents &amp; evidence</a>
     <a href="/evidence">◫ &nbsp;Evidence gaps</a><a href="/controls">◇ &nbsp;Shared control library</a><a href="/traceability">✧ &nbsp;Traceability explorer</a><a href="/assurance">◈ &nbsp;Review centre</a>

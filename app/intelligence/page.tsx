@@ -77,7 +77,8 @@ export default function Intelligence(){
   <a href="/workbench" className={ui.logo}><span className={ui.logoMark}>R</span><span>RegPilot <b>AI</b><small>INTELLIGENCE &amp; OPERATIONS</small></span></a>
   <div className={ui.sideCaption}>WORKSPACE</div>
   <nav className={ui.sideNav} aria-label="Navigation">
-   <a href="/workbench">◉ &nbsp;Today&apos;s work</a><a href="/register">▤ &nbsp;Action register</a><a href="/documents">▣ &nbsp;Documents</a>
+   <a href="/workbench">◉ &nbsp;Today&apos;s work</a>
+    <a href="/ai">✦ &nbsp;AI review studio</a><a href="/register">▤ &nbsp;Action register</a><a href="/documents">▣ &nbsp;Documents</a>
    <a className={ui.active} href="/intelligence" aria-current="page">✧ &nbsp;Regulatory intelligence</a>
    <a href="/evidence">◫ &nbsp;Evidence gaps</a><a href="/controls">◇ &nbsp;Shared control library</a><a href="/traceability">✧ &nbsp;Traceability explorer</a><a href="/assurance">◈ &nbsp;Review centre</a><a href="/departments">⚙ &nbsp;Business setup</a>
   </nav>
@@ -110,6 +111,7 @@ export default function Intelligence(){
      <div className={css.detailTop}><span className={css.agency}>{current.agency}</span><h2>{current.title}</h2><p>{current.description||"Read the publication to understand its requirements."}</p>
       <div className={css.meta}><span>Public update: {format(current.updatedAt)}</span><span>Current version: {format(sourceVersion(current))}</span></div>
       <a className={css.official} href={current.url} target="_blank" rel="noopener noreferrer">Read original GOV.UK publication <span>↗</span></a>
+      <a className={css.official} style={{marginTop:10}} href={"/ai?sourceId="+encodeURIComponent(current.id)}>Prepare AI impact draft (private pilot) <span>↗</span></a>
      </div>
      {oldReview&&<p className={css.revision}>The recorded source version differs from an earlier review. Previous decisions do not automatically carry forward.</p>}
      <form onSubmit={save} className={css.form}>

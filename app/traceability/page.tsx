@@ -61,6 +61,7 @@ export default function Traceability(){
    <div className={shell.sideCaption}>WORKSPACE</div>
    <nav className={shell.sideNav} aria-label="Navigation">
     <a href="/workbench">◉ &nbsp;Today&apos;s work</a>
+    <a href="/ai">✦ &nbsp;AI review studio</a>
     <a href="/intelligence">✦ &nbsp;Regulatory intelligence</a>
     <a href="/controls">◇ &nbsp;Shared control library</a>
     <a className={shell.active} aria-current="page" href="/traceability">◈ &nbsp;Traceability explorer</a>
