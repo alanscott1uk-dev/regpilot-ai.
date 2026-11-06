@@ -11,7 +11,7 @@ export class RegulatoryWatchError extends Error{
 type Official={id:string;title:string;url:string;updatedAt:string|null;revisionAt:string|null;text:string};
 type Loader=(sourceId:string)=>Promise<Official|null>;
 const roles=["OWNER","ADMIN","EDITOR"];
-const validUuid=x=>typeof x==="string"&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x);
+const validUuid=(x:unknown):x is string=>typeof x==="string"&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x);
 export async function listSourceSnapshots(ctx:AuthorizedContext){
  const snapshots=await db.regulatorySnapshot.findMany({
   where:{organizationId:ctx.organizationId},
