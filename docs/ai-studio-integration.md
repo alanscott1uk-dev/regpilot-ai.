@@ -53,3 +53,6 @@ Because the staging Supabase database has been inaccessible, the database servic
 
 ## Private pilot login safeguards
 Passwordless Supabase login now sets `shouldCreateUser:false` to prevent anonymous browsers from automatically creating Supabase Auth users. An administrator must provision and confirm invited email accounts in Supabase Auth before the user can sign in. The app separately checks an exact server-side email allowlist and database membership. The authenticated AI route reports disabled until the secure workspace flag, AI flag, a provider/model identifier and Gateway credentials are present. This is a readiness check, not a substitute for an end-to-end live model request.
+
+## Model selection
+No model is assumed as a production default. The operator must select a currently available `provider/model` identifier from the live Vercel AI Gateway catalogue, check data-handling terms, configure the key or OIDC token and set a budget. The route remains disabled if the model is unset.

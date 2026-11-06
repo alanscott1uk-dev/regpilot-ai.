@@ -51,7 +51,7 @@ function instructions(mode:AiInput["mode"]){
  ].join("\n");
 }
 export async function runRegPilotAi(input:AiInput,official:Official){
- const model=safeModelName(process.env.REGPILOT_AI_MODEL||"openai/gpt-5.4-mini");
+ const model=safeModelName(process.env.REGPILOT_AI_MODEL||"");
  const sourceText=official?.text||"";
  const text=[
   "MODE: "+input.mode,
