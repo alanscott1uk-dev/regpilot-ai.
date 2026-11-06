@@ -1,0 +1,11 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {operationalQueue,operationsSummary,exportOperationsCsv,addOperationalEvent,validOperationalEvents} from "../lib/operational-triage.mjs";
+const act=(over={})=>({id:"a",title:"Fictional review",owner:"Quality",due:"2026-11-08",regulator:"Internal",notes:"demo",status:"Open",...over});
+const doc=(over={})=>({obligationId:"a",status:"Approved",reviewDate:"2027-03-01",hasAttachment:true,...over});
+test("overdue actions are highest priority",()=>{const r=operationalQueue([act({due:"2026-11-01"}),act({id:"b",due:"2027-01-01"})],[], "2026-11-06");assert.equal(r[0].id,"a");assert.equal(r[0].level,"overdue");});
+test("evidence triage does not confuse draft, expired or recorded files",()=>{assert.equal(operationalQueue([act()],[doc({status:"Draft"})],"2026-11-06")[0].state,"pending-review");assert.equal(operationalQueue([act()],[doc({reviewDate:"2026-10-01"})],"2026-11-06")[0].state,"review-expired");assert.equal(operationalQueue([act()],[doc()],"2026-11-06")[0].state,"evidence-linked");});
+test("closed work without evidence is flagged as an exception",()=>{const row=operationalQueue([act({status:"Complete"})],[],"2026-11-06")[0];assert.equal(row.completionException,true);assert.equal(row.level,"exception");assert.equal(operationsSummary([row]).exceptions,1);});
+test("completed item with current recorded attachment is not flagged",()=>{const row=operationalQueue([act({status:"Complete"})],[doc()],"2026-11-06")[0];assert.equal(row.level,"complete");assert.equal(row.completionException,false);});
+test("csv output escapes formulas and carries next steps",()=>{const row=operationalQueue([act({title:"=BAD"})],[],"2026-11-06");const csv=exportOperationsCsv(row);assert.match(csv,/\'=BAD/);assert.match(csv,/Link a supporting record/);});
+test("activity list capped, validated and local only",()=>{let arr=[];for(let i=0;i<220;i++)arr=addOperationalEvent(arr,"a","Edited","Example","2026-11-06T10:00:00Z");assert.equal(arr.length,200);assert.equal(validOperationalEvents(arr),true);});

@@ -26,6 +26,8 @@ export default function Documents(){
  const [reviewFilter,setReviewFilter]=useState("All review dates");
  useEffect(()=>{
   try{const obligationsRaw=localStorage.getItem(OBLIGATIONS_KEY);if(obligationsRaw){const parsed:unknown=JSON.parse(obligationsRaw);if(Array.isArray(parsed))setObligations(parsed.filter((x):x is ObligationChoice=>!!x&&typeof x.id==="string"&&typeof x.title==="string").map(x=>({id:x.id,title:x.title})));}
+  const requested=new URLSearchParams(window.location.search).get("obligationId");
+  if(requested && obligationsRaw){const parsed:unknown=JSON.parse(obligationsRaw);if(Array.isArray(parsed)&&parsed.some(x=>x&&typeof x==="object"&&x.id===requested))setObligationId(requested);}
   const historyRaw=localStorage.getItem(DOCUMENT_ACTIVITY_KEY);if(historyRaw){const history:unknown=JSON.parse(historyRaw);if(validDocumentEvents(history))setEvents(history);}
   const raw=localStorage.getItem(KEY);if(raw){const parsed:unknown=JSON.parse(raw);if(Array.isArray(parsed))setItems(parsed.filter(validDocumentMetadata).slice(0,1000) as DocumentMetadata[]);}
   const profile=localStorage.getItem(WORKSPACE_KEY);if(profile){const config=parseWorkspace(JSON.parse(profile));if(config)setDepartments(config.departments);}
