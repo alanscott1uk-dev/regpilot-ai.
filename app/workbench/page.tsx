@@ -120,7 +120,7 @@ export default function Workbench(){
     <a className={ui.active} aria-current="page" href="/workbench">◉ &nbsp;Today&apos;s work</a>
     <a href="/register">▤ &nbsp;Action register</a>
     <a href="/documents">▣ &nbsp;Documents &amp; evidence</a>
-    <a href="/evidence">◫ &nbsp;Evidence gaps</a><a href="/assurance">◈ &nbsp;Review centre</a>
+    <a href="/evidence">◫ &nbsp;Evidence gaps</a><a href="/controls">◇ &nbsp;Shared control library</a><a href="/assurance">◈ &nbsp;Review centre</a>
     <a href="/intelligence">✦ &nbsp;Regulatory intelligence</a><a href="/regulatory-sources">◇ &nbsp;Official source catalogue</a>
     <a href="/departments">⚙ &nbsp;Business setup</a>
     <a href="/distribution">▥ &nbsp;Distribution</a>
