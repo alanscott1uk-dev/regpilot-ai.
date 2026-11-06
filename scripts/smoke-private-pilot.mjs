@@ -53,7 +53,7 @@ try{
  await waitForServer();
  const routes=[
   "/workbench","/register","/documents","/evidence","/controls",
-  "/assurance","/intelligence","/traceability","/team","/ai"
+  "/assurance","/intelligence","/traceability","/team","/team/evidence","/ai"
  ];
  for(const path of routes){
   const res=await response(path);
@@ -71,6 +71,8 @@ try{
  assert.equal(noAi.status,503,"unauthenticated AI generation must fail closed");
  const noReview=await response("/api/ai/reviews?organizationId=123e4567-e89b-42d3-a456-426614174000");
  assert.equal(noReview.status,503,"private AI review access must fail closed");
+ const noEvidence=await response("/api/workspace/evidence?organizationId=123e4567-e89b-42d3-a456-426614174000&obligationId=123e4567-e89b-42d3-a456-426614174001");
+ assert.equal(noEvidence.status,503,"evidence API must fail closed without private storage and antivirus configuration");
  const noTeam=await response("/api/workspace/obligations?organizationId=123e4567-e89b-42d3-a456-426614174000");
  assert.equal(noTeam.status,503,"private team API must fail closed");
  const rootResponse=await response("/");

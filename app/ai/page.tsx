@@ -233,7 +233,7 @@ export default function AiStudio(){
     <a href="/workbench">◉ &nbsp;Today's work</a>
     <a className={shell.active} aria-current="page" href="/ai">✦ &nbsp;AI review studio</a>
     <a href="/intelligence">◇ &nbsp;Regulatory intelligence</a>
-    <a href="/traceability">◈ &nbsp;Traceability explorer</a><a href="/team">▣ &nbsp;Secure team tasks</a>
+    <a href="/traceability">◈ &nbsp;Traceability explorer</a><a href="/team">▣ &nbsp;Secure team tasks</a><a href="/team/evidence">◈ &nbsp;Evidence vault</a>
     <a href="/documents">▣ &nbsp;Documents</a>
     <a href="/assurance">▤ &nbsp;Review centre</a>
    </nav>
