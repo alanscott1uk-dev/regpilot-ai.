@@ -39,7 +39,7 @@ export default function Documents(){
  const visible=items.filter(x=>(filter==="All"||x.category===filter)&&(reviewFilter==="All review dates"||reviewState(x,todayString)===reviewFilter)&&[x.title,x.category,x.department,x.owner].join(" ").toLowerCase().includes(search.toLowerCase()));
  async function add(e:React.FormEvent){
   e.preventDefault();
-  const entry:DocumentMetadata={id:crypto.randomUUID(),title:title.trim(),category,department:department.trim(),owner:owner.trim(),version:version.trim(),reviewDate,status:"Draft",obligationId:obligationId||undefined};
+  const entry:DocumentMetadata={id:crypto.randomUUID(),title:title.trim(),category,department:department.trim(),owner:owner.trim(),version:version.trim(),reviewDate,status:"Draft",obligationId:obligationId||undefined,hasAttachment:!!attachment};
   if(!validDocumentMetadata(entry)){setMessage("Check the document metadata.");return;}
   if(attachment){try{await saveDemoCertificateFile("document-"+entry.id,attachment)}catch(e){setMessage(e instanceof Error?e.message:"File rejected");return;}}
   setItems(x=>[entry,...x]);setEvents(x=>addDocumentEvent(x,entry.id,"Document created",entry.title));setTitle("");setDepartment("");setOwner("");setVersion("1.0");setReviewDate("");setObligationId("");setAttachment(null);setMessage(attachment?"Demo document and file saved locally.":"Document metadata saved without an attachment.");
@@ -48,7 +48,7 @@ export default function Documents(){
  async function remove(id:string){if(!window.confirm("Delete document metadata and its local attachment?"))return;try{await deleteDemoCertificateFile("document-"+id);setItems(x=>x.filter(v=>v.id!==id));setEvents(x=>addDocumentEvent(x,id,"Document deleted"));setMessage("Document removed.");}catch{setMessage("Unable to delete local attachment.");}}
  return <main className={styles.shell}>
  <header className={styles.top}><div className={styles.brand}><span className={styles.mark}>R</span>RegPilot <span style={{color:"#3159df"}}>AI</span></div><span className={styles.pill}>DEMO WORKSPACE</span></header>
- <a href="/" style={{fontSize:13,color:"#3159df"}}>← Compliance dashboard</a>
+ <div style={{display:"flex",gap:16,flexWrap:"wrap"}}><a href="/" style={{fontSize:13,color:"#3159df"}}>← Compliance dashboard</a><a href="/evidence" style={{fontSize:13,color:"#3159df"}}>Evidence gaps →</a></div>
  <div style={{marginTop:24}}><div className={styles.eyebrow}>Document control / All sectors</div><h1 className={styles.heading}>Document library</h1><p className={styles.sub}>Manage policies, certifications, permits and supporting evidence.</p></div>
  <div className={styles.notice}><strong>Demo only.</strong> Files are stored in this browser's IndexedDB, not encrypted, backed up or shared. Use fictional or non-sensitive files only. An Approved label is not a formal compliance approval.</div>
  <section className={styles.stats}>{[["Documents",items.length],["Draft",items.filter(x=>x.status==="Draft").length],["In review",items.filter(x=>x.status==="In review").length],["Overdue reviews",summary.overdue||0]].map(([label,count])=><div className={styles.stat} key={label}><div className={styles.statLabel}>{label}</div><div className={styles.statNumber}>{count}</div></div>)}</section>
