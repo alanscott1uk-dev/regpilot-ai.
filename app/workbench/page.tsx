@@ -124,7 +124,7 @@ export default function Workbench(){
     <a className={ui.active} aria-current="page" href="/workbench">◉ &nbsp;Today&apos;s work</a>
     <a href="/register">▤ &nbsp;Action register</a>
     <a href="/documents">▣ &nbsp;Documents &amp; evidence</a>
-    <a href="/evidence">◫ &nbsp;Evidence gaps</a><a href="/controls">◇ &nbsp;Shared control library</a><a href="/assurance">◈ &nbsp;Review centre</a>
+    <a href="/evidence">◫ &nbsp;Evidence gaps</a><a href="/controls">◇ &nbsp;Shared control library</a><a href="/traceability">✧ &nbsp;Traceability explorer</a><a href="/assurance">◈ &nbsp;Review centre</a>
     <a href="/intelligence">✦ &nbsp;Regulatory intelligence</a><a href="/regulatory-sources">◇ &nbsp;Official source catalogue</a>
     <a href="/departments">⚙ &nbsp;Business setup</a>
     <a href="/distribution">▥ &nbsp;Distribution</a>
@@ -178,7 +178,7 @@ export default function Workbench(){
      <button type="button" className={ui.quickStep} onClick={()=>{setShowCreate(true);setMessage("Enter a task title, responsible owner and due date in the form above.");}}><span className={ui.quickNum}>01</span><strong>Record a task</strong><small>{items.length?"Work items recorded":"Name the work and its owner"}</small><span className={ui.quickIcon}>{items.length?"✓":"→"}</span></button>
      <a href="/documents" className={ui.quickStep}><span className={ui.quickNum}>02</span><strong>Add supporting evidence</strong><small>{documents.length?"Document records present":"Record or attach a demo file"}</small><span className={ui.quickIcon}>{documents.length?"✓":"→"}</span></a>
      <a href="/controls" className={ui.quickStep}><span className={ui.quickNum}>03</span><strong>Connect a control</strong><small>{controls.length?"Shared control recorded":"Reuse evidence across tasks"}</small><span className={ui.quickIcon}>{controls.length?"✓":"→"}</span></a>
-     <a href="/assurance" className={ui.quickStep}><span className={ui.quickNum}>04</span><strong>Review the gaps</strong><small>Export a review pack (not a certificate)</small><span className={ui.quickIcon}>→</span></a>
+     <a href="/traceability" className={ui.quickStep}><span className={ui.quickNum}>04</span><strong>Trace the evidence</strong><small>Review links, gaps and sources</small><span className={ui.quickIcon}>→</span></a>
     </div>
    </section>
    <div className={ui.dashboardSectionTitle}><div><span>OVERVIEW</span><h2>Today at a glance</h2></div><a href="/evidence">Explore evidence gaps ↗</a></div>

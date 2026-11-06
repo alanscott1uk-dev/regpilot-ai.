@@ -79,7 +79,7 @@ export default function Intelligence(){
   <nav className={ui.sideNav} aria-label="Navigation">
    <a href="/workbench">◉ &nbsp;Today&apos;s work</a><a href="/register">▤ &nbsp;Action register</a><a href="/documents">▣ &nbsp;Documents</a>
    <a className={ui.active} href="/intelligence" aria-current="page">✧ &nbsp;Regulatory intelligence</a>
-   <a href="/evidence">◫ &nbsp;Evidence gaps</a><a href="/controls">◇ &nbsp;Shared control library</a><a href="/assurance">◈ &nbsp;Review centre</a><a href="/departments">⚙ &nbsp;Business setup</a>
+   <a href="/evidence">◫ &nbsp;Evidence gaps</a><a href="/controls">◇ &nbsp;Shared control library</a><a href="/traceability">✧ &nbsp;Traceability explorer</a><a href="/assurance">◈ &nbsp;Review centre</a><a href="/departments">⚙ &nbsp;Business setup</a>
   </nav>
   <div className={ui.sideFoot}><strong>Limited pilot feed</strong><p>Official MHRA and Home Office publication metadata. Not a full compliance monitoring service.</p></div>
  </aside>

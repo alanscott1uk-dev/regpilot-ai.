@@ -82,7 +82,7 @@ export default function Assurance(){
    <div className={ui.sideCaption}>WORKSPACE</div>
    <nav className={ui.sideNav} aria-label="Navigation">
     <a href="/workbench">◉ &nbsp;Today's work</a><a href="/intelligence">✦ &nbsp;Regulatory intelligence</a>
-    <a href="/controls">◇ &nbsp;Shared control library</a><a href="/documents">▣ &nbsp;Documents &amp; evidence</a><a href="/evidence">◫ &nbsp;Evidence gaps</a>
+    <a href="/controls">◇ &nbsp;Shared control library</a><a href="/traceability">✧ &nbsp;Traceability explorer</a><a href="/documents">▣ &nbsp;Documents &amp; evidence</a><a href="/evidence">◫ &nbsp;Evidence gaps</a>
     <a className={ui.active} href="/assurance" aria-current="page">◈ &nbsp;Review centre</a>
     <a href="/register">▤ &nbsp;Action register</a><a href="/departments">⚙ &nbsp;Business setup</a>
    </nav>
@@ -111,7 +111,7 @@ export default function Assurance(){
     <div className={css.coverage}><span>RECORDED FILE COVERAGE</span><strong>{score===null?"—":score+"%"}</strong><small>{summary.confirmedAttachmentMetadata} of {summary.actions} work items with current approved attachment metadata</small></div>
    </div>
    <div className={css.controlBar}><div><span className={css.eyebrow}>LIVE WORKSPACE SNAPSHOT</span><h2>{state.company}</h2><p>{snapshot.reviewDate} · {summary.actions} actions · {summary.documents} documents · {summary.controls} controls · {summary.sourceDecisions} manual source decisions</p></div>
-    <div className={css.refreshActions}><button className={css.softButton} type="button" onClick={()=>{refresh();setMessage("Local workspace refreshed.");}}>↻ Refresh workspace</button><button className={css.softButton} type="button" disabled={loading} onClick={()=>void fetchSources()}>{loading?"Checking…":"↻ Check official metadata"}</button></div>
+    <div className={css.refreshActions}><a className={css.softButton} style={{textDecoration:"none"}} href="/traceability">Explore traceability ↗</a><button className={css.softButton} type="button" onClick={()=>{refresh();setMessage("Local workspace refreshed.");}}>↻ Refresh workspace</button><button className={css.softButton} type="button" disabled={loading} onClick={()=>void fetchSources()}>{loading?"Checking…":"↻ Check official metadata"}</button></div>
    </div>
    <section className={css.reviewPanel} aria-label="Review workspace">
     <div className={css.tabStrip} role="group" aria-label="Review views">{views.map(t=><button type="button" key={t.id} className={view===t.id?css.tabActive:css.tab} onClick={()=>setView(t.id)}>{t.label}</button>)}</div>

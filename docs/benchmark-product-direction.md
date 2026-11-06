@@ -47,3 +47,33 @@ The command-centre ring means **percent of work items with document metadata mar
 
 ## Release gate
 No real customer, supplier, employee or patient data until secure backend and validation gates above are completed. The staging Supabase project was discovered but returned connection timeouts; no database or security configuration was changed in this iteration.
+
+
+## Revised competitive benchmark — testable outcomes (November 2026)
+
+The reference products are Vanta (automated controls and shared evidence), Sprinto (guided remediation and evidence automation), CUBE (source-to-obligation lineage), and ISMS.online (first-time user support).
+
+**Do not describe RegPilot as better than these products without independent side-by-side testing.**
+
+| Dimension | Objective test | Target | Current RegPilot |
+| --- | --- | --- | --- |
+| First use | New nontechnical operator creates task, links document, maps control, reviews gaps | <=10 minutes without instructions | Guided demo only; no independent test |
+| Traceability | Open task -> reference -> control -> evidence -> issue | 100% of recorded links explorable | New traceability explorer, local metadata |
+| Reuse | Connect one relevant file to 2+ actions with shared control | One file referenced, not duplicated | Implemented for operating controls in demo |
+| Data integrity | Remove linked item; inspect alerts | 100% broken links surfaced in tests | New reference checks, unit tested |
+| Source provenance | Source version changes or fetch fails | Version change requires review; outage never called a regulatory change | Limited GOV.UK metadata comparison |
+| Human review | Convert decision to task and generate review pack | No silent approval, audit attribution | Manual local decision, no authenticated reviewer |
+| AI accuracy | Compare verified obligations against document with cited passages | Precision/recall measured by expert-labelled sample | Not implemented |
+| Security | Separate two organisations | No cross-tenant reads/writes | Not implemented; production blocker |
+| Evidence authenticity | Tampered document or stale upload | Hash verification + malware checking | Not implemented; local attachment flag only |
+| Notification | Important confirmed publication changes | Time-based alerts with delivery logs | Not implemented |
+
+### Current development batch
+- Source-to-action-to-control-to-evidence traceability explorer.
+- Records unresolved issues in plain English and links to the relevant editing screen.
+- Catches duplicated identifiers, deleted linked records, overdue action dates and recorded source checks older than 90 days.
+- Exports reviewable CSV/JSON **without asserting audit certification**.
+- No new production deploy until the wider, secure multi-tenant batch is finished and validated.
+
+### Cost constraint
+Vercel preview deployments are disabled for the linked project during development to conserve the plan's limits. Development is verified using GitHub Actions; production deployment remains a separately controlled milestone. Check these project settings before a later release.

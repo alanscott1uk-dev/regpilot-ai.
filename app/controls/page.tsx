@@ -47,7 +47,7 @@ export default function Controls(){
    <nav className={ui.sideNav} aria-label="Navigation">
     <a href="/workbench">◉ &nbsp;Today's work</a><a href="/intelligence">✦ &nbsp;Regulatory intelligence</a>
     <a className={ui.active} href="/controls" aria-current="page">◇ &nbsp;Shared control library</a>
-    <a href="/assurance">◈ &nbsp;Review centre</a><a href="/documents">▣ &nbsp;Documents</a><a href="/register">▤ &nbsp;Action register</a>
+    <a href="/traceability">✧ &nbsp;Traceability explorer</a><a href="/assurance">◈ &nbsp;Review centre</a><a href="/documents">▣ &nbsp;Documents</a><a href="/register">▤ &nbsp;Action register</a>
     <a href="/departments">⚙ &nbsp;Business setup</a>
    </nav>
    <div className={ui.sideFoot}><strong>Control mapping pilot</strong><p>Links multiple work items and documents. This is not continuous monitoring or a control effectiveness test.</p></div>
