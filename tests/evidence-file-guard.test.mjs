@@ -34,4 +34,4 @@ async function clamd(reply){
 test("valid ClamAV CLEAN verdict permits upload",async()=>assert.equal((await clamd("stream: OK")).status,"CLEAN"));
 test("ClamAV virus verdict never permits upload",async()=>await assert.rejects(()=>clamd("stream: Eicar-Test-Signature FOUND"),EvidenceError));
 test("ClamAV ERROR fails closed",async()=>await assert.rejects(()=>clamd("stream: ERROR"),EvidenceError));
-test("scanner must be configured",async()=>await assert.rejects(()=>scanWithClamd(pdf,{host:""}),EvidenceError));
+test("scanner must be configured",()=>assert.throws(()=>scanWithClamd(pdf,{host:""}),EvidenceError));
