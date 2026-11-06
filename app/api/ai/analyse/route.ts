@@ -25,7 +25,7 @@ export async function POST(request:Request){
  if(!aiConfigured())return json({error:"Private AI pilot not configured"},503);
  if(!process.env.AI_GATEWAY_API_KEY&&!process.env.VERCEL_OIDC_TOKEN)return json({error:"AI Gateway authentication not configured"},503);
  const contentType=request.headers.get("content-type")||"";
- if(!contentType.toLowerCase().startsWith("application/json"))return json({error:"Send application/json"},415);
+ if(contentType.toLowerCase().split(";")[0].trim()!=="application/json")return json({error:"Send application/json"},415);
  const size=Number(request.headers.get("content-length")||"0");
  if(size>3_000_000)return json({error:"Request exceeds 3 MB"},413);
  let requestId:string|null=null;

@@ -44,3 +44,18 @@ test("saving a review is opt-in only and cannot be spoofed as a string",()=>{
  assert.equal(validateAiRequest({...example,retainDraft:true}).retainDraft,true);
  assert.throws(()=>validateAiRequest({...example,retainDraft:"true"}),InputError);
 });
+
+test("model-produced action and amendment source quotations are independently checked",()=>{
+ const ai={summary:"Provisional",findings:[],
+  suggestedActions:[{title:"Review",sourceQuote:"This requirement is mandatory."}],
+  suggestedAmendments:[{section:"Training",supportingSourceQuote:"A fabricated government legal quote"}]};
+ const result=validateAndAnnotateAiOutput(ai,{
+  sourceText:"This requirement is mandatory.",documentText:"",sourceVerified:true,hadPdf:false
+ });
+ assert.equal(result.suggestedActions[0].sourceQuoteMatched,true);
+ assert.equal(result.suggestedAmendments[0].supportingSourceQuoteMatched,false);
+ const offline=validateAndAnnotateAiOutput(ai,{
+  sourceText:"This requirement is mandatory.",documentText:"",sourceVerified:false,hadPdf:false
+ });
+ assert.equal(offline.suggestedActions[0].sourceQuoteMatched,false);
+});

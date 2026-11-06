@@ -11,8 +11,8 @@ type Mode="document"|"change"|"assistant";
 type Org={id:string;name:string;role:string};
 type SavedReview={id:string;organizationId:string;requestId:string;createdById:string;createdAt:string;mode:string;modelId:string;sourceUrl:string|null;status:"PENDING_REVIEW"|"REVIEWED"|"NEEDS_CHANGES";version:number;summary:string;reviewerId:string|null;reviewerNotes:string;reviewedAt:string|null;ai?:Result;sha256?:string};
 type Finding={type:string;priority:string;title:string;rationale:string;recommendation:string;sourceQuote:string;documentQuote:string;sourceQuoteMatched:boolean;documentQuoteMatched:boolean;citationStatus:string};
-type Suggestion={title:string;reason:string;ownerSuggestion:string;sourceQuote:string};
-type Amendment={section:string;proposedText:string;rationale:string;supportingSourceQuote:string};
+type Suggestion={title:string;reason:string;ownerSuggestion:string;sourceQuote:string;sourceQuoteMatched?:boolean};
+type Amendment={section:string;proposedText:string;rationale:string;supportingSourceQuote:string;supportingSourceQuoteMatched?:boolean};
 type Result={summary:string;confidence:string;findings:Finding[];suggestedActions:Suggestion[];suggestedAmendments:Amendment[];questions:string[];limitations:string[];scope:string;generatedAt:string;source:{id:string;title:string;url:string;updatedAt:string|null;revisionAt:string|null}|null;model:string;usage?:{inputTokens:number|null;outputTokens:number|null}};
 const ACTIONS_KEY="regpilot-demo-obligations-v1";
 function dueIn(days:number){const d=new Date();d.setDate(d.getDate()+days);return [d.getFullYear(),String(d.getMonth()+1).padStart(2,"0"),String(d.getDate()).padStart(2,"0")].join("-");}
@@ -252,13 +252,13 @@ export default function AiStudio(){
       </div>
       {result.suggestedAmendments?.length>0&&<div className={ui.amendments}><h3>Suggested policy wording — draft only</h3><p>No amendment is applied automatically. A qualified reviewer must check its wording and legal applicability.</p>
        {result.suggestedAmendments.map((a,i)=><article key={i}><span>{a.section}</span><p>{a.proposedText}</p><small>{a.rationale}</small>
-        {a.supportingSourceQuote&&<small>Supporting source excerpt (review independently): “{a.supportingSourceQuote}”</small>}
+        {a.supportingSourceQuote&&<small>{a.supportingSourceQuoteMatched?"Text matched in the retrieved official excerpt":"Unverified source quotation"}: “{a.supportingSourceQuote}”</small>}
         <button type="button" onClick={()=>{void navigator.clipboard.writeText(a.proposedText).then(()=>setMessage("Draft wording copied for independent review.")).catch(()=>setMessage("Unable to copy draft wording."));}}>Copy proposed wording</button>
        </article>)}
       </div>}
       <div className={ui.actions}><h3>Suggested corrective work</h3><p>Only a human can add a draft task to the browser-local demo register.</p>
        {result.suggestedActions.length>0&&<label className={ui.fieldLabel}>Responsible owner for accepted tasks<input maxLength={80} value={owner} onChange={e=>setOwner(e.target.value)}/></label>}
-       {result.suggestedActions.map((s,i)=><div key={i} className={ui.suggestion}><div><strong>{s.title}</strong><p>{s.reason}</p></div><button type="button" disabled={accepted.includes(i)} onClick={()=>accept(s,i)}>{accepted.includes(i)?"Added to local demo ✓":"Accept draft action"}</button></div>)}
+       {result.suggestedActions.map((s,i)=><div key={i} className={ui.suggestion}><div><strong>{s.title}</strong><p>{s.reason}</p>{s.sourceQuote&&<small>{s.sourceQuoteMatched?"Source quotation matched retrieved text":"Source quotation not verified"}: “{s.sourceQuote}”</small>}</div><button type="button" disabled={accepted.includes(i)} onClick={()=>accept(s,i)}>{accepted.includes(i)?"Added to local demo ✓":"Accept draft action"}</button></div>)}
       </div>
       {(result.questions.length>0||result.limitations.length>0)&&<div className={ui.questions}><h3>Questions and limitations</h3>{result.questions.map((q,i)=><p key={"q"+i}>• {q}</p>)}{result.limitations.map((q,i)=><p key={"l"+i}>• {q}</p>)}</div>}
       <p className={ui.request}>Request ID: {requestId} · AI usage: {result.usage?.inputTokens??"?"} input / {result.usage?.outputTokens??"?"} output tokens</p>

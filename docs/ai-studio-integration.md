@@ -42,3 +42,6 @@ A new optional `retainDraft` selection saves only the generated AI result (inclu
 Saved drafts start `PENDING_REVIEW`. A different authenticated `OWNER` or `ADMIN` in the same organisation can mark a draft `REVIEWED` or `NEEDS_CHANGES` with a written rationale. These labels describe a human review of the AI draft, **not regulatory certification or formal evidence approval**. Writes are version-checked and audit events are created transactionally. Hash checking helps detect accidental changes to the stored result but is not cryptographic non-repudiation because an administrator could alter the database.
 
 The staging PostgreSQL migration and cross-tenant end-to-end tests remain an activation prerequisite; no customer data should be submitted or stored. Retention, deletion/export controls, audit append-only enforcement and backups remain to be implemented before production use.
+
+## Citation checks
+Findings, suggested actions and proposed amendments now explicitly flag whether a quoted source phrase appears in the fetched, allowlisted official publication text. This verifies only an exact text match (after whitespace normalisation), not legal applicability or the sufficiency of a quotation. When an official publication is unavailable, source quotations are labelled unverified.
