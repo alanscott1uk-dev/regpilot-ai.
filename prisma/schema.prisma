@@ -53,7 +53,8 @@ model User {
   memberships Membership[]
   auditEvents AuditEvent[]
   aiReviewsCreated AiReview[] @relation("AiReviewCreator")
-  regulatoryReviews RegulatorySnapshot[]
+  regulatoryReviews RegulatorySnapshot[] @relation("RegulatorySnapshotReviewer")
+  regulatoryCaptures RegulatorySnapshot[] @relation("RegulatorySnapshotCapturer")
   aiReviewsChecked AiReview[] @relation("AiReviewReviewer")
   aiDailyUsage AiDailyUsage[]
   evidenceUploaded Evidence[] @relation("EvidenceUploader")
@@ -202,11 +203,13 @@ model RegulatorySnapshot {
   reviewStatus     SourceReviewState @default(NEEDS_REVIEW)
   reviewNotes      String @default("")
   reviewerId       String? @db.Uuid
+  capturedById     String @db.Uuid
   reviewedAt       DateTime?
   version          Int @default(1)
   firstCapturedAt  DateTime @default(now())
   lastCheckedAt    DateTime @default(now())
   organization     Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
-  reviewer         User? @relation(fields:[reviewerId],references:[id],onDelete:Restrict)
+  reviewer         User? @relation("RegulatorySnapshotReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+  capturedBy       User @relation("RegulatorySnapshotCapturer",fields:[capturedById],references:[id],onDelete:Restrict)
   @@index([organizationId,sourceId,firstCapturedAt])
 }
