@@ -5,6 +5,7 @@ import {validDocumentMetadata} from "../../lib/document-categories.mjs";
 import {parseControls,CONTROL_KEY} from "../../lib/controls.mjs";
 import {parseChangeReviews,CHANGE_REVIEW_KEY} from "../../lib/change-triage.mjs";
 import {buildTraceabilityGraph,exportTraceabilityCsv} from "../../lib/traceability-graph.mjs";
+import {TRACEABILITY_EXAMPLE} from "../../lib/traceability-fixture.mjs";
 import type {TraceGraph,TraceRow} from "../../lib/traceability-graph.mjs";
 import shell from "../workbench/workbench.module.css";
 import ui from "./traceability.module.css";
@@ -22,6 +23,7 @@ export default function Traceability(){
  const [filter,setFilter]=useState("all");
  const [search,setSearch]=useState("");
  const [showIntegrity,setShowIntegrity]=useState(false);
+ const [exampleMode,setExampleMode]=useState(false);
  const load=useCallback(()=>{
   function read(key:string):unknown{try{return JSON.parse(localStorage.getItem(key)||"[]")}catch{return []}}
   const actions=read(ACTIONS),documents=read(DOCS);
@@ -46,7 +48,7 @@ export default function Traceability(){
   finally{setLoading(false)}
  },[]);
  useEffect(()=>{void checkSources()},[checkSources]);
- const graph:TraceGraph=useMemo(()=>buildTraceabilityGraph(data,todayLocal()),[data]);
+ const graph:TraceGraph=useMemo(()=>buildTraceabilityGraph(exampleMode?TRACEABILITY_EXAMPLE:data,todayLocal()),[data,exampleMode]);
  useEffect(()=>{if(!selected&&graph.rows.length)setSelected(graph.rows[0].id);if(selected&&!graph.rows.some(r=>r.id===selected))setSelected(graph.rows[0]?.id||"")},[selected,graph]);
  const visible=useMemo(()=>graph.rows.filter(r=>(filter==="all"||r.attention===filter)&&[r.title,r.owner,r.regulator].join(" ").toLowerCase().includes(search.toLowerCase())),[graph,filter,search]);
  const detail=graph.rows.find(x=>x.id===selected);
@@ -75,6 +77,7 @@ export default function Traceability(){
     <div className={ui.heroTags}><span>Traceable references</span><span>Reusable controls</span><span>Explainable gap checks</span></div></div>
     <div className={ui.heroSide}><span>RECORD TRANSPARENCY</span><strong>{graph.summary.critical+graph.summary.review}</strong><p>work items with urgent or review-level metadata findings</p><button type="button" onClick={()=>{setFilter("review");setSearch("");}}>Explore review items ↗</button></div>
    </header>
+   <div className={ui.exampleBar}><div><strong>{exampleMode?"Fictional walkthrough is active":"Want to see how traceability works?"}</strong><p>{exampleMode?"Showing three sample tasks and linked controls. Your saved records are unchanged.":"Explore a worked example without uploading documents or altering your records."}</p></div><button type="button" onClick={()=>{setExampleMode(v=>!v);setSelected("");setFilter("all");setSearch("");}}>{exampleMode?"Show my local records":"Explore fictional example"}</button></div>
    <div className={shell.warning}><strong>Metadata visibility, not a compliance verdict.</strong> A source link isn't a verified obligation. A document's Approved label and attachment flag do not prove its contents are suitable. No automated legal interpretation or secure customer storage is connected.</div>
    {error&&<div className={ui.warning} role="status">{error}<button onClick={()=>void checkSources()} disabled={loading}>Retry</button></div>}
    <div className={ui.stats}>{labels.map(([label,num])=><div key={label}><span>{label}</span><strong>{num}</strong></div>)}</div>
