@@ -39,14 +39,28 @@ export async function createObligation(ctx: AuthorizedContext, input: NewObligat
   });
 }
 
-export async function changeObligationStatus(ctx: AuthorizedContext, id: string, status: ObligationStatus) {
+export async function changeObligationStatus(ctx: AuthorizedContext, id: string, status: ObligationStatus, opts?:{completionRationale?:string}) {
   if (!can(ctx.role, "obligation:write")) throw new Error("Forbidden");
   if (!["OPEN", "IN_PROGRESS", "COMPLETE"].includes(status)) throw new Error("Invalid status");
   return db.$transaction(async tx => {
     const existing = await tx.obligation.findFirst({ where: { id, organizationId: ctx.organizationId } });
     if (!existing) return null;
-    const updated = await tx.obligation.update({ where: { id: existing.id }, data: { status } });
-    await tx.auditEvent.create({ data: { organizationId: ctx.organizationId, actorId: ctx.userId, action: "obligation.status_changed", entityType: "Obligation", entityId: id, details: { from: existing.status, to: status } } });
+    const approvedEvidence = status==="COMPLETE" ? await tx.evidence.count({
+      where:{organizationId:ctx.organizationId,obligationId:id,scanStatus:"CLEAN",reviewStatus:"APPROVED"}
+    }):0;
+    const rationale=opts?.completionRationale?.trim()||"";
+    if(rationale.length>500)throw new Error("Completion rationale too long");
+    const exception=status==="COMPLETE"&&approvedEvidence===0;
+    if(exception&&rationale.length<20)throw new Error("Completion requires independently reviewed evidence or a documented exception rationale of at least 20 characters");
+    const updated = await tx.obligation.update({
+      where:{id:existing.id},data:{
+        status,
+        completionException:exception,
+        completionRationale:exception?rationale:"",
+        completedAt:status==="COMPLETE"?new Date():null
+      }
+    });
+    await tx.auditEvent.create({ data: { organizationId: ctx.organizationId, actorId: ctx.userId, action: "obligation.status_changed", entityType: "Obligation", entityId: id, details: { from: existing.status, to: status, completionException:exception,approvedEvidence } } });
     return updated;
   });
 }

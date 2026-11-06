@@ -46,6 +46,12 @@ test("isolated PostgreSQL checks: tenant membership, distinct human review, inte
   assert.equal(await changeObligationStatus(outsiderCtx,task.id,"IN_PROGRESS"),null);
   const changedTask=await changeObligationStatus(creatorCtx,task.id,"IN_PROGRESS");
   assert.equal(changedTask?.status,"IN_PROGRESS");
+  await assert.rejects(()=>changeObligationStatus(creatorCtx,task.id,"COMPLETE"),/Completion requires independently reviewed evidence/);
+  const withException=await changeObligationStatus(creatorCtx,task.id,"COMPLETE",{
+   completionRationale:"A reviewer must confirm why the supporting evidence was not available."
+  });
+  assert.equal(withException?.completionException,true);
+  await changeObligationStatus(creatorCtx,task.id,"IN_PROGRESS");
   const review=await saveGeneratedReview(creatorCtx,{requestId:randomUUID(),mode:"document",ai:draft});
   const inboxA=await listAiReviewRecords(creatorCtx),inboxB=await listAiReviewRecords(outsiderCtx);
   assert.equal(inboxA.length,1);assert.equal(inboxA[0].integrityOk,true);assert.equal(inboxB.length,0);

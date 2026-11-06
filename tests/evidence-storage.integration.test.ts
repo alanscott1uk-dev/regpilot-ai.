@@ -4,6 +4,7 @@ import {randomUUID} from "node:crypto";
 import {db} from "../lib/server/db";
 import {createEvidence,listEvidence,downloadEvidence,reviewEvidence} from "../lib/server/evidence-service";
 import {EvidenceError,MAX_ORG_EVIDENCE_FILES} from "../lib/evidence/file-guard.mjs";
+import {changeObligationStatus} from "../lib/server/obligation-service";
 import type {EvidenceObjectStore} from "../lib/server/evidence-storage";
 
 const file=Buffer.from("%PDF-1.7\n1 0 obj\n<</Type /Catalog>>\nendobj\n%%EOF");
@@ -54,6 +55,8 @@ test("private scanned evidence: metadata, file bytes, permissions, independent r
   const approved=await reviewEvidence(adminCtx,created.id,{decision:"APPROVED",
    notes:"Independently checked the example PDF and recorded the decision.",version:1},store);
   assert.equal(approved.reviewStatus,"APPROVED");assert.equal(approved.reviewVersion,2);
+  const closed=await changeObligationStatus(editorCtx,task.id,"COMPLETE");
+  assert.equal(closed?.completionException,false);
   await assert.rejects(()=>reviewEvidence(adminCtx,created.id,{decision:"REJECTED",notes:"Attempt to replay a stale evidence review record.",version:1},store),(e:any)=>e.status===409);
   const [key]=objects.keys();objects.set(key,Buffer.from("%PDF-1.7\nbadly tampered\n%%EOF"));
   await assert.rejects(()=>downloadEvidence(adminCtx,created.id,store),(e:any)=>e.status===409);

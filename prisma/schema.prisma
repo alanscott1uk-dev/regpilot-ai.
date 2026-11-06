@@ -93,6 +93,9 @@ model Obligation {
   ownerName      String
   dueDate        DateTime         @db.Date
   status         ObligationStatus @default(OPEN)
+  completionException Boolean @default(false)
+  completionRationale String @default("")
+  completedAt DateTime?
   notes          String           @default("")
   sourceUrl      String?
   sourceCheckedAt DateTime?

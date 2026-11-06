@@ -4,7 +4,7 @@ import {browserAuth} from "../../lib/client/supabase-auth";
 import shell from "../workbench/workbench.module.css";
 import ui from "./team.module.css";
 type Org={id:string;name:string;role:"OWNER"|"ADMIN"|"EDITOR"|"VIEWER"};
-type Task={id:string;title:string;ownerName:string;category:string;dueDate:string;status:"OPEN"|"IN_PROGRESS"|"COMPLETE";notes:string;sourceUrl:string|null;sourceCheckedAt:string|null;createdAt:string};
+type Task={id:string;title:string;ownerName:string;category:string;dueDate:string;status:"OPEN"|"IN_PROGRESS"|"COMPLETE";notes:string;completionException:boolean;completionRationale:string;sourceUrl:string|null;sourceCheckedAt:string|null;createdAt:string};
 const fmt=(s:string)=>s?new Date(s).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}):"—";
 const today=()=>{const d=new Date();return [d.getFullYear(),String(d.getMonth()+1).padStart(2,"0"),String(d.getDate()).padStart(2,"0")].join("-");};
 export default function Team(){
@@ -13,6 +13,7 @@ export default function Team(){
  const [company,setCompany]=useState("Demo pilot business"),[email,setEmail]=useState("");
  const [items,setItems]=useState<Task[]>([]),[busy,setBusy]=useState(false),[message,setMessage]=useState("");
  const [search,setSearch]=useState(""),[filter,setFilter]=useState("all"),[showCreate,setShowCreate]=useState(false);
+ const [completionNotes,setCompletionNotes]=useState<Record<string,string>>({});
  const [draft,setDraft]=useState({title:"",ownerName:"",category:"Internal",dueDate:today(),notes:""});
  async function sessionToken(){return (await browserAuth().auth.getSession()).data.session?.access_token||""}
  const loadSession=useCallback(async()=>{
@@ -76,9 +77,9 @@ export default function Team(){
  async function changeStatus(task:Task,status:Task["status"]){
   setBusy(true);try{
    const token=await sessionToken();if(!token)throw new Error("Sign in first");
-   const res=await fetch("/api/workspace/obligations/"+encodeURIComponent(task.id),{method:"PATCH",headers:{"Content-Type":"application/json",authorization:"Bearer "+token},body:JSON.stringify({organizationId:orgId,status})});
+   const res=await fetch("/api/workspace/obligations/"+encodeURIComponent(task.id),{method:"PATCH",headers:{"Content-Type":"application/json",authorization:"Bearer "+token},body:JSON.stringify({organizationId:orgId,status,completionRationale:completionNotes[task.id]||""})});
    const data=await res.json();if(!res.ok)throw new Error(data.error||"Status update failed");
-   await loadTasks(orgId);setMessage("Work status updated with an audit event. It is not a certification or legal assessment.");
+   await loadTasks(orgId);setCompletionNotes(n=>({...n,[task.id]:""}));setMessage("Work status updated with an audit event. Completion without approved evidence is documented as an exception, not certification.");
   }catch(e){setMessage(e instanceof Error?e.message:"Could not update task")}finally{setBusy(false)}
  }
  async function signOut(){await browserAuth().auth.signOut();setUser(null);setOrgId("");setOrganisations([]);setItems([]);}
@@ -116,7 +117,7 @@ export default function Team(){
     </form></section>}
     <section className={ui.card}><div className={ui.heading}><div><span className={ui.overline}>SHARED WORK QUEUE</span><h2>{items.length} recorded tasks</h2><p>Changes are associated with authenticated users and organisation membership.</p></div><span className={ui.count}>{items.filter(x=>x.status!=="COMPLETE").length} open</span></div>
      <div className={ui.filters}><input aria-label="Search tasks" placeholder="Search work or owners…" value={search} onChange={e=>setSearch(e.target.value)}/><select aria-label="Filter work status" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All statuses</option><option value="OPEN">Open</option><option value="IN_PROGRESS">In progress</option><option value="COMPLETE">Recorded complete</option></select></div>
-     <div className={ui.tasks}>{visible.length===0?<p className={ui.empty}>No matching tasks. {ready?"Record a task to begin.":"Loading…"}</p>:visible.map(task=><article className={ui.task} key={task.id}><div><span className={ui.overline}>{task.category} · Due {fmt(task.dueDate)}</span><h3>{task.title}</h3><p>{task.ownerName} · {task.notes||"No additional notes"}</p>{task.sourceUrl&&<a href={task.sourceUrl} target="_blank" rel="noopener noreferrer">View recorded source ↗</a>} <a href={"/team/evidence?taskId="+encodeURIComponent(task.id)}>Attach or review evidence ↗</a></div><div><label>Work status<select disabled={!canWrite||busy} value={task.status} onChange={e=>void changeStatus(task,e.target.value as Task["status"])}><option value="OPEN">Open</option><option value="IN_PROGRESS">In progress</option><option value="COMPLETE">Recorded complete</option></select></label></div></article>)}</div>
+     <div className={ui.tasks}>{visible.length===0?<p className={ui.empty}>No matching tasks. {ready?"Record a task to begin.":"Loading…"}</p>:visible.map(task=><article className={ui.task} key={task.id}><div><span className={ui.overline}>{task.category} · Due {fmt(task.dueDate)}</span><h3>{task.title}</h3><p>{task.ownerName} · {task.notes||"No additional notes"}</p>{task.completionException&&<p className={ui.completionFlag}>Completion exception recorded: {task.completionRationale}</p>}{task.sourceUrl&&<a href={task.sourceUrl} target="_blank" rel="noopener noreferrer">View recorded source ↗</a>} <a href={"/team/evidence?taskId="+encodeURIComponent(task.id)}>Attach or review evidence ↗</a></div><div><label>Exception rationale (if no reviewed evidence)<textarea rows={2} maxLength={500} value={completionNotes[task.id]||""} onChange={e=>setCompletionNotes(n=>({...n,[task.id]:e.target.value}))} placeholder="Needed only when closing without approved evidence"/></label><label>Work status<select disabled={!canWrite||busy} value={task.status} onChange={e=>void changeStatus(task,e.target.value as Task["status"])}><option value="OPEN">Open</option><option value="IN_PROGRESS">In progress</option><option value="COMPLETE">Recorded complete</option></select></label></div></article>)}</div>
      <p className={ui.foot}>Only the most recent 100 tasks are returned. Completion indicates work status, not verified compliance or evidence approval.</p>
     </section>
    </>}

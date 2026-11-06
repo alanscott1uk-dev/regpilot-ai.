@@ -15,12 +15,13 @@ export async function PATCH(request:Request,{params}:Context){
   if(!valid(input.organizationId))return reply({error:"Invalid organisation"},400);
   if(!["OPEN","IN_PROGRESS","COMPLETE"].includes(input.status))return reply({error:"Invalid status"},400);
   const ctx=await authorisedWorkspaceContext(request,input.organizationId,["OWNER","ADMIN","EDITOR"]);
-  const updated=await changeObligationStatus(ctx,params.id,input.status);
+  const updated=await changeObligationStatus(ctx,params.id,input.status,{completionRationale:typeof input.completionRationale==="string"?input.completionRationale:""});
   if(!updated)return reply({error:"Task not found"},404);
   return reply({item:updated});
  }catch(error){
   if(error instanceof AccessError)return reply({error:error.message},error.status);
   if(error instanceof SyntaxError)return reply({error:"Invalid JSON"},400);
+  if(error instanceof Error&&/Completion requires|rationale too long/.test(error.message))return reply({error:error.message},409);
   return reply({error:"Cannot change task status"},503);
  }
 }
