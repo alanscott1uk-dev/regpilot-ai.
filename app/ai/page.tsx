@@ -4,7 +4,7 @@ import {browserAuth} from "../../lib/client/supabase-auth";
 import {readDemoCertificateFile} from "../../lib/demo-certificate-files.mjs";
 import {validDocumentMetadata} from "../../lib/document-categories.mjs";
 import {REGULATORY_SOURCES} from "../../lib/regulatory-sources.mjs";
-import {validateObligation} from "../../lib/obligations.mjs";
+
 import shell from "../workbench/workbench.module.css";
 import ui from "./ai.module.css";
 type Mode="document"|"change"|"assistant";
@@ -14,7 +14,7 @@ type Finding={type:string;priority:string;title:string;rationale:string;recommen
 type Suggestion={title:string;reason:string;ownerSuggestion:string;sourceQuote:string;sourceQuoteMatched?:boolean};
 type Amendment={section:string;proposedText:string;rationale:string;supportingSourceQuote:string;supportingSourceQuoteMatched?:boolean};
 type Result={summary:string;confidence:string;findings:Finding[];suggestedActions:Suggestion[];suggestedAmendments:Amendment[];questions:string[];limitations:string[];scope:string;generatedAt:string;source:{id:string;title:string;url:string;updatedAt:string|null;revisionAt:string|null}|null;model:string;usage?:{inputTokens:number|null;outputTokens:number|null}};
-const ACTIONS_KEY="regpilot-demo-obligations-v1";
+
 function dueIn(days:number){const d=new Date();d.setDate(d.getDate()+days);return [d.getFullYear(),String(d.getMonth()+1).padStart(2,"0"),String(d.getDate()).padStart(2,"0")].join("-");}
 function toBase64(bytes:Uint8Array){let binary="";for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(binary);}
 export default function AiStudio(){
@@ -65,7 +65,7 @@ export default function AiStudio(){
   let active=true;
   void fetch("/api/ai/analyse",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(active)setFeature(j.enabled===true)}).catch(()=>{if(active)setFeature(false)});
   const {data}=browserAuthSafe();
-  if(data?.auth){const {data:listener}=data.auth.onAuthStateChange(()=>{void loadSession()});void loadSession();return()=>{active=false;listener.subscription.unsubscribe();}}
+  if(data?.auth){const {data:listener}=data.auth.onAuthStateChange(()=>{setTimeout(()=>void loadSession(),0)});void loadSession();return()=>{active=false;listener.subscription.unsubscribe();}}
   setAuthReady(true);return()=>{active=false};
  },[loadSession]);
  function browserAuthSafe(){try{return {data:browserAuth()}}catch{return {data:null}}}
@@ -158,23 +158,30 @@ export default function AiStudio(){
   const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}));
   const a=document.createElement("a");a.href=url;a.download="regpilot-ai-review-draft.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
  }
- function accept(s:Suggestion,index:number){
+ async function accept(s:Suggestion,index:number){
   if(accepted.includes(index))return;
   const responsible=owner.trim();
-  if(!responsible){setMessage("Enter an action owner before accepting the draft");return;}
-  const raw=localStorage.getItem(ACTIONS_KEY);
-  let parsed:unknown;
-  try{parsed=JSON.parse(raw||"[]")}catch{parsed=[]}
-  const items=Array.isArray(parsed)?parsed.filter(validateObligation):[];
-  if(items.length>=1000){setMessage("The local action register is full");return;}
-  const action={id:crypto.randomUUID(),title:s.title.slice(0,160),regulator:result?.source?"Official source review":"AI draft suggestion",owner:responsible.slice(0,80),due:dueIn(7),status:"Open",notes:("AI-generated suggestion, approved for DEMO action by a human: "+s.reason).slice(0,500),
-   sourceUrl:result?.source?.url||"",sourceCheckedAt:result?.source?dueIn(0):""};
-  if(!validateObligation(action)){setMessage("Draft could not pass action validation");return;}
+  if(!responsible){setMessage("Enter an owner before accepting a task");return;}
+  if(!orgId){setMessage("Choose an authorised organisation first");return;}
   try{
-   localStorage.setItem(ACTIONS_KEY,JSON.stringify([action,...items]));
-   setAccepted(prev=>[...prev,index]);setMessage("Draft action added to this browser's demo register, not to a secure company database.");
-  }catch{setMessage("Unable to save demo task in browser storage");}
+   const token=(await browserAuth().auth.getSession()).data.session?.access_token;
+   if(!token)throw new Error("Sign in first");
+   const response=await fetch("/api/workspace/obligations",{
+    method:"POST",headers:{"Content-Type":"application/json",authorization:"Bearer "+token},
+    body:JSON.stringify({
+     organizationId:orgId,title:s.title.slice(0,160),category:result?.source?"Official source impact review":"AI-assisted work",
+     ownerName:responsible.slice(0,80),dueDate:dueIn(7),
+     notes:("AI-generated draft suggestion accepted by an authorised user. Human review is still required: "+s.reason).slice(0,500),
+     sourceUrl:result?.source?.url||""
+    })
+   });
+   const body=await response.json();
+   if(!response.ok)throw new Error(body.error||"Could not create team task");
+   setAccepted(prev=>[...prev,index]);
+   setMessage("Draft task saved to the authorised team queue. No regulatory approval is implied.");
+  }catch(e){setMessage(e instanceof Error?e.message:"Could not create team task. No local fallback was used.");}
  }
+
  useEffect(()=>{
   const params=new URLSearchParams(window.location.search);
   const requestedSource=params.get("sourceId");
@@ -204,7 +211,7 @@ export default function AiStudio(){
     <a href="/workbench">◉ &nbsp;Today's work</a>
     <a className={shell.active} aria-current="page" href="/ai">✦ &nbsp;AI review studio</a>
     <a href="/intelligence">◇ &nbsp;Regulatory intelligence</a>
-    <a href="/traceability">◈ &nbsp;Traceability explorer</a>
+    <a href="/traceability">◈ &nbsp;Traceability explorer</a><a href="/team">▣ &nbsp;Secure team tasks</a>
     <a href="/documents">▣ &nbsp;Documents</a>
     <a href="/assurance">▤ &nbsp;Review centre</a>
    </nav>
@@ -256,9 +263,9 @@ export default function AiStudio(){
         <button type="button" onClick={()=>{void navigator.clipboard.writeText(a.proposedText).then(()=>setMessage("Draft wording copied for independent review.")).catch(()=>setMessage("Unable to copy draft wording."));}}>Copy proposed wording</button>
        </article>)}
       </div>}
-      <div className={ui.actions}><h3>Suggested corrective work</h3><p>Only a human can add a draft task to the browser-local demo register.</p>
+      <div className={ui.actions}><h3>Suggested corrective work</h3><p>Only an authorised user can add a suggested task to the organisation database. Nothing is added automatically.</p>
        {result.suggestedActions.length>0&&<label className={ui.fieldLabel}>Responsible owner for accepted tasks<input maxLength={80} value={owner} onChange={e=>setOwner(e.target.value)}/></label>}
-       {result.suggestedActions.map((s,i)=><div key={i} className={ui.suggestion}><div><strong>{s.title}</strong><p>{s.reason}</p>{s.sourceQuote&&<small>{s.sourceQuoteMatched?"Source quotation matched retrieved text":"Source quotation not verified"}: “{s.sourceQuote}”</small>}</div><button type="button" disabled={accepted.includes(i)} onClick={()=>accept(s,i)}>{accepted.includes(i)?"Added to local demo ✓":"Accept draft action"}</button></div>)}
+       {result.suggestedActions.map((s,i)=><div key={i} className={ui.suggestion}><div><strong>{s.title}</strong><p>{s.reason}</p>{s.sourceQuote&&<small>{s.sourceQuoteMatched?"Source quotation matched retrieved text":"Source quotation not verified"}: “{s.sourceQuote}”</small>}</div><button type="button" disabled={accepted.includes(i)} onClick={()=>void accept(s,i)}>{accepted.includes(i)?"Added to team queue ✓":"Add to team queue"}</button></div>)}
       </div>
       {(result.questions.length>0||result.limitations.length>0)&&<div className={ui.questions}><h3>Questions and limitations</h3>{result.questions.map((q,i)=><p key={"q"+i}>• {q}</p>)}{result.limitations.map((q,i)=><p key={"l"+i}>• {q}</p>)}</div>}
       <p className={ui.request}>Request ID: {requestId} · AI usage: {result.usage?.inputTokens??"?"} input / {result.usage?.outputTokens??"?"} output tokens</p>

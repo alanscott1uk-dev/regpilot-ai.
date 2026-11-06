@@ -82,6 +82,7 @@ export default function Assurance(){
    <div className={ui.sideCaption}>WORKSPACE</div>
    <nav className={ui.sideNav} aria-label="Navigation">
     <a href="/workbench">◉ &nbsp;Today's work</a>
+    <a href="/team">▣ &nbsp;Secure team tasks</a>
     <a href="/ai">✦ &nbsp;AI review studio</a><a href="/intelligence">✦ &nbsp;Regulatory intelligence</a>
     <a href="/controls">◇ &nbsp;Shared control library</a><a href="/traceability">✧ &nbsp;Traceability explorer</a><a href="/documents">▣ &nbsp;Documents &amp; evidence</a><a href="/evidence">◫ &nbsp;Evidence gaps</a>
     <a className={ui.active} href="/assurance" aria-current="page">◈ &nbsp;Review centre</a>

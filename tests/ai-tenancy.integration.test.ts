@@ -5,6 +5,7 @@ import {db} from "../lib/server/db";
 import {authorizeOrganization} from "../lib/server/authorization";
 import {saveGeneratedReview,listAiReviewRecords,readAiReviewRecord,updateAiReviewDecision} from "../lib/server/ai-reviews";
 import {reserveAiRequest,DailyLimitError} from "../lib/server/ai-meter";
+import {listObligations,createObligation,changeObligationStatus} from "../lib/server/obligation-service";
 
 const draft={
  summary:"This is an illustrative generated summary requiring independent human review.",
@@ -36,6 +37,15 @@ test("isolated PostgreSQL checks: tenant membership, distinct human review, inte
   assert.equal(await authorizeOrganization({externalId:outsider.externalId},orgA.id,["OWNER","ADMIN","EDITOR"]),null);
   assert.equal(await authorizeOrganization({externalId:viewer.externalId},orgA.id,["OWNER","ADMIN","EDITOR"]),null);
   if(!creatorCtx||!reviewerCtx||!outsiderCtx)throw new Error("Missing test membership");
+  const task=await createObligation(creatorCtx,{
+   title:"Inspect a fictional supplier record",category:"Internal quality",ownerName:"Operations",
+   dueDate:"2026-12-01",notes:"Non-sensitive test record",sourceUrl:"https://www.gov.uk/example"
+  });
+  assert.equal((await listObligations(creatorCtx)).length,1);
+  assert.equal((await listObligations(outsiderCtx)).length,0);
+  assert.equal(await changeObligationStatus(outsiderCtx,task.id,"IN_PROGRESS"),null);
+  const changedTask=await changeObligationStatus(creatorCtx,task.id,"IN_PROGRESS");
+  assert.equal(changedTask?.status,"IN_PROGRESS");
   const review=await saveGeneratedReview(creatorCtx,{requestId:randomUUID(),mode:"document",ai:draft});
   const inboxA=await listAiReviewRecords(creatorCtx),inboxB=await listAiReviewRecords(outsiderCtx);
   assert.equal(inboxA.length,1);assert.equal(inboxA[0].integrityOk,true);assert.equal(inboxB.length,0);
@@ -61,6 +71,7 @@ test("isolated PostgreSQL checks: tenant membership, distinct human review, inte
   await assert.rejects(()=>readAiReviewRecord(reviewerCtx,review.id),(e:any)=>e.status===409);
  }finally{
   await db.aiDailyUsage.deleteMany({where:{organizationId:{in:orgIds}}});
+  await db.obligation.deleteMany({where:{organizationId:{in:orgIds}}});
   await db.auditEvent.deleteMany({where:{organizationId:{in:orgIds}}});
   await db.aiReview.deleteMany({where:{organizationId:{in:orgIds}}});
   await db.membership.deleteMany({where:{organizationId:{in:orgIds}}});

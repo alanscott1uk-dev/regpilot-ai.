@@ -45,3 +45,8 @@ The staging PostgreSQL migration and cross-tenant end-to-end tests remain an act
 
 ## Citation checks
 Findings, suggested actions and proposed amendments now explicitly flag whether a quoted source phrase appears in the fetched, allowlisted official publication text. This verifies only an exact text match (after whitespace normalisation), not legal applicability or the sufficiency of a quotation. When an official publication is unavailable, source quotations are labelled unverified.
+
+## Persistent private team tasks
+The secure team task API is separately gated by `REGPILOT_WORKSPACE_ENABLED=false` by default. It uses verified Supabase identity, database-backed organisation membership and role checks on every read/write. Work items are stored in PostgreSQL with audit entries; the former browser-only workbench remains an explicitly separate demonstration. An accepted AI suggestion goes to `/team` and never silently falls back to localStorage.
+
+Because the staging Supabase database has been inaccessible, the database service is tested against disposable PostgreSQL in GitHub Actions. Production database migration, role invitation tooling, retention policies and protected file evidence remain required before a real customer rollout.

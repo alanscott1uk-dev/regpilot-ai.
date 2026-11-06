@@ -46,6 +46,7 @@ export default function Controls(){
    <div className={ui.sideCaption}>WORKSPACE</div>
    <nav className={ui.sideNav} aria-label="Navigation">
     <a href="/workbench">◉ &nbsp;Today's work</a>
+    <a href="/team">▣ &nbsp;Secure team tasks</a>
     <a href="/ai">✦ &nbsp;AI review studio</a><a href="/intelligence">✦ &nbsp;Regulatory intelligence</a>
     <a className={ui.active} href="/controls" aria-current="page">◇ &nbsp;Shared control library</a>
     <a href="/traceability">✧ &nbsp;Traceability explorer</a><a href="/assurance">◈ &nbsp;Review centre</a><a href="/documents">▣ &nbsp;Documents</a><a href="/register">▤ &nbsp;Action register</a>
