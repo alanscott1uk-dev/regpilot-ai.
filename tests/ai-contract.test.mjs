@@ -38,3 +38,9 @@ test("model selected from strict provider/model identifier, not user request",()
  assert.equal(safeModelName("openai/gpt-5.4-mini"),"openai/gpt-5.4-mini");
  assert.throws(()=>safeModelName("http://unknown"),/Invalid model/);
 });
+
+test("saving a review is opt-in only and cannot be spoofed as a string",()=>{
+ assert.equal(validateAiRequest({...example}).retainDraft,false);
+ assert.equal(validateAiRequest({...example,retainDraft:true}).retainDraft,true);
+ assert.throws(()=>validateAiRequest({...example,retainDraft:"true"}),InputError);
+});

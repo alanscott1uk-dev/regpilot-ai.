@@ -3,6 +3,7 @@ import {aiConfigured,AccessError,authorisedAiContext} from "../../../../lib/serv
 import {reserveAiRequest,DailyLimitError} from "../../../../lib/server/ai-meter";
 import {loadOfficialSource,SourceUnavailable} from "../../../../lib/server/ai-sources";
 import {runRegPilotAi} from "../../../../lib/server/ai-model";
+import {saveGeneratedReview} from "../../../../lib/server/ai-reviews";
 import {validateAiRequest,InputError} from "../../../../lib/ai/contract.mjs";
 export const runtime="nodejs";export const dynamic="force-dynamic";export const maxDuration=60;
 const json=(value:unknown,status=200)=>NextResponse.json(value,{status,headers:{"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"}});
@@ -35,7 +36,17 @@ export async function POST(request:Request){
   const official=await loadOfficialSource(input.sourceId);
   requestId=await reserveAiRequest(ctx,input.mode);
   const ai=await runRegPilotAi(input,official);
-  return json({requestId,ai});
+  let reviewId:string|null=null,storageWarning:string|null=null;
+  if(input.retainDraft){
+   try{
+    const stored=await saveGeneratedReview(ctx,{requestId,mode:input.mode,ai});
+    reviewId=stored.id;
+   }catch{
+    // Never discard a paid AI result solely because the optional review save failed.
+    storageWarning="Your AI review was generated but not saved to the team inbox. Download the draft before leaving.";
+   }
+  }
+  return json({requestId,ai,reviewId,storageWarning});
  }catch(error){
   if(error instanceof InputError)return json({error:error.message},400);
   if(error instanceof AccessError)return json({error:error.message},error.status);

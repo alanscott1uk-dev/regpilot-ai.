@@ -37,7 +37,7 @@ export async function authorisedAiContext(request:Request,organizationId:string)
 export async function listAiOrganisations(request:Request){
  const identity=await verifyAiIdentity(request);
  const user=await db.user.findUnique({where:{externalId:identity.externalId},select:{id:true,memberships:{select:{role:true,organization:{select:{id:true,name:true}}}}}});
- return {email:identity.email,organisations:user?.memberships.map(m=>({id:m.organization.id,name:m.organization.name,role:m.role}))||[]};
+ return {email:identity.email,userId:user?.id||null,organisations:user?.memberships.map(m=>({id:m.organization.id,name:m.organization.name,role:m.role}))||[]};
 }
 export async function bootstrapAiOrganisation(request:Request,companyName:string){
  const identity=await verifyAiIdentity(request);

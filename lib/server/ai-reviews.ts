@@ -64,7 +64,7 @@ export async function updateAiReviewDecision(ctx:AuthorizedContext,id:string,raw
   if(found.status!=="PENDING_REVIEW")throw new ReviewStoreError("This AI review has already been checked",409);
   const changed=await tx.aiReview.updateMany({
    where:{id,organizationId:ctx.organizationId,status:"PENDING_REVIEW",version:decision.version},
-   data:{status:decision.decision,reviewerId:ctx.userId,reviewerNotes:decision.notes,reviewedAt:new Date(),version:{increment:1}}
+   data:{status:decision.decision as "REVIEWED"|"NEEDS_CHANGES",reviewerId:ctx.userId,reviewerNotes:decision.notes,reviewedAt:new Date(),version:{increment:1}}
   });
   if(changed.count!==1)throw new ReviewStoreError("Review updated by someone else; refresh the record",409);
   await tx.auditEvent.create({data:{
