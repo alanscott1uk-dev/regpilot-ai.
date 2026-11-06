@@ -27,6 +27,11 @@ enum AiReviewState {
   REDACTED
 }
 
+enum ScanStatus {
+  CLEAN
+  QUARANTINED
+}
+
 enum ReviewStatus {
   DRAFT
   PENDING_REVIEW
@@ -44,6 +49,8 @@ model User {
   aiReviewsCreated AiReview[] @relation("AiReviewCreator")
   aiReviewsChecked AiReview[] @relation("AiReviewReviewer")
   aiDailyUsage AiDailyUsage[]
+  evidenceUploaded Evidence[] @relation("EvidenceUploader")
+  evidenceReviewed Evidence[] @relation("EvidenceReviewer")
 }
 
 model Organization {
@@ -94,10 +101,19 @@ model Evidence {
   contentType    String
   sizeBytes      Int
   sha256         String
+  scannedAt      DateTime?
+  scanStatus     ScanStatus @default(QUARANTINED)
+  uploadedById   String? @db.Uuid
+  reviewerId     String? @db.Uuid
+  reviewerNotes  String @default("")
+  reviewedAt     DateTime?
+  reviewVersion  Int @default(1)
   reviewStatus   ReviewStatus @default(DRAFT)
   createdAt      DateTime     @default(now())
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   obligation     Obligation   @relation(fields: [obligationId], references: [id], onDelete: Restrict)
+  uploadedBy      User? @relation("EvidenceUploader",fields:[uploadedById],references:[id],onDelete:Restrict)
+  reviewer        User? @relation("EvidenceReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
   @@index([organizationId, obligationId])
 }
 
