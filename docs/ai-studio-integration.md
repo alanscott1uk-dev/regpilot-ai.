@@ -31,3 +31,6 @@ An AI quote or confidence label is not an official verification or compliance ou
 AI model credentials remain on the server, no actual client model call is permitted without auth, allowlist, membership and quota.
 Client demo files remain in IndexedDB; database-backed evidence storage and approval are separate production blockers.
 Tests and builds should never invoke or bill a model.
+
+## Human-reviewed amendments
+The schema also supports up to three draft policy paragraphs with rationale and source-excerpt fields. No edits are committed automatically. Users may copy proposed wording or export a JSON review; both require independent human assessment.

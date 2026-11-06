@@ -11,7 +11,8 @@ type Mode="document"|"change"|"assistant";
 type Org={id:string;name:string;role:string};
 type Finding={type:string;priority:string;title:string;rationale:string;recommendation:string;sourceQuote:string;documentQuote:string;sourceQuoteMatched:boolean;documentQuoteMatched:boolean;citationStatus:string};
 type Suggestion={title:string;reason:string;ownerSuggestion:string;sourceQuote:string};
-type Result={summary:string;confidence:string;findings:Finding[];suggestedActions:Suggestion[];questions:string[];limitations:string[];scope:string;generatedAt:string;source:{id:string;title:string;url:string;updatedAt:string|null;revisionAt:string|null}|null;model:string;usage?:{inputTokens:number|null;outputTokens:number|null}};
+type Amendment={section:string;proposedText:string;rationale:string;supportingSourceQuote:string};
+type Result={summary:string;confidence:string;findings:Finding[];suggestedActions:Suggestion[];suggestedAmendments:Amendment[];questions:string[];limitations:string[];scope:string;generatedAt:string;source:{id:string;title:string;url:string;updatedAt:string|null;revisionAt:string|null}|null;model:string;usage?:{inputTokens:number|null;outputTokens:number|null}};
 const ACTIONS_KEY="regpilot-demo-obligations-v1";
 function dueIn(days:number){const d=new Date();d.setDate(d.getDate()+days);return [d.getFullYear(),String(d.getMonth()+1).padStart(2,"0"),String(d.getDate()).padStart(2,"0")].join("-");}
 function toBase64(bytes:Uint8Array){let binary="";for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(binary);}
@@ -91,6 +92,12 @@ export default function AiStudio(){
    if(!response.ok)throw new Error(json.error||"AI request could not complete");
    setResult(json.ai as Result);setRequestId(json.requestId||"");
   }catch(e){setMessage(e instanceof Error?e.message:"AI request failed")}finally{setBusy(false)}
+ }
+ function exportDraft(){
+  if(!result)return;
+  const payload={format:"regpilot-ai-draft-review",version:1,generatedAt:result.generatedAt,requestId,model:result.model,source:result.source,summary:result.summary,findings:result.findings,suggestedActions:result.suggestedActions,suggestedAmendments:result.suggestedAmendments,questions:result.questions,limitations:result.limitations,scope:result.scope};
+  const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}));
+  const a=document.createElement("a");a.href=url;a.download="regpilot-ai-review-draft.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
  }
  function accept(s:Suggestion,index:number){
   if(accepted.includes(index))return;
@@ -175,7 +182,7 @@ export default function AiStudio(){
     <section className={ui.results}>
      <div className={ui.sectionHead}><span>03 / HUMAN REVIEW</span><h2>AI findings</h2></div>
      {!result?<div className={ui.empty}><span>✧</span><h3>Ready for evidence-led analysis</h3><p>Authenticate, choose a workflow and submit fictional material. The result will be marked as a draft and will never alter records automatically.</p></div>:<>
-      <div className={ui.summary}><span>AI DRAFT · HUMAN REVIEW REQUIRED</span><h3>Summary</h3><p>{result.summary}</p><small>Model: {result.model} · Confidence: {result.confidence} · {new Date(result.generatedAt).toLocaleString("en-GB")}</small>
+      <div className={ui.summary}><span>AI DRAFT · HUMAN REVIEW REQUIRED</span><h3>Summary</h3><p>{result.summary}</p><small>Model: {result.model} · Confidence: {result.confidence} · {new Date(result.generatedAt).toLocaleString("en-GB")}</small><button type="button" className={ui.export} onClick={exportDraft}>Download draft review (JSON)</button>
        {result.source&&<a href={result.source.url} target="_blank" rel="noopener noreferrer">Open original official source ↗</a>}</div>
       <div className={ui.findings}><div className={ui.resultHeading}><h3>Potential findings</h3><span>{result.findings.length}</span></div>
        {result.findings.length===0?<p>No specific finding was returned. This does not mean the material is compliant.</p>:result.findings.map((f,i)=><article key={i} className={ui.finding}><div className={ui.flag}>{f.type} · {f.priority} priority</div><h4>{f.title}</h4><p>{f.rationale}</p><div className={ui.recommendation}><strong>Suggested next step</strong><p>{f.recommendation}</p></div>
@@ -183,6 +190,12 @@ export default function AiStudio(){
         {f.documentQuote&&<blockquote><span>{f.documentQuoteMatched?"Pasted document text matched":"Document quotation NOT independently verified"}</span><p>“{f.documentQuote}”</p></blockquote>}
        </article>)}
       </div>
+      {result.suggestedAmendments?.length>0&&<div className={ui.amendments}><h3>Suggested policy wording — draft only</h3><p>No amendment is applied automatically. A qualified reviewer must check its wording and legal applicability.</p>
+       {result.suggestedAmendments.map((a,i)=><article key={i}><span>{a.section}</span><p>{a.proposedText}</p><small>{a.rationale}</small>
+        {a.supportingSourceQuote&&<small>Supporting source excerpt (review independently): “{a.supportingSourceQuote}”</small>}
+        <button type="button" onClick={()=>{void navigator.clipboard.writeText(a.proposedText).then(()=>setMessage("Draft wording copied for independent review.")).catch(()=>setMessage("Unable to copy draft wording."));}}>Copy proposed wording</button>
+       </article>)}
+      </div>}
       <div className={ui.actions}><h3>Suggested corrective work</h3><p>Only a human can add a draft task to the browser-local demo register.</p>
        {result.suggestedActions.length>0&&<label className={ui.fieldLabel}>Responsible owner for accepted tasks<input maxLength={80} value={owner} onChange={e=>setOwner(e.target.value)}/></label>}
        {result.suggestedActions.map((s,i)=><div key={i} className={ui.suggestion}><div><strong>{s.title}</strong><p>{s.reason}</p></div><button type="button" disabled={accepted.includes(i)} onClick={()=>accept(s,i)}>{accepted.includes(i)?"Added to local demo ✓":"Accept draft action"}</button></div>)}

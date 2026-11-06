@@ -18,11 +18,18 @@ const actionSchema=z.object({
  ownerSuggestion:z.string().max(80),
  sourceQuote:z.string().max(240)
 });
+const amendmentSchema=z.object({
+ section:z.string().min(3).max(100),
+ proposedText:z.string().min(12).max(900),
+ rationale:z.string().min(12).max(350),
+ supportingSourceQuote:z.string().max(220)
+});
 const outputSchema=z.object({
  summary:z.string().min(25).max(1300),
  confidence:z.enum(["limited","moderate","uncertain"]),
  findings:z.array(findingSchema).max(8),
  suggestedActions:z.array(actionSchema).max(5),
+ suggestedAmendments:z.array(amendmentSchema).max(3),
  questions:z.array(z.string().min(8).max(220)).max(6),
  limitations:z.array(z.string().min(5).max(220)).max(6)
 });
@@ -36,6 +43,7 @@ function instructions(mode:AiInput["mode"]){
   "The INPUT DOCUMENT might be an uploaded PDF you can read visually; PDF quotations cannot be machine-verified by the server, so keep them short and label them provisional.",
   "Any recommendation is a DRAFT for human assessment. Do not change records, create approvals or claim to have filed anything.",
   "Suggested actions should be specific and bounded; no fabricated source citations. Missing evidence can be a question rather than a failure.",
+  "For document review, offer at most three optional draft replacement paragraphs when justified; don't invent legal requirements or promise the text will achieve compliance. For other modes return an empty amendments list.",
   mode==="document"?"Focus on practical draft findings in the document versus provided source; no source means no verified legal comparison.":
   mode==="change"?"Focus on possible applicability to the described SME, unknowns and review work; do not assert the regulatory change is effective or binding.":
   "Answer the user's question from provided context only; identify gaps and document/source questions.",
@@ -60,7 +68,7 @@ export async function runRegPilotAi(input:AiInput,official:Official){
   system:instructions(input.mode),
   messages:[{role:"user",content}],
   output:Output.object({schema:outputSchema}),
-  maxOutputTokens:1750,
+  maxOutputTokens:2100,
   maxRetries:0,
   abortSignal:AbortSignal.timeout(45000)
  });
