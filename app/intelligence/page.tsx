@@ -49,6 +49,7 @@ export default function Intelligence(){
   try{
    const next=buildReview(current,draft);
    const prev=reviews.find(r=>r.key===next.key);
+   if(prev?.actionId&&next.status!=="action-required"){setMessage("This review already has a linked action. Review the existing task before changing the applicability decision.");return;}
    const update={...next,...(prev?.actionId?{actionId:prev.actionId}:{})};
    setReviews(all=>[update,...all.filter(r=>r.key!==next.key)].slice(0,300));
    setMessage("Impact decision saved locally. This is a manual review, not AI verification.");
@@ -78,7 +79,7 @@ export default function Intelligence(){
   <nav className={ui.sideNav} aria-label="Navigation">
    <a href="/workbench">◉ &nbsp;Today&apos;s work</a><a href="/register">▤ &nbsp;Action register</a><a href="/documents">▣ &nbsp;Documents</a>
    <a className={ui.active} href="/intelligence" aria-current="page">✧ &nbsp;Regulatory intelligence</a>
-   <a href="/evidence">◫ &nbsp;Evidence gaps</a><a href="/departments">⚙ &nbsp;Business setup</a>
+   <a href="/evidence">◫ &nbsp;Evidence gaps</a><a href="/assurance">◈ &nbsp;Review centre</a><a href="/departments">⚙ &nbsp;Business setup</a>
   </nav>
   <div className={ui.sideFoot}><strong>Limited pilot feed</strong><p>Official MHRA and Home Office publication metadata. Not a full compliance monitoring service.</p></div>
  </aside>

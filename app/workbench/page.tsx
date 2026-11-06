@@ -76,6 +76,7 @@ export default function Workbench(){
  useEffect(()=>{if(ready)try{localStorage.setItem(ACTIONS_KEY,JSON.stringify(items));}catch{setMessage("Browser storage is full; export your register immediately.");}},[items,ready]);
  useEffect(()=>{if(ready)try{localStorage.setItem(ACTIVITY_KEY,JSON.stringify(events));}catch{setMessage("Unable to save local history.");}},[events,ready]);
  useEffect(()=>{if(!selectedId&&items.length)setSelectedId(items[0].id);},[items,selectedId]);
+ useEffect(()=>{if(!ready)return;const requested=new URLSearchParams(window.location.search).get("item");if(requested&&items.some(x=>x.id===requested))setSelectedId(requested);},[ready]);
  useEffect(()=>{
   const selected=items.find(x=>x.id===selectedId);
   if(selected)setDraft({status:selected.status,owner:selected.owner,due:selected.due,notes:selected.notes,sourceUrl:selected.sourceUrl||"",sourceCheckedAt:selected.sourceCheckedAt||"",completionRationale:selected.completionRationale||""});
@@ -119,7 +120,7 @@ export default function Workbench(){
     <a className={ui.active} aria-current="page" href="/workbench">◉ &nbsp;Today&apos;s work</a>
     <a href="/register">▤ &nbsp;Action register</a>
     <a href="/documents">▣ &nbsp;Documents &amp; evidence</a>
-    <a href="/evidence">◫ &nbsp;Evidence gaps</a>
+    <a href="/evidence">◫ &nbsp;Evidence gaps</a><a href="/assurance">◈ &nbsp;Review centre</a>
     <a href="/intelligence">✦ &nbsp;Regulatory intelligence</a><a href="/regulatory-sources">◇ &nbsp;Official source catalogue</a>
     <a href="/departments">⚙ &nbsp;Business setup</a>
     <a href="/distribution">▥ &nbsp;Distribution</a>
