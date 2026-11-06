@@ -47,3 +47,17 @@ test("empty graph and invalid date are handled without fake positive completion"
  const g=buildTraceabilityGraph({},"2026-11-06");assert.equal(g.summary.actions,0);assert.equal(g.summary.withCurrentFileMetadata,0);
  assert.throws(()=>buildTraceabilityGraph({},"2026-02-30"),/Invalid review date/);
 });
+
+test("future source-check dates are flagged rather than accepted as reviewed",()=>{
+ const g=buildTraceabilityGraph({actions:[action("a1",{sourceUrl:"https://www.gov.uk/example",sourceCheckedAt:"2027-01-01"})]},"2026-11-06");
+ assert.equal(g.rows[0].source.state,"future-check-date");
+ assert.ok(g.rows[0].gaps.some(x=>x.code==="source-future"));
+});
+test("orphan and contradictory regulatory review links are surfaced",()=>{
+ const g=buildTraceabilityGraph({actions:[action("a1")],reviews:[
+  {key:"s::v1",actionId:"missing",status:"action-required"},
+  {key:"s::v2",actionId:"a1",status:"not-applicable"}
+ ]},"2026-11-06");
+ assert.ok(g.integrity.some(x=>x.code==="orphan-review-action"));
+ assert.ok(g.integrity.some(x=>x.code==="conflicting-review-decision"));
+});
