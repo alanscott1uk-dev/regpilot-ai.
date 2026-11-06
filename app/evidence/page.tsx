@@ -34,7 +34,7 @@ export default function Evidence(){
  const visible=useMemo(()=>rows.filter(r=>(filter==="All"||r.state===filter)&&[r.title,r.owner].join(" ").toLowerCase().includes(query.toLowerCase())).sort((a,b)=>(priority[a.state]??99)-(priority[b.state]??99)),[rows,filter,query]);
  return <main className={styles.shell}>
   <header className={styles.top}><div className={styles.brand}><span className={styles.mark}>R</span>RegPilot <span style={{color:"#3159df"}}>AI</span></div><span className={styles.pill}>DEMO WORKSPACE</span></header>
-  <a href="/" style={{fontSize:13,color:"#3159df"}}>← Compliance dashboard</a>
+  <a href="/" style={{fontSize:13,color:"#3159df"}}>← Compliance dashboard</a> <a href="/assurance" style={{fontSize:13,color:"#3159df",marginLeft:16}}>Review centre →</a>
   <div style={{marginTop:24}}><div className={styles.eyebrow}>Action to evidence / All sectors</div><h1 className={styles.heading}>Evidence coverage</h1><p className={styles.sub}>See which actions need documents, review or attached evidence before closing them.</p></div>
   <div className={styles.notice}><strong>Demonstration only.</strong> This browser-only check uses document metadata, including a saved-file flag. It does not inspect document contents, confirm that a file still exists or decide legal compliance. Use fictional information only.</div>
   <section className={styles.stats}>{[["Actions",summary.total||0],["Missing",(summary.missing||0)],["Pending review",(summary["pending-review"]||0)+(summary["review-expired"]||0)],["Linked files",(summary["evidence-linked"]||0)]].map(([label,count])=><div className={styles.stat} key={label}><div className={styles.statLabel}>{label}</div><div className={styles.statNumber}>{count}</div></div>)}</section>
