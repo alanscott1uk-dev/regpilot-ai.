@@ -59,6 +59,9 @@ model User {
   aiDailyUsage AiDailyUsage[]
   evidenceUploaded Evidence[] @relation("EvidenceUploader")
   evidenceReviewed Evidence[] @relation("EvidenceReviewer")
+  businessProfilesUpdated BusinessProfile[]
+  intelligenceCreated IntelligenceRun[]
+  intelligenceReviewed IntelligenceDecision[]
 }
 
 model Organization {
@@ -74,6 +77,8 @@ model Organization {
   aiDailyUsage AiDailyUsage[]
   evidenceCount Int @default(0)
   evidenceBytes BigInt @default(0)
+  businessProfile BusinessProfile?
+  intelligenceRuns IntelligenceRun[]
 }
 
 model Membership {
@@ -103,6 +108,10 @@ model Obligation {
   updatedAt      DateTime         @updatedAt
   organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   evidence       Evidence[]
+  originKey      String? @db.VarChar(64)
+  intelligenceDecisions IntelligenceDecision[]
+  @@unique([id, organizationId])
+  @@unique([organizationId, originKey])
   @@index([organizationId, status, dueDate])
 }
 
@@ -214,5 +223,56 @@ model RegulatorySnapshot {
   organization     Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
   reviewer         User? @relation("RegulatorySnapshotReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
   capturedBy       User @relation("RegulatorySnapshotCapturer",fields:[capturedById],references:[id],onDelete:Restrict)
+  intelligenceRuns IntelligenceRun[]
+  @@unique([id, organizationId])
   @@index([organizationId,sourceId,firstCapturedAt])
+}
+
+// Server-only intelligence records; Data API access is revoked by security SQL.
+model BusinessProfile {
+  organizationId String @id @db.Uuid
+  activities Json
+  jurisdictions Json
+  version Int @default(1)
+  updatedById String @db.Uuid
+  updatedAt DateTime @updatedAt
+  organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+  updatedBy User @relation(fields:[updatedById],references:[id],onDelete:Restrict)
+}
+
+model IntelligenceRun {
+  id String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  snapshotId String @db.Uuid
+  profileVersion Int
+  profile Json
+  engineVersion String @db.VarChar(80)
+  result Json
+  resultHash String @db.VarChar(64)
+  createdById String @db.Uuid
+  createdAt DateTime @default(now())
+  organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+  creator User @relation(fields:[createdById],references:[id],onDelete:Restrict)
+  snapshot RegulatorySnapshot @relation(fields:[snapshotId,organizationId],references:[id,organizationId],onDelete:Restrict)
+  decisions IntelligenceDecision[]
+  @@unique([id,organizationId])
+  @@unique([organizationId,snapshotId,profileVersion,engineVersion])
+  @@index([organizationId,createdAt])
+}
+
+model IntelligenceDecision {
+  id String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  runId String @db.Uuid
+  candidateKey String @db.VarChar(64)
+  decision String @db.VarChar(20)
+  rationale String @db.VarChar(800)
+  reviewerId String @db.Uuid
+  obligationId String? @db.Uuid
+  createdAt DateTime @default(now())
+  run IntelligenceRun @relation(fields:[runId,organizationId],references:[id,organizationId],onDelete:Restrict)
+  reviewer User @relation(fields:[reviewerId],references:[id],onDelete:Restrict)
+  obligation Obligation? @relation(fields:[obligationId,organizationId],references:[id,organizationId],onDelete:Restrict)
+  @@unique([runId,candidateKey])
+  @@index([organizationId,createdAt])
 }

@@ -10,10 +10,10 @@ import ui from "./ai.module.css";
 type Mode="document"|"change"|"assistant";
 type Org={id:string;name:string;role:string};
 type SavedReview={id:string;organizationId:string;requestId:string;createdById:string;createdAt:string;mode:string;modelId:string;sourceUrl:string|null;status:"PENDING_REVIEW"|"REVIEWED"|"NEEDS_CHANGES"|"REDACTED";version:number;summary:string;reviewerId:string|null;reviewerNotes:string;reviewedAt:string|null;ai?:Result;sha256?:string};
-type Finding={type:string;priority:string;title:string;rationale:string;recommendation:string;sourceQuote:string;documentQuote:string;sourceQuoteMatched:boolean;documentQuoteMatched:boolean;citationStatus:string};
+type Finding={type:string;priority:string;title:string;rationale:string;recommendation:string;sourceQuote:string;documentQuote:string;sourceQuoteMatched:boolean;documentQuoteMatched:boolean;citationStatus:string;grounding?:string;reviewChecks?:string[]};
 type Suggestion={title:string;reason:string;ownerSuggestion:string;sourceQuote:string;sourceQuoteMatched?:boolean};
 type Amendment={section:string;proposedText:string;rationale:string;supportingSourceQuote:string;supportingSourceQuoteMatched?:boolean};
-type Result={summary:string;confidence:string;findings:Finding[];suggestedActions:Suggestion[];suggestedAmendments:Amendment[];questions:string[];limitations:string[];scope:string;generatedAt:string;source:{id:string;title:string;url:string;updatedAt:string|null;revisionAt:string|null}|null;model:string;usage?:{inputTokens:number|null;outputTokens:number|null}};
+type Result={groundingSummary?:{findings:number;dualTextMatches:number;unverified:number;pdfRequiresManualCheck:boolean;meaningVerified:boolean};summary:string;confidence:string;findings:Finding[];suggestedActions:Suggestion[];suggestedAmendments:Amendment[];questions:string[];limitations:string[];scope:string;generatedAt:string;source:{id:string;title:string;url:string;updatedAt:string|null;revisionAt:string|null}|null;model:string;usage?:{inputTokens:number|null;outputTokens:number|null}};
 
 function dueIn(days:number){const d=new Date();d.setDate(d.getDate()+days);return [d.getFullYear(),String(d.getMonth()+1).padStart(2,"0"),String(d.getDate()).padStart(2,"0")].join("-");}
 function toBase64(bytes:Uint8Array){let binary="";for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(binary);}
@@ -177,7 +177,7 @@ export default function AiStudio(){
  }
  function exportDraft(){
   if(!result)return;
-  const payload={format:"regpilot-ai-draft-review",version:1,generatedAt:result.generatedAt,requestId,model:result.model,source:result.source,summary:result.summary,findings:result.findings,suggestedActions:result.suggestedActions,suggestedAmendments:result.suggestedAmendments,questions:result.questions,limitations:result.limitations,scope:result.scope};
+  const payload={format:"regpilot-ai-draft-review",version:1,generatedAt:result.generatedAt,requestId,model:result.model,source:result.source,summary:result.summary,findings:result.findings,suggestedActions:result.suggestedActions,suggestedAmendments:result.suggestedAmendments,questions:result.questions,limitations:result.limitations,scope:result.scope,groundingSummary:result.groundingSummary};
   const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}));
   const a=document.createElement("a");a.href=url;a.download="regpilot-ai-review-draft.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
  }
@@ -277,9 +277,11 @@ export default function AiStudio(){
      {!result?<div className={ui.empty}><span>✧</span><h3>Ready for evidence-led analysis</h3><p>Authenticate, choose a workflow and submit fictional material. The result will be marked as a draft and will never alter records automatically.</p></div>:<>
       <div className={ui.summary}><span>AI DRAFT · HUMAN REVIEW REQUIRED</span><h3>Summary</h3><p>{result.summary}</p><small>Model: {result.model} · Confidence: {result.confidence} · {new Date(result.generatedAt).toLocaleString("en-GB")}</small><p className={ui.savedNote}>{savedReviewId?"Draft retained in organisation review inbox · "+savedReviewId:"Not retained in the server review inbox."}</p><button type="button" className={ui.export} onClick={exportDraft}>Download draft review (JSON)</button>
        {result.source&&<a href={result.source.url} target="_blank" rel="noopener noreferrer">Open original official source ↗</a>}</div>
+      {result.groundingSummary&&<div className={ui.summary}><h3>Evidence behind this review</h3><p>{result.groundingSummary.dualTextMatches} findings quote both the supplied source and document. {result.groundingSummary.unverified} findings have no matching quotation in either.</p><small>Text matches locate evidence; they do not verify the model’s interpretation.{result.groundingSummary.pdfRequiresManualCheck?" PDF quotations require manual checking.":""}</small></div>}
       <div className={ui.findings}><div className={ui.resultHeading}><h3>Potential findings</h3><span>{result.findings.length}</span></div>
        {result.findings.length===0?<p>No specific finding was returned. This does not mean the material is compliant.</p>:result.findings.map((f,i)=><article key={i} className={ui.finding}><div className={ui.flag}>{f.type} · {f.priority} priority</div><h4>{f.title}</h4><p>{f.rationale}</p><div className={ui.recommendation}><strong>Suggested next step</strong><p>{f.recommendation}</p></div>
         {f.sourceQuote&&<blockquote><span>{f.sourceQuoteMatched?"Source excerpt text matched":"Source quotation NOT verified"}</span><p>“{f.sourceQuote}”</p></blockquote>}
+        {f.reviewChecks&&<details><summary>What the reviewer needs to verify</summary><ul>{f.reviewChecks.map(check=><li key={check}>{check}</li>)}</ul></details>}
         {f.documentQuote&&<blockquote><span>{f.documentQuoteMatched?"Pasted document text matched":"Document quotation NOT independently verified"}</span><p>“{f.documentQuote}”</p></blockquote>}
        </article>)}
       </div>

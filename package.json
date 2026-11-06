@@ -9,28 +9,32 @@
     "db:validate": "prisma validate",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "test": "node --test tests/*.test.mjs",
-    "test:integration": "node --import tsx --test tests/ai-tenancy.integration.test.ts tests/evidence-storage.integration.test.ts tests/regulatory-watch.integration.test.ts",
+    "test": "node --test tests/*.test.mjs && node --import tsx --test tests/intelligence.test.ts tests/intelligence-http.test.ts",
+    "test:integration": "node --import tsx --test tests/ai-tenancy.integration.test.ts tests/evidence-storage.integration.test.ts tests/regulatory-watch.integration.test.ts tests/intelligence.integration.test.ts",
     "test:smoke": "node scripts/smoke-private-pilot.mjs"
   },
   "dependencies": {
-    "next": "14.2.35",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "@prisma/client": "^6.19.0",
+    "next": "15.5.29",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "@prisma/client": "6.19.3",
     "ai": "6.0.320",
-    "zod": "4.1.12",
+    "zod": "4.6.7",
     "@supabase/supabase-js": "2.118.0"
   },
   "devDependencies": {
     "typescript": "^5.7.3",
     "@types/node": "^20.17.0",
-    "@types/react": "^18.3.0",
-    "@types/react-dom": "^18.3.0",
-    "prisma": "^6.19.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "prisma": "6.19.3",
     "tsx": "4.20.6"
   },
   "engines": {
     "node": ">=22.0.0"
+  },
+  "overrides": {
+    "deepmerge-ts": "8.0.0",
+    "postcss": "8.5.23"
   }
 }

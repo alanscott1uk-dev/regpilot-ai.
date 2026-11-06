@@ -1,5 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import {quoteAnchor} from "../lib/ai/contract.mjs";
+
+test("AI grounding preserves machine-checked anchors and explicit interpretation limits",()=>{
+ const passage="Staff must complete documented training before access.";
+ const result=validateAndAnnotateAiOutput({findings:[{sourceQuote:passage,documentQuote:passage}]},{sourceVerified:true,sourceText:passage,documentText:passage,hadPdf:false});
+ assert.equal(result.findings[0].grounding,"source-and-document");
+ assert.equal(result.findings[0].sourceAnchor.start,0);
+ assert.equal(result.groundingSummary.dualTextMatches,1);
+ assert.equal(result.groundingSummary.meaningVerified,false);
+ assert.ok(result.findings[0].reviewChecks.some(x=>x.includes("entailment")));
+ assert.equal(quoteAnchor(passage,passage+" "+passage).ambiguous,true);
+ assert.equal(quoteAnchor("invented evidence","unrelated text"),null);
+});
 import {validateAiRequest,validateAndAnnotateAiOutput,corroborateQuote,safeModelName,InputError} from "../lib/ai/contract.mjs";
 const example={organizationId:"123e4567-e89b-42d3-a456-426614174000",mode:"document",consent:true,documentText:"This is a fictional example policy with details about weekly reviews and quality management.",sourceId:"mhra-safety"};
 test("requires an authorised organisation and explicit AI processing consent",()=>{
