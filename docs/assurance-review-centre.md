@@ -38,3 +38,7 @@ A review finding is a record-completeness signal, not a legal risk score, regula
 The most valuable next step is a **secure multi-tenant system of record**: trusted user sessions, organisation permissions, PostgreSQL persistence, secure object storage, evidence hashes, review/sign-off controls and end-to-end tests. The existing Supabase staging database was hibernated/unavailable when last checked. No live data was migrated in this release.
 
 Only after that foundation is verified should RegPilot offer customer uploads, scheduled regulatory change monitoring, source-linked AI document comparisons or claims of audit-grade traceability.
+
+## Shared controls
+
+The control library at `/controls` allows one recorded control to link to multiple tasks and documents. Its metadata-coverage states and review-date alerts are now included in the Review Centre, the HTML snapshot and JSON export. No control is represented as tested or effective. A document linked to a control is not automatically an obligation match; all conclusions still require qualified review.

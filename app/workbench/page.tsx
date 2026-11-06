@@ -2,6 +2,8 @@
 import {useEffect,useMemo,useState} from "react";
 import {validateObligation,isValidDate} from "../../lib/obligations.mjs";
 import {validDocumentMetadata} from "../../lib/document-categories.mjs";
+import {parseControls,CONTROL_KEY} from "../../lib/controls.mjs";
+import type {ControlRecord} from "../../lib/controls.mjs";
 import {WORKSPACE_KEY,defaultWorkspace,parseWorkspace} from "../../lib/workspace-config.mjs";
 import {operationalQueue,operationsSummary,exportOperationsCsv,ACTIVITY_KEY,addOperationalEvent,validOperationalEvents} from "../../lib/operational-triage.mjs";
 import type {TriageRow,OperationalEvent} from "../../lib/operational-triage.mjs";
@@ -33,6 +35,7 @@ export default function Workbench(){
  const [ready,setReady]=useState(false);
  const [items,setItems]=useState<Action[]>([]);
  const [documents,setDocuments]=useState<unknown[]>([]);
+ const [controls,setControls]=useState<ControlRecord[]>([]);
  const [events,setEvents]=useState<OperationalEvent[]>([]);
  const [company,setCompany]=useState("Demo workspace");
  const [selectedId,setSelectedId]=useState("");
@@ -52,6 +55,7 @@ export default function Workbench(){
   setReady(true);
   function refreshLinked(){
    try{const v=JSON.parse(localStorage.getItem(DOCUMENTS_KEY)||"[]");setDocuments(Array.isArray(v)?v.filter(validDocumentMetadata):[]);}catch{setDocuments([]);}
+   try{setControls(parseControls(localStorage.getItem(CONTROL_KEY)||"[]"));}catch{setControls([]);}
    try{const raw=localStorage.getItem(WORKSPACE_KEY);const v=raw?parseWorkspace(JSON.parse(raw)):defaultWorkspace();setCompany(v?.company||"Demo workspace");}catch{setCompany("Demo workspace");}
   }
   refreshLinked();
@@ -82,7 +86,7 @@ export default function Workbench(){
   if(selected)setDraft({status:selected.status,owner:selected.owner,due:selected.due,notes:selected.notes,sourceUrl:selected.sourceUrl||"",sourceCheckedAt:selected.sourceCheckedAt||"",completionRationale:selected.completionRationale||""});
  },[selectedId,items]);
  const today=localDate();
- const queue=useMemo(()=>operationalQueue(items,documents,today),[items,documents,today]);
+ const queue=useMemo(()=>operationalQueue(items,documents,today,controls),[items,documents,controls,today]);
  const stats=useMemo(()=>operationsSummary(queue),[queue]);
  const visible=useMemo(()=>queue.filter(x=>
   (filter==="all"||(filter==="priority"&&x.status!=="Complete"&&(x.level!=="routine"||x.state!=="evidence-linked"))||(filter==="week"&&x.status!=="Complete"&&x.daysRemaining!==null&&x.daysRemaining<=7)||(filter==="exceptions"&&x.completionException)||(filter==="evidence"&&x.status!=="Complete"&&x.state!=="evidence-linked")||(filter==="complete"&&x.status==="Complete"))&&
@@ -120,7 +124,7 @@ export default function Workbench(){
     <a className={ui.active} aria-current="page" href="/workbench">◉ &nbsp;Today&apos;s work</a>
     <a href="/register">▤ &nbsp;Action register</a>
     <a href="/documents">▣ &nbsp;Documents &amp; evidence</a>
-    <a href="/evidence">◫ &nbsp;Evidence gaps</a><a href="/assurance">◈ &nbsp;Review centre</a>
+    <a href="/evidence">◫ &nbsp;Evidence gaps</a><a href="/controls">◇ &nbsp;Shared control library</a><a href="/assurance">◈ &nbsp;Review centre</a>
     <a href="/intelligence">✦ &nbsp;Regulatory intelligence</a><a href="/regulatory-sources">◇ &nbsp;Official source catalogue</a>
     <a href="/departments">⚙ &nbsp;Business setup</a>
     <a href="/distribution">▥ &nbsp;Distribution</a>
@@ -168,6 +172,15 @@ export default function Workbench(){
       <div className={ui.full}><button className={ui.primary} type="submit">Create action</button></div>
      </form>
     </section>}
+   <section className={ui.quickStart} aria-label="Guided setup">
+    <div className={ui.quickHead}><div><span>GET STARTED</span><h2>Your first four steps</h2><p>Follow this path to experience the demo from start to review. Each step shows where your records are used.</p></div><span className={ui.quickCount}>{(items.length>0?1:0)+(documents.length>0?1:0)+(controls.length>0?1:0)} / 3 RECORDING STEPS</span></div>
+    <div className={ui.quickGrid}>
+     <button type="button" className={ui.quickStep} onClick={()=>{setShowCreate(true);setMessage("Enter a task title, responsible owner and due date in the form above.");}}><span className={ui.quickNum}>01</span><strong>Record a task</strong><small>{items.length?"Work items recorded":"Name the work and its owner"}</small><span className={ui.quickIcon}>{items.length?"✓":"→"}</span></button>
+     <a href="/documents" className={ui.quickStep}><span className={ui.quickNum}>02</span><strong>Add supporting evidence</strong><small>{documents.length?"Document records present":"Record or attach a demo file"}</small><span className={ui.quickIcon}>{documents.length?"✓":"→"}</span></a>
+     <a href="/controls" className={ui.quickStep}><span className={ui.quickNum}>03</span><strong>Connect a control</strong><small>{controls.length?"Shared control recorded":"Reuse evidence across tasks"}</small><span className={ui.quickIcon}>{controls.length?"✓":"→"}</span></a>
+     <a href="/assurance" className={ui.quickStep}><span className={ui.quickNum}>04</span><strong>Review the gaps</strong><small>Export a review pack (not a certificate)</small><span className={ui.quickIcon}>→</span></a>
+    </div>
+   </section>
    <div className={ui.dashboardSectionTitle}><div><span>OVERVIEW</span><h2>Today at a glance</h2></div><a href="/evidence">Explore evidence gaps ↗</a></div>
    <div className={ui.stats}>
     <div><span>Open attention items</span><strong>{stats.needsAttention}</strong><small>Includes overdue, upcoming and evidence gaps</small></div>

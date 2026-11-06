@@ -53,3 +53,20 @@ test("unavailable public source does not imply a newer revision",()=>{
  assert.equal(p.sourceDecisions[0].versionState,"not-checked");
  assert.ok(!p.findings.some(x=>x.kind==="Previous source version"));
 });
+
+test("shared control can cover multiple tasks with one evidence record",()=>{
+ const control={id:"c1",title:"<Supplier control>",purpose:"Demo",owner:"QA",status:"In operation",frequency:"Annual",reviewDate:"2027-04-01",actionIds:["a1","a2"],documentIds:["d1"]};
+ const p=assembleAssurance({actions:[action(),action({id:"a2",title:"Another task"})],documents:[doc({obligationId:"",reviewDate:"2027-01-01",hasAttachment:true})],controls:[control]},"2026-11-06");
+ assert.equal(p.summary.controls,1);
+ assert.equal(p.controls[0].linkedActions,2);
+ assert.equal(p.controls[0].linkedDocuments,1);
+ assert.ok(!p.findings.some(f=>f.kind==="Record not linked to action"&&f.title==="Training overview"));
+ const html=printableAssurance(p);
+ assert.match(html,/Shared control matrix/);assert.match(html,/&lt;Supplier control&gt;/);
+});
+test("broken control links and overdue review appear in report findings",()=>{
+ const control={id:"c1",title:"Periodic risk check",purpose:"Demo",owner:"QA",status:"In operation",frequency:"Monthly",reviewDate:"2026-10-01",actionIds:["not-found"],documentIds:["d1"]};
+ const p=assembleAssurance({actions:[],documents:[],controls:[control]},"2026-11-06");
+ assert.equal(p.summary.controls,1);
+ assert.ok(p.findings.some(f=>f.kind==="Control review overdue"));
+});

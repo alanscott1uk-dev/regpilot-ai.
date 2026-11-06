@@ -3,6 +3,8 @@ import {useCallback,useEffect,useMemo,useState} from "react";
 import {validateObligation} from "../../lib/obligations.mjs";
 import {validDocumentMetadata} from "../../lib/document-categories.mjs";
 import {parseChangeReviews,CHANGE_REVIEW_KEY} from "../../lib/change-triage.mjs";
+import {parseControls,CONTROL_KEY} from "../../lib/controls.mjs";
+import type {ControlRecord} from "../../lib/controls.mjs";
 import {ACTIVITY_KEY,validOperationalEvents} from "../../lib/operational-triage.mjs";
 import {defaultWorkspace,parseWorkspace,WORKSPACE_KEY} from "../../lib/workspace-config.mjs";
 import {assembleAssurance,printableAssurance,serializeAssurance} from "../../lib/assurance-pack.mjs";
@@ -12,11 +14,11 @@ import type {ChangeReview} from "../../lib/change-triage.mjs";
 import ui from "../workbench/workbench.module.css";
 import css from "./assurance.module.css";
 const ACTIONS_KEY="regpilot-demo-obligations-v1", DOCUMENTS_KEY="regpilot-document-library-v1";
-type AppState={company:string;actions:any[];documents:any[];reviews:ChangeReview[];events:OperationalEvent[];sources:any[];sourcesLoaded:boolean};
-type View="findings"|"actions"|"documents"|"decisions"|"activity";
+type AppState={company:string;actions:any[];documents:any[];controls:ControlRecord[];reviews:ChangeReview[];events:OperationalEvent[];sources:any[];sourcesLoaded:boolean};
+type View="findings"|"actions"|"documents"|"controls"|"decisions"|"activity";
 const views:ReadonlyArray<{id:View;label:string}>= [
  {id:"findings",label:"Attention centre"},{id:"actions",label:"Evidence matrix"},{id:"documents",label:"Document checks"},
- {id:"decisions",label:"Source decisions"},{id:"activity",label:"Local activity"}
+ {id:"controls",label:"Shared controls"},{id:"decisions",label:"Source decisions"},{id:"activity",label:"Local activity"}
 ];
 const notes:Record<string,string>={"follow-up":"Follow up","review":"Review","organise":"Organise"};
 const evidence:Record<string,string>={"evidence-linked":"Approved file metadata recorded","review-expired":"Linked review date expired",
@@ -31,11 +33,12 @@ function loadLocal():Omit<AppState,"sources"|"sourcesLoaded">{
  return {company,
   actions:Array.isArray(rawActions)?rawActions.filter(validateObligation).slice(0,1000):[],
   documents:Array.isArray(rawDocs)?rawDocs.filter(validDocumentMetadata).slice(0,1000):[],
+  controls:parseControls(localStorage.getItem(CONTROL_KEY)||"[]"),
   reviews:parseChangeReviews(localStorage.getItem(CHANGE_REVIEW_KEY)||"[]"),
   events:validOperationalEvents(rawEvents)?rawEvents:[]};
 }
 export default function Assurance(){
- const [state,setState]=useState<AppState>({company:"Demo workspace",actions:[],documents:[],reviews:[],events:[],sources:[],sourcesLoaded:false});
+ const [state,setState]=useState<AppState>({company:"Demo workspace",actions:[],documents:[],controls:[],reviews:[],events:[],sources:[],sourcesLoaded:false});
  const [ready,setReady]=useState(false);
  const [loading,setLoading]=useState(false);
  const [sourceError,setSourceError]=useState("");
@@ -79,7 +82,7 @@ export default function Assurance(){
    <div className={ui.sideCaption}>WORKSPACE</div>
    <nav className={ui.sideNav} aria-label="Navigation">
     <a href="/workbench">◉ &nbsp;Today's work</a><a href="/intelligence">✦ &nbsp;Regulatory intelligence</a>
-    <a href="/documents">▣ &nbsp;Documents &amp; evidence</a><a href="/evidence">◫ &nbsp;Evidence gaps</a>
+    <a href="/controls">◇ &nbsp;Shared control library</a><a href="/documents">▣ &nbsp;Documents &amp; evidence</a><a href="/evidence">◫ &nbsp;Evidence gaps</a>
     <a className={ui.active} href="/assurance" aria-current="page">◈ &nbsp;Review centre</a>
     <a href="/register">▤ &nbsp;Action register</a><a href="/departments">⚙ &nbsp;Business setup</a>
    </nav>
@@ -107,7 +110,7 @@ export default function Assurance(){
     <button type="button" className={css.kpi} onClick={()=>filterClick("organise")}><span>RECORDS TO ORGANISE</span><strong>{summary.organise}</strong><small>Documents not linked to a task</small></button>
     <div className={css.coverage}><span>RECORDED FILE COVERAGE</span><strong>{score===null?"—":score+"%"}</strong><small>{summary.confirmedAttachmentMetadata} of {summary.actions} work items with current approved attachment metadata</small></div>
    </div>
-   <div className={css.controlBar}><div><span className={css.eyebrow}>LIVE WORKSPACE SNAPSHOT</span><h2>{state.company}</h2><p>{snapshot.reviewDate} · {summary.actions} actions · {summary.documents} documents · {summary.sourceDecisions} manual source decisions</p></div>
+   <div className={css.controlBar}><div><span className={css.eyebrow}>LIVE WORKSPACE SNAPSHOT</span><h2>{state.company}</h2><p>{snapshot.reviewDate} · {summary.actions} actions · {summary.documents} documents · {summary.controls} controls · {summary.sourceDecisions} manual source decisions</p></div>
     <div className={css.refreshActions}><button className={css.softButton} type="button" onClick={()=>{refresh();setMessage("Local workspace refreshed.");}}>↻ Refresh workspace</button><button className={css.softButton} type="button" disabled={loading} onClick={()=>void fetchSources()}>{loading?"Checking…":"↻ Check official metadata"}</button></div>
    </div>
    <section className={css.reviewPanel} aria-label="Review workspace">
@@ -129,6 +132,11 @@ export default function Assurance(){
     {view==="documents"&&<><div className={css.panelHead}><div><h2>Document review position</h2><p>Review date, status, attachment flag and task links.</p></div><a className={css.textLink} href="/documents">Open documents ↗</a></div>
       <div className={css.tableScroll}><table className={css.table}><thead><tr><th>Document</th><th>Owner</th><th>Review date</th><th>Recorded status</th><th>File flag</th><th>Task link</th></tr></thead><tbody>
        {snapshot.documents.length===0?<tr><td colSpan={6}>No documents recorded.</td></tr>:snapshot.documents.map(d=><tr key={d.id}><td><strong>{d.title}</strong><small>{d.category} · v{d.version||"—"}</small></td><td>{d.owner||"Not assigned"}</td><td>{d.reviewDate||"Not set"}<small>{d.reviewState}</small></td><td>{d.status}</td><td>{d.hasAttachment?"Recorded":"Not recorded"}</td><td>{d.linked?"Linked":"Unlinked / missing"}</td></tr>)}
+      </tbody></table></div>
+    </>}
+    {view==="controls"&&<><div className={css.panelHead}><div><h2>Shared control coverage</h2><p>Controls link multiple work items to a common record of evidence. Metadata alone does not prove effectiveness.</p></div><a className={css.textLink} href="/controls">Manage controls ↗</a></div>
+      <div className={css.tableScroll}><table className={css.table}><thead><tr><th>Control</th><th>Owner</th><th>Recorded state</th><th>Task links</th><th>Document links</th><th>Evidence metadata</th></tr></thead><tbody>
+       {snapshot.controls.length===0?<tr><td colSpan={6}>No shared controls recorded yet.</td></tr>:snapshot.controls.map(c=><tr key={c.id}><td><strong>{c.title}</strong><small>{c.frequency} · Review {c.reviewDate||"not scheduled"}</small></td><td>{c.owner}</td><td>{c.state}</td><td>{c.linkedActions}</td><td>{c.linkedDocuments}</td><td>{c.approvedFileMetadata} recorded approved files</td></tr>)}
       </tbody></table></div>
     </>}
     {view==="decisions"&&<><div className={css.panelHead}><div><h2>Manual regulatory decisions</h2><p>Recorded source-version decisions, not AI interpretations or a complete legislation register.</p></div><a className={css.textLink} href="/intelligence">Open intelligence ↗</a></div>
