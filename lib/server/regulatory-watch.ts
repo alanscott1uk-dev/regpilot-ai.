@@ -85,10 +85,11 @@ export async function reviewSourceSnapshot(ctx:AuthorizedContext,id:string,data:
    throw new RegulatoryWatchError("This source was already reviewed or changed; refresh",409);
   const changed=await tx.regulatorySnapshot.updateMany({where:{
    id,organizationId:ctx.organizationId,version:input.version,reviewStatus:"NEEDS_REVIEW"},
-   data:{reviewStatus:input.status as "REVIEWED"|"NOT_APPLICABLE",reviewerId:ctx.userId,
+   data:{reviewStatus:input.status as "REVIEWED"|"NOT_APPLICABLE",
     reviewerNotes:input.notes.trim(),reviewedAt:new Date(),version:{increment:1}}
   });
   if(changed.count!==1)throw new RegulatoryWatchError("Review conflict",409);
+  await tx.regulatorySnapshot.update({where:{id},data:{reviewer:{connect:{id:ctx.userId}}}});
   await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,
    action:"regulatory.human_impact_review",entityType:"RegulatorySnapshot",entityId:id,
    details:{sourceId:row.sourceId,contentHash:row.contentHash,decision:input.status,reviewVersion:input.version+1}

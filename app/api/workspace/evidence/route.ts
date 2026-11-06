@@ -5,7 +5,7 @@ import {createEvidence,listEvidence} from "../../../../lib/server/evidence-servi
 import {EvidenceError} from "../../../../lib/evidence/file-guard.mjs";
 export const runtime="nodejs";export const dynamic="force-dynamic";export const maxDuration=60;
 const reply=(data:unknown,status=200)=>NextResponse.json(data,{status,headers:{"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"}});
-const valid=x=>typeof x==="string"&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x);
+const valid=(x:unknown)=>typeof x==="string"&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x);
 async function limitedForm(request:Request){
  const contentType=request.headers.get("content-type")||"";
  if(!contentType.toLowerCase().startsWith("multipart/form-data;"))throw new EvidenceError("Multipart form data required",415);
