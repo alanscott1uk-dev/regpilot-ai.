@@ -5,6 +5,7 @@ import {validDocumentMetadata} from "../../lib/document-categories.mjs";
 import {WORKSPACE_KEY,defaultWorkspace,parseWorkspace} from "../../lib/workspace-config.mjs";
 import {operationalQueue,operationsSummary,exportOperationsCsv,ACTIVITY_KEY,addOperationalEvent,validOperationalEvents} from "../../lib/operational-triage.mjs";
 import type {TriageRow,OperationalEvent} from "../../lib/operational-triage.mjs";
+import {reviewSummary,parseChangeReviews,CHANGE_REVIEW_KEY} from "../../lib/change-triage.mjs";
 import ui from "./workbench.module.css";
 type Status="Open"|"In progress"|"Complete";
 type Action={id:string;title:string;regulator:string;owner:string;due:string;status:Status;notes:string;sourceUrl?:string;sourceCheckedAt?:string;completionRationale?:string};
@@ -43,6 +44,8 @@ export default function Workbench(){
  const [newAction,setNewAction]=useState({title:"",regulator:"Internal",owner:"",due:"",notes:""});
  const [message,setMessage]=useState("");
  const [showActivity,setShowActivity]=useState(false);
+ const [sourcePulse,setSourcePulse]=useState<{available:number;awaiting:number;checkedAt:string}|null>(null);
+ const [sourcePulseError,setSourcePulseError]=useState(false);
  useEffect(()=>{
   try{const raw=localStorage.getItem(ACTIONS_KEY);if(raw){const x:unknown=JSON.parse(raw);setItems(Array.isArray(x)?x.filter(validateObligation) as Action[]:sample);}else setItems(sample);}catch{setItems(sample);}
   try{const raw=localStorage.getItem(ACTIVITY_KEY);if(raw){const x:unknown=JSON.parse(raw);if(validOperationalEvents(x))setEvents(x);}}catch{}
@@ -55,6 +58,21 @@ export default function Workbench(){
   window.addEventListener("focus",refreshLinked);window.addEventListener("storage",refreshLinked);
   return()=>{window.removeEventListener("focus",refreshLinked);window.removeEventListener("storage",refreshLinked)};
  },[]);
+ useEffect(()=>{
+  let active=true;
+  async function check(){
+   try{
+    const res=await fetch("/api/regulatory-sources",{cache:"no-store"});
+    if(!res.ok)throw new Error("Unavailable");
+    const payload:unknown=await res.json();
+    if(!payload||typeof payload!=="object"||!("results" in payload)||!Array.isArray(payload.results)||!("checkedAt" in payload)||typeof payload.checkedAt!=="string")throw new Error("Invalid");
+    const snapshot=reviewSummary(payload.results,parseChangeReviews(localStorage.getItem(CHANGE_REVIEW_KEY)||"[]"));
+    if(active){setSourcePulse({available:snapshot.sources,awaiting:snapshot.awaiting,checkedAt:payload.checkedAt});setSourcePulseError(false);}
+   }catch{if(active)setSourcePulseError(true);}
+  }
+  void check();
+  return()=>{active=false};
+ },[]);
  useEffect(()=>{if(ready)try{localStorage.setItem(ACTIONS_KEY,JSON.stringify(items));}catch{setMessage("Browser storage is full; export your register immediately.");}},[items,ready]);
  useEffect(()=>{if(ready)try{localStorage.setItem(ACTIVITY_KEY,JSON.stringify(events));}catch{setMessage("Unable to save local history.");}},[events,ready]);
  useEffect(()=>{if(!selectedId&&items.length)setSelectedId(items[0].id);},[items,selectedId]);
@@ -66,8 +84,11 @@ export default function Workbench(){
  const queue=useMemo(()=>operationalQueue(items,documents,today),[items,documents,today]);
  const stats=useMemo(()=>operationsSummary(queue),[queue]);
  const visible=useMemo(()=>queue.filter(x=>
-  (filter==="all"||(filter==="priority"&&x.status!=="Complete"&&(x.level!=="routine"||x.state!=="evidence-linked"))||(filter==="week"&&x.status!=="Complete"&&x.daysRemaining!==null&&x.daysRemaining<=7)||(filter==="exceptions"&&x.completionException)||(filter==="complete"&&x.status==="Complete"))&&
+  (filter==="all"||(filter==="priority"&&x.status!=="Complete"&&(x.level!=="routine"||x.state!=="evidence-linked"))||(filter==="week"&&x.status!=="Complete"&&x.daysRemaining!==null&&x.daysRemaining<=7)||(filter==="exceptions"&&x.completionException)||(filter==="evidence"&&x.status!=="Complete"&&x.state!=="evidence-linked")||(filter==="complete"&&x.status==="Complete"))&&
   [x.title,x.owner,x.regulator].join(" ").toLowerCase().includes(search.trim().toLowerCase())),[queue,filter,search]);
+ const evidenceLinked=queue.filter(x=>x.state==="evidence-linked").length;
+ const evidenceRate=queue.length?Math.round(evidenceLinked/queue.length*100):0;
+ const recommended=queue.find(x=>x.status!=="Complete"||x.completionException);
  const selected=queue.find(x=>x.id===selectedId);
  const selectedAction=items.find(x=>x.id===selectedId);
  function record(id:string,verb:string,details:string){setEvents(e=>addOperationalEvent(e,id,verb,details));}
@@ -99,7 +120,7 @@ export default function Workbench(){
     <a href="/register">▤ &nbsp;Action register</a>
     <a href="/documents">▣ &nbsp;Documents &amp; evidence</a>
     <a href="/evidence">◫ &nbsp;Evidence gaps</a>
-    <a href="/regulatory-sources">◇ &nbsp;Regulatory sources</a>
+    <a href="/intelligence">✦ &nbsp;Regulatory intelligence</a><a href="/regulatory-sources">◇ &nbsp;Official source catalogue</a>
     <a href="/departments">⚙ &nbsp;Business setup</a>
     <a href="/distribution">▥ &nbsp;Distribution</a>
    </nav>
@@ -107,9 +128,31 @@ export default function Workbench(){
   </aside>
   <main className={ui.main}>
    <div className={ui.topbar}><span className={ui.crumb}>Workspace / Daily operations</span><div className={ui.topActions}><span className={ui.demo}>DEMO ONLY</span><a href="/departments" className={ui.profile}>Business settings</a></div></div>
-   <header className={ui.heading}>
-    <div><div className={ui.overline}>YOUR COMPLIANCE CONTROL CENTRE</div><h1>Know what needs doing.</h1><p>Prioritised tasks, supporting evidence and next actions — without digging through spreadsheets.</p><div className={ui.company}>Workspace: <strong>{company}</strong></div></div>
-    <button type="button" className={ui.primary} onClick={()=>{setShowCreate(x=>!x);setMessage("");}}>{showCreate?"Close new action":"＋ New action"}</button>
+   <header className={ui.premiumHero}>
+    <div className={ui.heroCopy}>
+     <div className={ui.heroEyebrow}><span className={ui.statusDot}/> REGPILOT CONTROL CENTRE <span className={ui.heroDivider}>/</span> DEMONSTRATION</div>
+     <h1>Compliance, <em>without the chaos.</em></h1>
+     <p>One clear picture of what matters, what needs evidence and what your team should do next.</p>
+     <div className={ui.heroButtons}>
+      <button type="button" className={ui.heroPrimary} onClick={()=>{setShowCreate(x=>!x);setMessage("");}}>{showCreate?"Close action form":"＋ Create an action"} <span>↗</span></button>
+      <a className={ui.heroGhost} href="/intelligence">Review regulatory updates <span>↗</span></a>
+     </div>
+     <div className={ui.heroTrust}><span>✦ Guided work</span><span>◈ Evidence connected</span><span>◉ Clear ownership</span></div>
+    </div>
+    <div className={ui.heroPulse}>
+     <div className={ui.pulseTop}><span>OPERATIONAL SIGNAL</span><span className={ui.livePill}>● LOCAL DEMO</span></div>
+     <div className={ui.pulseMiddle}>
+      <div className={ui.pulseRing} style={{background:"conic-gradient(#a794ff "+evidenceRate+"%, rgba(255,255,255,.12) "+evidenceRate+"%)"}}>
+       <div className={ui.pulseInside}><strong>{evidenceRate}%</strong><small>of actions have current approved file metadata</small></div>
+      </div>
+      <div className={ui.pulseLegend}>
+       <div><strong>{evidenceLinked}</strong><span>File-linked</span></div>
+       <div><strong>{Math.max(0,queue.length-evidenceLinked)}</strong><span>Not confirmed</span></div>
+       <div><strong>{queue.length}</strong><span>Total tasks</span></div>
+      </div>
+     </div>
+     <div className={ui.pulseFoot}>Calculated from browser records, <strong>not</strong> a compliance score or verification.</div>
+    </div>
    </header>
    <div className={ui.warning} role="note"><strong>Demonstration, not a compliant live system.</strong> No authenticated users, shared database, verified regulatory intelligence or secure evidence repository. Use fictional records only.</div>
    {message&&<div className={ui.feedback} role="status">{message}<button onClick={()=>setMessage("")} aria-label="Dismiss notice">×</button></div>}
@@ -124,18 +167,31 @@ export default function Workbench(){
       <div className={ui.full}><button className={ui.primary} type="submit">Create action</button></div>
      </form>
     </section>}
+   <div className={ui.dashboardSectionTitle}><div><span>OVERVIEW</span><h2>Today at a glance</h2></div><a href="/evidence">Explore evidence gaps ↗</a></div>
    <div className={ui.stats}>
     <div><span>Open attention items</span><strong>{stats.needsAttention}</strong><small>Includes overdue, upcoming and evidence gaps</small></div>
     <div><span>Overdue</span><strong>{stats.overdue}</strong><small>Tasks requiring immediate review</small></div>
     <div><span>Evidence gaps</span><strong>{stats.needsEvidence}</strong><small>Open tasks with incomplete evidence records</small></div>
     <div><span>Completion exceptions</span><strong>{stats.exceptions}</strong><small>Marked complete without current recorded evidence</small></div>
    </div>
+   <section className={ui.actionStrip} aria-label="Suggested next steps">
+    <div className={ui.recommendation}>
+     <span className={ui.stripIcon}>✧</span>
+     <div><span className={ui.stripOverline}>NEXT BEST MOVE</span><strong>{recommended?recommended.nextStep:"Your open work queue has no flagged tasks"}</strong><small>{recommended?recommended.title+" · "+recommended.owner:"Review new obligations and supporting records as they arise."}</small></div>
+     {recommended&&<button type="button" onClick={()=>{setSelectedId(recommended.id);setFilter("all");setMessage("Selected the suggested work item below.");}}>Open action <span>↗</span></button>}
+    </div>
+    <div className={ui.regulatorySignal}>
+     <span className={ui.stripIcon}>◈</span>
+     <div><span className={ui.stripOverline}>OFFICIAL SOURCE WATCH</span><strong>{sourcePulse?sourcePulse.awaiting+" of "+sourcePulse.available+" sources need manual triage":sourcePulseError?"Source check unavailable":"Checking official sources…"}</strong><small>{sourcePulse?"Metadata checked "+new Date(sourcePulse.checkedAt).toLocaleDateString("en-GB"):"Limited MHRA / Home Office pilot feed · no background monitoring"}</small></div>
+     <a href="/intelligence">Open inbox <span>↗</span></a>
+    </div>
+   </section>
    <div className={ui.columns}>
     <section className={ui.queueCard} aria-label="Prioritised work">
-     <div className={ui.sectionTop}><div><h2>Your work queue</h2><p>Sorted by urgency, due dates and recorded evidence.</p></div><button className={ui.smallButton} onClick={csv}>Export report</button></div>
+     <div className={ui.sectionTop}><div><h2>Prioritised work</h2><p>Real tasks. Clear owners. The next step already surfaced.</p></div><button className={ui.smallButton} onClick={csv}>Export report</button></div>
      <div className={ui.filterBar}>
       <label className={ui.searchLabel}>Search actions<input aria-label="Search actions" placeholder="Search tasks or owners…" value={search} onChange={e=>setSearch(e.target.value)}/></label>
-      <label className={ui.filterLabel}>Show<select aria-label="Filter work" value={filter} onChange={e=>setFilter(e.target.value)}><option value="priority">Needs attention</option><option value="week">Overdue and next 7 days</option><option value="exceptions">Completion exceptions</option><option value="complete">Completed</option><option value="all">All actions</option></select></label>
+      <label className={ui.filterLabel}>Show<select aria-label="Filter work" value={filter} onChange={e=>setFilter(e.target.value)}><option value="priority">Needs attention</option><option value="week">Overdue and next 7 days</option><option value="exceptions">Completion exceptions</option><option value="evidence">Evidence gaps</option><option value="complete">Completed</option><option value="all">All actions</option></select></label>
      </div>
      <div className={ui.queueList}>{!ready?<p className={ui.empty}>Loading work queue…</p>:visible.length===0?<div className={ui.empty}><strong>No items in this view.</strong><p>Switch to all actions or create a new work item.</p></div>:visible.map(row=>
       <button type="button" key={row.id} className={ui.queueItem+" "+(selectedId===row.id?ui.selected:"")} onClick={()=>{setSelectedId(row.id);setMessage("");}} aria-pressed={selectedId===row.id}>
@@ -156,7 +212,7 @@ export default function Workbench(){
       </div>
       <div className={ui.evidenceBox}><div><strong>Evidence position</strong><p>{selected.linked} linked document(s) · {selected.verifiedAttachments} current approved record(s) marked as having a file</p><small>Document metadata has not been independently checked.</small></div><a href={"/documents?obligationId="+encodeURIComponent(selected.id)} className={ui.secondary}>Add / link evidence</a></div>
       <form onSubmit={update} className={ui.editor}>
-       <h3>Update work item</h3>
+       <h3>Make progress</h3>
        <div className={ui.formGrid}>
         <label>Progress<select value={draft.status} onChange={e=>setDraft(x=>({...x,status:e.target.value as Status}))}><option>Open</option><option>In progress</option><option>Complete</option></select></label>
         <label>Responsible owner<input required maxLength={80} value={draft.owner} onChange={e=>setDraft(x=>({...x,owner:e.target.value}))}/></label>
