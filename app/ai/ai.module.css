@@ -4,3 +4,23 @@
 
 .export{display:block;margin:13px 0 0;background:#e5dbff;color:#6249af;border:1px solid #cbb8fa;border-radius:8px;padding:10px 12px;font-size:11px;font-weight:850;cursor:pointer}
 .amendments{border-top:1px solid #ece6f5;margin-top:23px;padding-top:19px}.amendments h3{font-size:17px;margin:0 0 7px}.amendments>p{font-size:11px;color:#9288a7;line-height:1.5}.amendments article{padding:15px;margin-top:10px;border:1px solid #e8e1f4;background:#fcfaff;border-radius:12px}.amendments article span{font-size:11px;color:#7155b8;font-weight:900}.amendments article p{font-size:13px;color:#494063;line-height:1.6;white-space:pre-wrap}.amendments article small{font-size:10px;color:#968fa7;display:block;line-height:1.4;margin:8px 0}.amendments article button{margin-top:9px;background:#efe8ff;color:#6a4eb6;border:1px solid #d8caf2;border-radius:9px;padding:9px 11px;cursor:pointer;font-size:11px;font-weight:850}
+
+.savedNote{font-size:10px;color:#7b6ca2;margin:12px 0 2px;overflow-wrap:anywhere}
+.inbox{margin-top:21px;background:#fff;border:1px solid #e3def0;border-radius:18px;padding:22px;box-shadow:0 9px 25px #29204d08}
+.inboxTitle{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}.inboxTitle span{font-size:10px;letter-spacing:1.2px;font-weight:900;color:#795ac2}
+.inboxTitle h2{font-size:20px;letter-spacing:-.5px;margin:7px 0}.inboxTitle p{color:#8984a2;font-size:12px;line-height:1.5;margin:0;max-width:750px}
+.inboxTitle button{background:#eee8ff;color:#6952b7;border:1px solid #d8c9f3;padding:10px 12px;border-radius:8px;font-size:11px;font-weight:850;cursor:pointer}
+.inboxLayout{display:grid;grid-template-columns:minmax(250px,.8fr) minmax(320px,1.2fr);gap:15px;align-items:start}
+.inboxList,.inboxDetail{border:1px solid #e9e5f4;border-radius:13px;padding:13px;min-height:145px}
+.inboxList>p,.inboxEmpty{font-size:12px;color:#918ba4;line-height:1.6;padding:15px}
+.inboxRow{display:grid;gap:7px;text-align:left;width:100%;border:1px solid #e7e1f1;border-radius:10px;padding:12px;margin-bottom:8px;cursor:pointer;background:#faf9fd}
+.inboxRow:hover{border-color:#a995df}.inboxRow span,.inboxRow small{font-size:10px;color:#7658bd}.inboxRow strong{font-size:12px;color:#403559;line-height:1.4}
+.inboxStatus{font-size:10px;color:#7652b9;font-weight:900;letter-spacing:.7px}
+.inboxDetail h3{font-size:17px;color:#383153;margin:10px 0}.inboxDetail>small{font-size:10px;color:#958ea6;overflow-wrap:anywhere}
+.inboxDraft{display:grid;gap:10px;margin:16px 0}.inboxDraft>div{border-left:3px solid #a692ea;background:#fbf9ff;border-radius:7px;padding:12px}
+.inboxDraft strong{font-size:12px;color:#42345c}.inboxDraft p{font-size:12px;color:#776f91;line-height:1.5}.inboxDraft small{font-size:10px;color:#9283aa}
+.inboxForm{display:grid;gap:13px;border-top:1px solid #eeeaf5;padding-top:14px}.inboxForm label{font-size:11px;color:#615677;font-weight:750}
+.inboxForm select,.inboxForm textarea{display:block;border:1px solid #dbd5eb;border-radius:9px;padding:10px;font:inherit;font-size:12px;color:#413557;background:#fff;width:100%;box-sizing:border-box;margin-top:6px}
+.inboxForm button{background:linear-gradient(110deg,#8e6fde,#6756d0);border:0;color:#fff;border-radius:9px;padding:11px;font-size:12px;font-weight:850;cursor:pointer}
+.inboxForm button:disabled{opacity:.5;cursor:default}.inboxForm p{font-size:11px;color:#9b6771}.reviewedNote{font-size:12px;background:#eff8f4;color:#467360;padding:13px;border-radius:10px}
+@media(max-width:900px){.inboxLayout{grid-template-columns:1fr}}@media(max-width:580px){.inbox{padding:15px}.inboxTitle{flex-direction:column;align-items:flex-start}}

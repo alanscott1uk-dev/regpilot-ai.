@@ -9,6 +9,7 @@ import shell from "../workbench/workbench.module.css";
 import ui from "./ai.module.css";
 type Mode="document"|"change"|"assistant";
 type Org={id:string;name:string;role:string};
+type SavedReview={id:string;organizationId:string;requestId:string;createdById:string;createdAt:string;mode:string;modelId:string;sourceUrl:string|null;status:"PENDING_REVIEW"|"REVIEWED"|"NEEDS_CHANGES";version:number;summary:string;reviewerId:string|null;reviewerNotes:string;reviewedAt:string|null;ai?:Result;sha256?:string};
 type Finding={type:string;priority:string;title:string;rationale:string;recommendation:string;sourceQuote:string;documentQuote:string;sourceQuoteMatched:boolean;documentQuoteMatched:boolean;citationStatus:string};
 type Suggestion={title:string;reason:string;ownerSuggestion:string;sourceQuote:string};
 type Amendment={section:string;proposedText:string;rationale:string;supportingSourceQuote:string};
@@ -19,7 +20,7 @@ function toBase64(bytes:Uint8Array){let binary="";for(let i=0;i<bytes.length;i+=
 export default function AiStudio(){
  const [feature,setFeature]=useState<boolean|null>(null);
  const [authReady,setAuthReady]=useState(false);
- const [user,setUser]=useState<{email:string}|null>(null);
+ const [user,setUser]=useState<{email:string;id:string}|null>(null);
  const [organisations,setOrganisations]=useState<Org[]>([]);
  const [orgId,setOrgId]=useState("");
  const [company,setCompany]=useState("RegPilot pilot business");
@@ -33,11 +34,18 @@ export default function AiStudio(){
  const [sourceId,setSourceId]=useState("");
  const [owner,setOwner]=useState("");
  const [consent,setConsent]=useState(false);
+ const [retainDraft,setRetainDraft]=useState(false);
  const [busy,setBusy]=useState(false);
  const [message,setMessage]=useState("");
  const [result,setResult]=useState<Result|null>(null);
  const [accepted,setAccepted]=useState<number[]>([]);
  const [requestId,setRequestId]=useState("");
+ const [savedReviewId,setSavedReviewId]=useState("");
+ const [savedReviews,setSavedReviews]=useState<SavedReview[]>([]);
+ const [activeReview,setActiveReview]=useState<SavedReview|null>(null);
+ const [reviewNotes,setReviewNotes]=useState("");
+ const [reviewDecision,setReviewDecision]=useState<"REVIEWED"|"NEEDS_CHANGES">("REVIEWED");
+ const [reviewBusy,setReviewBusy]=useState(false);
  const loadSession=useCallback(async()=>{
   try{
    const supabase=browserAuth();
@@ -48,7 +56,7 @@ export default function AiStudio(){
    const response=await fetch("/api/ai/context",{headers:{authorization:"Bearer "+token},cache:"no-store"});
    const json=await response.json();
    if(!response.ok){setMessage(json.error||"Access unavailable");setUser(null);return}
-   setUser({email:json.email});setOwner(o=>o||json.email||"");
+   setUser({email:json.email,id:json.userId||""});setOwner(o=>o||json.email||"");
    const list:Array<Org>=Array.isArray(json.organisations)?json.organisations:[];
    setOrganisations(list);setOrgId(prev=>list.some(o=>o.id===prev)?prev:list[0]?.id||"");
   }catch(e){setMessage(e instanceof Error?e.message:"Cannot access pilot account")}finally{setAuthReady(true)}
@@ -61,6 +69,54 @@ export default function AiStudio(){
   setAuthReady(true);return()=>{active=false};
  },[loadSession]);
  function browserAuthSafe(){try{return {data:browserAuth()}}catch{return {data:null}}}
+ const fetchReviews=useCallback(async(targetOrg:string)=>{
+  if(!targetOrg)return;
+  try{
+   const token=(await browserAuth().auth.getSession()).data.session?.access_token;
+   if(!token)throw new Error("Sign in first");
+   const res=await fetch("/api/ai/reviews?organizationId="+encodeURIComponent(targetOrg),{
+    headers:{authorization:"Bearer "+token},cache:"no-store"});
+   const data=await res.json();
+   if(!res.ok)throw new Error(data.error||"Review list unavailable");
+   setSavedReviews(Array.isArray(data.reviews)?data.reviews:[]);
+  }catch(error){setMessage(error instanceof Error?error.message:"Review history unavailable");}
+ },[]);
+ useEffect(()=>{
+  setActiveReview(null);setSavedReviews([]);
+  if(user?.id&&orgId&&feature)void fetchReviews(orgId);
+ },[user?.id,orgId,feature,fetchReviews]);
+ async function openReview(id:string){
+  if(!orgId)return;setReviewBusy(true);
+  try{
+   const token=(await browserAuth().auth.getSession()).data.session?.access_token;
+   if(!token)throw new Error("Sign in first");
+   const res=await fetch("/api/ai/reviews/"+encodeURIComponent(id)+"?organizationId="+encodeURIComponent(orgId),{
+    headers:{authorization:"Bearer "+token},cache:"no-store"});
+   const body=await res.json();
+   if(!res.ok)throw new Error(body.error||"Could not open saved draft");
+   setActiveReview(body.review);setReviewNotes("");
+  }catch(error){setMessage(error instanceof Error?error.message:"Could not open review")}
+  finally{setReviewBusy(false)}
+ }
+ async function recordDecision(e:React.FormEvent){
+  e.preventDefault();
+  if(!activeReview||!orgId)return;
+  setReviewBusy(true);
+  try{
+   const token=(await browserAuth().auth.getSession()).data.session?.access_token;
+   if(!token)throw new Error("Sign in first");
+   const res=await fetch("/api/ai/reviews/"+encodeURIComponent(activeReview.id),{
+    method:"PATCH",headers:{authorization:"Bearer "+token,"Content-Type":"application/json"},
+    body:JSON.stringify({organizationId:orgId,decision:reviewDecision,version:activeReview.version,notes:reviewNotes})
+   });
+   const body=await res.json();
+   if(!res.ok)throw new Error(body.error||"Review decision not saved");
+   setActiveReview(body.review);setReviewNotes("");
+   await fetchReviews(orgId);
+   setMessage("A human review decision was recorded for this AI draft. No legal or regulatory approval was granted.");
+  }catch(error){setMessage(error instanceof Error?error.message:"Could not save decision")}
+  finally{setReviewBusy(false)}
+ }
  async function sendMagicLink(e:React.FormEvent){
   e.preventDefault();setMessage("");setBusy(true);
   try{
@@ -68,7 +124,7 @@ export default function AiStudio(){
    if(error)throw error;setMessage("Check your inbox for the secure sign-in link. Return to this device and browser.");
   }catch(e){setMessage(e instanceof Error?e.message:"Unable to send email")}finally{setBusy(false)}
  }
- async function signOut(){try{await browserAuth().auth.signOut();setUser(null);setOrganisations([]);setOrgId("");setResult(null)}catch{setMessage("Sign-out failed")}}
+ async function signOut(){try{await browserAuth().auth.signOut();setUser(null);setOrganisations([]);setOrgId("");setResult(null);setSavedReviews([]);setActiveReview(null)}catch{setMessage("Sign-out failed")}}
  async function bootstrap(e:React.FormEvent){
   e.preventDefault();setBusy(true);setMessage("");
   try{
@@ -80,17 +136,20 @@ export default function AiStudio(){
   }catch(e){setMessage(e instanceof Error?e.message:"Unable to start pilot")}finally{setBusy(false)}
  }
  async function run(e:React.FormEvent){
-  e.preventDefault();setMessage("");setBusy(true);setResult(null);setAccepted([]);
+  e.preventDefault();setMessage("");setBusy(true);setResult(null);setAccepted([]);setSavedReviewId("");
   try{
    if(!consent)throw new Error("Explicit consent to external AI processing is required");
    const token=(await browserAuth().auth.getSession()).data.session?.access_token;
    if(!token)throw new Error("You are not signed in");
    let pdfBase64="";
    if(file){if(file.type!=="application/pdf"||file.size>2_000_000||file.size<20)throw new Error("Choose a PDF smaller than 2 MB");pdfBase64=toBase64(new Uint8Array(await file.arrayBuffer()))}
-   const response=await fetch("/api/ai/analyse",{method:"POST",headers:{"Content-Type":"application/json",authorization:"Bearer "+token},body:JSON.stringify({organizationId:orgId,mode,documentText,question,businessContext,sourceId,pdfBase64,consent:true})});
+   const response=await fetch("/api/ai/analyse",{method:"POST",headers:{"Content-Type":"application/json",authorization:"Bearer "+token},body:JSON.stringify({organizationId:orgId,mode,documentText,question,businessContext,sourceId,pdfBase64,consent:true,retainDraft})});
    const json=await response.json();
    if(!response.ok)throw new Error(json.error||"AI request could not complete");
    setResult(json.ai as Result);setRequestId(json.requestId||"");
+   setSavedReviewId(typeof json.reviewId==="string"?json.reviewId:"");
+   if(json.storageWarning)setMessage(json.storageWarning);
+   if(json.reviewId)void fetchReviews(orgId);
   }catch(e){setMessage(e instanceof Error?e.message:"AI request failed")}finally{setBusy(false)}
  }
  function exportDraft(){
@@ -175,6 +234,7 @@ export default function AiStudio(){
       {mode!=="document"&&<label>Your question<input maxLength={1500} value={question} onChange={e=>setQuestion(e.target.value)} placeholder="What could this change affect?"/></label>}
       {mode==="document"&&<label>Question (optional)<input maxLength={1500} value={question} onChange={e=>setQuestion(e.target.value)} placeholder="Which sections might need review?"/></label>}
       <label className={ui.check}><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/><span>I confirm this contains fictional or non-sensitive content and I consent to external AI processing.</span></label>
+      <label className={ui.check}><input type="checkbox" checked={retainDraft} onChange={e=>setRetainDraft(e.target.checked)}/><span>Optionally retain this generated AI draft in our organisation's private review inbox. Output may contain short document excerpts; original PDF/text is not saved by the review service.</span></label>
       <button type="submit" className={ui.run} disabled={!canRun||working||!consent}>{busy?"Running secure analysis…":"Run AI review →"}</button>
       <p className={ui.hint}>A daily user/organisation limit is enforced by the database. AI Gateway spend must also be capped in Vercel. Your document contents are not stored by this route.</p>
      </form>
@@ -182,7 +242,7 @@ export default function AiStudio(){
     <section className={ui.results}>
      <div className={ui.sectionHead}><span>03 / HUMAN REVIEW</span><h2>AI findings</h2></div>
      {!result?<div className={ui.empty}><span>✧</span><h3>Ready for evidence-led analysis</h3><p>Authenticate, choose a workflow and submit fictional material. The result will be marked as a draft and will never alter records automatically.</p></div>:<>
-      <div className={ui.summary}><span>AI DRAFT · HUMAN REVIEW REQUIRED</span><h3>Summary</h3><p>{result.summary}</p><small>Model: {result.model} · Confidence: {result.confidence} · {new Date(result.generatedAt).toLocaleString("en-GB")}</small><button type="button" className={ui.export} onClick={exportDraft}>Download draft review (JSON)</button>
+      <div className={ui.summary}><span>AI DRAFT · HUMAN REVIEW REQUIRED</span><h3>Summary</h3><p>{result.summary}</p><small>Model: {result.model} · Confidence: {result.confidence} · {new Date(result.generatedAt).toLocaleString("en-GB")}</small><p className={ui.savedNote}>{savedReviewId?"Draft retained in organisation review inbox · "+savedReviewId:"Not retained in the server review inbox."}</p><button type="button" className={ui.export} onClick={exportDraft}>Download draft review (JSON)</button>
        {result.source&&<a href={result.source.url} target="_blank" rel="noopener noreferrer">Open original official source ↗</a>}</div>
       <div className={ui.findings}><div className={ui.resultHeading}><h3>Potential findings</h3><span>{result.findings.length}</span></div>
        {result.findings.length===0?<p>No specific finding was returned. This does not mean the material is compliant.</p>:result.findings.map((f,i)=><article key={i} className={ui.finding}><div className={ui.flag}>{f.type} · {f.priority} priority</div><h4>{f.title}</h4><p>{f.rationale}</p><div className={ui.recommendation}><strong>Suggested next step</strong><p>{f.recommendation}</p></div>
@@ -205,6 +265,25 @@ export default function AiStudio(){
      </>}
     </section>
    </div>
+   {user&&orgId&&<section className={ui.inbox}>
+    <div className={ui.inboxTitle}><div><span>04 / SEPARATE HUMAN REVIEW</span><h2>Private team review inbox</h2><p>AI drafts can be checked by a different authorised administrator. This is not legal approval or a verified audit report.</p></div><button type="button" onClick={()=>void fetchReviews(orgId)} disabled={reviewBusy}>Refresh inbox</button></div>
+    <div className={ui.inboxLayout}>
+     <div className={ui.inboxList}>{savedReviews.length===0?<p>No saved draft reviews. Choose optional retention when running an AI analysis to create one.</p>:savedReviews.map(x=><button key={x.id} type="button" className={ui.inboxRow} onClick={()=>void openReview(x.id)}>
+      <span>{x.status.replaceAll("_"," ")} · {x.mode}</span><strong>{x.summary.slice(0,140)||"AI draft review"}</strong><small>{new Date(x.createdAt).toLocaleDateString("en-GB")} · Version {x.version}</small></button>)}</div>
+     <div className={ui.inboxDetail}>{!activeReview?<div className={ui.inboxEmpty}>Select a saved draft to view its recorded findings and review status.</div>:<>
+      <span className={ui.inboxStatus}>{activeReview.status.replaceAll("_"," ")}</span><h3>{activeReview.summary}</h3>
+      <small>Request {activeReview.requestId} · Model {activeReview.modelId} · Result SHA-256: {activeReview.sha256?.slice(0,16)||"—"}…</small>
+      <div className={ui.inboxDraft}>{(activeReview.ai?.findings||[]).map((x,i)=><div key={i}><strong>{x.title}</strong><p>{x.rationale}</p><small>{x.sourceQuoteMatched?"Source quotation matches the retrieved text.":"Official source quotation not verified."}</small></div>)}</div>
+      {activeReview.status==="PENDING_REVIEW"&&<form onSubmit={recordDecision} className={ui.inboxForm}>
+       <label>Human decision<select value={reviewDecision} onChange={e=>setReviewDecision(e.target.value as "REVIEWED"|"NEEDS_CHANGES")}><option value="REVIEWED">Reviewed — findings assessed</option><option value="NEEDS_CHANGES">Needs changes or further evidence</option></select></label>
+       <label>Review rationale (at least 20 characters)<textarea required minLength={20} maxLength={800} rows={3} value={reviewNotes} onChange={e=>setReviewNotes(e.target.value)} placeholder="Explain what was checked, what remains uncertain and why." /></label>
+       <button disabled={reviewBusy||activeReview.createdById===user.id||!["OWNER","ADMIN"].includes(organisations.find(o=>o.id===orgId)?.role||"")} type="submit">Record independent review</button>
+       {activeReview.createdById===user.id&&<p>You created this AI draft. A different authorised owner or administrator must review it.</p>}
+      </form>}
+      {activeReview.status!=="PENDING_REVIEW"&&<p className={ui.reviewedNote}>Review completed by another authorised user. Recorded rationale: {activeReview.reviewerNotes}</p>}
+     </>}</div>
+    </div>
+   </section>}
    <footer className={shell.footer}>RegPilot AI · Private development pilot · No automated compliance verdict, formal approval or production-grade file handling.</footer>
   </main>
  </div>;
