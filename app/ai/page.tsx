@@ -120,7 +120,7 @@ export default function AiStudio(){
  async function sendMagicLink(e:React.FormEvent){
   e.preventDefault();setMessage("");setBusy(true);
   try{
-   const {error}=await browserAuth().auth.signInWithOtp({email:email.trim(),options:{emailRedirectTo:window.location.origin+"/ai"}});
+   const {error}=await browserAuth().auth.signInWithOtp({email:email.trim(),options:{emailRedirectTo:window.location.origin+"/ai",shouldCreateUser:false}});
    if(error)throw error;setMessage("Check your inbox for the secure sign-in link. Return to this device and browser.");
   }catch(e){setMessage(e instanceof Error?e.message:"Unable to send email")}finally{setBusy(false)}
  }

@@ -50,7 +50,7 @@ export default function Team(){
  useEffect(()=>{setItems([]);if(orgId&&user)void loadTasks(orgId)},[orgId,user?.email,loadTasks]);
  async function login(e:React.FormEvent){
   e.preventDefault();setBusy(true);try{
-   const {error}=await browserAuth().auth.signInWithOtp({email:email.trim(),options:{emailRedirectTo:window.location.origin+"/team"}});
+   const {error}=await browserAuth().auth.signInWithOtp({email:email.trim(),options:{emailRedirectTo:window.location.origin+"/team",shouldCreateUser:false}});
    if(error)throw error;setMessage("Sign-in link sent. Open it using this browser.");
   }catch(e){setMessage(e instanceof Error?e.message:"Could not send sign-in link")}finally{setBusy(false)}
  }

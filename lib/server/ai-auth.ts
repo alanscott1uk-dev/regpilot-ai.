@@ -11,7 +11,12 @@ export function workspaceConfigured(){
  !!process.env.DATABASE_URL&&!!(process.env.NEXT_PUBLIC_SUPABASE_URL||process.env.SUPABASE_URL)&&
  !!(process.env.SUPABASE_PUBLISHABLE_KEY||process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY);
 }
-export function aiConfigured(){return workspaceConfigured()&&process.env.REGPILOT_AI_ENABLED==="true";}
+export function aiConfigured(){
+ const configuredModel=process.env.REGPILOT_AI_MODEL||"";
+ return workspaceConfigured()&&process.env.REGPILOT_AI_ENABLED==="true"&&
+  /^[a-z0-9-]+\/[a-z0-9._-]+$/i.test(configuredModel)&&
+  !!(process.env.AI_GATEWAY_API_KEY||process.env.VERCEL_OIDC_TOKEN);
+}
 type Identity={externalId:string;email:string};
 export async function verifyAiIdentity(request:Request):Promise<Identity>{
  if(!workspaceConfigured())throw new AccessError("Private workspace not configured",503);
