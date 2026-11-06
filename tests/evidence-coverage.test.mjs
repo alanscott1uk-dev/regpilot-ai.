@@ -23,3 +23,8 @@ test("retired control evidence does not count towards active coverage",()=>{
  const rows=evidenceCoverage([a],[d],"2026-11-06",[{status:"Retired",actionIds:["a1"],documentIds:["d1"]}]);
  assert.equal(rows[0].state,"missing");
 });
+
+test("a designed but not operating control cannot make a task evidence-linked",()=>{
+ const row=evidenceCoverage([{id:"a1",title:"Task"}],[{id:"d1",status:"Approved",reviewDate:"2027-09-01",hasAttachment:true}],"2026-11-06",[{status:"Designed",actionIds:["a1"],documentIds:["d1"]}]);
+ assert.equal(row[0].state,"missing");
+});

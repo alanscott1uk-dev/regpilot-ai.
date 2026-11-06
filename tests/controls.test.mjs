@@ -27,3 +27,8 @@ test("duplicate document links, bad dates and oversized values rejected",()=>{
  assert.equal(validControl(c({title:"x".repeat(161)})),false);
  assert.equal(parseControls(JSON.stringify([c(),c()])).length,1);
 });
+
+test("control without an action or scheduled review is not marked fully mapped",()=>{
+ const row=controlCoverage([c({actionIds:[],reviewDate:""})],actions,documents,"2026-11-06")[0];
+ assert.equal(row.state,"needs-review");assert.ok(row.notes.some(s=>s.includes("Next control review")));
+});
