@@ -86,7 +86,7 @@ export async function reviewSourceSnapshot(ctx:AuthorizedContext,id:string,data:
   const changed=await tx.regulatorySnapshot.updateMany({where:{
    id,organizationId:ctx.organizationId,version:input.version,reviewStatus:"NEEDS_REVIEW"},
    data:{reviewStatus:input.status as "REVIEWED"|"NOT_APPLICABLE",
-    reviewerNotes:input.notes.trim(),reviewedAt:new Date(),version:{increment:1}}
+    reviewNotes:input.notes.trim(),reviewedAt:new Date(),version:{increment:1}}
   });
   if(changed.count!==1)throw new RegulatoryWatchError("Review conflict",409);
   await tx.regulatorySnapshot.update({where:{id},data:{reviewer:{connect:{id:ctx.userId}}}});
