@@ -94,6 +94,7 @@ export async function reviewEvidence(ctx:AuthorizedContext,id:string,raw:unknown
  if(!Number.isInteger(input.version)||Number(input.version)<1)throw new EvidenceError("Invalid evidence version",400);
  if(typeof input.notes!=="string"||input.notes.trim().length<20||input.notes.length>800)
   throw new EvidenceError("Explain the review in 20 to 800 characters",400);
+ const notes=input.notes.trim();
  const record=await db.evidence.findFirst({where:{id,organizationId:ctx.organizationId}});
  if(!record)throw new EvidenceError("Evidence not found",404);
  if(record.uploadedById===ctx.userId)throw new EvidenceError("Uploader cannot approve their own evidence",403);
@@ -105,7 +106,7 @@ export async function reviewEvidence(ctx:AuthorizedContext,id:string,raw:unknown
   const change=await tx.evidence.updateMany({where:{
    id,organizationId:ctx.organizationId,reviewStatus:"PENDING_REVIEW",reviewVersion:input.version,scanStatus:"CLEAN"},
    data:{reviewStatus:input.decision as "APPROVED"|"REJECTED",reviewerId:ctx.userId,
-    reviewVersion:{increment:1},reviewerNotes:input.notes.trim(),reviewedAt:new Date()}
+    reviewVersion:{increment:1},reviewerNotes:notes,reviewedAt:new Date()}
   });
   if(change.count!==1)throw new EvidenceError("Evidence review conflict; refresh",409);
   const updated=await tx.evidence.findFirstOrThrow({where:{id,organizationId:ctx.organizationId}});

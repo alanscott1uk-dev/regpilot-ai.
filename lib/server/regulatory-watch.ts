@@ -77,6 +77,7 @@ export async function reviewSourceSnapshot(ctx:AuthorizedContext,id:string,data:
  if(!Number.isInteger(input.version)||Number(input.version)<1)throw new RegulatoryWatchError("Invalid source version",400);
  if(typeof input.notes!=="string"||input.notes.trim().length<20||input.notes.length>800)
   throw new RegulatoryWatchError("Enter review rationale of at least 20 characters",400);
+ const notes=input.notes.trim();
  return db.$transaction(async tx=>{
   const row=await tx.regulatorySnapshot.findFirst({where:{id,organizationId:ctx.organizationId}});
   if(!row)throw new RegulatoryWatchError("Source snapshot not found",404);
@@ -86,7 +87,7 @@ export async function reviewSourceSnapshot(ctx:AuthorizedContext,id:string,data:
   const changed=await tx.regulatorySnapshot.updateMany({where:{
    id,organizationId:ctx.organizationId,version:input.version,reviewStatus:"NEEDS_REVIEW"},
    data:{reviewStatus:input.status as "REVIEWED"|"NOT_APPLICABLE",
-    reviewNotes:input.notes.trim(),reviewedAt:new Date(),version:{increment:1}}
+    reviewNotes:notes,reviewedAt:new Date(),version:{increment:1}}
   });
   if(changed.count!==1)throw new RegulatoryWatchError("Review conflict",409);
   await tx.regulatorySnapshot.update({where:{id},data:{reviewer:{connect:{id:ctx.userId}}}});
