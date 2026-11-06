@@ -77,3 +77,13 @@ The reference products are Vanta (automated controls and shared evidence), Sprin
 
 ### Cost constraint
 Vercel preview deployments are disabled for the linked project during development to conserve the plan's limits. Development is verified using GitHub Actions; production deployment remains a separately controlled milestone. Check these project settings before a later release.
+
+## Substantial pre-Vercel implementation batch
+
+- Private Evidence Vault: scanned PDFs, private object storage, real hash checked retrieval, quota, separate human review, organisation access and actual task links.
+- Manual GOV.UK text snapshots: exact source IDs, content hashes and passage-level diff, persistent history, explicit review outcomes and manually-created team follow-up tasks.
+- AI Studio can use a private Evidence Vault PDF via authenticated server fetch and SHA verification (2 MB AI cap, 5 MB vault upload cap).
+- Offline CI includes three disposable Postgres integration suites plus a synthetic ClamAV protocol test. No Vercel previews required.
+- **Remaining gap against Vanta/Sprinto/CUBE:** live provider integration, enterprise scale and monitoring, autonomous updates, validated AI output, legal coverage, robust privacy/data retention and real-user testing.
+
+Do not release customer uploads until staging, privacy, scanner and recovery tests are complete.
