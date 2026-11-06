@@ -6,14 +6,15 @@ export class AccessError extends Error {
  status:number;
  constructor(message:string,status:number){super(message);this.name="AccessError";this.status=status;}
 }
-export function aiConfigured(){
- return process.env.REGPILOT_AI_ENABLED==="true"&&!!process.env.REGPILOT_AI_ALLOWED_EMAILS?.trim()&&
+export function workspaceConfigured(){
+ return process.env.REGPILOT_WORKSPACE_ENABLED==="true"&&!!process.env.REGPILOT_AI_ALLOWED_EMAILS?.trim()&&
  !!process.env.DATABASE_URL&&!!(process.env.NEXT_PUBLIC_SUPABASE_URL||process.env.SUPABASE_URL)&&
  !!(process.env.SUPABASE_PUBLISHABLE_KEY||process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY);
 }
+export function aiConfigured(){return workspaceConfigured()&&process.env.REGPILOT_AI_ENABLED==="true";}
 type Identity={externalId:string;email:string};
 export async function verifyAiIdentity(request:Request):Promise<Identity>{
- if(!aiConfigured())throw new AccessError("Private pilot not configured",503);
+ if(!workspaceConfigured())throw new AccessError("Private workspace not configured",503);
  const header=request.headers.get("authorization")||"";
  if(!/^Bearer [A-Za-z0-9._-]{20,5000}$/.test(header))throw new AccessError("Sign in to continue",401);
  const token=header.slice(7),base=(process.env.NEXT_PUBLIC_SUPABASE_URL||process.env.SUPABASE_URL||"").replace(/\/$/,"");
@@ -28,11 +29,14 @@ export async function verifyAiIdentity(request:Request):Promise<Identity>{
  if(!allowedEmail(user.email,process.env.REGPILOT_AI_ALLOWED_EMAILS))throw new AccessError("This pilot is invitation-only",403);
  return {externalId:user.id,email:user.email.toLowerCase()};
 }
-export async function authorisedAiContext(request:Request,organizationId:string){
+export async function authorisedWorkspaceContext(request:Request,organizationId:string,allowedRoles:readonly ("OWNER"|"ADMIN"|"EDITOR"|"VIEWER")[]=["OWNER","ADMIN","EDITOR","VIEWER"]){
  const identity=await verifyAiIdentity(request);
- const context=await authorizeOrganization({externalId:identity.externalId},organizationId,["OWNER","ADMIN","EDITOR"]);
+ const context=await authorizeOrganization({externalId:identity.externalId},organizationId,allowedRoles);
  if(!context)throw new AccessError("No permission for this organisation",403);
  return {...context,email:identity.email};
+}
+export async function authorisedAiContext(request:Request,organizationId:string){
+ return authorisedWorkspaceContext(request,organizationId,["OWNER","ADMIN","EDITOR"]);
 }
 export async function listAiOrganisations(request:Request){
  const identity=await verifyAiIdentity(request);

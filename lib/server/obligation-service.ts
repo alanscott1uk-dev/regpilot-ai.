@@ -3,7 +3,7 @@ import { db } from "./db";
 import type { AuthorizedContext } from "./authorization";
 import type { ObligationStatus } from "@prisma/client";
 
-export type NewObligation = { title: string; category: string; ownerName: string; dueDate: string; notes?: string };
+export type NewObligation = { title: string; category: string; ownerName: string; dueDate: string; notes?: string; sourceUrl?:string; sourceCheckedAt?:string };
 
 function dateOnly(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error("Invalid date");
@@ -25,8 +25,15 @@ export async function createObligation(ctx: AuthorizedContext, input: NewObligat
   const notes = input.notes?.trim() ?? "";
   if (!title || title.length > 160 || !ownerName || ownerName.length > 80 || category.length > 80 || notes.length > 500) throw new Error("Invalid input");
   const dueDate = dateOnly(input.dueDate);
+  const sourceUrl=input.sourceUrl?.trim()||null;
+  if(sourceUrl){
+    try{const url=new URL(sourceUrl);if(url.protocol!=="https:"||url.username||url.password||sourceUrl.length>500)throw new Error("Invalid");}
+    catch{throw new Error("Invalid source URL");}
+  }
+  if(input.sourceCheckedAt&&!sourceUrl)throw new Error("Source date requires a source reference");
+  const sourceCheckedAt=input.sourceCheckedAt?dateOnly(input.sourceCheckedAt):null;
   return db.$transaction(async tx => {
-    const item = await tx.obligation.create({ data: { organizationId: ctx.organizationId, title, category, ownerName, dueDate, notes } });
+    const item = await tx.obligation.create({ data: { organizationId: ctx.organizationId, title, category, ownerName, dueDate, notes, sourceUrl, sourceCheckedAt } });
     await tx.auditEvent.create({ data: { organizationId: ctx.organizationId, actorId: ctx.userId, action: "obligation.created", entityType: "Obligation", entityId: item.id, details: { title, dueDate: input.dueDate } } });
     return item;
   });
