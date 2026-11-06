@@ -49,6 +49,7 @@ export default function Intelligence(){
   try{
    const next=buildReview(current,draft);
    const prev=reviews.find(r=>r.key===next.key);
+   if(prev?.actionId&&next.status!=="action-required"){setMessage("This review already has a linked action. Review the existing task before changing the applicability decision.");return;}
    const update={...next,...(prev?.actionId?{actionId:prev.actionId}:{})};
    setReviews(all=>[update,...all.filter(r=>r.key!==next.key)].slice(0,300));
    setMessage("Impact decision saved locally. This is a manual review, not AI verification.");

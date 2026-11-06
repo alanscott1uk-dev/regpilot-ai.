@@ -47,3 +47,9 @@ test("serialised pack retains schema version, timestamp and does not include act
 test("empty workspace does not invent a positive readiness percentage",()=>{
  const p=assembleAssurance({},"2026-11-06");assert.equal(p.summary.coveragePercent,null);assert.equal(p.summary.actions,0);
 });
+
+test("unavailable public source does not imply a newer revision",()=>{
+ const p=assembleAssurance({reviews:[review],sources:[{...source,status:"unavailable",revisionAt:null,updatedAt:null}]},"2026-11-06");
+ assert.equal(p.sourceDecisions[0].versionState,"not-checked");
+ assert.ok(!p.findings.some(x=>x.kind==="Previous source version"));
+});
