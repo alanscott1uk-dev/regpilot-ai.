@@ -76,3 +76,40 @@ export async function updateAiReviewDecision(ctx:AuthorizedContext,id:string,raw
   return displayReview(record,true);
  },{isolationLevel:"Serializable"});
 }
+
+/** Removes generated content from the active review record without deleting audit provenance.
+ * Not a GDPR end-to-end erasure procedure: backups, external model data and audit metadata
+ * have separate retention controls, which are not implemented yet.
+ */
+export async function redactAiReviewContent(ctx:AuthorizedContext,id:string,version:number){
+ if(!stableReviewId(id))throw new ReviewStoreError("Invalid review ID",400);
+ if(!Number.isInteger(version)||version<1)throw new ReviewStoreError("Invalid review version",400);
+ return db.$transaction(async tx=>{
+  const existing=await tx.aiReview.findFirst({
+   where:{id,organizationId:ctx.organizationId},
+   select:{id:true,createdById:true,status:true,version:true,result:true,resultSha256:true}
+  });
+  if(!existing)throw new ReviewStoreError("Review not found",404);
+  if(ctx.userId!==existing.createdById&&!["OWNER","ADMIN"].includes(ctx.role))
+   throw new ReviewStoreError("Only the creator or an administrator can redact this draft",403);
+  if(existing.status==="REDACTED")throw new ReviewStoreError("Review content was already redacted",409);
+  if(existing.version!==version)throw new ReviewStoreError("Review was updated; refresh the record",409);
+  if(reviewContentHash(existing.result)!==existing.resultSha256)
+   throw new ReviewStoreError("Review content integrity check failed",409);
+  const marker={redacted:true,message:"Generated AI content removed from active storage"};
+  const nextHash=reviewContentHash(marker);
+  const changed=await tx.aiReview.updateMany({
+   where:{id,organizationId:ctx.organizationId,version,status:{not:"REDACTED"}},
+   data:{result:marker,resultSha256:nextHash,status:"REDACTED",version:{increment:1},
+     sourceUrl:null,reviewerNotes:"",reviewerId:null,reviewedAt:null}
+  });
+  if(changed.count!==1)throw new ReviewStoreError("Review was changed; refresh it",409);
+  await tx.auditEvent.create({
+   data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"ai.review_content_redacted",
+    entityType:"AiReview",entityId:id,
+    details:{previousContentSha256:existing.resultSha256,redactedContentSha256:nextHash,
+      reviewVersion:version+1,reason:"user_requested_data_minimisation"}}
+  });
+  return {id,status:"REDACTED",version:version+1,contentRedacted:true};
+ },{isolationLevel:"Serializable"});
+}

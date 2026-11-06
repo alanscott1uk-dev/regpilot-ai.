@@ -9,7 +9,7 @@ import shell from "../workbench/workbench.module.css";
 import ui from "./ai.module.css";
 type Mode="document"|"change"|"assistant";
 type Org={id:string;name:string;role:string};
-type SavedReview={id:string;organizationId:string;requestId:string;createdById:string;createdAt:string;mode:string;modelId:string;sourceUrl:string|null;status:"PENDING_REVIEW"|"REVIEWED"|"NEEDS_CHANGES";version:number;summary:string;reviewerId:string|null;reviewerNotes:string;reviewedAt:string|null;ai?:Result;sha256?:string};
+type SavedReview={id:string;organizationId:string;requestId:string;createdById:string;createdAt:string;mode:string;modelId:string;sourceUrl:string|null;status:"PENDING_REVIEW"|"REVIEWED"|"NEEDS_CHANGES"|"REDACTED";version:number;summary:string;reviewerId:string|null;reviewerNotes:string;reviewedAt:string|null;ai?:Result;sha256?:string};
 type Finding={type:string;priority:string;title:string;rationale:string;recommendation:string;sourceQuote:string;documentQuote:string;sourceQuoteMatched:boolean;documentQuoteMatched:boolean;citationStatus:string};
 type Suggestion={title:string;reason:string;ownerSuggestion:string;sourceQuote:string;sourceQuoteMatched?:boolean};
 type Amendment={section:string;proposedText:string;rationale:string;supportingSourceQuote:string;supportingSourceQuoteMatched?:boolean};
@@ -19,6 +19,7 @@ function dueIn(days:number){const d=new Date();d.setDate(d.getDate()+days);retur
 function toBase64(bytes:Uint8Array){let binary="";for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(binary);}
 export default function AiStudio(){
  const [feature,setFeature]=useState<boolean|null>(null);
+ const [workspaceFeature,setWorkspaceFeature]=useState<boolean|null>(null);
  const [authReady,setAuthReady]=useState(false);
  const [user,setUser]=useState<{email:string;id:string}|null>(null);
  const [organisations,setOrganisations]=useState<Org[]>([]);
@@ -63,7 +64,7 @@ export default function AiStudio(){
  },[]);
  useEffect(()=>{
   let active=true;
-  void fetch("/api/ai/analyse",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(active)setFeature(j.enabled===true)}).catch(()=>{if(active)setFeature(false)});
+  void fetch("/api/ai/analyse",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(active){setFeature(j.enabled===true);setWorkspaceFeature(j.workspaceEnabled===true)}}).catch(()=>{if(active){setFeature(false);setWorkspaceFeature(false)}});
   const {data}=browserAuthSafe();
   if(data?.auth){const {data:listener}=data.auth.onAuthStateChange(()=>{setTimeout(()=>void loadSession(),0)});void loadSession();return()=>{active=false;listener.subscription.unsubscribe();}}
   setAuthReady(true);return()=>{active=false};
@@ -83,8 +84,8 @@ export default function AiStudio(){
  },[]);
  useEffect(()=>{
   setActiveReview(null);setSavedReviews([]);
-  if(user?.id&&orgId&&feature)void fetchReviews(orgId);
- },[user?.id,orgId,feature,fetchReviews]);
+  if(user?.id&&orgId&&workspaceFeature)void fetchReviews(orgId);
+ },[user?.id,orgId,workspaceFeature,fetchReviews]);
  async function openReview(id:string){
   if(!orgId)return;setReviewBusy(true);
   try{
@@ -96,6 +97,27 @@ export default function AiStudio(){
    if(!res.ok)throw new Error(body.error||"Could not open saved draft");
    setActiveReview(body.review);setReviewNotes("");
   }catch(error){setMessage(error instanceof Error?error.message:"Could not open review")}
+  finally{setReviewBusy(false)}
+ }
+
+ async function redactSavedReview(){
+  if(!activeReview||!orgId)return;
+  if(!window.confirm("Remove this saved AI draft's generated content from active storage? This cannot be undone. Audit metadata and backups may still exist."))return;
+  setReviewBusy(true);
+  try{
+   const token=(await browserAuth().auth.getSession()).data.session?.access_token;
+   if(!token)throw new Error("Sign in first");
+   const res=await fetch("/api/ai/reviews/"+encodeURIComponent(activeReview.id),{
+    method:"DELETE",
+    headers:{"Content-Type":"application/json",authorization:"Bearer "+token},
+    body:JSON.stringify({organizationId:orgId,version:activeReview.version})
+   });
+   const body=await res.json();
+   if(!res.ok)throw new Error(body.error||"Could not redact saved output");
+   await openReview(activeReview.id);
+   await fetchReviews(orgId);
+   setMessage("Generated content redacted from the active review record. Audit metadata and external processor retention are separate.");
+  }catch(error){setMessage(error instanceof Error?error.message:"Review redaction failed")}
   finally{setReviewBusy(false)}
  }
  async function recordDecision(e:React.FormEvent){
@@ -227,7 +249,7 @@ export default function AiStudio(){
     <section className={ui.controls}>
      <div className={ui.sectionHead}><span>01 / ACCESS</span><h2>Secure pilot session</h2></div>
      {user?<div className={ui.session}><div><strong>{user.email}</strong><small>Verified pilot email</small></div><button type="button" onClick={()=>void signOut()}>Sign out</button></div>:
-      <form onSubmit={sendMagicLink} className={ui.smallForm}><label>Email address<input required type="email" autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@company.co.uk"/></label><button type="submit" disabled={working||feature!==true}>Email me a sign-in link</button></form>}
+      <form onSubmit={sendMagicLink} className={ui.smallForm}><label>Email address<input required type="email" autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@company.co.uk"/></label><button type="submit" disabled={working||workspaceFeature!==true}>Email me a sign-in link</button></form>}
      {user&&organisations.length>0&&<label className={ui.fieldLabel}>Authorised business<select value={orgId} onChange={e=>setOrgId(e.target.value)}>{organisations.map(o=><option key={o.id} value={o.id}>{o.name} ({o.role})</option>)}</select></label>}
      {user&&organisations.length===0&&<form className={ui.smallForm} onSubmit={bootstrap}><label>Pilot business name<input value={company} minLength={3} maxLength={100} onChange={e=>setCompany(e.target.value)}/></label><button disabled={working}>Set up pilot company</button></form>}
      <div className={ui.sectionHead}><span>02 / AI WORKFLOW</span><h2>What should RegPilot review?</h2></div>
@@ -278,7 +300,7 @@ export default function AiStudio(){
      <div className={ui.inboxList}>{savedReviews.length===0?<p>No saved draft reviews. Choose optional retention when running an AI analysis to create one.</p>:savedReviews.map(x=><button key={x.id} type="button" className={ui.inboxRow} onClick={()=>void openReview(x.id)}>
       <span>{x.status.replaceAll("_"," ")} · {x.mode}</span><strong>{x.summary.slice(0,140)||"AI draft review"}</strong><small>{new Date(x.createdAt).toLocaleDateString("en-GB")} · Version {x.version}</small></button>)}</div>
      <div className={ui.inboxDetail}>{!activeReview?<div className={ui.inboxEmpty}>Select a saved draft to view its recorded findings and review status.</div>:<>
-      <span className={ui.inboxStatus}>{activeReview.status.replaceAll("_"," ")}</span><h3>{activeReview.summary}</h3>
+      <span className={ui.inboxStatus}>{activeReview.status.replaceAll("_"," ")}</span>{activeReview.status!=="REDACTED"&&<button type="button" className={ui.redact} disabled={reviewBusy} onClick={()=>void redactSavedReview()}>Remove saved AI content</button>}<h3>{activeReview.summary}</h3>
       <small>Request {activeReview.requestId} · Model {activeReview.modelId} · Result SHA-256: {activeReview.sha256?.slice(0,16)||"—"}…</small>
       <div className={ui.inboxDraft}>{(activeReview.ai?.findings||[]).map((x,i)=><div key={i}><strong>{x.title}</strong><p>{x.rationale}</p><small>{x.sourceQuoteMatched?"Source quotation matches the retrieved text.":"Official source quotation not verified."}</small></div>)}</div>
       {activeReview.status==="PENDING_REVIEW"&&<form onSubmit={recordDecision} className={ui.inboxForm}>
@@ -287,7 +309,7 @@ export default function AiStudio(){
        <button disabled={reviewBusy||activeReview.createdById===user.id||!["OWNER","ADMIN"].includes(organisations.find(o=>o.id===orgId)?.role||"")} type="submit">Record independent review</button>
        {activeReview.createdById===user.id&&<p>You created this AI draft. A different authorised owner or administrator must review it.</p>}
       </form>}
-      {activeReview.status!=="PENDING_REVIEW"&&<p className={ui.reviewedNote}>Review completed by another authorised user. Recorded rationale: {activeReview.reviewerNotes}</p>}
+      {activeReview.status==="REDACTED"?<p className={ui.reviewedNote}>Saved AI output was redacted from this active record. Audit metadata may remain.</p>:activeReview.status!=="PENDING_REVIEW"&&<p className={ui.reviewedNote}>Review completed by another authorised user. Recorded rationale: {activeReview.reviewerNotes}</p>}
      </>}</div>
     </div>
    </section>}

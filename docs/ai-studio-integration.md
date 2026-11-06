@@ -56,3 +56,9 @@ Passwordless Supabase login now sets `shouldCreateUser:false` to prevent anonymo
 
 ## Model selection
 No model is assumed as a production default. The operator must select a currently available `provider/model` identifier from the live Vercel AI Gateway catalogue, check data-handling terms, configure the key or OIDC token and set a budget. The route remains disabled if the model is unset.
+
+
+## Saved AI draft data minimisation (pre-deployment)
+Saved AI drafts can be redacted through an authenticated DELETE endpoint even when paid AI generation is turned off, provided the separate private workspace is enabled. A record creator or an OWNER/ADMIN may remove the stored model output. The active record is overwritten with a small redaction marker and its SHA-256 hash is recalculated, with status REDACTED and version incremented. An audit event preserves content hashes and actor identifiers but **not** original generated text.
+
+**Important:** This is an active-record content-redaction mechanism, not a full GDPR data-erasure implementation. DB backups, AI provider processing/retention, and audit metadata need separate policy and deletion/expiry procedures before customer data is allowed. Previous reviewer rationale fields are blanked from the active record during redaction.

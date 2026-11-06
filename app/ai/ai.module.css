@@ -24,3 +24,6 @@
 .inboxForm button{background:linear-gradient(110deg,#8e6fde,#6756d0);border:0;color:#fff;border-radius:9px;padding:11px;font-size:12px;font-weight:850;cursor:pointer}
 .inboxForm button:disabled{opacity:.5;cursor:default}.inboxForm p{font-size:11px;color:#9b6771}.reviewedNote{font-size:12px;background:#eff8f4;color:#467360;padding:13px;border-radius:10px}
 @media(max-width:900px){.inboxLayout{grid-template-columns:1fr}}@media(max-width:580px){.inbox{padding:15px}.inboxTitle{flex-direction:column;align-items:flex-start}}
+
+.redact{float:right;border:1px solid #edc9d1;border-radius:8px;color:#a9495b;background:#fff5f6;padding:8px 10px;font-size:11px;font-weight:800;cursor:pointer}
+.redact:disabled{opacity:.45;cursor:default}

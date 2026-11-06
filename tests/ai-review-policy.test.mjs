@@ -27,3 +27,8 @@ test("UUID review locator is checked before database access",()=>{
 test("digest uses canonical key order to survive PostgreSQL JSONB round trips",()=>{
  assert.equal(reviewContentHash({a:"x",b:{z:2,a:1}}),reviewContentHash({b:{a:1,z:2},a:"x"}));
 });
+
+test("saved AI draft can be redacted only with a valid version and role checks",()=>{
+ // Redaction is tested transactionally against disposable PostgreSQL by the tenant integration suite.
+ assert.equal(stableReviewId("123e4567-e89b-42d3-a456-426614174000"),true);
+});

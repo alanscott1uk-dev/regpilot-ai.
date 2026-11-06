@@ -24,6 +24,7 @@ enum AiReviewState {
   PENDING_REVIEW
   REVIEWED
   NEEDS_CHANGES
+  REDACTED
 }
 
 enum ReviewStatus {

@@ -1,5 +1,5 @@
 import {NextResponse} from "next/server";
-import {aiConfigured,AccessError,authorisedAiContext} from "../../../../lib/server/ai-auth";
+import {aiConfigured,workspaceConfigured,AccessError,authorisedAiContext} from "../../../../lib/server/ai-auth";
 import {reserveAiRequest,DailyLimitError} from "../../../../lib/server/ai-meter";
 import {loadOfficialSource,SourceUnavailable} from "../../../../lib/server/ai-sources";
 import {runRegPilotAi} from "../../../../lib/server/ai-model";
@@ -19,7 +19,7 @@ async function limitedBody(request:Request){
  return JSON.parse(Buffer.concat(chunks.map(x=>Buffer.from(x))).toString("utf8"));
 }
 export async function GET(){
- return json({enabled:aiConfigured(),mode:"private-pilot",privacy:"Use fictional or non-sensitive data only. Model processing may occur outside the UK.",requiresAuth:true});
+ return json({enabled:aiConfigured(),workspaceEnabled:workspaceConfigured(),mode:"private-pilot",privacy:"Use fictional or non-sensitive data only. Model processing may occur outside the UK.",requiresAuth:true});
 }
 export async function POST(request:Request){
  if(!aiConfigured())return json({error:"Private AI pilot not configured"},503);

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {randomUUID} from "node:crypto";
 import {db} from "../lib/server/db";
 import {authorizeOrganization} from "../lib/server/authorization";
-import {saveGeneratedReview,listAiReviewRecords,readAiReviewRecord,updateAiReviewDecision} from "../lib/server/ai-reviews";
+import {saveGeneratedReview,listAiReviewRecords,readAiReviewRecord,updateAiReviewDecision,redactAiReviewContent} from "../lib/server/ai-reviews";
 import {reserveAiRequest,DailyLimitError} from "../lib/server/ai-meter";
 import {listObligations,createObligation,changeObligationStatus} from "../lib/server/obligation-service";
 
@@ -69,6 +69,20 @@ test("isolated PostgreSQL checks: tenant membership, distinct human review, inte
   // Simulate unauthorized DB content modification and verify read-side detection.
   await db.aiReview.update({where:{id:review.id},data:{result:{summary:"Tampered"}}});
   await assert.rejects(()=>readAiReviewRecord(reviewerCtx,review.id),(e:any)=>e.status===409);
+  await assert.rejects(()=>redactAiReviewContent(creatorCtx,review.id,2),(e:any)=>e.status===409);
+  // Repair the deliberately tampered test record to exercise the redaction path.
+  await db.aiReview.update({where:{id:review.id},data:{result:draft}});
+  await assert.rejects(()=>redactAiReviewContent(outsiderCtx,review.id,2),(e:any)=>e.status===404);
+  await assert.rejects(()=>redactAiReviewContent(creatorCtx,review.id,1),(e:any)=>e.status===409);
+  const redaction=await redactAiReviewContent(creatorCtx,review.id,2);
+  assert.equal(redaction.status,"REDACTED");
+  const after=await readAiReviewRecord(creatorCtx,review.id);
+  assert.equal(after.status,"REDACTED");
+  assert.equal(after.ai?.redacted,true);
+  assert.equal(after.ai?.summary,undefined);
+  assert.equal(after.reviewerNotes,"");
+  await assert.rejects(()=>redactAiReviewContent(creatorCtx,review.id,3),(e:any)=>e.status===409);
+  await assert.rejects(()=>updateAiReviewDecision(reviewerCtx,review.id,{decision:"REVIEWED",version:3,notes:"This was redacted so it cannot be reviewed."}),(e:any)=>e.status===409);
  }finally{
   await db.aiDailyUsage.deleteMany({where:{organizationId:{in:orgIds}}});
   await db.obligation.deleteMany({where:{organizationId:{in:orgIds}}});
