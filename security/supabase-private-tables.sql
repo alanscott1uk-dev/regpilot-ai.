@@ -16,7 +16,7 @@ DECLARE
 BEGIN
   FOREACH name IN ARRAY ARRAY[
     'User','Organization','Membership','Obligation','Evidence','AuditEvent',
-    'AiDailyUsage','AiReview'
+    'AiDailyUsage','AiReview','RegulatorySnapshot'
   ] LOOP
     relation_name := format('public.%I',name);
     IF to_regclass(relation_name) IS NULL THEN

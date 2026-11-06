@@ -27,6 +27,12 @@ enum AiReviewState {
   REDACTED
 }
 
+enum SourceReviewState {
+ NEEDS_REVIEW
+ REVIEWED
+ NOT_APPLICABLE
+}
+
 enum ScanStatus {
   CLEAN
   QUARANTINED
@@ -47,6 +53,7 @@ model User {
   memberships Membership[]
   auditEvents AuditEvent[]
   aiReviewsCreated AiReview[] @relation("AiReviewCreator")
+  regulatoryReviews RegulatorySnapshot[]
   aiReviewsChecked AiReview[] @relation("AiReviewReviewer")
   aiDailyUsage AiDailyUsage[]
   evidenceUploaded Evidence[] @relation("EvidenceUploader")
@@ -62,6 +69,7 @@ model Organization {
   evidence    Evidence[]
   auditEvents AuditEvent[]
   aiReviews AiReview[]
+  regulatorySnapshots RegulatorySnapshot[]
   aiDailyUsage AiDailyUsage[]
   evidenceCount Int @default(0)
   evidenceBytes BigInt @default(0)
@@ -175,4 +183,30 @@ model AiReview {
   reviewer         User?         @relation("AiReviewReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
   @@index([organizationId,status,createdAt])
   @@index([organizationId,createdAt])
+}
+
+
+// Stores snapshots of an explicit, allowlisted GOV.UK source at the time the
+// authorised operator checked it. No autonomous monitoring is implied.
+model RegulatorySnapshot {
+  id               String @id @default(uuid()) @db.Uuid
+  organizationId   String @db.Uuid
+  sourceId         String @db.VarChar(120)
+  title            String @db.VarChar(300)
+  url              String @db.VarChar(500)
+  contentHash      String @db.VarChar(64)
+  bodyText         String @db.Text
+  revisionAt       String? @db.VarChar(100)
+  addedSnippets    Json @default("[]")
+  removedSnippets  Json @default("[]")
+  reviewStatus     SourceReviewState @default(NEEDS_REVIEW)
+  reviewNotes      String @default("")
+  reviewerId       String? @db.Uuid
+  reviewedAt       DateTime?
+  version          Int @default(1)
+  firstCapturedAt  DateTime @default(now())
+  lastCheckedAt    DateTime @default(now())
+  organization     Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+  reviewer         User? @relation(fields:[reviewerId],references:[id],onDelete:Restrict)
+  @@index([organizationId,sourceId,firstCapturedAt])
 }
