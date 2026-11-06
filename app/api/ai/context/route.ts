@@ -1,5 +1,5 @@
 import {NextResponse} from "next/server";
-import {AccessError,aiConfigured,bootstrapAiOrganisation,listAiOrganisations} from "../../../lib/server/ai-auth";
+import {AccessError,aiConfigured,bootstrapAiOrganisation,listAiOrganisations} from "../../../../lib/server/ai-auth";
 export const runtime="nodejs";export const dynamic="force-dynamic";
 const json=(body:unknown,status=200)=>NextResponse.json(body,{status,headers:{"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"}});
 export async function GET(request:Request){
