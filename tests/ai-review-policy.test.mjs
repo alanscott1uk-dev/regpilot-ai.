@@ -23,3 +23,7 @@ test("UUID review locator is checked before database access",()=>{
  assert.equal(stableReviewId("123e4567-e89b-42d3-a456-426614174000"),true);
  assert.equal(stableReviewId("../../../other-org"),false);
 });
+
+test("digest uses canonical key order to survive PostgreSQL JSONB round trips",()=>{
+ assert.equal(reviewContentHash({a:"x",b:{z:2,a:1}}),reviewContentHash({b:{a:1,z:2},a:"x"}));
+});
