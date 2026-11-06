@@ -59,3 +59,12 @@ test("model-produced action and amendment source quotations are independently ch
  });
  assert.equal(offline.suggestedActions[0].sourceQuoteMatched,false);
 });
+
+test("private evidence ID can drive document review but cannot be used in chat or combined with raw PDF bytes",()=>{
+ const id="123e4567-e89b-42d3-a456-426614174000";
+ const input=validateAiRequest({...example,documentText:"",evidenceId:id});
+ assert.equal(input.evidenceId,id);assert.equal(input.fileBytes,null);
+ assert.throws(()=>validateAiRequest({...example,documentText:"",evidenceId:"../../other-org"}),InputError);
+ assert.throws(()=>validateAiRequest({...example,mode:"assistant",question:"What are the requirements?",evidenceId:id}),InputError);
+ assert.throws(()=>validateAiRequest({...example,evidenceId:id,pdfBase64:Buffer.from("%PDF-1.7\n%%EOF").toString("base64")}),InputError);
+});

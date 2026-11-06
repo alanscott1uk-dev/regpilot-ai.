@@ -30,6 +30,7 @@ export default function AiStudio(){
  const [documentText,setDocumentText]=useState("");
  const [file,setFile]=useState<File|null>(null);
  const [selectedDocument,setSelectedDocument]=useState("");
+ const [evidenceId,setEvidenceId]=useState("");
  const [question,setQuestion]=useState("");
  const [businessContext,setBusinessContext]=useState("");
  const [sourceId,setSourceId]=useState("");
@@ -164,8 +165,8 @@ export default function AiStudio(){
    const token=(await browserAuth().auth.getSession()).data.session?.access_token;
    if(!token)throw new Error("You are not signed in");
    let pdfBase64="";
-   if(file){if(file.type!=="application/pdf"||file.size>2_000_000||file.size<20)throw new Error("Choose a PDF smaller than 2 MB");pdfBase64=toBase64(new Uint8Array(await file.arrayBuffer()))}
-   const response=await fetch("/api/ai/analyse",{method:"POST",headers:{"Content-Type":"application/json",authorization:"Bearer "+token},body:JSON.stringify({organizationId:orgId,mode,documentText,question,businessContext,sourceId,pdfBase64,consent:true,retainDraft})});
+   if(file&&!evidenceId){if(file.type!=="application/pdf"||file.size>2_000_000||file.size<20)throw new Error("Choose a PDF smaller than 2 MB");pdfBase64=toBase64(new Uint8Array(await file.arrayBuffer()))}
+   const response=await fetch("/api/ai/analyse",{method:"POST",headers:{"Content-Type":"application/json",authorization:"Bearer "+token},body:JSON.stringify({organizationId:orgId,mode,documentText,question,businessContext,sourceId,pdfBase64,evidenceId,consent:true,retainDraft})});
    const json=await response.json();
    if(!response.ok)throw new Error(json.error||"AI request could not complete");
    setResult(json.ai as Result);setRequestId(json.requestId||"");
@@ -206,6 +207,8 @@ export default function AiStudio(){
 
  useEffect(()=>{
   const params=new URLSearchParams(window.location.search);
+  const requestedEvidence=params.get("evidenceId");
+  if(requestedEvidence&&/^[a-f0-9-]{36}$/i.test(requestedEvidence)){setMode("document");setEvidenceId(requestedEvidence);setSelectedDocument("Private evidence from the organisation vault");}
   const requestedSource=params.get("sourceId");
   if(requestedSource&&REGULATORY_SOURCES.some(s=>s.id===requestedSource))setSourceId(requestedSource);
   const requestedDoc=params.get("documentId");
@@ -258,8 +261,9 @@ export default function AiStudio(){
       <label>UK business context (fictional)<textarea rows={2} maxLength={2500} value={businessContext} onChange={e=>setBusinessContext(e.target.value)} placeholder="Example: Small wholesale business reviewing supplier procedures."/></label>
       <label>Official GOV.UK source<select value={sourceId} onChange={e=>setSourceId(e.target.value)} required={mode==="change"}><option value="">No official source selected</option>{REGULATORY_SOURCES.map(s=><option key={s.id} value={s.id}>{s.agency}: {s.title}</option>)}</select></label>
       {(mode==="document"||mode==="assistant")&&<label>{mode==="document"?"Policy/document text (fictional)":"Relevant policy or context (optional)"}<textarea rows={5} maxLength={16000} value={documentText} onChange={e=>setDocumentText(e.target.value)} placeholder="Paste non-sensitive example policy text…"/></label>}
+      {mode==="document"&&evidenceId&&<p className={ui.hint}>Private organisation evidence selected (up to 2 MB). RegPilot retrieves and verifies the stored bytes server-side after checking your membership; no public file URL is issued. <button type="button" onClick={()=>setEvidenceId("")}>Clear selection</button></p>}
       {mode==="document"&&selectedDocument&&<p className={ui.hint}>Selected document from demo library: <strong>{selectedDocument}</strong>. Review the content before sending it to an external model provider.</p>}
-      {mode==="document"&&<label>Or upload a non-sensitive example PDF (max 2 MB)<input type="file" accept="application/pdf,.pdf" onChange={e=>setFile(e.target.files?.[0]||null)}/></label>}
+      {mode==="document"&&<label>Or upload a non-sensitive example PDF (max 2 MB)<input type="file" accept="application/pdf,.pdf" onChange={e=>{setEvidenceId("");setFile(e.target.files?.[0]||null);}}/></label>}
       {mode!=="document"&&<label>Your question<input maxLength={1500} value={question} onChange={e=>setQuestion(e.target.value)} placeholder="What could this change affect?"/></label>}
       {mode==="document"&&<label>Question (optional)<input maxLength={1500} value={question} onChange={e=>setQuestion(e.target.value)} placeholder="Which sections might need review?"/></label>}
       <label className={ui.check}><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/><span>I confirm this contains fictional or non-sensitive content and I consent to external AI processing.</span></label>

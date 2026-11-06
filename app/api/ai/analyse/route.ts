@@ -4,6 +4,9 @@ import {reserveAiRequest,DailyLimitError} from "../../../../lib/server/ai-meter"
 import {loadOfficialSource,SourceUnavailable} from "../../../../lib/server/ai-sources";
 import {runRegPilotAi} from "../../../../lib/server/ai-model";
 import {saveGeneratedReview} from "../../../../lib/server/ai-reviews";
+import {downloadEvidence} from "../../../../lib/server/evidence-service";
+import {evidenceConfigured} from "../../../../lib/server/evidence-storage";
+import {EvidenceError} from "../../../../lib/evidence/file-guard.mjs";
 import {validateAiRequest,InputError} from "../../../../lib/ai/contract.mjs";
 export const runtime="nodejs";export const dynamic="force-dynamic";export const maxDuration=60;
 const json=(value:unknown,status=200)=>NextResponse.json(value,{status,headers:{"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"}});
@@ -34,8 +37,15 @@ export async function POST(request:Request){
   const input=validateAiRequest(raw);
   const ctx=await authorisedAiContext(request,input.organizationId);
   const official=await loadOfficialSource(input.sourceId);
+  let aiInput=input;
+  if(input.evidenceId){
+   if(!evidenceConfigured())return json({error:"Private evidence vault not configured"},503);
+   const stored=await downloadEvidence(ctx,input.evidenceId);
+   if(stored.bytes.byteLength>2_000_000)return json({error:"AI currently supports private evidence PDFs up to 2 MB"},413);
+   aiInput={...input,fileBytes:stored.bytes};
+  }
   requestId=await reserveAiRequest(ctx,input.mode);
-  const ai=await runRegPilotAi(input,official);
+  const ai=await runRegPilotAi(aiInput,official);
   let reviewId:string|null=null,storageWarning:string|null=null;
   if(input.retainDraft){
    try{
@@ -52,6 +62,7 @@ export async function POST(request:Request){
   if(error instanceof AccessError)return json({error:error.message},error.status);
   if(error instanceof SourceUnavailable)return json({error:error.message},422);
   if(error instanceof DailyLimitError)return json({error:error.message},429);
+  if(error instanceof EvidenceError)return json({error:error.message},error.status);
   // Internal provider errors must never return credentials, submitted documents or provider payloads.
   return json({error:requestId?"AI generation unavailable or invalid; allowance was reserved. Retry later.":"AI service or organisation store unavailable."},503);
  }
