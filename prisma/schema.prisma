@@ -63,6 +63,8 @@ model Organization {
   auditEvents AuditEvent[]
   aiReviews AiReview[]
   aiDailyUsage AiDailyUsage[]
+  evidenceCount Int @default(0)
+  evidenceBytes BigInt @default(0)
 }
 
 model Membership {
