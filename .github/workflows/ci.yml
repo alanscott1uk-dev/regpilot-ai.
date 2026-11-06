@@ -50,3 +50,4 @@ jobs:
       - run: node --import tsx --test tests/private-tables.integration.test.ts
       - run: npm run test:integration
       - run: npm run build
+      - run: npm run test:smoke
