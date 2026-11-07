@@ -1,8 +1,8 @@
 import {createHash} from "node:crypto";
 import type {Interpretation} from "./semantic";
 
-export const ENGINE_VERSION = "obligation-triage-1.0.0";
-export const ACTIVITIES = ["personal-data", "employing-staff", "premises", "medicines", "controlled-drugs"] as const;
+export const ENGINE_VERSION = "obligation-triage-1.1.0";
+export const ACTIVITIES = ["personal-data", "employing-staff", "premises", "medicines", "controlled-drugs", "food-business", "consumer-sales", "vat-registered", "limited-company", "commercial-waste"] as const;
 export const JURISDICTIONS = ["England", "Scotland", "Wales", "Northern Ireland"] as const;
 export type BusinessProfile = {activities: string[]; jurisdictions: string[]};
 export type Mapping = {id: string; title: string; matchedTerms: string[]; evidenceNeeded: string[]; domains: string[]};
@@ -32,6 +32,9 @@ export const CONTROL_THEMES = [
 const sourceActivities: Record<string, string[]> = {
   "home-office-domestic":["controlled-drugs"], "home-office-application":["controlled-drugs"],
   "mhra-organisation":["medicines"], "mhra-safety":["medicines"],
+  "employer-registration":["employing-staff"], "workplace-pensions":["employing-staff"],
+  "vat-records":["vat-registered"], "company-records":["limited-company"], "distance-selling":["consumer-sales"],
+  "food-registration":["food-business"], "food-safety":["food-business"], "commercial-waste":["commercial-waste"],
   "uk-data-protection":["personal-data"], "workplace-fire-safety":["premises", "employing-staff"]
 };
 export function hashValue(value: unknown) {

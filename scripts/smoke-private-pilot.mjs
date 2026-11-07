@@ -30,6 +30,11 @@ const server=spawn(process.execPath,["node_modules/next/dist/bin/next","start","
   REGPILOT_SEMANTIC_ENABLED:"false",
   REGPILOT_MONITORING_ENABLED:"false",
   REGPILOT_WORKSPACE_ENABLED:"false",
+  REGPILOT_PROGRAMME_ENABLED:"false",
+  REGPILOT_PROGRAMME_AI_ENABLED:"false",
+  REGPILOT_CONNECTORS_ENABLED:"false",
+  REGPILOT_AUTOMATION_ENABLED:"false",
+  REGPILOT_MONITOR_SECRET:"",
   AI_GATEWAY_API_KEY:"",
   VERCEL_OIDC_TOKEN:"",
   NEXT_TELEMETRY_DISABLED:"1"
@@ -54,7 +59,7 @@ async function waitForServer(){
 try{
  await waitForServer();
  const routes=[
-  "/workbench","/register","/documents","/evidence","/controls",
+  "/team/operations","/workbench","/register","/documents","/evidence","/controls",
   "/assurance","/intelligence","/traceability","/team","/team/evidence","/team/sources","/team/intelligence","/team/assurance","/ai"
  ];
  for(const path of routes){
@@ -77,11 +82,12 @@ try{
  assert.equal(noEvidence.status,503,"evidence API must fail closed without private storage and antivirus configuration");
  const noSources=await response("/api/workspace/sources?organizationId=123e4567-e89b-42d3-a456-426614174000");
  assert.equal(noSources.status,503,"team regulatory source API must fail closed when private workspace is disabled");
- for(const path of ["/api/workspace/assurance","/api/workspace/intelligence","/api/workspace/intelligence/profile","/api/workspace/intelligence/semantic","/api/workspace/intelligence/monitoring","/api/internal/monitor","/api/workspace/intelligence/123e4567-e89b-42d3-a456-426614174000"]){
+ for(const path of ["/api/workspace/operations","/api/workspace/programme","/api/workspace/connectors","/api/workspace/controls","/api/workspace/assurance","/api/workspace/intelligence","/api/workspace/intelligence/profile","/api/workspace/intelligence/semantic","/api/workspace/intelligence/monitoring","/api/internal/monitor","/api/workspace/intelligence/123e4567-e89b-42d3-a456-426614174000"]){
    const method=(path.endsWith("profile")||path.endsWith("monitoring"))?"PUT":"POST";
    const result=await response(path,{method,headers:{"Content-Type":"application/json"},body:"{}"});
    assert.equal(result.status,503,path+" must fail closed");
  }
+ assert.equal((await response("/api/internal/automation",{method:"POST"})).status,401,"automation rejects missing secrets");
  const noTeam=await response("/api/workspace/obligations?organizationId=123e4567-e89b-42d3-a456-426614174000");
  assert.equal(noTeam.status,503,"private team API must fail closed");
  const rootResponse=await response("/");

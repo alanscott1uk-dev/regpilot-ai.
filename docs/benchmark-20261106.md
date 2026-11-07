@@ -39,3 +39,16 @@ The next implementation closes a specific weakness in RegPilot's old completion 
 | Inspection support | Export source, evidence hashes, selected quotations, human rationale and current/stale state | Export hash and authorisation checked; not a digitally signed certification |
 
 These features address content-level assurance and explainability. Superiority over Vanta, Sprinto, Drata or CUBE still requires comparable hands-on evidence of accuracy, collection coverage, task-completion time, uptime and cost. See [evidence assurance](evidence-assurance.md) for scope and activation boundaries.
+
+## Programme and connected-evidence batch — 7 November
+
+| Gap identified in competitor comparison | Development implementation | Remaining acceptance or breadth gap |
+| --- | --- | --- |
+| Existing-programme import | Multi-PDF ingestion into persistent owned controls; exact page quotations; optional structured AI; independent acceptance | No OCR/DOCX, programme completeness guarantee or real-model evaluation |
+| Connected evidence | GitHub classic branch-protection adapter, encrypted credentials, durable leased collection, historical exports and follow-up tasks | One narrow connector; no ruleset/review-history assessment or customer-connected acceptance |
+| Recurring work | Owned review schedules, duplicate-safe task generation, missed-cycle coalescing and overdue work queue | Background trigger not provisioned; no external chasing or measured service reliability |
+| Control reuse | Many-to-many human-reviewed scope links between managed controls and tasks | No expert-validated/licensed framework mappings; requirement-specific assurance remains mandatory |
+| Wider UK content | 14 selected GOV.UK references and expanded business activities | Still a small guidance catalogue; territory, exceptions and applicability require expert review |
+| Ease of use | One Operations workspace for Today, Import programme, Control library and Connections | Timed SME usability and authenticated browser acceptance remain unmeasured |
+
+Scope and release boundaries: [programme operations](programme-operations.md). Existing competitor references above describe vendor documentation, not a head-to-head performance experiment.

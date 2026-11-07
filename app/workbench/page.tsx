@@ -123,7 +123,7 @@ export default function Workbench(){
    <nav className={ui.sideNav} aria-label="Main navigation">
     <a className={ui.active} aria-current="page" href="/workbench">◉ &nbsp;Demo overview</a>
     <a href="/team/intelligence">◈ &nbsp;Regulatory inbox</a>
-    <a href="/team">▤ &nbsp;Team tasks</a>
+    <a href="/team/operations">▤ &nbsp;Team operations</a>
     <a href="/team/evidence">▣ &nbsp;Evidence vault</a>
     <a href="/team/assurance">◎ &nbsp;Evidence assessment</a>
     <a href="/ai">✦ &nbsp;AI Studio</a>
@@ -139,7 +139,7 @@ export default function Workbench(){
      <h1>Compliance, <em>without the chaos.</em></h1>
      <p>One clear picture of what matters, what needs evidence and what your team should do next.</p>
      <div className={ui.heroButtons}>
-      <a className={ui.heroPrimary} href="/team">Open your team workspace <span>↗</span></a>
+      <a className={ui.heroPrimary} href="/team/operations">Open your team workspace <span>↗</span></a>
       <button type="button" className={ui.heroGhost} onClick={()=>{setShowCreate(x=>!x);setMessage("");}}>{showCreate?"Close action form":"＋ Try a demo task"} <span>↗</span></button>
      </div>
      <div className={ui.heroTrust}><span>✦ Guided work</span><span>◈ Evidence connected</span><span>◉ Clear ownership</span></div>
@@ -204,7 +204,7 @@ export default function Workbench(){
     </div>
     <div className={ui.regulatorySignal}>
      <span className={ui.stripIcon}>◈</span>
-     <div><span className={ui.stripOverline}>OFFICIAL SOURCE WATCH</span><strong>{sourcePulse?sourcePulse.awaiting+" of "+sourcePulse.available+" sources need manual triage":sourcePulseError?"Source check unavailable":"Checking official sources…"}</strong><small>{sourcePulse?"Metadata checked "+new Date(sourcePulse.checkedAt).toLocaleDateString("en-GB"):"Limited MHRA / Home Office pilot feed · no background monitoring"}</small></div>
+     <div><span className={ui.stripOverline}>OFFICIAL SOURCE WATCH</span><strong>{sourcePulse?sourcePulse.awaiting+" of "+sourcePulse.available+" sources need manual triage":sourcePulseError?"Source check unavailable":"Checking official sources…"}</strong><small>{sourcePulse?"Metadata checked "+new Date(sourcePulse.checkedAt).toLocaleDateString("en-GB"):"Selected UK guidance references · public metadata check"}</small></div>
      <a href="/intelligence">Open inbox <span>↗</span></a>
     </div>
    </section>
