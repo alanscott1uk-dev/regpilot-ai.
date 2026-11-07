@@ -121,7 +121,7 @@ export default function Team(){
      <p className={ui.foot}>Only the most recent 100 tasks are returned. Completion indicates work status, not verified compliance or evidence approval.</p>
     </section>
    </>}
-   <footer className={shell.footer}>Private test environment only · Secure evidence storage, true organisation invitations and regulatory sign-off require further development.</footer>
+   <footer className={shell.footer}>Private pilot · Evidence storage and AI require service activation. Organisation invitations and production acceptance remain outstanding.</footer>
   </main>
  </div>;
 }
