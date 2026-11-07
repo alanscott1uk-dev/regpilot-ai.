@@ -5,7 +5,7 @@
 ## Why this matters
 RegPilot accesses its PostgreSQL tables from server-side Prisma through an administrator-managed connection. Supabase exposes the **public** schema to its Data API under some settings; a direct publishable-key request must never read sensitive workspaces.
 
-To protect this integration until properly reviewed row-level, role-specific policies exist, \`security/supabase-private-tables.sql\` enables RLS on **all 27 current private app tables** and REVOKES direct privileges from \`PUBLIC\`, \`anon\`, \`authenticated\`, and \`service_role\` (when present). There are **no public read/write policies**. It is intentionally default-deny.
+To protect this integration until properly reviewed row-level, role-specific policies exist, \`security/supabase-private-tables.sql\` enables RLS on **all 32 current private app tables** and REVOKES direct privileges from \`PUBLIC\`, \`anon\`, \`authenticated\`, and \`service_role\` (when present). There are **no public read/write policies**. It is intentionally default-deny.
 
 The privileged Prisma database connection can bypass ordinary row-level restrictions when using an owner/bypassrls role. For this reason, **each API route must still enforce verified identity, organisation membership, roles and organisation-scoped query filters**. These SQL guards do not make the app fully tenant secure on their own.
 

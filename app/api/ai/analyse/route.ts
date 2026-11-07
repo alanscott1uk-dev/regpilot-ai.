@@ -1,3 +1,4 @@
+import {IntelligenceError} from "../../../../lib/server/intelligence-service";
 import {NextResponse} from "next/server";
 import {aiConfigured,workspaceConfigured,AccessError,authorisedAiContext} from "../../../../lib/server/ai-auth";
 import {reserveAiRequest,DailyLimitError} from "../../../../lib/server/ai-meter";
@@ -62,6 +63,7 @@ export async function POST(request:Request){
   return json({requestId,ai,reviewId,storageWarning});
  }catch(error){
   if(error instanceof InputError)return json({error:error.message},400);
+  if(error instanceof IntelligenceError)return json({error:error.message},error.status);
   if(error instanceof AccessError)return json({error:error.message},error.status);
   if(error instanceof SourceUnavailable)return json({error:error.message},422);
   if(error instanceof DailyLimitError)return json({error:error.message},429);

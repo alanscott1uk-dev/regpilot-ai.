@@ -4,7 +4,7 @@ import os from "node:os";
 import {Worker} from "node:worker_threads";
 import assert from "node:assert/strict";
 import {fixtureDocx} from "../tests/helpers/docx-fixture.mjs";
-const root=process.cwd(),routes=["api/workspace/evidence","api/workspace/evidence/[id]/inspect","api/workspace/programme","api/workspace/assurance","api/workspace/assurance/[id]","api/workspace/library/coverage","api/workspace/library/coverage/[id]","api/ai/analyse"];
+const root=process.cwd(),routes=["api/workspace/services","api/workspace/evidence","api/workspace/evidence/[id]/inspect","api/workspace/programme","api/workspace/assurance","api/workspace/assurance/[id]","api/workspace/library/coverage","api/workspace/library/coverage/[id]","api/ai/analyse"];
 // Verify every consuming route independently, so one trace cannot hide another's missing dependency.
 for(const route of routes){
   const tracePath=path.join(root,".next/server/app",route,"route.js.nft.json"),trace=JSON.parse(await readFile(tracePath,"utf8"));

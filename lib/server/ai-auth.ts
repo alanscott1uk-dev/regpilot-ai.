@@ -1,3 +1,4 @@
+import {paidMaster} from "../services/config";
 import {db} from "./db";
 import {authorizeOrganization} from "./authorization";
 import {allowedEmail} from "../ai/security.mjs";
@@ -13,7 +14,7 @@ export function workspaceConfigured(){
 }
 export function aiConfigured(){
  const configuredModel=process.env.REGPILOT_AI_MODEL||"";
- return workspaceConfigured()&&process.env.REGPILOT_AI_ENABLED==="true"&&process.env.REGPILOT_AI_SAFEGUARDS_VERIFIED==="true"&&
+ return paidMaster()&&workspaceConfigured()&&process.env.REGPILOT_AI_ENABLED==="true"&&process.env.REGPILOT_AI_SAFEGUARDS_VERIFIED==="true"&&
   /^[a-z0-9-]+\/[a-z0-9._-]+$/i.test(configuredModel)&&
   !!(process.env.AI_GATEWAY_API_KEY||process.env.VERCEL_OIDC_TOKEN);
 }

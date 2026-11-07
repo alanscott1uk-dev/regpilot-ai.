@@ -4,6 +4,7 @@ const pdfRuntime=["./lib/server/pdf-extraction-worker.mjs","./node_modules/pdfjs
 const config={
   serverExternalPackages:["pdfjs-dist"],
   outputFileTracingIncludes:{
+    "/api/workspace/services":[...docxRuntime,...pdfRuntime],
     "/api/workspace/evidence":[...docxRuntime],
     "/api/workspace/evidence/*/inspect":[...docxRuntime,...pdfRuntime],
     "/api/workspace/library/intake":[...docxRuntime,"./lib/server/pdf-extraction-worker.mjs","./node_modules/pdfjs-dist/legacy/build/*.mjs","./node_modules/pdfjs-dist/package.json","./node_modules/@napi-rs/canvas*/**/*"],

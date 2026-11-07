@@ -26,6 +26,7 @@ const server=spawn(process.execPath,["node_modules/next/dist/bin/next","start","
  env:{
   ...process.env,
   NODE_ENV:"production",
+  REGPILOT_PAID_SERVICES_ENABLED:"false",
   REGPILOT_AI_ENABLED:"false",
   REGPILOT_SEMANTIC_ENABLED:"false",
   REGPILOT_MONITORING_ENABLED:"false",
@@ -61,7 +62,7 @@ async function waitForServer(){
 try{
  await waitForServer();
  const routes=[
-  "/team/settings","/team/operations","/team/library","/workbench","/register","/documents","/evidence","/controls",
+  "/team/services","/team/settings","/team/operations","/team/library","/workbench","/register","/documents","/evidence","/controls",
   "/assurance","/intelligence","/traceability","/team","/team/evidence","/team/sources","/team/intelligence","/team/assurance","/ai"
  ];
  for(const path of routes){

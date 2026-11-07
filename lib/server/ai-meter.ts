@@ -1,3 +1,4 @@
+import {reservePaid} from "./paid-budget";
 import {db} from "./db";
 import type {AuthorizedContext} from "./authorization";
 export class DailyLimitError extends Error {constructor(){super("Daily AI request allowance reached");this.name="DailyLimitError";}}
@@ -13,6 +14,7 @@ export async function reserveAiRequest(ctx:AuthorizedContext,mode:string){
  const day=new Date(new Date().toISOString().slice(0,10)+"T00:00:00.000Z");
  const id=crypto.randomUUID();
  await db.$transaction(async tx=>{
+  await reservePaid(tx,ctx,"AI","ai:"+id);
   const total=await tx.aiDailyUsage.aggregate({where:{organizationId:ctx.organizationId,day},_sum:{count:true}});
   if((total._sum.count||0)>=perOrg)throw new DailyLimitError();
   await tx.aiDailyUsage.upsert({

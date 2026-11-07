@@ -81,6 +81,9 @@ model User {
   coverageRuns CoverageRun[]
   coverageDecisions CoverageDecision[]
   workspaceInvitations WorkspaceInvitation[] @relation("InvitationIssuer")
+  serviceJobs ServiceJob[]
+  paidReservations PaidReservation[]
+  paidBudgetConfigurations PaidBudget[]
 }
 
 model Organization {
@@ -113,6 +116,84 @@ model Organization {
   coverageRuns CoverageRun[]
   coverageDecisions CoverageDecision[]
   workspaceInvitations WorkspaceInvitation[]
+  paidBudget PaidBudget?
+  paidReservations PaidReservation[]
+  serviceJobs ServiceJob[]
+  billingAccount BillingAccount?
+  billingEvents BillingEvent[]
+}
+
+model PaidBudget {
+ organizationId String @id @db.Uuid
+ monthlyLimitMicros Int
+ remindersEnabled Boolean @default(false)
+ configuredById String? @db.Uuid
+ configuredBy User? @relation(fields:[configuredById],references:[id],onDelete:SetNull)
+ version Int @default(1)
+ updatedAt DateTime @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+}
+
+model PaidReservation {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ userId String @db.Uuid
+ requestKey String @db.VarChar(140)
+ service String @db.VarChar(24)
+ units Int
+ reservedMicros Int
+ month DateTime @db.Date
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ user User @relation(fields:[userId],references:[id],onDelete:Restrict)
+ @@unique([organizationId,requestKey])
+ @@index([month,organizationId])
+}
+
+model ServiceJob {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ createdById String @db.Uuid
+ kind String @db.VarChar(24)
+ targetId String? @db.Uuid
+ sourceHash String? @db.VarChar(64)
+ dedupeKey String @db.VarChar(180)
+ status String @default("DRAFT") @db.VarChar(24)
+ version Int @default(1)
+ units Int @default(1)
+ recipientId String? @db.Uuid
+ leaseToken String? @db.Uuid
+ leaseUntil DateTime?
+ failureCode String? @db.VarChar(48)
+ result Json?
+ resultHash String? @db.VarChar(64)
+ providerId String? @unique @db.VarChar(200)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ creator User @relation(fields:[createdById],references:[id],onDelete:Restrict)
+ @@unique([organizationId,dedupeKey])
+ @@index([status,createdAt])
+ @@index([organizationId,createdAt])
+}
+
+model BillingAccount {
+ organizationId String @id @db.Uuid
+ customerId String @unique @db.VarChar(120)
+ subscriptionId String? @unique @db.VarChar(120)
+ status String @default("PENDING") @db.VarChar(40)
+ lastEventAt Int @default(0)
+ updatedAt DateTime @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+}
+
+model BillingEvent {
+ id String @id @db.VarChar(120)
+ organizationId String @db.Uuid
+ eventType String @db.VarChar(100)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ @@index([organizationId,createdAt])
 }
 
 model WorkspaceInvitation {
