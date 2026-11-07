@@ -62,8 +62,14 @@ test("team access: email ownership, tenant isolation, expiry, role escalation, h
   // Recheck membership after a scan/store operation completes. Orphan upload is removed.
   await assert.rejects(()=>createEvidence(ctx(invitee.id,"EDITOR"),task.id,"fixture.pdf",fixturePdf([["Fictional test file."]]),{storage:store,scan:async()=>{await changeMember(o,{userId:invitee.id,expectedRole:"EDITOR",action:"REMOVE"});return scan();}}),rejects(403));assert.equal(objects.size,0);
   const evidence=await createEvidence(ctx(replacement.id,"EDITOR"),task.id,"fixture.pdf",fixturePdf([["Fictional review file."]]),{storage:store,scan});
+  const connector=await db.evidenceConnector.create({data:{organizationId:a.id,controlId:control.id,configuredById:admin.id,repository:"fictional/repository",branch:"main",enabled:true,encryptedSecret:"fictional-not-a-credential",leaseToken:randomUUID(),leaseUntil:new Date(Date.now()+60000)}});
+  const watch=await db.watchSchedule.create({data:{organizationId:a.id,configuredById:admin.id,sourceId:"fictional-source",enabled:true,leaseToken:randomUUID(),leaseUntil:new Date(Date.now()+60000)}});
+  await db.managedControl.update({where:{id:control.id},data:{scheduledById:admin.id}});
   await assert.rejects(()=>reviewEvidence(ad,evidence.id,{decision:"APPROVED",version:1,notes:"Independently checked the fictional bytes."},{...store,async get(k){const bytes=await store.get(k);await changeMember(o,{userId:admin.id,expectedRole:"ADMIN",action:"ROLE",role:"EDITOR"});return bytes;}}),rejects(403));
   assert.equal((await db.evidence.findUniqueOrThrow({where:{id:evidence.id}})).reviewStatus,"PENDING_REVIEW");
+  const pausedConnector=await db.evidenceConnector.findUniqueOrThrow({where:{id:connector.id}}),pausedWatch=await db.watchSchedule.findUniqueOrThrow({where:{id:watch.id}});
+  assert.equal(pausedConnector.enabled,false);assert.equal(pausedConnector.encryptedSecret,null);assert.equal(pausedConnector.leaseToken,null);assert.equal(pausedConnector.version,2);
+  assert.equal(pausedWatch.enabled,false);assert.equal(pausedWatch.leaseToken,null);assert.equal((await db.managedControl.findUniqueOrThrow({where:{id:control.id}})).enabled,false);
   await assert.rejects(()=>downloadEvidence(ed,evidence.id,store),rejects(403));
   const output={summary:"Illustrative fixture requiring an independent reviewer.",confidence:"limited",findings:[],suggestedActions:[],suggestedAmendments:[],questions:[],limitations:["No compliance determination"],scope:"Draft only",source:null,model:"test/fixture",generatedAt:new Date().toISOString()};
   await assert.rejects(()=>saveGeneratedReview(ed,{requestId:randomUUID(),mode:"document",ai:output}),rejects(403));
@@ -75,7 +81,7 @@ test("team access: email ownership, tenant isolation, expiry, role escalation, h
   await assert.rejects(()=>inviteMember(o,{email:later.email,role:"ADMIN"}),rejects(403));
   assert.ok((await teamWorkspace(ctx(admin.id,"OWNER"))).activity.some(e=>e.action==="team.ownership_transferred"));
  }finally{
-  for(const model of [db.workspaceInvitation,db.auditEvent,db.aiReview,db.evidence,db.libraryApplicability,db.libraryRevision,db.libraryRequirement,db.obligation,db.managedControl,db.programmeImport,db.membership] as any[])await model.deleteMany({where:{organizationId:{in:orgIds}}});
+  for(const model of [db.workspaceInvitation,db.auditEvent,db.aiReview,db.evidence,db.libraryApplicability,db.libraryRevision,db.libraryRequirement,db.obligation,db.evidenceConnector,db.watchSchedule,db.managedControl,db.programmeImport,db.membership] as any[])await model.deleteMany({where:{organizationId:{in:orgIds}}});
   await db.organization.deleteMany({where:{id:{in:orgIds}}});await db.user.deleteMany({where:{id:{in:users.map(u=>u.id)}}});await db.$disconnect();
  }
 });
