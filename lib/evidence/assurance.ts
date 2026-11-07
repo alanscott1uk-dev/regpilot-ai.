@@ -47,7 +47,7 @@ export function groundedAssessment(raw:unknown,sourceQuote:string,documents:Evid
       const document=documents.find(d=>d.id===citation.evidenceId)?.document;const page=document?.pages.find(p=>p.page===citation.page),offset=page?.text.indexOf(citation.quote)??-1;
       if(!page||offset<0||page.text.indexOf(citation.quote,offset+1)!==-1){valid=false;break;}
       const p={evidenceId:citation.evidenceId,page:citation.page,unitKind:document?.unitKind||"page",label:page.label,start:offset,end:offset+citation.quote.length,quote:citation.quote};
-      anchored.push({...p,key:hashValue(p),matchedTerms:[],negationDetected:/\b(not|never|no|except|unless|missing|failed)\b/i.test(p.quote)});
+      anchored.push({...p,key:hashValue({evidenceId:p.evidenceId,page:p.page,start:p.start,end:p.end,quote:p.quote}),matchedTerms:[],negationDetected:/\b(not|never|no|except|unless|missing|failed)\b/i.test(p.quote)});
     }
     if(["SUPPORTED","CONTRADICTED"].includes(check.verdict)&&!anchored.length)valid=false;
     if(!valid){base.rejectedClaims++;base.checks.push({criterion:"A model claim could not be grounded",sourceQuote,verdict:"UNASSESSED",explanation:"This claim was withheld because a source or evidence quotation was missing, ambiguous, or referenced the wrong document location.",passageKeys:[]});continue;}

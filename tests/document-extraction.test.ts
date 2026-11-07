@@ -20,7 +20,7 @@ test("Word citations are grounded by block and offset, reject invented quotation
   const result=groundProgramme({controls:[candidate]},docs);assert.equal(result.controls.length,1);assert.equal(result.controls[0].citations[0].unitKind,"block");assert.match(result.controls[0].citations[0].label!,/paragraph 1/);assert.equal(result.documents[0].unitKind,"block");
   assert.equal(groundProgramme({controls:[{...candidate,citations:[{evidenceId:id,page:2,quote}]}]},docs).rejected,1);
   const assessment=groundedAssessment({checks:[{criterion:"Training is completed before access",sourceQuote:quote,verdict:"SUPPORTED",explanation:"The fictional policy states an intention; implementation requires further records.",citations:[{evidenceId:id,page:1,quote}]}],limitations:[]},quote,docs);
-  assert.equal(assessment.passages[0].unitKind,"block");assert.equal(assessment.documents[0].unitKind,"block");
+  assert.equal(assessment.passages.filter(p=>p.quote===quote).length,1,"Search and AI must not duplicate the same source passage");assert.equal(assessment.passages[0].unitKind,"block");assert.equal(assessment.documents[0].unitKind,"block");
   const pdf=await extractDocument(fixturePdf([[quote]]),"legacy.pdf");assert.equal(pdf.unitKind,"page");assert.equal(pdf.pages[0].page,1);
 });
 test("unresolved revisions, images, fields and merged cells block acceptance with explicit repair instructions",async()=>{
