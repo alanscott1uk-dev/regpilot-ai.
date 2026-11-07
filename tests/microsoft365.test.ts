@@ -26,7 +26,7 @@ test("pagination is complete before all-account passes; returned gaps create sco
 for(const link of ["https://evil.invalid/steal","https://graph.microsoft.com@evil.invalid/steal","http://graph.microsoft.com/v1.0/reports/authenticationMethods/userRegistrationDetails","https://graph.microsoft.com/v1.0/users","https://graph.microsoft.com/v1.0/reports/authenticationMethods/userRegistrationDetails#x"])
  test("pagination refuses unsafe target "+link,async()=>{const f=fixture({pages:[{value:[record("one")],"@odata.nextLink":link}]});await assert.rejects(()=>collectMicrosoft365(target,secret,f.fetcher),(e:any)=>e.code==="UNSAFE_PAGINATION");assert.equal(f.calls.length,4);});
 test("looped, malformed, duplicate or oversized provider results cannot produce observations",async()=>{
- for(const pages of [[{value:[record("one")],"@odata.nextLink":endpoint}],[{value:[record("one"),record("one")]}],[{value:"bad"}],[{value:[record("one")],"@odata.nextLink":123}],[{value:[record("one")],extra:"x".repeat(1_000_001)}]]){
+ for(const pages of [[{value:[record("one")],"@odata.nextLink":endpoint}],[{value:[record("one"),record("one")]}],[{value:"bad"}],[{value:[record("")]}],[{value:[record("one")],"@odata.nextLink":""}],[{value:[record("one")],"@odata.nextLink":123}],[{value:[record("one")],extra:"x".repeat(1_000_001)}]]){
   const f=fixture({pages});await assert.rejects(()=>collectMicrosoft365(target,secret,f.fetcher));
  }
 });
@@ -40,4 +40,11 @@ test("bounded pagination returns explicit incomplete coverage without reading ar
 });
 test("change comparison excludes capture timestamps and distinguishes status/value changes",async()=>{
  const f=fixture(),r=await collectMicrosoft365(target,secret,f.fetcher),later={...r,capturedAt:"2099-01-01",checks:r.checks.map(c=>({...c}))};assert.deepEqual(signalChanges(later,r),[]);later.checks[1].status="FAIL";later.checks[1].observed="One returned member needs enrolment";assert.equal(signalChanges(later,r).length,1);assert.equal(signalChanges(later,r)[0].before,"PASS");assert.deepEqual(signalChanges({...later,engine:"another-version"},r),[]);assert.deepEqual(signalChanges(later,null),[]);
+});
+
+test("aggregate-byte and record limits prevent unbounded collection or complete-coverage claims",async()=>{
+ const pages=Array.from({length:3},(_,i)=>({value:[record("user"+i)],padding:"x".repeat(700_000),"@odata.nextLink":endpoint+"?$skiptoken="+(i+1)}));
+ await assert.rejects(()=>collectMicrosoft365(target,secret,fixture({pages}).fetcher),(e:any)=>e.code==="RESPONSE_TOO_LARGE");
+ const f=fixture({pages:[{value:Array.from({length:2000},(_,i)=>record("user"+i)),"@odata.nextLink":endpoint+"?$skiptoken=more"}]}),r=await collectMicrosoft365(target,secret,f.fetcher);
+ assert.equal(r.coverage.records,2000);assert.equal(r.coverage.complete,false);assert.equal(f.calls.length,4);assert.equal(r.checks.find(c=>c.id==="registration-coverage")?.status,"UNKNOWN");
 });

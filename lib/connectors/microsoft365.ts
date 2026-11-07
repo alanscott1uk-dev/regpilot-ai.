@@ -46,7 +46,7 @@ export async function collectMicrosoft365(target:MicrosoftTarget,secret:string,f
    if(row.isMfaCapable===true)counts.capable++;if(row.isMfaCapable===false)counts.notCapable++;
    if(row.isAdmin===true){counts.admins++;if(row.isMfaCapable===true)counts.adminCapable++;else if(row.isMfaCapable===false)counts.adminNotCapable++;else counts.adminUnknown++;}
   }
-  const link=data["@odata.nextLink"];if(link!==undefined&&typeof link!=="string")throw new CollectionError("INVALID_RESPONSE");next=link?reportUrl(link):"";
+  const link=data["@odata.nextLink"];if(link!==undefined&&(typeof link!=="string"||!link.length))throw new CollectionError("INVALID_RESPONSE");next=link?reportUrl(link):"";
  }
  const fresh=coverage.reportAvailable&&!coverage.staleRecords&&!coverage.missingDates,complete=coverage.complete&&!coverage.unknownType&&!counts.unknown;
  const status=(total:number,negative:number,unknown=0):ConnectorCheck["status"]=>!fresh?"UNKNOWN":negative>0?"FAIL":complete&&total>0&&!unknown?"PASS":"UNKNOWN";
