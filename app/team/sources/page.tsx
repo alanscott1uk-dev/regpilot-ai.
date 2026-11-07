@@ -1,4 +1,5 @@
 "use client";
+import {TERRITORIES,SOURCE_ACTIVITIES,matchingSources,sourceNextStep,type SourceCoverage} from "../../../lib/regulatory/source-coverage";
 import {officialSourceUrl} from "../../../lib/regulatory-sources.mjs";
 import {useCallback,useEffect,useMemo,useState,useRef} from "react";
 import {browserAuth} from "../../../lib/client/supabase-auth";
@@ -16,6 +17,9 @@ export default function OfficialSourceHistory(){
  const activeOrg=useRef(orgId);activeOrg.current=orgId;
  const [catalogue,setCatalogue]=useState([...REGULATORY_SOURCES]);
  const [selected,setSelected]=useState(REGULATORY_SOURCES[0].id);
+ const activeSelection=useRef(selected);activeSelection.current=selected;
+ const [coverage,setCoverage]=useState<SourceCoverage[]>([]),[territory,setTerritory]=useState(""),[activity,setActivity]=useState(""),[search,setSearch]=useState("");
+ const filtered=useMemo(()=>matchingSources(catalogue,territory,activity,search),[catalogue,territory,activity,search]);
  const [history,setHistory]=useState<Snapshot[]>([]);
  const [lastResult,setLastResult]=useState<CheckResult|null>(null);
  const [reviewNotes,setReviewNotes]=useState("");
@@ -32,15 +36,15 @@ export default function OfficialSourceHistory(){
  },[]);
  const loadHistory=useCallback(async(id:string)=>{
   if(!id)return;
-  try{const body=await request("/api/workspace/sources?organizationId="+encodeURIComponent(id));if(activeOrg.current===id){setHistory(Array.isArray(body.snapshots)?body.snapshots:[]);setCatalogue(body.catalogue||[...REGULATORY_SOURCES]);}}
-  catch(e){if(activeOrg.current!==id)return;setHistory([]);setMessage(e instanceof Error?e.message:"Source history unavailable")}
- },[request]);
+  try{const body=await request("/api/workspace/sources?organizationId="+encodeURIComponent(id)+"&sourceId="+encodeURIComponent(selected));if(activeOrg.current===id&&activeSelection.current===selected){setCoverage(body.coverage||[]);setHistory(Array.isArray(body.snapshots)?body.snapshots:[]);setCatalogue(body.catalogue||[...REGULATORY_SOURCES]);}}
+  catch(e){if(activeOrg.current!==id||activeSelection.current!==selected)return;setCoverage([]);setHistory([]);setMessage(e instanceof Error?e.message:"Source history unavailable")}
+ },[request,selected]);
  useEffect(()=>{
   let alive=true;
   async function session(){
    try{
     const token=(await browserAuth().auth.getSession()).data.session?.access_token;
-    if(!token){if(alive){activeOrg.current="";setUser(null);setOrgId("");setOrganisations([]);setHistory([]);setLastResult(null);setCatalogue([...REGULATORY_SOURCES]);}return;}
+    if(!token){if(alive){activeOrg.current="";setUser(null);setCoverage([]);setOrgId("");setOrganisations([]);setHistory([]);setLastResult(null);setCatalogue([...REGULATORY_SOURCES]);}return;}
     const response=await fetch("/api/ai/context",{headers:{authorization:"Bearer "+token},cache:"no-store"});
     if(!response.ok)throw new Error("Private workspace not configured");
     const body=await response.json();
@@ -53,14 +57,15 @@ export default function OfficialSourceHistory(){
   try{const {data}=browserAuth().auth.onAuthStateChange(()=>setTimeout(()=>{if(alive)void session()},0));void session();return()=>{alive=false;data.subscription.unsubscribe()}}
   catch{setMessage("Supabase sign-in is not configured");return()=>{alive=false}}
  },[]);
- useEffect(()=>{setHistory([]);setLastResult(null);setCatalogue([...REGULATORY_SOURCES]);if(user&&orgId)void loadHistory(orgId)},[orgId,user?.id,loadHistory]);
+ useEffect(()=>{setHistory([]);setCoverage([]);setLastResult(null);setCatalogue([...REGULATORY_SOURCES]);if(user&&orgId)void loadHistory(orgId)},[orgId,user?.id,loadHistory]);
  const currentOrg=organisations.find(x=>x.id===orgId);
  const activeSource=catalogue.find(x=>x.id===selected);
  const rows=useMemo(()=>history.filter(x=>x.sourceId===selected),[history,selected]);
  const latest=rows[0];
  const canCheck=currentOrg&&currentOrg.role!=="VIEWER";
  const canReview=currentOrg&&["OWNER","ADMIN"].includes(currentOrg.role);
- const pending=history.filter(x=>x.reviewStatus==="NEEDS_REVIEW").length;
+ const pending=coverage.filter(x=>x.reviewStatus==="NEEDS_REVIEW").length;
+ const selectedCoverage=coverage.find(x=>x.sourceId===selected);
  async function check(){
   if(!orgId)return;setBusy(true);setMessage("");
   try{
@@ -110,15 +115,17 @@ export default function OfficialSourceHistory(){
    {!user&&<div className={ui.card}>Sign in via the <a href="/team">private team workspace</a> before checking official sources.</div>}
    {user&&organisations.length>0&&<>
     <section className={ui.topCards}>
-     <div><span>Saved publication versions</span><strong>{history.length}</strong></div><div><span>Awaiting human review</span><strong>{pending}</strong></div>
+     <div><span>Sources with a baseline</span><strong>{coverage.filter(x=>x.snapshotId).length} / {catalogue.length}</strong></div><div><span>Awaiting human review</span><strong>{pending}</strong></div>
      <div><label>Organisation<select disabled={busy} value={orgId} onChange={e=>setOrgId(e.target.value)}>{organisations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></label></div>
     </section>
     <section className={ui.layout}>
-     <div className={ui.catalog}><div className={ui.heading}><span>01 / OFFICIAL SOURCE CATALOGUE</span><h2>Choose a publication</h2><a href="/team/library">Find and register publications ↗</a><p>Choose a seed reference or a publication registered by your organisation.</p></div>
-      {catalogue.map(src=><button key={src.id} type="button" onClick={()=>{setSelected(src.id);setLastResult(null)}} className={selected===src.id?ui.selected:ui.source}>
-       <span>{src.agency} · {src.topic}</span><strong>{src.title}</strong></button>)}
+     <div className={ui.catalog}><div className={ui.heading}><span>01 / OFFICIAL SOURCE CATALOGUE</span><h2>Choose a publication</h2><a href="/team/library">Find and register publications ↗</a><p>Find a relevant starting point. Territory and topic tags do not determine legal applicability; unclassified publications remain visible.</p></div>
+      <div className={ui.filters}><label>Business location<select value={territory} onChange={e=>setTerritory(e.target.value)}><option value="">All locations</option>{TERRITORIES.map(t=><option key={t}>{t}</option>)}</select></label><label>Activity<select value={activity} onChange={e=>setActivity(e.target.value)}><option value="">All activities</option>{Object.entries(SOURCE_ACTIVITIES).map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label><label>Find a publication<input type="search" value={search} onChange={e=>setSearch(e.target.value)} maxLength={100}/></label><p>{filtered.length} references shown. {coverage.filter(x=>!x.snapshotId).length} catalogue references have no saved baseline.</p></div>
+      {filtered.length===0&&<p>No references match these filters. This does not mean no requirements apply.</p>}
+      {filtered.map(src=><button key={src.id} type="button" disabled={busy} onClick={()=>{setSelected(src.id);setLastResult(null)}} className={selected===src.id?ui.selected:ui.source}>
+       <span>{src.agency} · {src.topic}</span><strong>{src.title}</strong><small>{src.jurisdictions?.join(", ")||"Territory scope needs review"}</small><small>{sourceNextStep(coverage.find(x=>x.sourceId===src.id))}</small></button>)}
      </div>
-     <div className={ui.detail}><div className={ui.heading}><span>02 / TEXT-BASED VERSION CHECK</span><h2>{activeSource?.title}</h2><p>Manual, versioned publication snapshots for your organisation.</p></div>
+     <div className={ui.detail}><div className={ui.heading}><span>02 / TEXT-BASED VERSION CHECK</span><h2>{activeSource?.title}</h2><p>{activeSource?.kind||"Publication reference"} · {activeSource?.jurisdictions?.join(", ")||"Confirm territory and exceptions in the original"}</p><p>{activeSource?.scopeNote||"Selected publication only; linked publications and attachments are separate references."}</p><p><strong>{sourceNextStep(selectedCoverage)}</strong> · {selectedCoverage?.monitoring||"Monitoring status unavailable"}</p><p><a href="/team/intelligence">Assess business applicability ↗</a> · <a href="/team/library">Review requirements and control relationships ↗</a></p></div>
       <div className={ui.line}><a href={activeSource?officialSourceUrl(activeSource):"/team/sources"} target="_blank" rel="noopener noreferrer">Open official source ↗</a>
        {canCheck&&<button type="button" disabled={busy} onClick={()=>void check()}>{busy?"Checking…":latest?"Compare latest text":"Create first baseline"}</button>}
       </div>
@@ -140,7 +147,7 @@ export default function OfficialSourceHistory(){
      <div className={ui.history}>{rows.length===0?<p>No history yet.</p>:rows.map(x=><div key={x.id}><span>{dateLabel(x.firstCapturedAt)}</span><strong>{x.contentHash.slice(0,18)}…</strong><small>{x.reviewStatus.replaceAll("_"," ")}</small></div>)}</div>
     </section>
    </>}
-   <footer className={shell.footer}>RegPilot private source watcher · Manual publication checks, not continuous legal monitoring.</footer>
+   <footer className={shell.footer}>RegPilot private source watcher · Selected publication checks and separately configured schedules; not a complete legal register.</footer>
   </main>
  </div>;
 }

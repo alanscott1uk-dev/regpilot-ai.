@@ -1,0 +1,62 @@
+{
+  "checkedAt": "2026-11-07T20:41:14.820876+00:00",
+  "method": "Unauthenticated GET to exact public URL, redirects refused, 1MB maximum; all eight then passed officialMainText semantic-main and heading checks. Retrieval proves availability and supported extraction at this time, not expert legal validation or complete linked-document capture. Raw publication contents are not committed.",
+  "sources": [
+    {
+      "id": "acas-disciplinary",
+      "status": 200,
+      "url": "https://www.acas.org.uk/acas-code-of-practice-on-disciplinary-and-grievance-procedures/html",
+      "bytes": 83797,
+      "sha256": "a5b1fc5e8f51b2fcbaac365c820394d9cd27f49482063df80bce1878fb9a4345"
+    },
+    {
+      "id": "acas-flexible-working",
+      "status": 200,
+      "url": "https://www.acas.org.uk/acas-code-of-practice-on-flexible-working-requests/html",
+      "bytes": 80480,
+      "sha256": "c23046948d08ce26db8c0d8a7724112f213b4b037036ba7ea756f2f574ede0ea"
+    },
+    {
+      "id": "ncsc-small-organisations",
+      "status": 200,
+      "url": "https://www.ncsc.gov.uk/collection/small-organisations-guide-to-cyber-security",
+      "bytes": 229350,
+      "sha256": "898d4862481e782a62fa4d3543158f09d8b9ef8c23577c457e42c1ac501bd299"
+    },
+    {
+      "id": "fss-starting-business",
+      "status": 200,
+      "url": "https://www.foodstandards.gov.scot/business-guidance/starting-a-new-business/starting-a-food-business-checklist",
+      "bytes": 330235,
+      "sha256": "2161b5f852feaea0cd5c62b9e92b01309f409908f8ab4e842cf2fe7781603f8f"
+    },
+    {
+      "id": "sepa-waste-duty",
+      "status": 200,
+      "url": "https://beta.sepa.scot/topics/waste/duty-of-care",
+      "bytes": 23049,
+      "sha256": "6e64adef6876eaac342840edd15023b956ba50715506b4d7e7ad12a2468942b2"
+    },
+    {
+      "id": "scotland-fire-premises",
+      "status": 200,
+      "url": "https://www.gov.scot/publications/practical-fire-safety-guidance-existing-non-residential-premises-2/",
+      "bytes": 56609,
+      "sha256": "50e1e340ac1aab1caccd0a26b4e4ac5cf8dcceea96c6f20b875f87157e1c7265"
+    },
+    {
+      "id": "hseni-risk-assessment",
+      "status": 200,
+      "url": "https://www.hseni.gov.uk/articles/risk-assessment",
+      "bytes": 33975,
+      "sha256": "7c35e830a1b69d79372a6ee318441d6e64123c06a0b3b5be92871725b2867252"
+    },
+    {
+      "id": "nrw-waste-duty",
+      "status": 200,
+      "url": "https://www.naturalresourceswales.gov.uk/guidance-and-advice/environmental-topics/waste-management/waste-duty-of-care/?lang=en",
+      "bytes": 32234,
+      "sha256": "1942f76f707ca4c1f8fcb5996858f5957bc36562a5737aa7634e16aaf6fc9cdc"
+    }
+  ]
+}

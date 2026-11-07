@@ -1,3 +1,4 @@
+import {vendorSignal,vendorSignalSchema,sameVendorSignal} from "./vendor-signals";
 import {Prisma,type Vendor,type VendorReview} from "@prisma/client";
 import {z} from "zod";
 import type {AuthorizedContext} from "./authorization";
@@ -17,13 +18,13 @@ async function owner(tx:Prisma.TransactionClient,ctx:AuthorizedContext,id:string
  if(!m||m.role==="VIEWER"||!allowedEmail(m.user.email,process.env.REGPILOT_AI_ALLOWED_EMAILS))throw new IntelligenceError("Choose a current colleague who can own follow-up work",409);
  return m.user.email;
 }
-function snapshot(v:Vendor){return {id:v.id,name:v.name,service:v.service,ownerId:v.ownerId,criticality:v.criticality,dataAccess:v.dataAccess,systemAccess:v.systemAccess,version:v.version};}
-function reviewHash(r:Pick<VendorReview,"baselineReviewId"|"vendorSnapshot"|"evidenceManifest"|"assessment"|"recommendation"|"rationale"|"followUpDue"|"validUntil">){
- return hashValue({baselineReviewId:r.baselineReviewId,vendorSnapshot:r.vendorSnapshot,evidenceManifest:r.evidenceManifest,assessment:r.assessment,recommendation:r.recommendation,rationale:r.rationale,followUpDue:r.followUpDue.toISOString().slice(0,10),validUntil:r.validUntil.toISOString().slice(0,10)});
+function snapshot(v:Vendor){return {id:v.id,name:v.name,service:v.service,ownerId:v.ownerId,criticality:v.criticality,dataAccess:v.dataAccess,systemAccess:v.systemAccess,version:v.version,...(v.signalConnectorId?{signalConnectorId:v.signalConnectorId}:{})};}
+function reviewHash(r:Pick<VendorReview,"signalSnapshot"|"baselineReviewId"|"vendorSnapshot"|"evidenceManifest"|"assessment"|"recommendation"|"rationale"|"followUpDue"|"validUntil">){
+ return hashValue({...(r.signalSnapshot?{signalSnapshot:r.signalSnapshot}:{}),baselineReviewId:r.baselineReviewId,vendorSnapshot:r.vendorSnapshot,evidenceManifest:r.evidenceManifest,assessment:r.assessment,recommendation:r.recommendation,rationale:r.rationale,followUpDue:r.followUpDue.toISOString().slice(0,10),validUntil:r.validUntil.toISOString().slice(0,10)});
 }
 function content(r:VendorReview){
  if(reviewHash(r)!==r.inputHash)throw new IntelligenceError("Supplier review record needs administrator review",409);
- return {files:reviewedFilesSchema.parse(r.evidenceManifest),assessment:assessmentSchema.parse(r.assessment)};
+ return {files:reviewedFilesSchema.parse(r.evidenceManifest),assessment:assessmentSchema.parse(r.assessment),signal:r.signalSnapshot?vendorSignalSchema.parse(r.signalSnapshot):null};
 }
 const expired=(date:Date)=>date.toISOString().slice(0,10)<new Date().toISOString().slice(0,10);
 async function reviewState(tx:Prisma.TransactionClient,ctx:AuthorizedContext,v:Vendor,r?:VendorReview|null){
@@ -32,6 +33,7 @@ async function reviewState(tx:Prisma.TransactionClient,ctx:AuthorizedContext,v:V
  const parsed=content(r);
  if(r.vendorVersion!==v.version||hashValue(r.vendorSnapshot)!==hashValue(snapshot(v)))return "STALE";
  if(expired(r.validUntil))return "EXPIRED";
+ if(v.signalConnectorId){const current=await vendorSignal(tx,ctx.organizationId,v.signalConnectorId);if(!current.current||!current.snapshot||!parsed.signal||!sameVendorSignal(current.snapshot,parsed.signal))return "STALE";}
  if(r.status==="DRAFT"){
   const current=await tx.vendorReview.findFirst({where:{...org(ctx),vendorId:v.id,status:"ACCEPTED"},select:{id:true}});
   if((current?.id||null)!==r.baselineReviewId)return "STALE";
@@ -40,13 +42,14 @@ async function reviewState(tx:Prisma.TransactionClient,ctx:AuthorizedContext,v:V
 }
 export async function vendorWorkspace(ctx:AuthorizedContext){return transaction(ctx,async tx=>{
  await requireMember(tx,ctx,ADMIN);
- const [rows,members,evidence]=await Promise.all([
+ const [rows,members,evidence,signalConnections]=await Promise.all([
   tx.vendor.findMany({where:org(ctx),include:{owner:{select:{email:true}},reviews:{where:{status:"ACCEPTED"},orderBy:{createdAt:"desc"},take:1}},orderBy:{nextReviewAt:"asc"},take:WORKFLOW_LIMITS.vendors}),
   tx.membership.findMany({where:{...org(ctx),role:{not:"VIEWER"}},select:{role:true,user:{select:{id:true,email:true}}},orderBy:{userId:"asc"},take:100}),
-  tx.evidence.findMany({where:{...org(ctx),scanStatus:"CLEAN",reviewStatus:"APPROVED"},select:{id:true,filename:true},orderBy:{createdAt:"desc"},take:200})
+  tx.evidence.findMany({where:{...org(ctx),scanStatus:"CLEAN",reviewStatus:"APPROVED"},select:{id:true,filename:true},orderBy:{createdAt:"desc"},take:200}),
+  tx.evidenceConnector.findMany({where:{...org(ctx),provider:"COMPANIES_HOUSE"},select:{id:true,repository:true,enabled:true},take:20})
  ]);
  const vendors=await Promise.all(rows.map(async v=>({id:v.id,name:v.name,service:v.service,active:v.active,version:v.version,criticality:v.criticality,owner:v.owner,nextReviewAt:v.nextReviewAt,recommendation:v.reviews[0]?.recommendation||null,reviewState:await reviewState(tx,ctx,v,v.reviews[0])})));
- return {vendors,members,evidence};
+ return {vendors,members,evidence,signalConnections};
 });}
 export async function createVendor(ctx:AuthorizedContext,input:unknown){
  const d=vendorSchema.parse(input),nextReviewAt=futureDate(d.nextReview);
@@ -67,7 +70,7 @@ export async function vendorDetail(ctx:AuthorizedContext,id:string){return trans
   const tasks=await tx.obligation.findMany({where:{...org(ctx),id:{in:ids}},select:{id:true,title:true,status:true,assigneeId:true,ownerName:true,dueDate:true,completionException:true}});
   return {id:r.id,version:r.version,status:r.status,createdById:r.createdById,reviewerId:r.reviewerId,createdAt:r.createdAt,reviewedAt:r.reviewedAt,reviewNotes:r.reviewNotes,recommendation:r.recommendation,rationale:r.rationale,followUpDue:r.followUpDue,validUntil:r.validUntil,vendorSnapshot:r.vendorSnapshot,...parsed,tasks,contextCurrent:(await reviewState(tx,ctx,v,r))==="CURRENT"};
  }));
- return {vendor:v,reviews,reviewState:await reviewState(tx,ctx,v,rows.find(r=>r.status==="ACCEPTED"))};
+ const signal=v.signalConnectorId?await vendorSignal(tx,ctx.organizationId,v.signalConnectorId):null;const signalTasks=await tx.obligation.findMany({where:{...org(ctx),vendorSignalId:id},select:{id:true,title:true,status:true,ownerName:true,dueDate:true},orderBy:{createdAt:"desc"},take:20});return {vendor:v,reviews,signal,signalTasks,reviewState:await reviewState(tx,ctx,v,rows.find(r=>r.status==="ACCEPTED"))};
 });}
 export async function prepareVendorReview(ctx:AuthorizedContext,id:string,input:unknown){
  const d=vendorReviewSchema.parse(input),followUpDue=futureDate(d.followUpDue),validUntil=futureDate(d.validUntil);
@@ -81,8 +84,11 @@ export async function prepareVendorReview(ctx:AuthorizedContext,id:string,input:
   if(await tx.vendorReview.count({where:{...org(ctx),vendorId:id}})>=WORKFLOW_LIMITS.reviews)throw new IntelligenceError("Supplier review limit reached",409);
   const files=await reviewedFiles(tx,ctx.organizationId,d.evidenceIds);
   const previous=await tx.vendorReview.findFirst({where:{...org(ctx),vendorId:id,status:"ACCEPTED"},select:{id:true}});
-  const record={baselineReviewId:previous?.id||null,vendorSnapshot:snapshot(v),evidenceManifest:files,assessment:d.assessment,recommendation:d.recommendation,rationale:d.rationale,followUpDue,validUntil};
-  const saved=await tx.vendorReview.create({data:{...org(ctx),vendorId:id,vendorVersion:v.version,createdById:ctx.userId,...record,inputHash:reviewHash(record)}});
+  const signal=v.signalConnectorId?await vendorSignal(tx,ctx.organizationId,v.signalConnectorId):null;
+  if(signal&&(!signal.current||!signal.snapshot||d.signalRunId!==signal.snapshot.runId||d.signalReviewed!==true))throw new IntelligenceError("Refresh and explicitly review the current company-register observation",409);
+  if(signal?.snapshot?.observation.checks.some(c=>c.status!=="PASS")&&d.recommendation==="APPROVE")throw new IntelligenceError("Address the register warnings or unknowns in a conditional/reject recommendation",409);
+  const record={signalSnapshot:signal?.snapshot||null,baselineReviewId:previous?.id||null,vendorSnapshot:snapshot(v),evidenceManifest:files,assessment:d.assessment,recommendation:d.recommendation,rationale:d.rationale,followUpDue,validUntil};
+  const saved=await tx.vendorReview.create({data:{...org(ctx),vendorId:id,vendorVersion:v.version,createdById:ctx.userId,...record,signalSnapshot:record.signalSnapshot||Prisma.DbNull,inputHash:reviewHash(record)}});
   await event(tx,ctx,"review_prepared",id,{reviewId:saved.id,recommendation:d.recommendation});return {id:saved.id,vendorId:id};
  });
 }
@@ -101,9 +107,10 @@ export async function changeVendor(ctx:AuthorizedContext,id:string,input:unknown
  if(d.action==="ACCEPT"){
   const before=await transaction(ctx,tx=>canAccept(tx,ctx,id,d));await verifyReviewedBytes(ctx,before.files,store);
   return transaction(ctx,async tx=>{
-   const {v,r,assessment,email}=await canAccept(tx,ctx,id,d);
+   const {v,r,assessment,email,signal}=await canAccept(tx,ctx,id,d);
    if(r.inputHash!==before.r.inputHash)throw new IntelligenceError("Review changed during verification",409);
    const work:Array<{key:string;title:string;notes:string}>=assessment.filter(c=>c.outcome==="GAP").map(c=>({key:c.id,title:VENDOR_CRITERIA.find(x=>x.id===c.id)!.label,notes:c.rationale}));
+   if(r.recommendation==="CONDITIONAL"&&signal?.observation.checks.some(c=>c.status!=="PASS"))work.push({key:"register-conditions",title:"Resolve company-register review conditions",notes:r.rationale});
    if(r.recommendation==="REJECT")work.push({key:"decision",title:"Decide next steps after rejected supplier review",notes:r.rationale});
    const tasks:string[]=[];
    for(const item of work){
@@ -115,6 +122,7 @@ export async function changeVendor(ctx:AuthorizedContext,id:string,input:unknown
    await tx.vendorReview.updateMany({where:{...org(ctx),vendorId:id,status:"ACCEPTED"},data:{status:"SUPERSEDED",version:{increment:1}}});
    await tx.vendorReview.update({where:{id:r.id},data:{status:"ACCEPTED",reviewerId:ctx.userId,reviewNotes:d.notes,reviewedAt:new Date(),followUpTasks:tasks,version:{increment:1}}});
    await tx.vendor.update({where:{id},data:{nextReviewAt:r.validUntil}});
+   if(v.signalConnectorId)await tx.obligation.updateMany({where:{...org(ctx),vendorSignalId:id,status:{not:"COMPLETE"}},data:{status:"COMPLETE",completedAt:new Date(),completionException:false,completionRationale:"Public register observation independently considered in supplier review "+r.id+"; the accepted recommendation and any follow-up remain recorded."}});
    await event(tx,ctx,"review_accepted",id,{reviewId:r.id,recommendation:r.recommendation,tasks});return {id,reviewId:r.id,tasks};
   });
  }
@@ -130,6 +138,11 @@ export async function changeVendor(ctx:AuthorizedContext,id:string,input:unknown
    await event(tx,ctx,"review_returned",id,{reviewId:r.id});return {id};
   }
   if(v.version!==d.version)throw new IntelligenceError("Supplier changed; refresh before continuing",409);
+  if(d.action==="LINK_SIGNAL"){
+   if(d.connectorId&&!await tx.evidenceConnector.findFirst({where:{id:d.connectorId,...org(ctx),provider:"COMPANIES_HOUSE"}}))throw new IntelligenceError("Choose this organisation's Companies House connection",404);
+   await tx.vendor.update({where:{id},data:{signalConnectorId:d.connectorId,version:{increment:1}}});
+   await event(tx,ctx,"signal_link_changed",id,{connectorId:d.connectorId,notes:d.notes});return {id};
+  }
   if(d.action==="ARCHIVE"){
    await tx.vendor.update({where:{id},data:{active:false,version:{increment:1}}});await event(tx,ctx,"archived",id);return {id,active:false};
   }
@@ -137,7 +150,7 @@ export async function changeVendor(ctx:AuthorizedContext,id:string,input:unknown
   if(v.ownerId!==fields.ownerId){
    const reviews=await tx.vendorReview.findMany({where:{...org(ctx),vendorId:id},select:{followUpTasks:true}});
    const ids=reviews.flatMap(r=>z.array(z.uuid()).max(7).parse(r.followUpTasks));
-   await tx.obligation.updateMany({where:{...org(ctx),id:{in:ids},status:{not:"COMPLETE"}},data:{assigneeId:fields.ownerId,ownerName:email}});
+   await tx.obligation.updateMany({where:{...org(ctx),OR:[{id:{in:ids}},{vendorSignalId:id}],status:{not:"COMPLETE"}},data:{assigneeId:fields.ownerId,ownerName:email}});
   }
   await tx.vendor.update({where:{id},data:{...fields,nextReviewAt,version:{increment:1}}});await event(tx,ctx,"updated",id);return {id};
  });

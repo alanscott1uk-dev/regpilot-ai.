@@ -1,3 +1,5 @@
+import {sourceCoverage} from "../../../../lib/server/source-coverage";
+import {IntelligenceError} from "../../../../lib/server/intelligence-service";
 import {workspaceCatalogue} from "../../../../lib/server/publication-catalogue";
 import {requireMember,WRITER} from "../../../../lib/server/workspace-member";
 import {NextResponse} from "next/server";
@@ -11,9 +13,11 @@ export async function GET(request:Request){
  try{
   const org=new URL(request.url).searchParams.get("organizationId")||"";
   const ctx=await authorisedWorkspaceContext(request,org);
-  const [snapshots,catalogue]=await Promise.all([listSourceSnapshots(ctx),workspaceCatalogue(ctx)]);return reply({snapshots,catalogue});
+  const sourceId=new URL(request.url).searchParams.get("sourceId")||undefined;
+  if(sourceId&&sourceId.length>120)return reply({error:"Invalid source selection"},400);
+  const [snapshots,catalogue,coverage]=await Promise.all([listSourceSnapshots(ctx,sourceId),workspaceCatalogue(ctx),sourceCoverage(ctx)]);return reply({snapshots,catalogue,coverage});
  }catch(e){
-  if(e instanceof AccessError||e instanceof RegulatoryWatchError)return reply({error:e.message},e.status);
+  if(e instanceof AccessError||e instanceof RegulatoryWatchError||e instanceof IntelligenceError)return reply({error:e.message},e.status);
   return reply({error:"Source history unavailable"},503);
  }
 }
@@ -29,7 +33,7 @@ export async function POST(request:Request){
   return reply(result);
  }catch(e){
   if(e instanceof SyntaxError)return reply({error:"Invalid JSON"},400);
-  if(e instanceof AccessError||e instanceof RegulatoryWatchError)return reply({error:e.message},e.status);
+  if(e instanceof AccessError||e instanceof RegulatoryWatchError||e instanceof IntelligenceError)return reply({error:e.message},e.status);
   if(e instanceof SourceUnavailable)return reply({error:e.message},503);
   return reply({error:"Official source could not be checked"},503);
  }

@@ -12,10 +12,10 @@ type Official={id:string;title:string;url:string;updatedAt:string|null;revisionA
 export type Loader=(sourceId:string)=>Promise<Official|null>;
 const roles=["OWNER","ADMIN","EDITOR"];
 const validUuid=(x:unknown):x is string=>typeof x==="string"&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x);
-export async function listSourceSnapshots(ctx:AuthorizedContext){
+export async function listSourceSnapshots(ctx:AuthorizedContext,sourceId?:string){
  const snapshots=await db.regulatorySnapshot.findMany({
-  where:{organizationId:ctx.organizationId},
-  orderBy:{firstCapturedAt:"desc"},take:60
+  where:{organizationId:ctx.organizationId,...(sourceId?{sourceId}:{})},
+  orderBy:[{firstCapturedAt:"desc"},{id:"desc"}],take:60
  });
  return snapshots.map(publicSnapshot);
 }

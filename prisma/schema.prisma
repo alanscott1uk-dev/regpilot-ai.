@@ -264,6 +264,9 @@ model Membership {
 }
 
 model Obligation {
+ vendorSignalId String? @db.Uuid
+ vendorSignal Vendor? @relation("VendorSignalTasks",fields:[vendorSignalId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ @@index([organizationId,vendorSignalId,status])
  accessItem AccessReviewItem?
  changeAction ChangeAction?
  auditRequest AuditRequest?
@@ -624,6 +627,7 @@ model ControlLink {
 }
 
 model EvidenceConnector {
+ signalVendors Vendor[]
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid
  controlId String @db.Uuid
@@ -908,6 +912,10 @@ model PolicyAssignment {
  @@index([organizationId,userId,status,dueDate])
 }
 model Vendor {
+ signalConnectorId String? @db.Uuid
+ signalConnector EvidenceConnector? @relation(fields:[signalConnectorId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ signalTasks Obligation[] @relation("VendorSignalTasks")
+ @@index([organizationId,signalConnectorId])
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid
  name String @db.VarChar(160)
@@ -928,6 +936,7 @@ model Vendor {
  @@index([organizationId,active,nextReviewAt])
 }
 model VendorReview {
+ signalSnapshot Json?
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid
  vendorId String @db.Uuid

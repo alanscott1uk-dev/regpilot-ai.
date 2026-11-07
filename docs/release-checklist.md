@@ -101,3 +101,12 @@ For Word/document inspection release acceptance, follow [Document understanding]
 - Check these workflows in authenticated desktop/mobile sessions with real staged Auth/Storage before customer use. Offline page rendering and API fixtures are not signed-in browser acceptance.
 - Access inventories remain human-confirmed CSVs; answer suggestions are deterministic matching; sampling is not a statistical opinion; the Trust Centre is private and named-access. These are not automatic provider discovery/revocation, AI-generated questionnaire answers, a public Trust Centre, or certified audit conclusions.
 - Keep every paid integration and Vercel preview disabled. No deployment is part of this batch.
+
+## Connected suppliers and UK source coverage
+
+- Apply `connected-supplier-signals.sql` after `assurance-operations.sql`; verify zero schema drift, composite tenant foreign keys and the unchanged 48-table private boundary.
+- Follow [the connected-supplier/source runbook](connected-suppliers-and-uk-sources.md) with fictional data. Exercise exact legal-entity linking, frozen observations, changed/failed signals, independent review, retained conditional remediation and owner handover.
+- Keep the GitLab, Cloudflare and Companies House provider flags false alongside the connector/paid-service masters. No provider activation, hosted migration or deployment is included.
+- Before activation, validate restricted credentials and real responses against approved test targets. Confirm partial/unknown settings never become a passing result.
+- Recheck the eight additional official references and assess applicability, territory, legal effect and control relationships with a qualified reviewer. Successful retrieval is not expert validation or complete regulatory coverage.
+- Verify source filters, per-source history and supplier forms in authenticated desktop/mobile sessions. CI and public retrieval evidence do not replace staged provider/Auth/Storage acceptance.
