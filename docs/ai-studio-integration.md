@@ -64,3 +64,7 @@ Saved AI drafts can be redacted through an authenticated DELETE endpoint even wh
 **Important:** This is an active-record content-redaction mechanism, not a full GDPR data-erasure implementation. DB backups, AI provider processing/retention, and audit metadata need separate policy and deletion/expiry procedures before customer data is allowed. Previous reviewer rationale fields are blanked from the active record during redaction.
 
 PDF quotation grounding now uses bounded server-side extraction with page anchors and coverage reporting; original files still require visual review. See docs/evidence-assurance.md for current scope and parser limits.
+
+## Word document support
+
+AI Studio now accepts standard `.docx` examples and authorised Word vault records, retaining the existing 2 MB limit. Only server-extracted, labelled blocks go to the model; the Word archive is not attached as PDF content. Findings use Word block coordinates and display extraction gaps. See [Document understanding](document-understanding.md). Live provider validation remains outstanding.

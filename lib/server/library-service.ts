@@ -26,6 +26,7 @@ async function sourceState(tx:Prisma.TransactionClient,org:string,type:Provenanc
   return {fingerprint:hashValue({id:s.id,hash:s.contentHash,version:s.version}),valid,reason:"Publication is changed, unreviewed, unavailable or more than seven days since its last check",authorId:s.capturedById,url:s.url,name:s.title,text:s.bodyText};
  }
  const e=await tx.evidence.findFirst({where:{id,organizationId:org}});if(!e)throw new IntelligenceError("Private evidence file not found",404);
+ if(e.contentType!=="application/pdf")throw new IntelligenceError("Exact clause intake currently requires a PDF; use Word files in programme import and evidence assessment",415);
  const valid=e.scanStatus==="CLEAN"&&e.reviewStatus==="APPROVED"&&!!e.reviewerId&&e.reviewerId!==e.uploadedById;
  return {fingerprint:hashValue({id:e.id,hash:e.sha256,version:e.reviewVersion,status:e.reviewStatus,scan:e.scanStatus,reviewer:e.reviewerId}),valid,reason:"Evidence approval, scan or content has changed",authorId:e.uploadedById,url:null,name:e.filename,text:""};
 }

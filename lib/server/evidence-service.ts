@@ -4,8 +4,9 @@ import type {AuthorizedContext} from "./authorization";
 import type {EvidenceObjectStore} from "./evidence-storage";
 import {privateEvidenceStore} from "./evidence-storage";
 import {EvidenceError,MAX_ORG_EVIDENCE_BYTES,MAX_ORG_EVIDENCE_FILES,
- checkPdf,evidenceHash,contentDispositionFilename,objectKey,scanWithClamd
+ checkDocument,evidenceHash,contentDispositionFilename,objectKey,scanWithClamd
 } from "../evidence/file-guard.mjs";
+import {extractDocument} from "./document-extraction";
 
 const idOk=(v:string)=>/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v||"");
 type Scan=(bytes:Uint8Array)=>Promise<{status:"CLEAN";engine:string}>;
@@ -41,15 +42,17 @@ export async function createEvidence(ctx:AuthorizedContext,taskId:string,filenam
  await db.$transaction(tx=>requireMember(tx,ctx,WRITER));
  if(!canUpload(ctx))throw new EvidenceError("Insufficient permission to upload",403);
  if(!idOk(taskId))throw new EvidenceError("Invalid task ID",400);
- const bytes=checkPdf(uploaded,filename);
+ const file=checkDocument(uploaded,filename),bytes=file.bytes;
  const task=await db.obligation.findFirst({where:{id:taskId,organizationId:ctx.organizationId},select:{id:true}});
  if(!task)throw new EvidenceError("Task not found",404);
  const scanner=dependencies.scan||productionScan;
  const result=await scanner(bytes);
  if(result?.status!=="CLEAN")throw new EvidenceError("Evidence scan not clean",422);
- const hash=evidenceHash(bytes),key=objectKey(ctx.organizationId);
+ // Check the entire archive before storage; a ZIP signature is not a DOCX validation.
+ if(file.format==="DOCX")await extractDocument(bytes,filename,{allowEmpty:true});
+ const hash=evidenceHash(bytes),key=objectKey(ctx.organizationId,file.format);
  const store=dependencies.storage||await privateEvidenceStore();
- await store.put(key,bytes);
+ await store.put(key,bytes,file.contentType);
  try{
   const record=await db.$transaction(async tx=>{
    await requireMember(tx,ctx,WRITER);
@@ -62,7 +65,7 @@ export async function createEvidence(ctx:AuthorizedContext,taskId:string,filenam
    if(reserved.count!==1)throw new EvidenceError("Organisation evidence quota reached",429);
    const row=await tx.evidence.create({data:{
     organizationId:ctx.organizationId,obligationId:taskId,
-    filename:contentDispositionFilename(filename),contentType:"application/pdf",storageKey:key,
+    filename:contentDispositionFilename(filename),contentType:file.contentType,storageKey:key,
     sizeBytes:bytes.byteLength,sha256:hash,scanStatus:"CLEAN",scannedAt:new Date(),
     uploadedById:ctx.userId,reviewStatus:"PENDING_REVIEW"
    }});

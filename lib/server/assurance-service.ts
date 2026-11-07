@@ -6,7 +6,8 @@ import {aiConfigured} from "./ai-auth";
 import {allowedEmail} from "../ai/security.mjs";
 import {evidenceConfigured,type EvidenceObjectStore} from "./evidence-storage";
 import {downloadEvidence} from "./evidence-service";
-import {extractPdf} from "./pdf-extraction";
+import {extractDocument} from "./document-extraction";
+import {extractionBlocked} from "../documents/coverage";
 import {sourceTextHash} from "../regulatory/source-fingerprint.mjs";
 import {hashValue,type Analysis} from "../regulatory/intelligence";
 import {ASSURANCE_ENGINE,contentAssessment,groundedAssessment,assertPassages,type AssuranceResult,type EvidenceDocument,type EvidenceManifest} from "../evidence/assurance";
@@ -50,7 +51,7 @@ async function documents(ctx:AuthorizedContext,manifest:EvidenceManifest[],stora
   for(const row of manifest){
     const stored=await downloadEvidence(ctx,row.id,storage);
     if(stored.sha256!==row.sha256)throw new IntelligenceError("Selected evidence changed; prepare a fresh assessment",409);
-    result.push({id:row.id,filename:stored.filename,document:await extractPdf(stored.bytes)});
+    result.push({id:row.id,filename:stored.filename,document:await extractDocument(stored.bytes,stored.filename)});
   }
   return result;
 }
@@ -163,7 +164,7 @@ export async function reviewAssurance(ctx:AuthorizedContext,id:string,input:{dec
     if(input.scopeConfirmed!==true||input.originalsChecked!==true)throw new IntelligenceError("Confirm the business scope and that you checked the original PDFs");
     if(!row.result||hashValue(row.result)!==row.resultHash)throw new IntelligenceError("Assessment integrity check failed",409);
     const result=row.result as unknown as AssuranceResult;
-    if(result.rejectedClaims||result.documents.some(d=>d.truncated||d.skippedPages.length)||result.checks.some(c=>["CONTRADICTED","NOT_FOUND"].includes(c.verdict)))throw new IntelligenceError("Resolve contradictions, missing proof or incomplete extraction before accepting this assessment",409);
+    if(result.rejectedClaims||result.documents.some(extractionBlocked)||result.checks.some(c=>["CONTRADICTED","NOT_FOUND"].includes(c.verdict)))throw new IntelligenceError("Resolve contradictions, missing proof or incomplete extraction before accepting this assessment",409);
     if(result.method==="AI"&&result.checks.some(c=>c.verdict!=="SUPPORTED"))throw new IntelligenceError("Every AI check needs supported evidence before this draft can be accepted",409);
     // Read-only preflight before accessing bytes; DB transaction repeats the checks after parsing.
     await transaction(ctx,async tx=>{await member(tx,ctx,true);const state=await currentAssessment(tx,ctx.organizationId,row);if(!state.valid)throw new IntelligenceError(state.reason!,409);});

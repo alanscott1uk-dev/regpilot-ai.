@@ -13,7 +13,8 @@ import {reserveAiRequest,DailyLimitError} from "./ai-meter";
 import {generateCoverage} from "./coverage-model";
 import {downloadEvidence} from "./evidence-service";
 import {evidenceConfigured,type EvidenceObjectStore} from "./evidence-storage";
-import {extractPdf} from "./pdf-extraction";
+import {extractDocument} from "./document-extraction";
+import {extractionBlocked} from "../documents/coverage";
 const j=(v:unknown)=>v as Prisma.InputJsonValue;
 const ids=(max:number,min=1)=>z.array(z.uuid()).min(min).max(max).refine(v=>new Set(v).size===v.length).transform(v=>v.sort());
 const inputSchema=z.object({revisionIds:ids(12),controlIds:ids(30),evidenceIds:ids(3,0),method:z.enum(["SEARCH","AI"]),consent:z.literal(true),retry:z.boolean().default(false)});
@@ -48,7 +49,7 @@ export async function prepareCoverage(ctx:AuthorizedContext,input:unknown,deps:{
  const row=await tx.coverageRun.create({data:{organizationId:ctx.organizationId,createdById:ctx.userId,inputHash,method:d.method,context:j(current.manifest)}});return {row,current,reused:false};});
  const {row,current}=reserved;if(reserved.reused)return {id:row.id,reused:true};
  try{
- for(const saved of current.manifest.evidence){const file=await downloadEvidence(ctx,saved.id,deps.storage);if(file.sha256!==saved.sha256)throw new IntelligenceError("Evidence bytes changed",409);const pdf=await extractPdf(file.bytes);if(pdf.truncated||pdf.skippedPages.length)throw new IntelligenceError("Incomplete evidence extraction; choose readable, shorter PDFs",409);current.input.documents.push({id:saved.id,pages:pdf.pages});}
+ for(const saved of current.manifest.evidence){const file=await downloadEvidence(ctx,saved.id,deps.storage);if(file.sha256!==saved.sha256)throw new IntelligenceError("Evidence bytes changed",409);const pdf=await extractDocument(file.bytes,file.filename);if(extractionBlocked(pdf))throw new IntelligenceError("Incomplete evidence extraction; choose complete, readable documents",409);current.input.documents.push({id:saved.id,pages:pdf.pages,unitKind:pdf.unitKind});}
  if(JSON.stringify(current.input).length>65000)throw new IntelligenceError("Selection exceeds 65,000 characters; use fewer requirements, controls or pages",413);
  await transaction(ctx,async tx=>{await requireMember(tx,ctx,WRITER);if(hashValue((await gather(tx,ctx,selection)).manifest)!==row.inputHash)throw new IntelligenceError("Inputs changed during preparation",409);});
  requireLibrary();if(d.method==="AI"){if(!coverageAiEnabled())throw new IntelligenceError("AI analysis was disabled",503);await reserveAiRequest(ctx,"library-coverage");}

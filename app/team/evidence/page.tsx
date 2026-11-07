@@ -1,8 +1,9 @@
 "use client";
-import {useCallback,useEffect,useMemo,useState} from "react";
+import {useCallback,useEffect,useMemo,useRef,useState} from "react";
 import {browserAuth} from "../../../lib/client/supabase-auth";
 import shell from "../../workbench/workbench.module.css";
 import ui from "./evidence.module.css";
+import {DocumentReader} from "./document-reader";
 type Org={id:string;name:string;role:"OWNER"|"ADMIN"|"EDITOR"|"VIEWER"};
 type Task={id:string;title:string;ownerName:string;status:string};
 type Evidence={id:string;obligationId:string;filename:string;sizeBytes:number;sha256:string;createdAt:string;scanStatus:string;reviewStatus:"DRAFT"|"PENDING_REVIEW"|"APPROVED"|"REJECTED";reviewVersion:number;uploadedById:string|null;reviewerId:string|null;reviewedAt:string|null;reviewerNotes:string};
@@ -16,6 +17,7 @@ export default function TeamEvidence(){
  const [reviewNotes,setReviewNotes]=useState<Record<string,string>>({});
  const [busy,setBusy]=useState(false),[notice,setNotice]=useState("");
  const [enabled,setEnabled]=useState<boolean|null>(null);
+ const active=useRef({orgId,taskId,userId:user?.id});active.current={orgId,taskId,userId:user?.id};
  const token=async()=> (await browserAuth().auth.getSession()).data.session?.access_token||"";
  const request=useCallback(async(path:string,opts:RequestInit={})=>{
   const session=(await browserAuth().auth.getSession()).data.session?.access_token;
@@ -28,28 +30,31 @@ export default function TeamEvidence(){
   return r;
  },[]);
  useEffect(()=>{
-  let alive=true;
+  let alive=true,sequence=0;
   void fetch("/api/workspace/evidence?organizationId=0&obligationId=0",{cache:"no-store"}).then(r=>{if(alive)setEnabled(r.status!==503)}).catch(()=>{if(alive)setEnabled(false)});
   async function load(){
+   const seq=++sequence;
    try{
     const session=await token();
-    if(!session){setUser(null);return}
+    if(!session){if(alive&&seq===sequence){setUser(null);setRows([]);setOrgs([]);setOrgId("");setTasks([]);setTaskId("");}return}
     const r=await fetch("/api/ai/context",{headers:{authorization:"Bearer "+session},cache:"no-store"});
     if(!r.ok)throw new Error("Secure team workspace is not activated");
     const d=await r.json();
-    if(!alive)return;
+    if(!alive||seq!==sequence)return;
+    if(active.current.userId!==d.userId){setRows([]);setTasks([]);setTaskId("");}
     setUser({id:d.userId||"",email:d.email});
     const list:Array<Org>=d.organisations||[];
     setOrgs(list);setOrgId(prev=>list.find(x=>x.id===prev)?prev:list[0]?.id||"");
-   }catch(e){if(alive)setNotice(e instanceof Error?e.message:"Please sign in from the team workspace")}
+   }catch(e){if(alive&&seq===sequence){setUser(null);setOrgs([]);setOrgId("");setRows([]);setTasks([]);setTaskId("");setNotice(e instanceof Error?e.message:"Please sign in from the team workspace");}}
   }
-  try{const {data}=browserAuth().auth.onAuthStateChange(()=>setTimeout(()=>{if(alive)void load()},0));void load();return()=>{alive=false;data.subscription.unsubscribe()}}catch{setEnabled(false);return()=>{alive=false}};
+  try{const {data}=browserAuth().auth.onAuthStateChange(event=>{if(event==="SIGNED_OUT"){sequence++;setUser(null);setRows([]);setOrgs([]);setOrgId("");setTasks([]);setTaskId("");active.current={orgId:"",taskId:"",userId:undefined};}else setTimeout(()=>{if(alive)void load()},0);});void load();return()=>{alive=false;sequence++;data.subscription.unsubscribe()}}catch{setEnabled(false);return()=>{alive=false}};
  },[]);
  const loadTasks=useCallback(async(id:string)=>{
   if(!id)return;
   try{
    const r=await request("/api/workspace/obligations?organizationId="+encodeURIComponent(id));
    const d=await r.json();const list:Task[]=Array.isArray(d.items)?d.items:[];
+   if(active.current.orgId!==id)return;
    setTasks(list);
    const preferred=new URLSearchParams(window.location.search).get("taskId");
    setTaskId(prev=>list.find(t=>t.id===prev)?prev:list.find(t=>t.id===preferred)?.id||list[0]?.id||"");
@@ -59,8 +64,8 @@ export default function TeamEvidence(){
   if(!org||!task){setRows([]);return}
   try{
    const r=await request("/api/workspace/evidence?organizationId="+encodeURIComponent(org)+"&obligationId="+encodeURIComponent(task));
-   const d=await r.json();setRows(Array.isArray(d.evidence)?d.evidence:[]);
-  }catch(e){setRows([]);setNotice(e instanceof Error?e.message:"Could not retrieve evidence")}
+   const d=await r.json();if(active.current.orgId!==org||active.current.taskId!==task)return;setRows(Array.isArray(d.evidence)?d.evidence:[]);
+  }catch(e){if(active.current.orgId===org&&active.current.taskId===task){setRows([]);setNotice(e instanceof Error?e.message:"Could not retrieve evidence")}}
  },[request]);
  useEffect(()=>{setTasks([]);setRows([]);if(orgId&&user&&enabled)void loadTasks(orgId)},[orgId,user?.id,enabled,loadTasks]);
  useEffect(()=>{setRows([]);if(orgId&&taskId&&enabled)void loadEvidence(orgId,taskId)},[orgId,taskId,enabled,loadEvidence]);
@@ -73,10 +78,10 @@ export default function TeamEvidence(){
  async function upload(e:React.FormEvent){
   e.preventDefault();if(!file||!taskId) return;setBusy(true);setNotice("");
   try{
-   if(file.type!=="application/pdf"||file.size>5_000_000||file.size<30)throw new Error("Select a PDF between 30 bytes and 5 MB");
+   if(! /\.(pdf|docx)$/i.test(file.name)||file.size>5_000_000||file.size<30)throw new Error("Select a PDF or Word document between 30 bytes and 5 MB");
    const form=new FormData();form.append("organizationId",orgId);form.append("obligationId",taskId);form.append("file",file);
    await request("/api/workspace/evidence",{method:"POST",body:form});
-   setFile(null);setNotice("PDF scanned, stored privately and placed in the independent evidence review queue.");
+   setFile(null);setNotice("Document scanned, stored privately and placed in the independent evidence review queue.");
    await loadEvidence(orgId,taskId);
   }catch(e){setNotice(e instanceof Error?e.message:"Upload failed")}finally{setBusy(false)}
  }
@@ -111,7 +116,7 @@ export default function TeamEvidence(){
   </aside>
   <main className={shell.main}>
    <div className={shell.topbar}><span className={shell.crumb}>Private workspace / Evidence vault</span><span className={shell.demo}>STAGING PILOT · NO CUSTOMER DATA</span></div>
-   <header className={ui.hero}><div><span>REGPILOT / EVIDENCE VAULT</span><h1>Evidence you can<br/><em>actually verify.</em></h1><p>Private PDF storage, antivirus scanning, SHA-256 file integrity and a second-person approval process.</p></div><div className={ui.heroGlyph}>◈</div></header>
+   <header className={ui.hero}><div><span>REGPILOT / EVIDENCE VAULT</span><h1>Evidence you can<br/><em>actually verify.</em></h1><p>Private PDF and Word storage, antivirus scanning, SHA-256 file integrity and a second-person approval process.</p></div><div className={ui.heroGlyph}>◈</div></header>
    <div className={shell.warning}><strong>Not a compliance certificate.</strong> A clean antivirus check and a file hash do not establish the authenticity, completeness or regulatory adequacy of a document. Keep genuine confidential records out of the staging pilot.</div>
    {notice&&<p className={ui.notice} role="status">{notice}</p>}
    {enabled===false&&<section className={ui.setup}><strong>Evidence vault disabled in this environment.</strong><p>Activation requires a verified private Supabase Storage bucket, server-side credentials, an operational ClamAV scanner and database migration. Nothing is publicly uploaded while disabled.</p></section>}
@@ -120,15 +125,15 @@ export default function TeamEvidence(){
     <section className={ui.bar}><div><label>Organisation<select value={orgId} onChange={e=>setOrgId(e.target.value)}>{orgs.map(o=><option key={o.id} value={o.id}>{o.name} · {o.role}</option>)}</select></label></div>
      <div><label>Task<select value={taskId} onChange={e=>setTaskId(e.target.value)}>{tasks.map(t=><option key={t.id} value={t.id}>{t.title}</option>)}</select></label></div></section>
     <section className={ui.stats}><div><span>Stored files</span><strong>{summary.total}</strong></div><div><span>Awaiting review</span><strong>{summary.pending}</strong></div><div><span>Independently reviewed</span><strong>{summary.approved}</strong></div></section>
-    {canUpload&&taskId&&<section className={ui.card}><div className={ui.head}><span>01 / ADD EVIDENCE</span><h2>Attach a supporting PDF</h2><p>Files are only stored after the configured antivirus scanner returns an explicit clean result.</p></div>
-     <form onSubmit={upload} className={ui.upload}><input type="file" accept="application/pdf,.pdf" required onChange={e=>setFile(e.target.files?.[0]||null)}/><button disabled={busy||!file||!enabled} type="submit">Scan and store privately</button></form>
-     <p className={ui.help}>PDF only · Maximum 5 MB · Separate reviewer required · No public download links</p>
+    {canUpload&&taskId&&<section className={ui.card}><div className={ui.head}><span>01 / ADD EVIDENCE</span><h2>Attach a policy or evidence document</h2><p>Files are only stored after the configured antivirus scanner returns an explicit clean result.</p></div>
+     <form onSubmit={upload} className={ui.upload}><input type="file" accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" required onChange={e=>setFile(e.target.files?.[0]||null)}/><button disabled={busy||!file||!enabled} type="submit">Scan and store privately</button></form>
+     <p className={ui.help}>PDF or Word (.docx) · Maximum 5 MB · Separate reviewer required · No public download links</p>
     </section>}
     <section className={ui.card}><div className={ui.head}><span>02 / REVIEW EVIDENCE</span><h2>Files linked to this task</h2><p>Files are accessed through verified organisation membership and checked against their stored SHA-256 fingerprint before download.</p></div>
-     {rows.length===0?<p className={ui.empty}>No scanned PDF evidence has been recorded for this task.</p>:<div className={ui.list}>{rows.map(item=><article key={item.id} className={ui.record}><div className={ui.itemTop}><div><strong>{item.filename}</strong><p>Uploaded {fmt(item.createdAt)} · {(item.sizeBytes/1024).toFixed(1)} KB</p></div><span className={ui.pill}>{item.reviewStatus.replaceAll("_"," ")}</span></div>
+     {rows.length===0?<p className={ui.empty}>No scanned evidence has been recorded for this task.</p>:<div className={ui.list}>{rows.map(item=><article key={item.id} className={ui.record}><div className={ui.itemTop}><div><strong>{item.filename}</strong><p>Uploaded {fmt(item.createdAt)} · {(item.sizeBytes/1024).toFixed(1)} KB</p></div><span className={ui.pill}>{item.reviewStatus.replaceAll("_"," ")}</span></div>
       <div className={ui.meta}><span><b>Antivirus</b> {item.scanStatus}</span><span><b>SHA-256</b> {item.sha256.slice(0,18)}…</span><span><b>Review</b> Version {item.reviewVersion}</span></div>
-      <button className={ui.secondary} disabled={busy} type="button" onClick={()=>void download(item)}>Download verified PDF</button> <a className={ui.secondary} style={{textDecoration:"none",display:"inline-block",marginLeft:7}} href={"/ai?evidenceId="+encodeURIComponent(item.id)}>AI document review (private pilot)</a>
-      {item.reviewStatus==="PENDING_REVIEW"&&canReview&&item.uploadedById!==user.id&&<div className={ui.reviewForm}><label>Independent review rationale<textarea rows={3} minLength={20} maxLength={800} value={reviewNotes[item.id]||""} onChange={e=>setReviewNotes(x=>({...x,[item.id]:e.target.value}))} placeholder="Explain the scope, suitability and limitations of this evidence…"/></label><div><button disabled={busy} type="button" onClick={()=>void decide(item,"APPROVED")}>Record reviewed</button><button disabled={busy} type="button" onClick={()=>void decide(item,"REJECTED")}>Reject with rationale</button></div></div>}
+      <button className={ui.secondary} disabled={busy} type="button" onClick={()=>void download(item)}>Download verified original</button> <a className={ui.secondary} style={{textDecoration:"none",display:"inline-block",marginLeft:7}} href={"/ai?evidenceId="+encodeURIComponent(item.id)}>AI document review (private pilot)</a>
+      <DocumentReader key={orgId+":"+item.id} organizationId={orgId} evidenceId={item.id} request={request}/>{item.reviewStatus==="PENDING_REVIEW"&&canReview&&item.uploadedById!==user.id&&<div className={ui.reviewForm}><label>Independent review rationale<textarea rows={3} minLength={20} maxLength={800} value={reviewNotes[item.id]||""} onChange={e=>setReviewNotes(x=>({...x,[item.id]:e.target.value}))} placeholder="Explain the scope, suitability and limitations of this evidence…"/></label><div><button disabled={busy} type="button" onClick={()=>void decide(item,"APPROVED")}>Record reviewed</button><button disabled={busy} type="button" onClick={()=>void decide(item,"REJECTED")}>Reject with rationale</button></div></div>}
       {item.reviewStatus==="PENDING_REVIEW"&&item.uploadedById===user.id&&<p className={ui.help}>A different owner or administrator must review evidence you uploaded.</p>}
       {item.reviewerNotes&&<p className={ui.reviewNote}>Reviewer rationale: {item.reviewerNotes}</p>}
      </article>)}</div>}

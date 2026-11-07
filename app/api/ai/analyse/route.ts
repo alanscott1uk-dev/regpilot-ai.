@@ -8,7 +8,8 @@ import {downloadEvidence} from "../../../../lib/server/evidence-service";
 import {evidenceConfigured} from "../../../../lib/server/evidence-storage";
 import {EvidenceError} from "../../../../lib/evidence/file-guard.mjs";
 import {validateAiRequest,InputError} from "../../../../lib/ai/contract.mjs";
-import {extractPdf} from "../../../../lib/server/pdf-extraction";
+import {extractDocument} from "../../../../lib/server/document-extraction";
+import {coverageOf} from "../../../../lib/documents/coverage";
 export const runtime="nodejs";export const dynamic="force-dynamic";export const maxDuration=60;
 const json=(value:unknown,status=200)=>NextResponse.json(value,{status,headers:{"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"}});
 async function limitedBody(request:Request){
@@ -42,10 +43,10 @@ export async function POST(request:Request){
   if(input.evidenceId){
    if(!evidenceConfigured())return json({error:"Private evidence vault not configured"},503);
    const stored=await downloadEvidence(ctx,input.evidenceId);
-   if(stored.bytes.byteLength>2_000_000)return json({error:"AI currently supports private evidence PDFs up to 2 MB"},413);
-   aiInput={...input,fileBytes:Uint8Array.from(stored.bytes)};
+   if(stored.bytes.byteLength>2_000_000)return json({error:"AI currently supports private evidence documents up to 2 MB"},413);
+   aiInput={...input,fileBytes:Uint8Array.from(stored.bytes),fileFormat:stored.filename.toLowerCase().endsWith(".docx")?"DOCX":"PDF"};
   }
-  if(aiInput.fileBytes){const extracted=await extractPdf(aiInput.fileBytes,{allowEmpty:true});aiInput={...aiInput,documentPages:extracted.pages,documentCoverage:{totalPages:extracted.totalPages,extractedPages:extracted.pages.length,truncated:extracted.truncated,unreadablePages:extracted.skippedPages}};}
+  if(aiInput.fileBytes){const extracted=await extractDocument(aiInput.fileBytes,aiInput.fileFormat==="DOCX"?"input.docx":"input.pdf",{allowEmpty:true});aiInput={...aiInput,fileBytes:extracted.format==="DOCX"?null:aiInput.fileBytes,documentUnitKind:extracted.unitKind,documentPages:extracted.pages,documentCoverage:{...coverageOf(extracted),unreadablePages:extracted.skippedPages}};}
   requestId=await reserveAiRequest(ctx,input.mode);
   const ai=await runRegPilotAi(aiInput,official);
   let reviewId:string|null=null,storageWarning:string|null=null;

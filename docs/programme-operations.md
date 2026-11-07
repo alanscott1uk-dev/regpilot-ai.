@@ -4,7 +4,7 @@ This batch joins programme import, owned controls, recurring reviews and the fir
 
 ## User workflow
 
-1. Add non-sensitive, text-based programme PDFs to the existing private Evidence Vault. An administrator independently reviews the files.
+1. Add non-sensitive, text-based programme PDFs or Word documents to the existing private Evidence Vault. An administrator independently reviews the files.
 2. In Operations → Import programme, select up to five files. Pattern search has no model cost. Optional AI proposes consolidated controls and human test procedures from the selected pages.
 3. An administrator other than the importer and uploaders checks exact page quotations, conditions, exceptions, scope and completeness. They select proposals, a current team member, an operational review interval and first date. Accepted controls are persisted; acceptance does not establish operating effectiveness.
 4. In Control library, manage ownership/schedules and record the rationale for each control-to-task scope link. Reassigning a control reassigns its open generated tasks. Links do not bypass requirement-specific assurance or assert framework equivalence.
@@ -15,7 +15,7 @@ The queue shows the first 100 open tasks, controls the first 100, import history
 
 ## Programme integrity and processing limits
 
-Imports reuse the existing real PDF.js worker: 5 MB/file, 40 pages, 80,000 characters/file, eight-second parser timeout, bounded V8 heap, empty worker environment; programme selections additionally cap extracted text at 60,000 characters. No OCR or DOCX support. The parser is not an OS sandbox and does not verify signatures/authenticity or guarantee table extraction.
+Imports reuse the existing real PDF.js worker: 5 MB/file, 40 pages, 80,000 characters/file, eight-second parser timeout, bounded V8 heap, empty worker environment; programme selections additionally cap extracted text at 60,000 characters. Word support now uses a separate bounded OOXML parser; see [Document understanding](document-understanding.md). OCR remains unavailable. The parser is not an OS sandbox and does not verify signatures/authenticity or guarantee table extraction.
 
 Every retained control quotation must appear exactly once on the selected document page. Unknown themes and ungrounded/ambiguous/duplicate proposals are withheld. A quote being present does not prove the proposed interpretation is correct. The independent reviewer remains responsible for that decision. Incomplete extraction blocks acceptance.
 

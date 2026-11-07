@@ -13,7 +13,7 @@ export async function GET(request:Request,{params}:Context){
   const ctx=await authorisedWorkspaceContext(request,orgId);
   const file=await downloadEvidence(ctx,(await params).id);
   return new Response(new Uint8Array(file.bytes),{headers:{
-   "Content-Type":"application/pdf",
+   "Content-Type":file.contentType,
    "Content-Disposition":'attachment; filename="'+file.filename+'"',
    "Content-Length":String(file.bytes.byteLength),
    "Cache-Control":"private, no-store, max-age=0",

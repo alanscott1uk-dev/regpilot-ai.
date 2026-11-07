@@ -42,7 +42,7 @@ export async function POST(request:Request){
   const orgId=form.get("organizationId"),taskId=form.get("obligationId"),file=form.get("file");
   if(!valid(orgId)||!valid(taskId))return reply({error:"Invalid organisation or task"},400);
   const ctx=await authorisedWorkspaceContext(request,orgId,["OWNER","ADMIN","EDITOR"]);
-  if(!(file instanceof File)||file.type!=="application/pdf")throw new EvidenceError("A PDF attachment is required",415);
+  if(!(file instanceof File))throw new EvidenceError("A PDF or Word attachment is required",415);
   const bytes=new Uint8Array(await file.arrayBuffer());
   const record=await createEvidence(ctx,taskId,file.name,bytes);
   return reply({evidence:record},201);

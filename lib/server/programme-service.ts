@@ -7,7 +7,8 @@ import {hashValue} from "../regulatory/intelligence";
 import {PROGRAMME_ENGINE,findProgrammePassages,groundProgramme,type ImportDocument,type ProgrammeResult} from "../programme/import";
 import {downloadEvidence} from "./evidence-service";
 import {evidenceConfigured,type EvidenceObjectStore} from "./evidence-storage";
-import {extractPdf} from "./pdf-extraction";
+import {extractDocument} from "./document-extraction";
+import {extractionBlocked} from "../documents/coverage";
 import {generateProgramme} from "./programme-model";
 import {aiConfigured} from "./ai-auth";
 import {reserveAiRequest,DailyLimitError} from "./ai-meter";
@@ -33,7 +34,7 @@ async function assertImport(tx:Prisma.TransactionClient,ctx:AuthorizedContext,ro
 }
 export async function prepareProgramme(ctx:AuthorizedContext,input:unknown,deps:{storage?:EvidenceObjectStore;generate?:typeof generateProgramme}={}){
  if(!programmeConfigured())throw new IntelligenceError("Programme import is awaiting activation",503);
- const parsed=prepareSchema.safeParse(input);if(!parsed.success)throw new IntelligenceError("Choose up to five PDFs, an import method and processing consent");const data=parsed.data;
+ const parsed=prepareSchema.safeParse(input);if(!parsed.success)throw new IntelligenceError("Choose up to five PDF or Word documents, an import method and processing consent");const data=parsed.data;
  if(data.method==="AI"&&!programmeAiEnabled())throw new IntelligenceError("Programme AI is awaiting activation",503);
  const reservation=await transaction(ctx,async tx=>{
   await requireMember(tx,ctx,WRITER);const files=await manifest(tx,ctx,data.evidenceIds),inputHash=hashValue({engine:PROGRAMME_ENGINE,files});
@@ -48,7 +49,7 @@ export async function prepareProgramme(ctx:AuthorizedContext,input:unknown,deps:
  if(reservation.reused)return {id:reservation.row.id,reused:true};const row=reservation.row;
  try{
   const docs:ImportDocument[]=[];let characters=0;
-  for(const id of data.evidenceIds){const file=await downloadEvidence(ctx,id,deps.storage);const saved=(row.evidenceManifest as any[]).find(e=>e.id===id);if(file.sha256!==saved.sha256)throw new IntelligenceError("Evidence changed",409);const document=await extractPdf(file.bytes);characters+=document.characters;if(characters>60000)throw new IntelligenceError("Use a smaller selection: import is limited to 60,000 extracted characters",413);docs.push({id,filename:file.filename,document});}
+  for(const id of data.evidenceIds){const file=await downloadEvidence(ctx,id,deps.storage);const saved=(row.evidenceManifest as any[]).find(e=>e.id===id);if(file.sha256!==saved.sha256)throw new IntelligenceError("Evidence changed",409);const document=await extractDocument(file.bytes,file.filename);characters+=document.characters;if(characters>60000)throw new IntelligenceError("Use a smaller selection: import is limited to 60,000 extracted characters",413);docs.push({id,filename:file.filename,document});}
   await transaction(ctx,tx=>assertImport(tx,ctx,row));
   if(!programmeConfigured()||data.method==="AI"&&!programmeAiEnabled())throw new IntelligenceError("Import activation changed",503);
   if(data.method==="AI")await reserveAiRequest(ctx,"programme-import");
@@ -68,7 +69,7 @@ export async function acceptProgramme(ctx:AuthorizedContext,id:string,input:unkn
  await transaction(ctx,tx=>assertImport(tx,ctx,row,true));
  if(!row.result||hashValue(row.result)!==row.resultHash)throw new IntelligenceError("Import integrity check failed",409);
  const result=row.result as unknown as ProgrammeResult;
- if(result.documents.some(d=>d.truncated||d.skippedPages.length))throw new IntelligenceError("Resolve incomplete extraction before accepting controls",409);
+ if(result.documents.some(extractionBlocked))throw new IntelligenceError("Resolve incomplete extraction before accepting controls",409);
  if(data.keys.some(k=>!result.controls.some(c=>c.key===k)))throw new IntelligenceError("Unknown control proposal",400);
  for(const file of row.evidenceManifest as any[]){const original=await downloadEvidence(ctx,file.id,deps.storage);if(original.sha256!==file.sha256)throw new IntelligenceError("Evidence bytes changed",409);}
  return transaction(ctx,async tx=>{

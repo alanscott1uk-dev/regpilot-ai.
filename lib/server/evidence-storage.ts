@@ -3,7 +3,7 @@ import {workspaceConfigured} from "./ai-auth";
 import {EvidenceError,MAX_EVIDENCE_BYTES} from "../evidence/file-guard.mjs";
 
 export interface EvidenceObjectStore{
- put(key:string,bytes:Uint8Array):Promise<void>;
+ put(key:string,bytes:Uint8Array,contentType?:string):Promise<void>;
  get(key:string):Promise<Uint8Array>;
  remove(key:string):Promise<void>;
 }
@@ -22,8 +22,8 @@ export async function privateEvidenceStore():Promise<EvidenceObjectStore>{
  if(error||!data||data.public!==false)throw new EvidenceError("Evidence storage bucket must exist and be private",503);
  const api=client.storage.from(bucket);
  return {
-  async put(key,bytes){
-   const {error}=await api.upload(key,Buffer.from(bytes),{contentType:"application/pdf",upsert:false,cacheControl:"0"});
+  async put(key,bytes,contentType="application/pdf"){
+   const {error}=await api.upload(key,Buffer.from(bytes),{contentType,upsert:false,cacheControl:"0"});
    if(error)throw new EvidenceError("Private evidence upload failed",503);
   },
   async get(key){

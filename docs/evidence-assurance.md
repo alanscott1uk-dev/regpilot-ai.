@@ -9,7 +9,7 @@ This is a scoped evidence decision, not a legal compliance certificate. Text ext
 ## End-to-end flow
 
 1. Open Evidence assessment from the regulatory inbox, task queue or evidence vault. Choose an existing task created from an independently accepted source recommendation.
-2. Select up to three scanned PDFs from the same organisation. A file may be reused from another task without copying the storage object. Each new use needs its own scope decision.
+2. Select up to three antivirus-scanned PDF or Word documents from the same organisation. A file may be reused from another task without copying the storage object. Each new use needs its own scope decision.
 3. Content search extracts page text locally and finds passages related to the requirement. It returns **unassessed** search candidates, never automatic proof. Negative and conditional wording is a cue to investigate, not a contradiction verdict.
 4. Optional AI assessment separates the requirement into draft checks. The prompt distinguishes a written policy promise from dated evidence that an activity happened. Checks may be supported, contradicted, not found in the supplied extraction, or unassessed. The model has no tools and no authority to approve anything.
 5. Every retained model citation must be a unique exact substring on the stated page of a selected file. Fabricated sources, invented file IDs, wrong pages and missing/ambiguous quotations become withheld, unassessed claims. Grounding does not validate the interpretation itself. The model's live accuracy is not yet measured.
@@ -48,3 +48,7 @@ The additive migration prisma/changes/evidence-assurance.sql follows monitoring-
 Tests use fictional PDFs generated with valid page trees, content streams and cross-reference tables; PDF extraction is real. Model calls are mocked; storage and antivirus use isolated adapters in integration tests. Coverage includes page anchoring, wrong-page/file/source citations, incomplete PDFs, concurrent request reservations, independent review, evidence reuse, expiry, stale revisions, file tampering, superseding adverse findings, redaction while generation runs, permission revocation, source drift, completion gates and auditable export. A separate production-package test copies only Next-traced parser assets to an isolated directory and executes real extraction there, catching missing worker/native dependencies before deployment.
 
 Live-model evaluation, real-provider staging acceptance, OCR/table/visual fidelity, browser usability/accessibility testing, workload/cost tests, independent security review and a complete retention/deletion policy remain required before customer use. Tests are not evidence of competitive superiority or production readiness.
+
+## Word and inspection extension
+
+The programme and assessment paths now support standard Word documents with block references, extraction-issue gates and a searchable vault inspector. See [Document understanding](document-understanding.md) for format limits, coordinate compatibility and honest readiness boundaries. Existing PDF page references remain unchanged.
