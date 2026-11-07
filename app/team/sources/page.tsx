@@ -99,7 +99,7 @@ export default function OfficialSourceHistory(){
   <aside className={shell.sidebar}>
    <a href="/workbench" className={shell.logo}><span className={shell.logoMark}>R</span><span>RegPilot <b>AI</b><small>REGULATORY SOURCE HISTORY</small></span></a>
    <div className={shell.sideCaption}>WORKSPACE</div>
-   <nav className={shell.sideNav}><a href="/team/library">◇ &nbsp;Obligation library</a><a href="/team">▤ &nbsp;Team tasks</a><a href="/team/intelligence">◈ &nbsp;Regulatory inbox</a><a href="/team/evidence">▣ &nbsp;Evidence vault</a><a href="/intelligence">✦ &nbsp;Prototype intelligence</a><a className={shell.active} href="/team/sources" aria-current="page">◈ &nbsp;Source history</a><a href="/ai">◇ &nbsp;AI Studio</a></nav>
+   <nav className={shell.sideNav}><a href="/team/library">◇ &nbsp;Obligation library</a><a href="/team">▤ &nbsp;Team tasks</a><a href="/team/intelligence">◈ &nbsp;Regulatory inbox</a><a href="/team/changes">Change response</a><a href="/team/evidence">▣ &nbsp;Evidence vault</a><a href="/intelligence">✦ &nbsp;Prototype intelligence</a><a className={shell.active} href="/team/sources" aria-current="page">◈ &nbsp;Source history</a><a href="/ai">◇ &nbsp;AI Studio</a></nav>
    <div className={shell.sideFoot}><strong>Publication checks</strong><p>Compares text from your selected official publications. It does not autonomously monitor all UK regulations or determine legal effects.</p></div>
   </aside>
   <main className={shell.main}>

@@ -1,5 +1,7 @@
 # RegPilot AI — November 2026 benchmark and next-stage product plan
 
+Historical development notes follow. For the latest implemented workflow and measurable acceptance criteria, see [Coordinated change response](coordinated-change-response.md), [Audit periods and wider coverage](audit-period-and-coverage.md) and the current [release checklist](release-checklist.md). Earlier “not implemented” entries describe their original batch, not the current branch.
+
 ## Competitive benchmark
 
 - **Vanta**: strongest overall product model for connected compliance operations, automated testing, evidence workflows, integrations and a polished interface. Reference: https://www.vanta.com/products/automated-compliance

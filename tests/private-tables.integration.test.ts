@@ -4,7 +4,7 @@ import {db} from "../lib/server/db";
 
 const PRIVATE_TABLES=[
  "User","Organization","Membership","Obligation","Evidence","AuditEvent",
- "AiDailyUsage","AiReview","RegulatorySnapshot","BusinessProfile","IntelligenceRun","IntelligenceDecision","WatchSchedule","SemanticRequest","AssuranceAssessment","ProgrammeImport","ManagedControl","ControlLink","EvidenceConnector","ConnectorRun","RegisteredSource","LibraryRequirement","LibraryRevision","LibraryApplicability","CoverageRun","CoverageDecision","WorkspaceInvitation","PaidBudget","PaidReservation","ServiceJob","BillingAccount","BillingEvent","AuditRoom","AuditGrant","AuditQuestion","Policy","PolicyRevision","PolicyAssignment","Vendor","VendorReview","AuditRequest"
+ "AiDailyUsage","AiReview","RegulatorySnapshot","BusinessProfile","IntelligenceRun","IntelligenceDecision","WatchSchedule","SemanticRequest","AssuranceAssessment","ProgrammeImport","ManagedControl","ControlLink","EvidenceConnector","ConnectorRun","RegisteredSource","LibraryRequirement","LibraryRevision","LibraryApplicability","CoverageRun","CoverageDecision","WorkspaceInvitation","PaidBudget","PaidReservation","ServiceJob","BillingAccount","BillingEvent","AuditRoom","AuditGrant","AuditQuestion","Policy","PolicyRevision","PolicyAssignment","Vendor","VendorReview","AuditRequest","ChangeResponse","ChangeAction"
 ];
 const UNTRUSTED_ROLES=["anon","authenticated","service_role"];
 

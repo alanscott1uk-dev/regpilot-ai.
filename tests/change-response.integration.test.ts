@@ -1,0 +1,74 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {randomUUID} from "node:crypto";
+import {db} from "../lib/server/db";
+import {transaction} from "../lib/server/intelligence-service";
+import {hashValue} from "../lib/regulatory/intelligence";
+import {assuranceFixture,rejects,future} from "./helpers/assurance-fixture";
+import {checkOfficialSource,reviewSourceSnapshot} from "../lib/server/regulatory-watch";
+import {saveLibraryFacts,draftRequirements,reviewRevision,decideApplicability,revisionContext} from "../lib/server/library-service";
+import {prepareCoverage,reviewCoverage,coverageDetail,coverageImpact} from "../lib/server/coverage-service";
+import type {CoverageResult} from "../lib/library/coverage";
+import {createAuditRoom} from "../lib/server/auditor-service";
+import {previewChangeResponse,createChangeResponse,changeResponseDetail,changeResponseAction,closeChangeResponse,exportChangeResponse,changeWorkspace} from "../lib/server/change-response-service";
+import {createPolicy,changePolicy} from "../lib/server/policy-service";
+import {createVendor,prepareVendorReview,changeVendor} from "../lib/server/vendor-service";
+import {VENDOR_CRITERIA} from "../lib/assurance-workflows";
+import {changeMember} from "../lib/server/team-service";
+test("change response coordinates shared requirements, prevents stale closure, reuses evidence and preserves superseded work",async()=>{
+ const x=await assuranceFixture(),{o,ad,ed,out,store}=x,notes="Independently inspected this fictional change, the requirement scope, evidence, recorded mappings and downstream uses.";
+ Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:"true",REGPILOT_LIBRARY_ENABLED:"true",REGPILOT_EVIDENCE_ENABLED:"true",SUPABASE_URL:"https://example.invalid",SUPABASE_PUBLISHABLE_KEY:"fixture",SUPABASE_SECRET_KEY:"fixture",REGPILOT_EVIDENCE_BUCKET:"fixture",REGPILOT_CLAMD_HOST:"fixture"});
+ const sourceId="uk-data-protection",url="https://www.gov.uk/data-protection-your-business",quote=(period:string)=>"Fictional widget staff must retain training records and review training records every "+period+".";
+ let previous="";
+ const capture=async(period:string,review=true)=>{if(previous)await db.regulatorySnapshot.update({where:{id:previous},data:{lastCheckedAt:new Date(0)}});const r=await checkOfficialSource(o,sourceId,async()=>({id:sourceId,title:"Fictional training source",url,updatedAt:null,revisionAt:null,text:quote(period)+" This fictional source is only for tests and has no legal authority."}));previous=r.snapshot.id;if(review)await reviewSourceSnapshot(ad,previous,{status:"REVIEWED",notes,version:1});return previous;};
+ const intake=async(snapshotId:string,period:string,decision="APPLIES")=>{const ids:string[]=[];for(const collection of ["Fictional A","Fictional B"]){const d=await draftRequirements(o,{collection,source:{type:"PUBLICATION",id:snapshotId},clauses:[{reference:"TRAIN-1",title:"Review training records",quote:quote(period),kind:"DUTY",conditions:[],exceptions:[],rule:null}],rightsConfirmed:true,consent:true}),id=d.revisionIds[0];await reviewRevision(ad,id,{version:1,decision:"ACCEPTED",notes,scopeConfirmed:true});const c=await transaction(ad,tx=>revisionContext(tx,ad,id));await decideApplicability(ad,id,{version:0,contextHash:c.contextHash,decision,rationale:notes,ownerId:decision==="APPLIES"?ed.userId:null,scopeConfirmed:true});ids.push(id);}return ids;};
+ try{
+  await saveLibraryFacts(o,{version:0,facts:{employeeCount:6},jurisdictions:["Scotland"]});
+  const baseline=await capture("month"),oldRevisions=await intake(baseline,"month"),file=await x.file();
+  const manifest=await db.evidence.findMany({where:{id:file.id},select:{id:true,sha256:true,scanStatus:true,reviewStatus:true,reviewVersion:true,uploadedById:true,reviewerId:true}});
+  // Programme acceptance itself is tested separately; this isolates a valid accepted-control context.
+  const programme=await db.programmeImport.create({data:{organizationId:x.a.id,createdById:o.userId,inputHash:randomUUID(),method:"SEARCH",status:"ACCEPTED",result:{},resultHash:hashValue({}),evidenceManifest:manifest}});
+  const control=await db.managedControl.create({data:{organizationId:x.a.id,importId:programme.id,proposalKey:"training",title:"Review training records",description:"Retain training records and review staff training records for fictional widgets.",testProcedure:"Inspect staff training records and dated reviewer approval.",theme:"training",ownerId:ed.userId,scheduledById:o.userId,intervalDays:30,nextReviewAt:new Date()}});
+  const map=async(revisionIds:string[])=>{const p=await prepareCoverage(o,{revisionIds,controlIds:[control.id],evidenceIds:[],method:"SEARCH",consent:true}),r=await coverageDetail(ad,p.id),result=r.result as unknown as CoverageResult;assert.equal(result.mappings.length,2);for(const m of result.mappings)await reviewCoverage(ad,r.id,{version:r.version,key:m.key,decision:"ACCEPTED",rationale:notes,scopeConfirmed:true});return r.id;};
+  const baselineRun=await map(oldRevisions);
+  // Dismissing a newer proposal must not erase an earlier accepted relationship.
+  const original=await db.coverageRun.findUniqueOrThrow({where:{id:baselineRun}}),originalDecision=await db.coverageDecision.findFirstOrThrow({where:{runId:baselineRun}});
+  const proposal=await db.coverageRun.create({data:{organizationId:x.a.id,createdById:o.userId,inputHash:original.inputHash,method:"AI",status:"DRAFT",context:original.context!,result:original.result!,resultHash:original.resultHash}});
+  await db.coverageDecision.create({data:{organizationId:x.a.id,runId:proposal.id,key:originalDecision.key,revisionId:originalDecision.revisionId,controlId:control.id,reviewerId:ad.userId,decision:"DISMISSED",rationale:notes}});
+  assert.equal((await coverageImpact(ad)).acceptedCurrent,2);
+  const audit=await createAuditRoom(o,{title:"Fictional audit package",purpose:"Inspect this fictional evidence in a deliberately scoped package.",expiresAt:new Date(Date.now()+30*86400000).toISOString(),evidenceIds:[file.id]});
+  const policy=await createPolicy(o,{title:"Fictional staff policy",summary:notes,evidenceId:file.id}),policyRevision=await db.policyRevision.findFirstOrThrow({where:{policyId:policy.id}});
+  await changePolicy(ad,policy.id,{action:"PUBLISH",version:1,revisionId:policyRevision.id,revisionVersion:1,notes,userIds:[ed.userId],dueDate:future(),confirm:true},store);
+  const vendor=await createVendor(o,{name:"Fictional training supplier",service:"Provides fictional training records for integration testing.",ownerId:ed.userId,criticality:"LOW",dataAccess:"NONE",systemAccess:false,nextReview:future(30)});
+  const vendorReview=await prepareVendorReview(o,vendor.id,{version:1,evidenceIds:[file.id],assessment:VENDOR_CRITERIA.map(c=>({id:c.id,outcome:"SUPPORTED",rationale:notes,evidenceIds:[file.id]})),recommendation:"APPROVE",rationale:notes,followUpDue:future(),validUntil:future(60)});
+  await changeVendor(ad,vendor.id,{action:"ACCEPT",reviewId:vendorReview.id,version:1,notes,confirm:true},store);
+  const changed=await capture("quarter",false);let p=await previewChangeResponse(o,changed);assert.ok(p.blockers.some(b=>b.includes("independent")));await assert.rejects(()=>previewChangeResponse(ed,changed),rejects(403));await assert.rejects(()=>previewChangeResponse(out,changed),rejects(404));
+  await reviewSourceSnapshot(ad,changed,{status:"REVIEWED",notes,version:1});p=await previewChangeResponse(o,changed);assert.deepEqual(p.blockers,[]);assert.equal(p.summary.affectedRelationships,2);assert.equal(p.summary.actions,1);assert.equal(p.summary.duplicateActionsAvoided,1);assert.equal(p.plan.dependencies.audits[0].id,audit.id);assert.equal(p.plan.dependencies.policies[0].id,policyRevision.id);assert.equal(p.plan.dependencies.suppliers[0].id,vendorReview.id);assert.equal(p.plan.evidenceIds[0],file.id);
+  await assert.rejects(()=>createChangeResponse(o,{snapshotId:changed,previewHash:"a".repeat(64),dueDate:future(),confirm:true}),rejects(409));
+  const input={snapshotId:changed,previewHash:p.previewHash,dueDate:future(),confirm:true};process.env.REGPILOT_LIBRARY_ENABLED="false";await assert.rejects(()=>createChangeResponse(o,input),rejects(503));process.env.REGPILOT_LIBRARY_ENABLED="true";
+  const created=await Promise.all([createChangeResponse(o,input),createChangeResponse(o,input)]);assert.equal(created[0].id,created[1].id);assert.equal(created.filter(r=>!r.reused).length,1);const responseId=created[0].id;
+  assert.equal(await db.changeAction.count({where:{responseId}}),1);assert.equal(await db.obligation.count({where:{organizationId:x.a.id,category:"Change response"}}),1);
+  let d=await changeResponseDetail(o,responseId),a=d.actions[0];await assert.rejects(()=>changeResponseDetail(out,responseId),rejects(404));assert.equal((await changeWorkspace(out)).responses.length,0);assert.equal((await changeWorkspace(x.re)).responses.length,0);await assert.rejects(()=>changeResponseDetail(x.re,responseId),rejects(404));const own=await changeResponseDetail(ed,responseId);assert.equal(own.dependencies.audits.length,0);assert.equal(own.plan.evidence.length,0);await assert.rejects(()=>exportChangeResponse(ed,responseId),rejects(403));
+  const close=async()=>{const c=await changeResponseDetail(ad,responseId);return closeChangeResponse(ad,responseId,{version:c.response.version,contextHash:c.contextHash,notes,dependenciesReviewed:true,confirm:true},store);};
+  await db.obligation.update({where:{id:a.taskId},data:{status:"COMPLETE"}});await assert.rejects(close,rejects(409));
+  const submit={action:"SUBMIT",version:1,notes,evidenceIds:[file.id],confirm:true};await assert.rejects(()=>changeResponseAction(ed,a.id,submit),rejects(409));
+  const newRevisions=await intake(changed,"quarter");await map(newRevisions);await assert.rejects(()=>changeResponseAction(out,a.id,submit),rejects(404));await changeResponseAction(ed,a.id,submit);
+  await db.membership.update({where:{organizationId_userId:{organizationId:x.a.id,userId:ed.userId}},data:{role:"ADMIN"}});await assert.rejects(()=>changeResponseAction({...ed,role:"ADMIN"},a.id,{action:"ACCEPT",version:2,notes,confirm:true},store),rejects(403));await db.membership.update({where:{organizationId_userId:{organizationId:x.a.id,userId:ed.userId}},data:{role:"EDITOR"}});
+  await assert.rejects(()=>changeResponseAction(ad,a.id,{action:"ACCEPT",version:2,notes,confirm:true},{...store,async get(k){const b=await store.get(k);await changeMember(o,{action:"ROLE",userId:ad.userId,expectedRole:"ADMIN",role:"EDITOR"});return b;}}),rejects(403));await changeMember(o,{action:"ROLE",userId:ad.userId,expectedRole:"EDITOR",role:"ADMIN"});
+  const accepted=await Promise.allSettled([changeResponseAction(ad,a.id,{action:"ACCEPT",version:2,notes,confirm:true},store),changeResponseAction(ad,a.id,{action:"ACCEPT",version:2,notes,confirm:true},store)]);assert.equal(accepted.filter(r=>r.status==="fulfilled").length,1);
+  d=await changeResponseDetail(ad,responseId);assert.deepEqual(d.blockers,[]);await db.auditRoom.update({where:{id:audit.id},data:{version:{increment:1},title:"Changed fictional audit package"}});await assert.rejects(()=>closeChangeResponse(ad,responseId,{version:d.response.version,contextHash:d.contextHash,notes,dependenciesReviewed:true,confirm:true}),rejects(409));
+  await changeResponseAction(ad,a.id,{action:"RETURN",version:3,notes,confirm:true});await changeResponseAction(ed,a.id,{...submit,version:4});assert.equal((await changeResponseDetail(ad,responseId)).actions[0].history.length,1);await changeResponseAction(ad,a.id,{action:"ACCEPT",version:5,notes,confirm:true},store);
+  const ready=await changeResponseDetail(ad,responseId),closure={version:ready.response.version,contextHash:ready.contextHash,notes,dependenciesReviewed:true,confirm:true};
+  await assert.rejects(()=>closeChangeResponse(ad,responseId,closure,{...store,async get(){return new Uint8Array([1,2,3]);}}),rejects(409));
+  await assert.rejects(()=>closeChangeResponse(ad,responseId,closure,{...store,async get(k){const bytes=await store.get(k);await db.auditRoom.update({where:{id:audit.id},data:{version:{increment:1}}});return bytes;}}),rejects(409));
+  await close();
+  const exported=await exportChangeResponse(ad,responseId);assert.equal(exported.currentAtExport,true);assert.equal(exported.plan.groups[0].requirements.length,2);assert.equal(exported.actions[0].submission!.files[0].id,file.id);assert.doesNotMatch(JSON.stringify(exported),/storageKey|encryptedSecret/);await assert.rejects(()=>exportChangeResponse(out,responseId),rejects(404));await assert.rejects(()=>changeResponseAction(ad,a.id,{action:"RETURN",version:6,notes,confirm:true}),rejects(409));
+  await db.evidence.update({where:{id:file.id},data:{scanStatus:"QUARANTINED"}});assert.equal((await exportChangeResponse(ad,responseId)).currentAtExport,false);await db.evidence.update({where:{id:file.id},data:{scanStatus:"CLEAN"}});
+  const third=await capture("week"),p3=await previewChangeResponse(o,third),r3=await createChangeResponse(o,{...input,snapshotId:third,previewHash:p3.previewHash});assert.equal((await exportChangeResponse(ad,responseId)).currentAtExport,false);
+  const fourth=await capture("year"),p4=await previewChangeResponse(o,fourth);assert.equal(p4.plan.replaces[0].id,r3.id);const r4=await createChangeResponse(o,{...input,snapshotId:fourth,previewHash:p4.previewHash});assert.equal((await changeResponseDetail(o,r3.id)).response.status,"SUPERSEDED");const retired=await db.obligation.findFirstOrThrow({where:{changeAction:{responseId:r3.id}}});assert.equal(retired.completionException,true);assert.equal(retired.status,"COMPLETE");
+  await intake(fourth,"year","NOT_APPLICABLE");const a4=(await changeResponseDetail(o,r4.id)).actions[0];await changeResponseAction(ed,a4.id,submit);await changeResponseAction(ad,a4.id,{action:"ACCEPT",version:2,notes,confirm:true},store);const d4=await changeResponseDetail(ad,r4.id);assert.equal(d4.actions[0].proof[0].kind,"NOT_APPLICABLE");await closeChangeResponse(ad,r4.id,{version:d4.response.version,contextHash:d4.contextHash,notes,dependenciesReviewed:true,confirm:true},store);
+  await assert.rejects(()=>db.changeResponse.create({data:{organizationId:x.b.id,snapshotId:fourth,createdById:out.userId,title:"Foreign case",plan:{},planHash:"a".repeat(64)}}),(e:any)=>e.code==="P2003");
+  // Action scope is part of the frozen plan and cannot be silently reassigned to other requirements.
+  await db.changeAction.update({where:{id:a4.id},data:{requirements:[]}});await assert.rejects(()=>changeResponseDetail(ad,r4.id),rejects(409));
+ }finally{await x.cleanup();}
+});

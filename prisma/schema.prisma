@@ -46,6 +46,10 @@ enum ReviewStatus {
 }
 
 model User {
+ changeResponsesCreated ChangeResponse[] @relation("ChangeResponseCreator")
+ changeResponsesClosed ChangeResponse[] @relation("ChangeResponseCloser")
+ changeActionsSubmitted ChangeAction[] @relation("ChangeActionSubmitter")
+ changeActionsReviewed ChangeAction[] @relation("ChangeActionReviewer")
  auditSubmissions AuditRequest[] @relation("AuditRequestSubmitter")
  auditRequestReviews AuditRequest[] @relation("AuditRequestReviewer")
   id          String       @id @default(uuid()) @db.Uuid
@@ -98,6 +102,8 @@ model User {
 }
 
 model Organization {
+ changeResponses ChangeResponse[]
+ changeActions ChangeAction[]
  auditRequests AuditRequest[]
   id          String       @id @default(uuid()) @db.Uuid
   name        String
@@ -243,6 +249,7 @@ model Membership {
 }
 
 model Obligation {
+ changeAction ChangeAction?
  auditRequest AuditRequest?
   id             String           @id @default(uuid()) @db.Uuid
   organizationId String           @db.Uuid
@@ -367,6 +374,7 @@ model AiReview {
 // Stores snapshots of an explicit, allowlisted GOV.UK source at the time the
 // authorised operator checked it. No autonomous monitoring is implied.
 model RegulatorySnapshot {
+ changeResponses ChangeResponse[]
   id               String @id @default(uuid()) @db.Uuid
   organizationId   String @db.Uuid
   sourceId         String @db.VarChar(120)
@@ -551,6 +559,7 @@ model ProgrammeImport {
 }
 
 model ManagedControl {
+ changeActions ChangeAction[]
  auditRequests AuditRequest[]
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid
@@ -961,4 +970,58 @@ model AuditRequest {
  reviewer User? @relation("AuditRequestReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
  @@unique([taskId,organizationId])
  @@index([organizationId,roomId,status])
+}
+
+
+// A reviewed operational response to a publication change, not a legal compliance verdict.
+model ChangeResponse {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ snapshotId String @db.Uuid
+ createdById String @db.Uuid
+ title String @db.VarChar(300)
+ plan Json
+ planHash String @db.VarChar(64)
+ status String @default("ACTIVE") @db.VarChar(16)
+ version Int @default(1)
+ resolution Json?
+ resolutionHash String? @db.VarChar(64)
+ closedById String? @db.Uuid
+ createdAt DateTime @default(now())
+ closedAt DateTime?
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ snapshot RegulatorySnapshot @relation(fields:[snapshotId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ creator User @relation("ChangeResponseCreator",fields:[createdById],references:[id],onDelete:Restrict)
+ closer User? @relation("ChangeResponseCloser",fields:[closedById],references:[id],onDelete:Restrict)
+ actions ChangeAction[]
+ @@unique([id,organizationId])
+ @@unique([organizationId,snapshotId])
+ @@index([organizationId,status,createdAt])
+}
+model ChangeAction {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ responseId String @db.Uuid
+ controlId String @db.Uuid
+ taskId String @unique @db.Uuid
+ requirements Json
+ status String @default("OPEN") @db.VarChar(16)
+ submission Json?
+ submissionHash String? @db.VarChar(64)
+ submittedById String? @db.Uuid
+ reviewerId String? @db.Uuid
+ reviewNotes String @default("") @db.VarChar(1600)
+ history Json @default("[]")
+ version Int @default(1)
+ reviewedAt DateTime?
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ response ChangeResponse @relation(fields:[responseId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ control ManagedControl @relation(fields:[controlId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ task Obligation @relation(fields:[taskId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ submitter User? @relation("ChangeActionSubmitter",fields:[submittedById],references:[id],onDelete:Restrict)
+ reviewer User? @relation("ChangeActionReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+ @@unique([responseId,controlId])
+ @@unique([taskId,organizationId])
+ @@index([organizationId,responseId,status])
 }

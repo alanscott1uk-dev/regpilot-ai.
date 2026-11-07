@@ -6,8 +6,8 @@ The current development branch contains authenticated workspace, regulatory moni
 
 - Unit, HTTP gate, parser, provider-adapter and grounding tests.
 - Prisma validation and generation; full additive migration chain on disposable PostgreSQL 17; zero schema drift.
-- Default-deny checks for all 41 private tables and PostgreSQL integration workflows, including tenant boundaries, independent reviews, stored-byte integrity, concurrent jobs, revoked permissions, redaction and duplicate prevention.
-- Production build; isolated PDF extraction from all ten traced route packages and Word extraction from nine independently packaged routes; 23-page and gated-API smoke checks; dependency audit.
+- Default-deny checks for all 43 private tables and PostgreSQL integration workflows, including tenant boundaries, independent reviews, stored-byte integrity, concurrent jobs, revoked permissions, redaction and duplicate prevention.
+- Production build; isolated PDF extraction from all ten traced route packages and Word extraction from nine independently packaged routes; 24-page and gated-API smoke checks; dependency audit.
 
 ## Service acceptance before release
 
@@ -79,3 +79,13 @@ For Word/document inspection release acceptance, follow [Document understanding]
 - Keep `REGPILOT_GOOGLE_WORKSPACE_ENABLED=false`. Before separate activation, validate the read-only OAuth scopes, customer binding, pagination, missing fields, credential rotation and revoked consent against a dedicated synthetic Google tenant.
 - Confirm the selected ICO, HSE and FCA pages remain retrievable and meaningful. ICO returned HTTP 403 from the development environment; never count that as successful monitoring. Source excerpts and proposed mappings still require qualified applicability/interpretation review.
 - Browser QA is pending: the managed preview runner injected unsupported Vite options into `next dev`. No framework change or deployment was made to work around it.
+
+
+## Coordinated change response
+
+- Apply `change-response.sql` after `audit-evidence-requests.sql`, verify zero drift and default-deny protection for all 43 private tables.
+- Complete the [change-response acceptance workflow](coordinated-change-response.md) with fictional data and real staged identities/storage. Add `/team/changes` to approved Auth redirects.
+- Check shared-control grouping, downstream dependency review, colleague-only action visibility, stale preview rejection, independent acceptance, storage verification at closure and later-change exports.
+- Verify a second source change supersedes unfinished response tasks explicitly without treating them as successful remediation.
+- Record desktop/mobile task completion times and errors before claiming usability or competitor superiority. The automated 100-link/five-action fixture tests scope preservation and work deduplication, not real-user performance.
+- Keep all paid integrations and preview deployments disabled; do not apply this migration to production as part of development verification.

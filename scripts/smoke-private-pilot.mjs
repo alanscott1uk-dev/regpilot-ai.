@@ -62,7 +62,7 @@ async function waitForServer(){
 try{
  await waitForServer();
  const routes=[
-  "/team/audit-requests","/team/people","/team/vendors","/team/audits","/auditor","/team/services","/team/settings","/team/operations","/team/library","/workbench","/register","/documents","/evidence","/controls",
+  "/team/audit-requests","/team/changes","/team/people","/team/vendors","/team/audits","/auditor","/team/services","/team/settings","/team/operations","/team/library","/workbench","/register","/documents","/evidence","/controls",
   "/assurance","/intelligence","/traceability","/team","/team/evidence","/team/sources","/team/intelligence","/team/assurance","/ai"
  ];
  for(const path of routes){
@@ -93,7 +93,7 @@ try{
  assert.equal((await response("/api/internal/automation",{method:"POST"})).status,401,"automation rejects missing secrets");
  for(const path of ["/api/workspace/team?organizationId=123e4567-e89b-42d3-a456-426614174000","/api/workspace/invitations"]){assert.equal((await response(path)).status,503,"team access fails closed");}
  for(const path of ["/api/workspace/audits?organizationId=123e4567-e89b-42d3-a456-426614174000","/api/auditor","/api/auditor/123e4567-e89b-42d3-a456-426614174000","/api/auditor/123e4567-e89b-42d3-a456-426614174000/evidence/123e4567-e89b-42d3-a456-426614174001"]){assert.equal((await response(path)).status,503,"auditor access fails closed");}
- for(const path of ["/api/workspace/audit-requests","/api/workspace/policies","/api/workspace/policy-inbox","/api/workspace/vendors"]){assert.equal((await response(path+"?organizationId=123e4567-e89b-42d3-a456-426614174000")).status,503,"policy and supplier access fails closed");}
+ for(const path of ["/api/workspace/changes","/api/workspace/audit-requests","/api/workspace/policies","/api/workspace/policy-inbox","/api/workspace/vendors"]){assert.equal((await response(path+"?organizationId=123e4567-e89b-42d3-a456-426614174000")).status,503,"policy and supplier access fails closed");}
  const noTeam=await response("/api/workspace/obligations?organizationId=123e4567-e89b-42d3-a456-426614174000");
  assert.equal(noTeam.status,503,"private team API must fail closed");
  const rootResponse=await response("/");

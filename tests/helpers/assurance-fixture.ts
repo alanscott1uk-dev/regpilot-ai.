@@ -23,7 +23,7 @@ export async function assuranceFixture(){
   return e;
  }
  async function cleanup(){
-  for(const model of [db.auditQuestion,db.auditGrant,db.auditRequest,db.auditRoom,db.policyAssignment,db.policyRevision,db.policy,db.vendorReview,db.vendor,db.auditEvent,db.evidence,db.obligation,db.managedControl,db.programmeImport,db.membership] as any[])await model.deleteMany({where:{organizationId:{in:orgIds}}});
+  for(const model of [db.changeAction,db.changeResponse,db.auditQuestion,db.auditGrant,db.auditRequest,db.auditRoom,db.policyAssignment,db.policyRevision,db.policy,db.vendorReview,db.vendor,db.auditEvent,db.coverageDecision,db.coverageRun,db.libraryApplicability,db.libraryRevision,db.libraryRequirement,db.businessProfile,db.regulatorySnapshot,db.evidence,db.obligation,db.managedControl,db.programmeImport,db.membership] as any[])await model.deleteMany({where:{organizationId:{in:orgIds}}});
   await db.organization.deleteMany({where:{id:{in:orgIds}}});await db.user.deleteMany({where:{id:{in:users.map(u=>u.id)}}});await db.$disconnect();
  }
  return {users,owner,admin,editor,staff,later,foreign,replacement,a,b,o,ad,ed,st,la,out,re,store,file,cleanup};
