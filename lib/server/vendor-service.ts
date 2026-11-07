@@ -103,8 +103,8 @@ export async function changeVendor(ctx:AuthorizedContext,id:string,input:unknown
   return transaction(ctx,async tx=>{
    const {v,r,assessment,email}=await canAccept(tx,ctx,id,d);
    if(r.inputHash!==before.r.inputHash)throw new IntelligenceError("Review changed during verification",409);
-   const work=assessment.filter(c=>c.outcome==="GAP").map(c=>({key:c.id,title:VENDOR_CRITERIA.find(x=>x.id===c.id)!.label,notes:c.rationale}));
-   if(r.recommendation==="REJECT")work.push({key:"decision" as typeof work[number]["key"],title:"Decide next steps after rejected supplier review",notes:r.rationale});
+   const work:Array<{key:string;title:string;notes:string}>=assessment.filter(c=>c.outcome==="GAP").map(c=>({key:c.id,title:VENDOR_CRITERIA.find(x=>x.id===c.id)!.label,notes:c.rationale}));
+   if(r.recommendation==="REJECT")work.push({key:"decision",title:"Decide next steps after rejected supplier review",notes:r.rationale});
    const tasks:string[]=[];
    for(const item of work){
     const automationKey=hashValue({kind:"vendor-review-gap",reviewId:r.id,criterion:item.key});

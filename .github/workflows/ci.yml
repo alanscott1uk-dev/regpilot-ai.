@@ -42,6 +42,7 @@ jobs:
       - run: npm run test
       - run: npm run db:validate
       - run: npm run db:generate
+      - run: npx tsc --noEmit
       # Isolated disposable CI database only, not a live migration.
       - run: npx prisma db push --schema fixtures/schema-b857436.prisma --skip-generate
       - run: npx prisma db execute --file prisma/changes/obligation-intelligence.sql --schema prisma/schema.prisma
