@@ -115,7 +115,7 @@ export async function policyInbox(ctx:AuthorizedContext){return transaction(ctx,
 });}
 async function assigned(tx:Prisma.TransactionClient,ctx:AuthorizedContext,id:string){
  await requireMember(tx,ctx);
- const a=await tx.policyAssignment.findFirst({where:{id,...org(ctx),userId:ctx.userId,status:{in:["PENDING","ACKNOWLEDGED"]}},include:{revision:{include:{policy:true}}});
+ const a=await tx.policyAssignment.findFirst({where:{id,...org(ctx),userId:ctx.userId,status:{in:["PENDING","ACKNOWLEDGED"]}},include:{revision:{include:{policy:true}}}});
  if(!a||!a.revision.policy.active||a.revision.status!=="PUBLISHED"||a.revision.number!==a.revision.policy.currentRevision)throw new IntelligenceError("Policy assignment no longer available",404);
  const file=fileOf(a.revision);await assertReviewedFiles(tx,ctx.organizationId,[file]);return {a,file};
 }
