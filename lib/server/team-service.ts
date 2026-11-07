@@ -102,7 +102,7 @@ export async function changeMember(ctx:AuthorizedContext,input:unknown){
   if(d.action==="ROLE"&&!d.role)throw new IntelligenceError("Choose a role");
   // Hand over open work atomically, preserving historical approvals and completed work.
   if(d.action==="REMOVE"||d.role==="VIEWER"){
-   const [controls,tasks,requirements,vendors]=await Promise.all([
+   const [controls,tasks,requirements,vendors,accessItems,questionnaires]=await Promise.all([
     tx.managedControl.count({where:{organizationId:ctx.organizationId,ownerId:d.userId,enabled:true}}),
     tx.obligation.count({where:{organizationId:ctx.organizationId,assigneeId:d.userId,status:{not:"COMPLETE"}}}),
     tx.$queryRaw<Array<{id:string}>>`SELECT latest.id FROM (
@@ -112,13 +112,18 @@ export async function changeMember(ctx:AuthorizedContext,input:unknown){
       WHERE a."organizationId"=${ctx.organizationId}::uuid AND r.status='ACCEPTED' AND r.number=q."currentRevision"
       ORDER BY a."revisionId",a."updatedAt" DESC,a.id DESC
     ) latest WHERE latest."ownerId"=${d.userId}::uuid AND latest.decision='APPLIES'`,
-    tx.vendor.count({where:{organizationId:ctx.organizationId,ownerId:d.userId,active:true}})
+    tx.vendor.count({where:{organizationId:ctx.organizationId,ownerId:d.userId,active:true}}),
+    tx.accessReviewItem.findMany({where:{organizationId:ctx.organizationId,reviewerId:d.userId,stage:"DECIDE",campaign:{status:"ACTIVE"}},select:{id:true,entry:true}}),
+    tx.assuranceQuestionnaire.findMany({where:{organizationId:ctx.organizationId,status:"DRAFT",questions:{array_contains:[{ownerId:d.userId}]}},select:{id:true,questions:true}})
    ]);
-   if(controls+tasks+requirements.length+vendors){
-    if(!d.replacementId||d.replacementId===d.userId)throw new IntelligenceError(`Choose a replacement owner for ${controls} active controls, ${tasks} open tasks and ${requirements.length} requirements and ${vendors} active suppliers`,409);
+   if(controls+tasks+requirements.length+vendors+accessItems.length+questionnaires.length){
+    if(!d.replacementId||d.replacementId===d.userId)throw new IntelligenceError(`Choose a replacement owner for ${controls} active controls, ${tasks} open tasks and ${requirements.length} requirements and ${vendors} active suppliers, ${accessItems.length} access decisions and ${questionnaires.length} questionnaires`,409);
     const replacement=await tx.membership.findUnique({where:{organizationId_userId:{organizationId:ctx.organizationId,userId:d.replacementId}},include:{user:{select:{email:true}}}});
     if(!replacement||replacement.role==="VIEWER")throw new IntelligenceError("Choose an active colleague who can edit work",409);
     eligible(replacement.user.email);
+    if(accessItems.some(a=>(a.entry as {account:string}).account.toLowerCase()===replacement.user.email.toLowerCase()))throw new IntelligenceError("Reassign the replacement colleague’s own access review to someone else before this handover",409);
+    await tx.accessReviewItem.updateMany({where:{id:{in:accessItems.map(a=>a.id)},organizationId:ctx.organizationId},data:{reviewerId:d.replacementId,version:{increment:1}}});
+    for(const q of questionnaires){const questions=q.questions as Array<Record<string,Prisma.JsonValue>>;await tx.assuranceQuestionnaire.update({where:{id:q.id},data:{questions:questions.map(r=>r.ownerId===d.userId?{...r,ownerId:d.replacementId!}:r) as Prisma.InputJsonValue,version:{increment:1}}});}
     await tx.managedControl.updateMany({where:{organizationId:ctx.organizationId,ownerId:d.userId,enabled:true},data:{ownerId:d.replacementId,version:{increment:1}}});
     await tx.obligation.updateMany({where:{organizationId:ctx.organizationId,assigneeId:d.userId,status:{not:"COMPLETE"}},data:{assigneeId:d.replacementId,ownerName:replacement.user.email}});
     await tx.vendor.updateMany({where:{organizationId:ctx.organizationId,ownerId:d.userId,active:true},data:{ownerId:d.replacementId,version:{increment:1}}});

@@ -1,5 +1,6 @@
 import {Prisma,type AuditRoom,type AuditGrant} from "@prisma/client";
 import {db} from "./db";
+import {approvedDisclosure} from "./customer-assurance-service";
 import {assertAuditRequestsReady} from "./audit-request-service";
 import type {AuthorizedContext} from "./authorization";
 import type {VerifiedWorkspaceIdentity} from "./ai-auth";
@@ -25,6 +26,11 @@ async function issuerActive(tx:Tx,room:{organizationId:string;createdById:string
 function manifest(room:{manifest:unknown;manifestHash:string}):AuditManifest{
  const m=manifestSchema.parse(room.manifest);if(hashValue(m)!==room.manifestHash)throw new IntelligenceError("Shared record integrity check failed",409);return m;
 }
+async function currentAssurance(tx:Tx,room:{organizationId:string;manifest:unknown;manifestHash:string}){
+ const a=manifest(room).assurance;if(!a)return;
+ const s=await approvedDisclosure(tx,room.organizationId,a.questionnaireId);
+ if(s.row.version!==a.questionnaireVersion||s.row.approvedHash!==a.approvedHash||hashValue({title:s.disclosure.title,scope:s.disclosure.scope,questions:s.disclosure.questions})!==hashValue({title:a.title,scope:a.scope,questions:a.questions}))throw new IntelligenceError("Shared assurance answers changed; prepare a new reviewed share",409);
+}
 async function filesWithAvailability(tx:Tx,orgId:string,m:AuditManifest){
  const rows=await tx.evidence.findMany({where:{organizationId:orgId,id:{in:m.files.map(f=>f.id)}}});
  return m.files.map(f=>({...f,available:evidenceStillShareable(f,rows.find(r=>r.id===f.id),orgId)}));
@@ -33,29 +39,33 @@ function activeRoom(room:{status:string;expiresAt:Date}){return room.status==="P
 export async function auditWorkspace(ctx:AuthorizedContext){
  return transaction(ctx,async tx=>{
   await requireMember(tx,ctx,ADMIN);
-  const [rooms,candidates,controls,members]=await Promise.all([
+  const [rooms,candidates,controls,members,questionnaires]=await Promise.all([
    tx.auditRoom.findMany({where:{organizationId:ctx.organizationId},select:{...summary,_count:{select:{grants:true,questions:true}}},orderBy:{createdAt:"desc"},take:AUDIT_LIMITS.rooms}),
    tx.evidence.findMany({where:{organizationId:ctx.organizationId,reviewStatus:"APPROVED",scanStatus:"CLEAN",obligation:{organizationId:ctx.organizationId}},select:{id:true,filename:true,sha256:true,reviewVersion:true,reviewedAt:true,uploadedById:true,reviewerId:true,obligation:{select:{title:true}}},orderBy:{createdAt:"desc"},take:201}),
    tx.managedControl.findMany({where:{organizationId:ctx.organizationId,enabled:true},select:{id:true,title:true},orderBy:{title:"asc"},take:100}),
-   tx.membership.findMany({where:{organizationId:ctx.organizationId,role:{not:"VIEWER"}},select:{user:{select:{id:true,email:true}}},take:100})
+   tx.membership.findMany({where:{organizationId:ctx.organizationId,role:{not:"VIEWER"}},select:{user:{select:{id:true,email:true}}},take:100}),
+   tx.assuranceQuestionnaire.findMany({where:{organizationId:ctx.organizationId,status:"APPROVED"},select:{id:true,title:true,scope:true},take:100})
   ]);
-  return {rooms,controls,members,candidates:candidates.slice(0,200).filter(e=>e.uploadedById&&e.reviewerId&&e.uploadedById!==e.reviewerId),moreEvidence:candidates.length>200,limits:AUDIT_LIMITS};
+  return {rooms,controls,members,questionnaires,candidates:candidates.slice(0,200).filter(e=>e.uploadedById&&e.reviewerId&&e.uploadedById!==e.reviewerId),moreEvidence:candidates.length>200,limits:AUDIT_LIMITS};
  });
 }
-export async function createAuditRoom(ctx:AuthorizedContext,input:unknown){
+export async function createAuditRoom(ctx:AuthorizedContext,input:unknown){return transaction(ctx,tx=>createAuditRoomInTransaction(tx,ctx,input));}
+export async function createAuditRoomInTransaction(tx:Tx,ctx:AuthorizedContext,input:unknown){
  const d=roomDraftSchema.parse(input),expiresAt=new Date(d.expiresAt);
  if(expiresAt<=new Date()||expiresAt.getTime()>Date.now()+AUDIT_LIMITS.roomDays*86400000)throw new IntelligenceError("Choose an expiry within the next 90 days");
- return transaction(ctx,async tx=>{
-  await requireMember(tx,ctx,ADMIN);
+ await requireMember(tx,ctx,ADMIN);
   if(await tx.auditRoom.count({where:{organizationId:ctx.organizationId}})>=AUDIT_LIMITS.rooms)throw new IntelligenceError("This pilot supports 40 audit rooms per organisation",429);
-  const rows=await tx.evidence.findMany({where:{id:{in:d.evidenceIds},organizationId:ctx.organizationId},include:{obligation:{select:{title:true,organizationId:true}}},orderBy:{id:"asc"}});
-  if(rows.length!==d.evidenceIds.length||rows.some(e=>e.scanStatus!=="CLEAN"||e.reviewStatus!=="APPROVED"||!e.reviewedAt||!e.uploadedById||!e.reviewerId||e.uploadedById===e.reviewerId||e.obligation.organizationId!==ctx.organizationId))throw new IntelligenceError("Choose only current, independently approved files from this organisation",409);
-  const m:AuditManifest={version:1,...(d.period?{period:d.period}:{}),capturedAt:new Date().toISOString(),files:rows.map(e=>({id:e.id,obligationId:e.obligationId,taskTitle:e.obligation.title,filename:e.filename,contentType:e.contentType,sizeBytes:e.sizeBytes,sha256:e.sha256,reviewVersion:e.reviewVersion,reviewedAt:e.reviewedAt!.toISOString()}))};
+  const disclosure=d.questionnaireId?await approvedDisclosure(tx,ctx.organizationId,d.questionnaireId):null;
+  const evidenceIds=[...new Set([...d.evidenceIds,...(disclosure?.files.map(f=>f.id)||[])])];if(evidenceIds.length>50)throw new IntelligenceError("This share supports 50 evidence files",409);
+  const rows=await tx.evidence.findMany({where:{id:{in:evidenceIds},organizationId:ctx.organizationId},include:{obligation:{select:{title:true,organizationId:true}}},orderBy:{id:"asc"}});
+  if(rows.length!==evidenceIds.length||rows.some(e=>e.scanStatus!=="CLEAN"||e.reviewStatus!=="APPROVED"||!e.reviewedAt||!e.uploadedById||!e.reviewerId||e.uploadedById===e.reviewerId||e.obligation.organizationId!==ctx.organizationId))throw new IntelligenceError("Choose only current, independently approved files from this organisation",409);
+  const m:AuditManifest={version:1,...(disclosure?{assurance:{questionnaireId:disclosure.row.id,questionnaireVersion:disclosure.row.version,approvedHash:disclosure.row.approvedHash!,title:disclosure.disclosure.title,scope:disclosure.disclosure.scope,questions:disclosure.disclosure.questions}}:{}),...(d.period?{period:d.period}:{}),capturedAt:new Date().toISOString(),files:rows.map(e=>({id:e.id,obligationId:e.obligationId,taskTitle:e.obligation.title,filename:e.filename,contentType:e.contentType,sizeBytes:e.sizeBytes,sha256:e.sha256,reviewVersion:e.reviewVersion,reviewedAt:e.reviewedAt!.toISOString()}))};
   manifestSchema.parse(m);
   const room=await tx.auditRoom.create({data:{organizationId:ctx.organizationId,createdById:ctx.userId,title:d.title,purpose:d.purpose,expiresAt,manifest:m,manifestHash:hashValue(m)},select:summary});
   await event(tx,ctx.organizationId,ctx.userId,"draft_created",room.id,{files:rows.length,manifestHash:room.manifestHash});return room;
- });
+
 }
+
 export async function manageAuditRoom(ctx:AuthorizedContext,id:string){
  return transaction(ctx,async tx=>{
   await requireMember(tx,ctx,ADMIN);
@@ -68,7 +78,7 @@ export async function manageAuditRoom(ctx:AuthorizedContext,id:string){
    filesWithAvailability(tx,ctx.organizationId,manifest(room))
   ]);
   const {manifest:_,createdById:__,...publicRoom}=room;
-  return {room:publicRoom,period:manifest(room).period,requests:manifest(room).requests||[],files,grants,questions:questions.map(q=>({...q,responses:responseHistorySchema.parse(q.responses)})),activity};
+  return {room:publicRoom,assurance:manifest(room).assurance,period:manifest(room).period,requests:manifest(room).requests||[],files,grants,questions:questions.map(q=>({...q,responses:responseHistorySchema.parse(q.responses)})),activity};
  });
 }
 export async function changeAuditRoom(ctx:AuthorizedContext,id:string,input:unknown){
@@ -82,7 +92,7 @@ export async function changeAuditRoom(ctx:AuthorizedContext,id:string,input:unkn
    if(d.action==="PUBLISH"){
     if(room.status!=="DRAFT"||room.expiresAt<=new Date()||!await issuerActive(tx,room))throw new IntelligenceError("This draft can no longer be published",409);
     if(room.manifestHash!==d.manifestHash)throw new IntelligenceError("Review the current disclosure before publishing",409);
-    await assertAuditRequestsReady(tx,ctx,id);
+    await assertAuditRequestsReady(tx,ctx,id);await currentAssurance(tx,room);
     const files=await filesWithAvailability(tx,ctx.organizationId,manifest(room));
     if(!files.length)throw new IntelligenceError("Select or accept reviewed evidence before publishing",409);
     if(files.some(f=>!f.available))throw new IntelligenceError("Selected evidence changed. Prepare a new room with current files",409);
@@ -126,6 +136,7 @@ async function guestTransaction<T>(identity:VerifiedWorkspaceIdentity,grantId:st
   if(!grant||!activeRoom(grant.room)||!await issuerActive(tx,grant.room)||!["PENDING","ACCEPTED"].includes(grant.status)||(grant.status==="PENDING"&&grant.expiresAt<=new Date()))throw new IntelligenceError("Audit access unavailable",404);
   if(grant.user&&grant.user.externalId!==identity.externalId)throw new IntelligenceError("Audit access unavailable",404);
   if(accepted&&grant.status!=="ACCEPTED")throw new IntelligenceError("Accept this invitation before opening the room",403);
+  await currentAssurance(tx,grant.room);
   const user=await verifiedLocalUser(tx,identity);
   if(grant.status==="ACCEPTED"&&grant.userId!==user.id)throw new IntelligenceError("Audit access unavailable",404);
   return fn(tx,grant,grant.room,user.id);
@@ -148,7 +159,7 @@ export async function openAuditRoom(identity:VerifiedWorkspaceIdentity,grantId:s
   const files=await filesWithAvailability(tx,room.organizationId,manifest(room));
   const questions=await tx.auditQuestion.findMany({where:{organizationId:room.organizationId,roomId:room.id,grantId:g.id},select:{id:true,evidenceId:true,question:true,response:true,responses:true,status:true,version:true,createdAt:true,answeredAt:true},orderBy:{createdAt:"desc"},take:AUDIT_LIMITS.questions});
   await event(tx,room.organizationId,userId,"room_opened",room.id,{grantId:g.id});
-  return {room:{title:room.title,purpose:room.purpose,expiresAt:room.expiresAt,publishedAt:room.publishedAt,manifestHash:room.manifestHash,period:manifest(room).period,requests:manifest(room).requests||[]},files,questions:questions.map(q=>({...q,responses:responseHistorySchema.parse(q.responses)}))};
+  return {room:{title:room.title,purpose:room.purpose,expiresAt:room.expiresAt,publishedAt:room.publishedAt,manifestHash:room.manifestHash,assurance:manifest(room).assurance?{title:manifest(room).assurance!.title,scope:manifest(room).assurance!.scope,questions:manifest(room).assurance!.questions}:null,period:manifest(room).period,requests:manifest(room).requests||[]},files,questions:questions.map(q=>({...q,responses:responseHistorySchema.parse(q.responses)}))};
  });
 }
 export async function guestAuditAction(identity:VerifiedWorkspaceIdentity,grantId:string,input:unknown){
@@ -196,7 +207,15 @@ export async function downloadAuditEvidence(identity:VerifiedWorkspaceIdentity,g
 export async function exportAuditPackage(ctx:AuthorizedContext,id:string){return transaction(ctx,async tx=>{
  await requireMember(tx,ctx,ADMIN);const room=await tx.auditRoom.findFirst({where:{id,organizationId:ctx.organizationId}});
  if(!room||!activeRoom(room)||!await issuerActive(tx,room))throw new IntelligenceError("Published audit package unavailable",404);
- const m=manifest(room),files=await filesWithAvailability(tx,ctx.organizationId,m);if(files.some(f=>!f.available))throw new IntelligenceError("Package evidence changed; prepare a current reviewed share",409);
+ await currentAssurance(tx,room);const m=manifest(room),files=await filesWithAvailability(tx,ctx.organizationId,m);if(files.some(f=>!f.available))throw new IntelligenceError("Package evidence changed; prepare a current reviewed share",409);
  await event(tx,ctx.organizationId,ctx.userId,"package_index_exported",id);
  return {format:"regpilot-audit-package-index-v1",title:room.title,purpose:room.purpose,publishedAt:room.publishedAt,manifest:m,manifestHash:room.manifestHash,limitation:"An index of selected files and reviewer-accepted period claims, not file bytes, a digital signature, a complete audit population or a control-effectiveness opinion."};
 });}
+
+export async function exportAuditArchive(ctx:AuthorizedContext,id:string,store?:EvidenceObjectStore){
+ const before=await exportAuditPackage(ctx,id);if(before.manifest.files.reduce((n,f)=>n+f.sizeBytes,0)>30*1024*1024)throw new IntelligenceError("Split the package into selections of at most 30 MB for archive download",413);
+ const {downloadEvidence}=await import("./evidence-service"),{makeAuditZip,archiveFilename}=await import("../audit-archive");const entries:Array<{name:string;bytes:Uint8Array}>=[];
+ for(const [i,f] of before.manifest.files.entries()){const actual=await downloadEvidence(ctx,f.id,store);if(actual.sha256!==f.sha256||actual.bytes.byteLength!==f.sizeBytes)throw new IntelligenceError("Package bytes changed during retrieval",409);entries.push({name:archiveFilename(i,f.filename),bytes:actual.bytes});}
+ const after=await exportAuditPackage(ctx,id);if(after.manifestHash!==before.manifestHash)throw new IntelligenceError("Published selection changed during retrieval",409);
+ const index={...after,format:"regpilot-audit-archive-v1",archiveFiles:entries.map((e,i)=>({entry:e.name,evidenceId:after.manifest.files[i].id,sha256:after.manifest.files[i].sha256})),limitation:"Selected reviewed files and accepted coverage claims. The population and sample limitations remain part of the record; this is not certification or a digital signature."};return makeAuditZip([{name:"manifest.json",bytes:Buffer.from(JSON.stringify(index,null,2))},...entries]);
+}

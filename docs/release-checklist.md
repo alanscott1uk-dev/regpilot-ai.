@@ -6,8 +6,8 @@ The current development branch contains authenticated workspace, regulatory moni
 
 - Unit, HTTP gate, parser, provider-adapter and grounding tests.
 - Prisma validation and generation; full additive migration chain on disposable PostgreSQL 17; zero schema drift.
-- Default-deny checks for all 43 private tables and PostgreSQL integration workflows, including tenant boundaries, independent reviews, stored-byte integrity, concurrent jobs, revoked permissions, redaction and duplicate prevention.
-- Production build; isolated PDF extraction from all ten traced route packages and Word extraction from nine independently packaged routes; 24-page and gated-API smoke checks; dependency audit.
+- Default-deny checks for all 48 private tables and PostgreSQL integration workflows, including tenant boundaries, independent reviews, stored-byte integrity, concurrent jobs, revoked permissions, redaction and duplicate prevention.
+- Production build; isolated PDF extraction from all ten traced route packages and Word extraction from nine independently packaged routes; 29-page and gated-API smoke checks; dependency audit.
 
 ## Service acceptance before release
 
@@ -89,3 +89,15 @@ For Word/document inspection release acceptance, follow [Document understanding]
 - Verify a second source change supersedes unfinished response tasks explicitly without treating them as successful remediation.
 - Record desktop/mobile task completion times and errors before claiming usability or competitor superiority. The automated 100-link/five-action fixture tests scope preservation and work deduplication, not real-user performance.
 - Keep all paid integrations and preview deployments disabled; do not apply this migration to production as part of development verification.
+
+
+## Access reviews, customer assurance and audit preparation
+
+- Apply `assurance-operations.sql` after `change-response.sql` through the reviewed release process. Confirm zero schema drift and default-deny on all 48 private tables. No hosted database change was made during development.
+- Follow [the assurance operations runbook](assurance-operations.md). Add `/team/access-reviews`, `/team/answers`, `/team/questionnaires`, `/team/trust` and `/trust` to staged Auth redirects as needed.
+- Use fictional accounts for access inventory → assigned decisions → source-system change → new inventory → reviewed proof → independent verification → closure. Check self-review, stale/new permissions, reassignment, removal of administrators during retrieval and historical exports.
+- Exercise approved answer → CSV questionnaire → per-question confirmation → independent disclosure approval → private Trust Centre → named guest acceptance/download → withdrawal and revocation. Revised answers must block existing shares and exports until new disclosure review.
+- Exercise audit period → reproducible sample preview → owned requests → independent acceptance → disclosure publication → ZIP with verified bytes. Check empty populations, changed files, unselected-file rejection, historical review context, archive limits and cancellation.
+- Check these workflows in authenticated desktop/mobile sessions with real staged Auth/Storage before customer use. Offline page rendering and API fixtures are not signed-in browser acceptance.
+- Access inventories remain human-confirmed CSVs; answer suggestions are deterministic matching; sampling is not a statistical opinion; the Trust Centre is private and named-access. These are not automatic provider discovery/revocation, AI-generated questionnaire answers, a public Trust Centre, or certified audit conclusions.
+- Keep every paid integration and Vercel preview disabled. No deployment is part of this batch.

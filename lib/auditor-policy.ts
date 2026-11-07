@@ -3,8 +3,8 @@ export const AUDIT_LIMITS={rooms:40,roomDays:90,guests:10,inviteDays:7,evidence:
 export const auditPeriodSchema=z.object({from:z.iso.date(),to:z.iso.date()}).refine(p=>p.from<=p.to&&Date.parse(p.to)-Date.parse(p.from)<=366*86400000,"Choose an audit period of no more than 366 days");
 export const roomDraftSchema=z.object({
  title:z.string().trim().min(3).max(160),purpose:z.string().trim().min(20).max(1200),
- period:auditPeriodSchema.optional(),expiresAt:z.iso.datetime(),evidenceIds:z.array(z.uuid()).max(AUDIT_LIMITS.evidence).refine(v=>new Set(v).size===v.length,"Choose each file once")
-}).refine(v=>v.evidenceIds.length>0||!!v.period,"Choose evidence or define an audit period before creating an empty draft");
+ questionnaireId:z.uuid().optional(),period:auditPeriodSchema.optional(),expiresAt:z.iso.datetime(),evidenceIds:z.array(z.uuid()).max(AUDIT_LIMITS.evidence).refine(v=>new Set(v).size===v.length,"Choose each file once")
+}).refine(v=>v.evidenceIds.length>0||!!v.period||!!v.questionnaireId,"Choose evidence or define an audit period before creating an empty draft");
 export const roomActionSchema=z.discriminatedUnion("action",[
  z.object({action:z.literal("PUBLISH"),version:z.number().int().positive(),manifestHash:z.string().regex(/^[a-f0-9]{64}$/),acknowledgeDisclosure:z.literal(true)}),
  z.object({action:z.literal("CLOSE"),version:z.number().int().positive()}),
@@ -19,8 +19,10 @@ export const guestActionSchema=z.discriminatedUnion("action",[
  z.object({action:z.literal("RESOLVE"),questionId:z.uuid(),version:z.number().int().positive()}),
  z.object({action:z.literal("REOPEN"),questionId:z.uuid(),version:z.number().int().positive()})
 ]);
+export const samplingSummarySchema=z.object({method:z.literal("DETERMINISTIC_HASH"),seed:z.string().min(4).max(80),populationCount:z.number().int().nonnegative(),populationHash:z.string().length(64),sampleCount:z.number().int().nonnegative(),limitation:z.string()});
+export const samplingPlanSchema=samplingSummarySchema.extend({sampleIds:z.array(z.uuid()).max(5)});
 export const manifestSchema=z.object({
- version:z.literal(1),period:auditPeriodSchema.optional(),requests:z.array(z.object({id:z.uuid(),title:z.string().max(160),controlTitle:z.string().max(160),controlVersion:z.number().int().positive(),coverage:auditPeriodSchema,fileIds:z.array(z.uuid()).min(1).max(10),acceptedAt:z.iso.datetime()})).max(50).optional(),capturedAt:z.iso.datetime(),files:z.array(z.object({
+ version:z.literal(1),assurance:z.object({questionnaireId:z.uuid(),questionnaireVersion:z.number().int(),approvedHash:z.string(),title:z.string(),scope:z.string(),questions:z.array(z.object({reference:z.string(),question:z.string(),answer:z.string(),evidence:z.array(z.object({filename:z.string(),sha256:z.string()}))})).max(100)}).optional(),period:auditPeriodSchema.optional(),requests:z.array(z.object({id:z.uuid(),title:z.string().max(160),controlTitle:z.string().max(160),controlVersion:z.number().int().positive(),sampling:samplingSummarySchema.optional(),coverage:auditPeriodSchema,fileIds:z.array(z.uuid()).min(1).max(10),acceptedAt:z.iso.datetime()})).max(50).optional(),capturedAt:z.iso.datetime(),files:z.array(z.object({
   id:z.uuid(),obligationId:z.uuid(),taskTitle:z.string(),filename:z.string(),contentType:z.string(),sizeBytes:z.number().int().positive(),
   sha256:z.string().regex(/^[a-f0-9]{64}$/),reviewVersion:z.number().int().positive(),reviewedAt:z.iso.datetime()
  })).max(AUDIT_LIMITS.evidence)

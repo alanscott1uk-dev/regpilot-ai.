@@ -46,6 +46,16 @@ enum ReviewStatus {
 }
 
 model User {
+ accessInventories AccessInventory[]
+ accessCampaignsCreated AccessCampaign[] @relation("AccessCreator")
+ accessCampaignsClosed AccessCampaign[] @relation("AccessCloser")
+ accessItemsReviewed AccessReviewItem[] @relation("AccessReviewer")
+ accessItemsSubmitted AccessReviewItem[] @relation("AccessSubmitter")
+ accessItemsVerified AccessReviewItem[] @relation("AccessVerifier")
+ assuranceAnswersWritten AssuranceAnswer[] @relation("AnswerAuthor")
+ assuranceAnswersReviewed AssuranceAnswer[] @relation("AnswerReviewer")
+ questionnairesCreated AssuranceQuestionnaire[] @relation("QuestionnaireAuthor")
+ questionnairesReviewed AssuranceQuestionnaire[] @relation("QuestionnaireReviewer")
  changeResponsesCreated ChangeResponse[] @relation("ChangeResponseCreator")
  changeResponsesClosed ChangeResponse[] @relation("ChangeResponseCloser")
  changeActionsSubmitted ChangeAction[] @relation("ChangeActionSubmitter")
@@ -102,6 +112,11 @@ model User {
 }
 
 model Organization {
+ accessInventories AccessInventory[]
+ accessCampaigns AccessCampaign[]
+ accessItems AccessReviewItem[]
+ assuranceAnswers AssuranceAnswer[]
+ questionnaires AssuranceQuestionnaire[]
  changeResponses ChangeResponse[]
  changeActions ChangeAction[]
  auditRequests AuditRequest[]
@@ -249,6 +264,7 @@ model Membership {
 }
 
 model Obligation {
+ accessItem AccessReviewItem?
  changeAction ChangeAction?
  auditRequest AuditRequest?
   id             String           @id @default(uuid()) @db.Uuid
@@ -943,6 +959,7 @@ model VendorReview {
 
 // Administrative evidence requests. Acceptance is not a control-effectiveness verdict.
 model AuditRequest {
+ samplingPlan Json?
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid
  roomId String @db.Uuid
@@ -1024,4 +1041,122 @@ model ChangeAction {
  @@unique([responseId,controlId])
  @@unique([taskId,organizationId])
  @@index([organizationId,responseId,status])
+}
+
+
+model AccessInventory {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ createdById String @db.Uuid
+ system String @db.VarChar(120)
+ source String @db.VarChar(32)
+ observedAt DateTime
+ records Json
+ recordsHash String @db.VarChar(64)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ creator User @relation(fields:[createdById],references:[id],onDelete:Restrict)
+ campaigns AccessCampaign[]
+ @@unique([id,organizationId])
+ @@index([organizationId,system,createdAt])
+}
+model AccessCampaign {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ inventoryId String @db.Uuid
+ createdById String @db.Uuid
+ closedById String? @db.Uuid
+ title String @db.VarChar(160)
+ dueDate DateTime
+ status String @default("ACTIVE") @db.VarChar(16)
+ version Int @default(1)
+ closure Json?
+ closureHash String? @db.VarChar(64)
+ closedAt DateTime?
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ inventory AccessInventory @relation(fields:[inventoryId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ creator User @relation("AccessCreator",fields:[createdById],references:[id],onDelete:Restrict)
+ closer User? @relation("AccessCloser",fields:[closedById],references:[id],onDelete:Restrict)
+ items AccessReviewItem[]
+ @@unique([id,organizationId])
+ @@unique([organizationId,inventoryId])
+ @@index([organizationId,status,createdAt])
+}
+model AccessReviewItem {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ campaignId String @db.Uuid
+ reviewerId String @db.Uuid
+ taskId String? @unique @db.Uuid
+ submittedById String? @db.Uuid
+ verifiedById String? @db.Uuid
+ entry Json
+ entryHash String @db.VarChar(64)
+ decision String @default("PENDING") @db.VarChar(16)
+ stage String @default("DECIDE") @db.VarChar(16)
+ targetPermission String? @db.VarChar(160)
+ rationale String @default("") @db.VarChar(1600)
+ proof Json?
+ proofHash String? @db.VarChar(64)
+ reviewNotes String @default("") @db.VarChar(1600)
+ history Json @default("[]")
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ campaign AccessCampaign @relation(fields:[campaignId,organizationId],references:[id,organizationId],onDelete:Cascade)
+ task Obligation? @relation(fields:[taskId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ reviewer User @relation("AccessReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+ submitter User? @relation("AccessSubmitter",fields:[submittedById],references:[id],onDelete:Restrict)
+ verifier User? @relation("AccessVerifier",fields:[verifiedById],references:[id],onDelete:Restrict)
+ @@unique([id,organizationId])
+ @@unique([taskId,organizationId])
+ @@index([organizationId,reviewerId,stage])
+ @@index([campaignId,stage])
+}
+model AssuranceAnswer {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ createdById String @db.Uuid
+ reviewerId String? @db.Uuid
+ question String @db.VarChar(1200)
+ scope String @db.VarChar(120)
+ answer String @db.VarChar(6000)
+ files Json
+ contentHash String @db.VarChar(64)
+ validUntil DateTime
+ status String @default("DRAFT") @db.VarChar(16)
+ reviewNotes String @default("") @db.VarChar(1600)
+ reviewedAt DateTime?
+ history Json @default("[]")
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ author User @relation("AnswerAuthor",fields:[createdById],references:[id],onDelete:Restrict)
+ reviewer User? @relation("AnswerReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+ @@unique([id,organizationId])
+ @@index([organizationId,status,scope])
+}
+model AssuranceQuestionnaire {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ createdById String @db.Uuid
+ reviewerId String? @db.Uuid
+ title String @db.VarChar(160)
+ recipient String @db.VarChar(160)
+ scope String @db.VarChar(120)
+ questions Json
+ status String @default("DRAFT") @db.VarChar(16)
+ version Int @default(1)
+ approvedSnapshot Json?
+ approvedHash String? @db.VarChar(64)
+ approvedAt DateTime?
+ reviewNotes String @default("") @db.VarChar(1600)
+ history Json @default("[]")
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ author User @relation("QuestionnaireAuthor",fields:[createdById],references:[id],onDelete:Restrict)
+ reviewer User? @relation("QuestionnaireReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+ @@unique([id,organizationId])
+ @@index([organizationId,status,createdAt])
 }
