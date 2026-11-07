@@ -1,0 +1,2 @@
+.rows{display:grid;gap:12px}.rows article{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid #eee5f4;padding:14px 0;overflow-wrap:anywhere}.rows article>div{min-width:0}.rows p{margin-bottom:0}.rows strong{font-size:14px}
+@media(max-width:600px){.rows article{align-items:flex-start;flex-direction:column}}

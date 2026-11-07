@@ -6,8 +6,8 @@ The current development branch contains authenticated workspace, regulatory moni
 
 - Unit, HTTP gate, parser, provider-adapter and grounding tests.
 - Prisma validation and generation; full additive migration chain on disposable PostgreSQL 17; zero schema drift.
-- Default-deny checks for all 20 private tables and PostgreSQL integration workflows, including tenant boundaries, independent reviews, stored-byte integrity, concurrent jobs, revoked permissions, redaction and duplicate prevention.
-- Production build; isolated PDF extraction from all four traced route packages; 15-page and gated-API smoke checks; dependency audit.
+- Default-deny checks for all 27 private tables and PostgreSQL integration workflows, including tenant boundaries, independent reviews, stored-byte integrity, concurrent jobs, revoked permissions, redaction and duplicate prevention.
+- Production build; isolated PDF extraction from all eight traced route packages; 17-page and gated-API smoke checks; dependency audit.
 
 ## Service acceptance before release
 
@@ -26,3 +26,10 @@ Runbooks: [programme operations](programme-operations.md), [evidence assurance](
 - [ ] Verify real GOV.UK discovery/identity/withdrawal behaviour and meaningful sector/devolved-nation coverage with a domain reviewer.
 - [ ] Run authenticated two-person library intake → applicability → shared controls → impact/withdrawal/redaction acceptance with fictional documents first.
 - [ ] Measure live AI relationship quality, review effort, spend enforcement and mobile usability; do not present quotation-grounding tests as legal accuracy or competitor superiority.
+
+### Team access batch
+
+- [ ] Apply `team-access.sql` after `obligation-library.sql`; verify zero schema drift and default-deny on all 27 private tables.
+- [ ] Complete the real-service workflow in [Team access](team-access.md), including account provisioning, allowed redirects and independent review.
+- [ ] Confirm revoked/demoted members cannot complete in-flight writes, and paused connectors/watches require deliberate reconfiguration.
+- [ ] Check mobile invitation acceptance, role changes and work handover with fictional records before customer use.

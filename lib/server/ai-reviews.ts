@@ -1,3 +1,4 @@
+import {requireMember,ADMIN,WRITER} from "./workspace-member";
 import {db} from "./db";
 import type {AuthorizedContext} from "./authorization";
 import {Prisma} from "@prisma/client";
@@ -16,6 +17,7 @@ export async function saveGeneratedReview(ctx:AuthorizedContext,input:{requestId
  const source=value.source;
  const sourceUrl=source&&typeof source==="object"&&typeof source.url==="string"?source.url:null;
  return db.$transaction(async tx=>{
+  await requireMember(tx,ctx,WRITER);
   const record=await tx.aiReview.create({data:{
    organizationId:ctx.organizationId,createdById:ctx.userId,
    requestId:input.requestId,mode:input.mode,modelId:String(value.model||"unknown").slice(0,90),
@@ -41,6 +43,7 @@ function displayReview(record:any,includeResult:boolean){
  };
 }
 export async function listAiReviewRecords(ctx:AuthorizedContext){
+ await db.$transaction(tx=>requireMember(tx,ctx));
  const records=await db.aiReview.findMany({
   where:{organizationId:ctx.organizationId},
   orderBy:{createdAt:"desc"},take:50
@@ -48,6 +51,7 @@ export async function listAiReviewRecords(ctx:AuthorizedContext){
  return records.map(r=>({...displayReview(r,false),integrityOk:reviewContentHash(r.result)===r.resultSha256}));
 }
 export async function readAiReviewRecord(ctx:AuthorizedContext,id:string){
+ await db.$transaction(tx=>requireMember(tx,ctx));
  if(!stableReviewId(id))throw new ReviewStoreError("Invalid review ID",400);
  const record=await db.aiReview.findFirst({where:{id,organizationId:ctx.organizationId}});
  if(!record)throw new ReviewStoreError("Review not found",404);
@@ -57,11 +61,12 @@ export async function readAiReviewRecord(ctx:AuthorizedContext,id:string){
 export async function updateAiReviewDecision(ctx:AuthorizedContext,id:string,raw:unknown){
  if(!stableReviewId(id))throw new ReviewStoreError("Invalid review ID",400);
  return db.$transaction(async tx=>{
+  const member=await requireMember(tx,ctx,ADMIN);
   const found=await tx.aiReview.findFirst({where:{id,organizationId:ctx.organizationId},
    select:{id:true,createdById:true,status:true,version:true,resultSha256:true,result:true}});
   if(!found)throw new ReviewStoreError("Review not found",404);
   if(reviewContentHash(found.result)!==found.resultSha256)throw new ReviewStoreError("Stored AI output integrity check failed",409);
-  const decision=validateReviewDecision(raw,ctx,found.createdById);
+  const decision=validateReviewDecision(raw,{...ctx,role:member.role},found.createdById);
   if(found.status!=="PENDING_REVIEW")throw new ReviewStoreError("This AI review has already been checked",409);
   const changed=await tx.aiReview.updateMany({
    where:{id,organizationId:ctx.organizationId,status:"PENDING_REVIEW",version:decision.version},
@@ -85,12 +90,13 @@ export async function redactAiReviewContent(ctx:AuthorizedContext,id:string,vers
  if(!stableReviewId(id))throw new ReviewStoreError("Invalid review ID",400);
  if(!Number.isInteger(version)||version<1)throw new ReviewStoreError("Invalid review version",400);
  return db.$transaction(async tx=>{
+  const member=await requireMember(tx,ctx);
   const existing=await tx.aiReview.findFirst({
    where:{id,organizationId:ctx.organizationId},
    select:{id:true,createdById:true,status:true,version:true,result:true,resultSha256:true}
   });
   if(!existing)throw new ReviewStoreError("Review not found",404);
-  if(ctx.userId!==existing.createdById&&!["OWNER","ADMIN"].includes(ctx.role))
+  if(ctx.userId!==existing.createdById&&!["OWNER","ADMIN"].includes(member.role))
    throw new ReviewStoreError("Only the creator or an administrator can redact this draft",403);
   if(existing.status==="REDACTED")throw new ReviewStoreError("Review content was already redacted",409);
   if(existing.version!==version)throw new ReviewStoreError("Review was updated; refresh the record",409);

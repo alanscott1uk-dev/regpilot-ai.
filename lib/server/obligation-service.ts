@@ -1,5 +1,6 @@
 import { can } from "../permissions.mjs";
 import { db } from "./db";
+import {requireMember,WRITER} from "./workspace-member";
 import {transaction} from "./intelligence-service";
 import type { AuthorizedContext } from "./authorization";
 import type { ObligationStatus } from "@prisma/client";
@@ -19,7 +20,7 @@ function dateOnly(value: string) {
 
 export async function listObligations(ctx: AuthorizedContext) {
   if (!can(ctx.role, "obligation:read")) throw new Error("Forbidden");
-  return db.obligation.findMany({ where: { organizationId: ctx.organizationId }, orderBy: { dueDate: "asc" }, take: 100 });
+  return db.$transaction(async tx=>{await requireMember(tx,ctx);return tx.obligation.findMany({ where: { organizationId: ctx.organizationId }, orderBy: { dueDate: "asc" }, take: 100 });});
 }
 
 export async function createObligation(ctx: AuthorizedContext, input: NewObligation) {
@@ -37,7 +38,8 @@ export async function createObligation(ctx: AuthorizedContext, input: NewObligat
   }
   if(input.sourceCheckedAt&&!sourceUrl)throw new Error("Source date requires a source reference");
   const sourceCheckedAt=input.sourceCheckedAt?dateOnly(input.sourceCheckedAt):null;
-  return db.$transaction(async tx => {
+  return transaction(ctx,async tx => {
+    await requireMember(tx,ctx,WRITER);
     const item = await tx.obligation.create({ data: { organizationId: ctx.organizationId, title, category, ownerName, dueDate, notes, sourceUrl, sourceCheckedAt } });
     await tx.auditEvent.create({ data: { organizationId: ctx.organizationId, actorId: ctx.userId, action: "obligation.created", entityType: "Obligation", entityId: item.id, details: { title, dueDate: input.dueDate } } });
     return item;
@@ -58,6 +60,7 @@ export async function changeObligationStatus(ctx: AuthorizedContext, id: string,
     verifiedAssessmentId=assessment.id;
   }
   return transaction(ctx,async tx => {
+    await requireMember(tx,ctx,WRITER);
     const existing = await tx.obligation.findFirst({ where: { id, organizationId: ctx.organizationId } });
     if (!existing) return null;
     const membership=await tx.membership.findUnique({where:{organizationId_userId:{organizationId:ctx.organizationId,userId:ctx.userId}}});

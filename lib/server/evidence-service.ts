@@ -1,3 +1,4 @@
+import {requireMember,ADMIN,WRITER} from "./workspace-member";
 import {db} from "./db";
 import type {AuthorizedContext} from "./authorization";
 import type {EvidenceObjectStore} from "./evidence-storage";
@@ -24,6 +25,7 @@ function recordView(row:any){
   reviewerNotes:row.reviewerNotes,reviewVersion:row.reviewVersion,createdAt:row.createdAt};
 }
 export async function listEvidence(ctx:AuthorizedContext,obligationId:string){
+ await db.$transaction(tx=>requireMember(tx,ctx));
  if(!idOk(obligationId))throw new EvidenceError("Invalid task ID",400);
  const task=await db.obligation.findFirst({where:{id:obligationId,organizationId:ctx.organizationId},select:{id:true}});
  if(!task)throw new EvidenceError("Task not found",404);
@@ -36,6 +38,7 @@ export async function listEvidence(ctx:AuthorizedContext,obligationId:string){
  */
 export async function createEvidence(ctx:AuthorizedContext,taskId:string,filename:string,uploaded:Uint8Array,
  dependencies:{storage?:EvidenceObjectStore;scan?:Scan}={}){
+ await db.$transaction(tx=>requireMember(tx,ctx,WRITER));
  if(!canUpload(ctx))throw new EvidenceError("Insufficient permission to upload",403);
  if(!idOk(taskId))throw new EvidenceError("Invalid task ID",400);
  const bytes=checkPdf(uploaded,filename);
@@ -49,6 +52,7 @@ export async function createEvidence(ctx:AuthorizedContext,taskId:string,filenam
  await store.put(key,bytes);
  try{
   const record=await db.$transaction(async tx=>{
+   await requireMember(tx,ctx,WRITER);
    const reserved=await tx.organization.updateMany({
     where:{id:ctx.organizationId,
      evidenceCount:{lt:MAX_ORG_EVIDENCE_FILES},
@@ -75,6 +79,7 @@ export async function createEvidence(ctx:AuthorizedContext,taskId:string,filenam
  }
 }
 export async function downloadEvidence(ctx:AuthorizedContext,id:string,store?:EvidenceObjectStore){
+ await db.$transaction(tx=>requireMember(tx,ctx));
  if(!idOk(id))throw new EvidenceError("Invalid evidence ID",400);
  const record=await db.evidence.findFirst({where:{id,organizationId:ctx.organizationId}});
  if(!record)throw new EvidenceError("Evidence not found",404);
@@ -83,6 +88,7 @@ export async function downloadEvidence(ctx:AuthorizedContext,id:string,store?:Ev
  const bytes=await backend.get(record.storageKey);
  if(bytes.byteLength!==record.sizeBytes||evidenceHash(bytes)!==record.sha256)
   throw new EvidenceError("File integrity verification failed; download blocked",409);
+ await db.$transaction(tx=>requireMember(tx,ctx));
  return {bytes,filename:contentDispositionFilename(record.filename),sha256:record.sha256,contentType:record.contentType};
 }
 export async function reviewEvidence(ctx:AuthorizedContext,id:string,raw:unknown,store?:EvidenceObjectStore){
@@ -103,6 +109,7 @@ export async function reviewEvidence(ctx:AuthorizedContext,id:string,raw:unknown
  // Check the *stored bytes*, not merely the attachment flag, before any approval.
  await downloadEvidence(ctx,id,store);
  return db.$transaction(async tx=>{
+  await requireMember(tx,ctx,ADMIN);
   const change=await tx.evidence.updateMany({where:{
    id,organizationId:ctx.organizationId,reviewStatus:"PENDING_REVIEW",reviewVersion:input.version,scanStatus:"CLEAN"},
    data:{reviewStatus:input.decision as "APPROVED"|"REJECTED",reviewerId:ctx.userId,

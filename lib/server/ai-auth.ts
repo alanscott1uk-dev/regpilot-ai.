@@ -17,8 +17,8 @@ export function aiConfigured(){
   /^[a-z0-9-]+\/[a-z0-9._-]+$/i.test(configuredModel)&&
   !!(process.env.AI_GATEWAY_API_KEY||process.env.VERCEL_OIDC_TOKEN);
 }
-type Identity={externalId:string;email:string};
-export async function verifyAiIdentity(request:Request):Promise<Identity>{
+export type VerifiedWorkspaceIdentity={externalId:string;email:string};
+export async function verifyAiIdentity(request:Request):Promise<VerifiedWorkspaceIdentity>{
  if(!workspaceConfigured())throw new AccessError("Private workspace not configured",503);
  const header=request.headers.get("authorization")||"";
  if(!/^Bearer [A-Za-z0-9._-]{20,5000}$/.test(header))throw new AccessError("Sign in to continue",401);

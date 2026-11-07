@@ -90,7 +90,7 @@ export default function Team(){
   <aside className={shell.sidebar}>
    <a className={shell.logo} href="/workbench"><span className={shell.logoMark}>R</span><span>RegPilot <b>AI</b><small>PRIVATE TEAM PILOT</small></span></a>
    <div className={shell.sideCaption}>WORKSPACE</div>
-   <nav className={shell.sideNav}><a href="/team/operations">◉ &nbsp;Operations</a><a href="/workbench">◉ &nbsp;Today's demo</a><a href="/ai">✦ &nbsp;AI Studio</a><a href="/traceability">◈ &nbsp;Traceability</a><a className={shell.active} href="/team" aria-current="page">▣ &nbsp;Secure team tasks</a><a href="/team/assurance">◎ &nbsp;Evidence assessment</a><a href="/team/intelligence">◈ &nbsp;Regulatory inbox</a><a href="/team/evidence">◈ &nbsp;Evidence vault</a><a href="/team/sources">✦ &nbsp;Source history</a><a href="/assurance">◇ &nbsp;Review centre</a></nav>
+   <nav className={shell.sideNav}><a href="/team/operations">◉ &nbsp;Operations</a><a href="/workbench">◉ &nbsp;Today's demo</a><a href="/ai">✦ &nbsp;AI Studio</a><a href="/traceability">◈ &nbsp;Traceability</a><a className={shell.active} href="/team" aria-current="page">▣ &nbsp;Secure team tasks</a><a href="/team/assurance">◎ &nbsp;Evidence assessment</a><a href="/team/intelligence">◈ &nbsp;Regulatory inbox</a><a href="/team/evidence">◈ &nbsp;Evidence vault</a><a href="/team/sources">✦ &nbsp;Source history</a><a href="/assurance">◇ &nbsp;Review centre</a><a href="/team/settings">Team &amp; access</a></nav>
    <div className={shell.sideFoot}><strong>Private pilot only</strong><p>Work items are stored in a tenant-scoped database when this feature is enabled. Real sensitive records remain prohibited until security testing is complete.</p></div>
   </aside>
   <main className={shell.main}>
@@ -121,7 +121,7 @@ export default function Team(){
      <p className={ui.foot}>Only the most recent 100 tasks are returned. Completion indicates work status, not verified compliance or evidence approval.</p>
     </section>
    </>}
-   <footer className={shell.footer}>Private pilot · Evidence storage and AI require service activation. Organisation invitations and production acceptance remain outstanding.</footer>
+   <footer className={shell.footer}>Private pilot · Evidence storage and AI require service activation. Manage invitations and roles in Team & access. Production acceptance remains outstanding.</footer>
   </main>
  </div>;
 }

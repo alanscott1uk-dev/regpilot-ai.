@@ -80,6 +80,7 @@ model User {
   applicabilityOwnership LibraryApplicability[] @relation("ApplicabilityOwner")
   coverageRuns CoverageRun[]
   coverageDecisions CoverageDecision[]
+  workspaceInvitations WorkspaceInvitation[] @relation("InvitationIssuer")
 }
 
 model Organization {
@@ -111,6 +112,24 @@ model Organization {
   libraryApplicability LibraryApplicability[]
   coverageRuns CoverageRun[]
   coverageDecisions CoverageDecision[]
+  workspaceInvitations WorkspaceInvitation[]
+}
+
+model WorkspaceInvitation {
+  id String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  email String @db.VarChar(254)
+  role MembershipRole
+  invitedById String @db.Uuid
+  status String @default("PENDING") @db.VarChar(16)
+  version Int @default(1)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  resolvedAt DateTime?
+  organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+  invitedBy User @relation("InvitationIssuer",fields:[invitedById],references:[id],onDelete:Restrict)
+  @@index([organizationId,status,expiresAt])
+  @@index([email,status,expiresAt])
 }
 
 model Membership {

@@ -14,6 +14,7 @@ test("private scanned evidence: metadata, file bytes, permissions, independent r
  const users=await Promise.all(["editor","admin","outside","viewer"].map(name=>db.user.create({
   data:{externalId:"file-"+name+"-"+suffix,email:name+"-"+suffix+"@example.invalid"}
  })));
+ process.env.REGPILOT_AI_ALLOWED_EMAILS=users.map(u=>u.email).join(",");
  const [editor,admin,outside,viewer]=users;
  const orgA=await db.organization.create({data:{name:"Evidence org A "+suffix}});
  const orgB=await db.organization.create({data:{name:"Evidence org B "+suffix}});

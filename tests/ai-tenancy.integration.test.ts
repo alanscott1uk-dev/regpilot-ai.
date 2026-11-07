@@ -19,6 +19,7 @@ test("isolated PostgreSQL checks: tenant membership, distinct human review, inte
  const users=await Promise.all(["creator","checker","outsider","viewer"].map(n=>db.user.create({
   data:{externalId:"demo-"+n+"-"+suffix,email:n+"-"+suffix+"@example.invalid"}
  })));
+ process.env.REGPILOT_AI_ALLOWED_EMAILS=users.map(u=>u.email).join(",");
  const [creator,checker,outsider,viewer]=users;
  const orgA=await db.organization.create({data:{name:"Test organisation A "+suffix}});
  const orgB=await db.organization.create({data:{name:"Test organisation B "+suffix}});
