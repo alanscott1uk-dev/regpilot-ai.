@@ -16,6 +16,7 @@ export const changeActionSchema=z.discriminatedUnion("action",[
  z.object({action:z.enum(["ACCEPT","RETURN"]),version:z.number().int().positive(),notes:z.string().trim().min(60).max(1600),confirm:z.literal(true)})
 ]);
 export const closeChangeSchema=z.object({version:z.number().int().positive(),contextHash:z.string().regex(/^[a-f0-9]{64}$/),notes:z.string().trim().min(60).max(1600),dependenciesReviewed:z.literal(true),confirm:z.literal(true)});
+export const reopenChangeSchema=z.object({action:z.literal("REOPEN"),version:z.number().int().positive(),notes:z.string().trim().min(60).max(1600),confirm:z.literal(true)});
 /** One action per shared control, with all affected requirement identities retained. */
 export function groupChangeWork(rows:Array<AffectedRequirement&{controlId:string;controlTitle:string;controlVersion:number;ownerId:string;ownerName:string}>){
  const groups=new Map<string,ChangePlan["groups"][number]>();
