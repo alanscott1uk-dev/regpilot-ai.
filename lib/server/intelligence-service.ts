@@ -15,7 +15,7 @@ function uuid(value:string) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new IntelligenceError("Invalid record identifier");
 }
 // Retry serialization conflicts only. Validation/auth failures are never retried.
-async function transaction<T>(ctx:AuthorizedContext,fn:(tx:Prisma.TransactionClient)=>Promise<T>):Promise<T> {
+export async function transaction<T>(ctx:AuthorizedContext,fn:(tx:Prisma.TransactionClient)=>Promise<T>):Promise<T> {
   for(let attempt=0;attempt<3;attempt++) {
     try {return await db.$transaction(async tx => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${ctx.organizationId}, 0))`;
@@ -45,9 +45,10 @@ export async function saveBusinessProfile(ctx:AuthorizedContext,input:unknown,ve
     return saved;
   });
 }
-export async function createIntelligenceRun(ctx:AuthorizedContext,snapshotId:string) {
+export async function createIntelligenceRun(ctx:AuthorizedContext,snapshotId:string,guard?:(tx:Prisma.TransactionClient)=>Promise<void>) {
   requireRole(ctx);uuid(snapshotId);
   return transaction(ctx,async tx=>{
+    if(guard)await guard(tx);
     const snapshot=await tx.regulatorySnapshot.findFirst({where:{id:snapshotId,organizationId:ctx.organizationId}});
     if(!snapshot)throw new IntelligenceError("Source snapshot not found",404);
     if(sourceTextHash(snapshot.bodyText)!==snapshot.contentHash)throw new IntelligenceError("Source integrity check failed",409);
@@ -79,6 +80,18 @@ export async function getIntelligenceWorkspace(ctx:AuthorizedContext) {
       stale:profile?.version!==run.profileVersion||snapshots.find(s=>s.sourceId===run.snapshot.sourceId)?.id!==run.snapshotId,
       decisions:run.decisions.map(d=>({...d,obligation:d.obligation ? {id:d.obligation.id,title:d.obligation.title,status:d.obligation.status,evidence:evidenceReadiness(d.obligation.evidence)} : null}))
     }))};
+}
+/** Trace accepted work back to a superseded source; do not silently invalidate approvals. */
+export async function getSourceImpact(ctx:AuthorizedContext){
+  const latest=await db.regulatorySnapshot.findMany({where:{organizationId:ctx.organizationId},orderBy:{firstCapturedAt:"desc"},distinct:["sourceId"],take:30,select:{id:true,sourceId:true,title:true,contentHash:true,url:true}});
+  if(!latest.length)return {tasks:[],limitReached:false};
+  const affected=await db.intelligenceDecision.findMany({where:{organizationId:ctx.organizationId,decision:"ACCEPTED",obligationId:{not:null},run:{OR:latest.map(s=>({snapshot:{sourceId:s.sourceId,contentHash:{not:s.contentHash}}}))}},orderBy:{createdAt:"desc"},take:101,
+    select:{run:{select:{snapshot:{select:{sourceId:true,contentHash:true}}}},obligation:{select:{id:true,title:true,status:true,_count:{select:{evidence:{where:{organizationId:ctx.organizationId}}}}}}}});
+  return {tasks:affected.slice(0,100).flatMap(d=>{
+    const current=latest.find(s=>s.sourceId===d.run.snapshot.sourceId);
+    if(!d.obligation||!current)return [];
+    return [{taskId:d.obligation.id,title:d.obligation.title,status:d.obligation.status,evidenceFiles:d.obligation._count.evidence,sourceTitle:current.title,sourceUrl:current.url,previousHash:d.run.snapshot.contentHash,currentHash:current.contentHash}];
+  }),limitReached:affected.length>100};
 }
 export async function decideCandidate(ctx:AuthorizedContext,runId:string,input:{candidateKey:string;decision:string;rationale:string;ownerName?:string;dueDate?:string;title?:string}) {
   requireRole(ctx,true);uuid(runId);

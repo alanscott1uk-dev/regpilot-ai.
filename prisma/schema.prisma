@@ -62,6 +62,8 @@ model User {
   businessProfilesUpdated BusinessProfile[]
   intelligenceCreated IntelligenceRun[]
   intelligenceReviewed IntelligenceDecision[]
+  watchSchedules WatchSchedule[]
+  semanticRequests SemanticRequest[]
 }
 
 model Organization {
@@ -79,6 +81,8 @@ model Organization {
   evidenceBytes BigInt @default(0)
   businessProfile BusinessProfile?
   intelligenceRuns IntelligenceRun[]
+  watchSchedules WatchSchedule[]
+  semanticRequests SemanticRequest[]
 }
 
 model Membership {
@@ -224,6 +228,7 @@ model RegulatorySnapshot {
   reviewer         User? @relation("RegulatorySnapshotReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
   capturedBy       User @relation("RegulatorySnapshotCapturer",fields:[capturedById],references:[id],onDelete:Restrict)
   intelligenceRuns IntelligenceRun[]
+  semanticRequests SemanticRequest[]
   @@unique([id, organizationId])
   @@index([organizationId,sourceId,firstCapturedAt])
 }
@@ -274,5 +279,50 @@ model IntelligenceDecision {
   reviewer User @relation(fields:[reviewerId],references:[id],onDelete:Restrict)
   obligation Obligation? @relation(fields:[obligationId,organizationId],references:[id,organizationId],onDelete:Restrict)
   @@unique([runId,candidateKey])
+  @@index([organizationId,createdAt])
+}
+
+// Persistent leases prevent concurrent dispatch. Scheduling is opt-in and off by default.
+model WatchSchedule {
+  id String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  sourceId String @db.VarChar(120)
+  configuredById String @db.Uuid
+  enabled Boolean @default(false)
+  intervalHours Int @default(24)
+  version Int @default(1)
+  nextCheckAt DateTime @default(now())
+  leaseToken String? @db.Uuid
+  leaseUntil DateTime?
+  attempts Int @default(0)
+  lastAttemptAt DateTime?
+  lastSuccessAt DateTime?
+  lastOutcome String? @db.VarChar(40)
+  failureCode String? @db.VarChar(40)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+  configuredBy User @relation(fields:[configuredById],references:[id],onDelete:Restrict)
+  @@unique([organizationId,sourceId])
+  @@index([enabled,nextCheckAt])
+}
+
+// One provider attempt per source/profile/engine. Interrupted attempts are not replayed.
+model SemanticRequest {
+  id String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  snapshotId String @db.Uuid
+  profileVersion Int
+  engineVersion String @db.VarChar(80)
+  modelId String @db.VarChar(160)
+  createdById String @db.Uuid
+  status String @default("RUNNING") @db.VarChar(24)
+  failureCode String? @db.VarChar(40)
+  createdAt DateTime @default(now())
+  finishedAt DateTime?
+  organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+  snapshot RegulatorySnapshot @relation(fields:[snapshotId,organizationId],references:[id,organizationId],onDelete:Restrict)
+  creator User @relation(fields:[createdById],references:[id],onDelete:Restrict)
+  @@unique([organizationId,snapshotId,profileVersion,engineVersion])
   @@index([organizationId,createdAt])
 }

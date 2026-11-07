@@ -4,7 +4,7 @@ import {randomUUID} from "node:crypto";
 import {db} from "../lib/server/db";
 import {sourceTextHash} from "../lib/regulatory/source-fingerprint.mjs";
 import {hashValue,type Analysis} from "../lib/regulatory/intelligence";
-import {createIntelligenceRun,decideCandidate,getIntelligenceWorkspace,saveBusinessProfile} from "../lib/server/intelligence-service";
+import {createIntelligenceRun,decideCandidate,getIntelligenceWorkspace,getSourceImpact,saveBusinessProfile} from "../lib/server/intelligence-service";
 import type {AuthorizedContext} from "../lib/server/authorization";
 
 test("intelligence workflow: isolation, review gates, exactly-once tasks, stale context and integrity",async()=>{
@@ -58,6 +58,11 @@ test("intelligence workflow: isolation, review gates, exactly-once tasks, stale 
     assert.equal((await getIntelligenceWorkspace(reviewer)).runs[0].result,null);
     await db.intelligenceRun.update({where:{id:fresh.id},data:{result:result as any,resultHash:hashValue(result)}});
     const newer=await db.regulatorySnapshot.create({data:{organizationId:maker.organizationId,sourceId:snapshot.sourceId,title:snapshot.title,url:snapshot.url,bodyText:text+" Review the latest source.",contentHash:sourceTextHash(text+" Review the latest source."),capturedById:maker.userId,firstCapturedAt:new Date(Date.now()+1000)}});
+    const impact=await getSourceImpact(reviewer);
+    assert.equal(impact.tasks.length,1);assert.equal(impact.tasks[0].taskId,accepted.obligation?.id);
+    assert.equal(impact.tasks[0].evidenceFiles,0);assert.notEqual(impact.tasks[0].previousHash,impact.tasks[0].currentHash);
+    assert.equal((await getSourceImpact(outside)).tasks.length,0);
+    assert.equal((await db.obligation.findUniqueOrThrow({where:{id:accepted.obligation!.id}})).status,"OPEN","a source change must not silently change task status");
     await assert.rejects(()=>decideCandidate(reviewer,fresh.id,{...accept,candidateKey:result.candidates[2].key}),(e:any)=>e.status===409&&/Source or business profile/.test(e.message));
     await assert.rejects(()=>db.intelligenceRun.create({data:{organizationId:outside.organizationId,snapshotId:newer.id,profileVersion:1,profile,engineVersion:"test",result:{},resultHash:hashValue({}),createdById:outside.userId}}),"database foreign key must block cross-organisation snapshot links");
     const events=await db.auditEvent.findMany({where:{organizationId:maker.organizationId,action:"intelligence.candidate_accepted"}});

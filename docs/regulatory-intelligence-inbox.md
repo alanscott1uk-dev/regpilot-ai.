@@ -29,7 +29,7 @@ Existing AI Gateway generation remains gated. Findings now carry a machine-calcu
 
 ## Important limits
 
-The inbox engine is deterministic language-pattern and token matching, **not semantic AI obligation extraction**. It can miss implicit duties, cross-references, table content and exceptions, and can surface non-binding language. It analyses the existing bounded GOV.UK excerpt, not every page or linked legal instrument. Source checks remain manual. Eight reusable control themes are suggestions, not licensed mappings to ISO, SOC 2 or other frameworks.
+The default inbox engine is deterministic language-pattern and token matching. A separately gated semantic interpretation path and durable monitoring worker are implemented in the subsequent batch; see [monitoring and semantic analysis](monitoring-and-semantic-analysis.md). Neither has been activated. It can miss implicit duties, cross-references, table content and exceptions, and can surface non-binding language. It analyses the existing bounded GOV.UK excerpt, not every page or linked legal instrument. Source checks can be manual; saved schedules await worker and scheduler activation. Eight reusable control themes are suggestions, not licensed mappings to ISO, SOC 2 or other frameworks.
 
 Live Supabase inspection returned hibernation/connection errors during this session. No hosted schema or data was changed. Real Supabase Auth/Storage, antivirus, end-to-end browser flow, privacy/data handling and AI billing gates remain release requirements. The local browser-preview launcher supplies Vite flags to Next.js and could not start; visual browser QA remains unverified.
 

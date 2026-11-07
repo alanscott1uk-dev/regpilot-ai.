@@ -12,3 +12,16 @@ This is a review of documented vendor capabilities, not an independent hands-on 
 The practical differentiation to pursue is a low-friction UK SME workflow with inspectable evidence and transparent uncertainty. This batch improves that foundation. Coverage, integration breadth, semantic accuracy, live reliability, accessibility and cost must be measured before making superiority claims.
 
 Next meaningful engineering benchmarks: a labelled UK multi-sector extraction corpus (precision/recall including exceptions and territorial scope), real-provider staging acceptance, tenant isolation under browser sessions, queue retry/lease testing for scheduled monitoring, cross-framework mapping review by domain specialists, and task completion time with non-technical users.
+
+## 7 November development update — measurable progress, no superiority claim
+
+| Competitive requirement | New implementation | What the tests establish | Still unproven |
+| --- | --- | --- | --- |
+| Reliable recurring work | Durable schedules, atomic leases, pause fencing, retries, failure visibility | Duplicate workers cannot both claim a due schedule; stale workers cannot write after pause; failures do not overwrite success timestamps | Hosted uptime, backlog capacity and scheduler operation |
+| Semantic obligation understanding | Structured AI interpretation of subjects, actions, exemptions and conditions | Mock SDK adapter works; unsupported quotations and unknown control IDs are withheld/rejected; concurrent requests make one provider attempt | Live-model precision/recall, omitted exceptions, territorial accuracy |
+| Change-to-action traceability | New source versions surface earlier accepted tasks and evidence attachments | Tenant-filtered source-hash changes identify existing work without silently changing approval or completion | Real user benefit, source coverage and legal impact accuracy |
+| SME simplicity | Monitoring status and interpretation details inside the existing inbox | Production compilation and gated HTTP/page rendering | Timed usability study, visual/accessibility QA and successful onboarding of independent reviewers |
+
+Release measurements should include expert-labelled extraction precision/recall (including exceptions and implicit duties), incorrect deadline/applicability rates, evidence-collection coverage, monitoring latency and missed-check rates, cost per organisation, and owner task-completion time. Results from mock providers must not be reported as live-model accuracy or as a head-to-head win over a competitor.
+
+Detailed scope, safeguards and remaining release gates: [monitoring and semantic analysis](monitoring-and-semantic-analysis.md).

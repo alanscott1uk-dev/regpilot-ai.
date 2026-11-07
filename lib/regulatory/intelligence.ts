@@ -1,4 +1,5 @@
 import {createHash} from "node:crypto";
+import type {Interpretation} from "./semantic";
 
 export const ENGINE_VERSION = "obligation-triage-1.0.0";
 export const ACTIVITIES = ["personal-data", "employing-staff", "premises", "medicines", "controlled-drugs"] as const;
@@ -7,13 +8,14 @@ export type BusinessProfile = {activities: string[]; jurisdictions: string[]};
 export type Mapping = {id: string; title: string; matchedTerms: string[]; evidenceNeeded: string[]; domains: string[]};
 export type Candidate = {
   key: string; quote: string; start: number; end: number;
-  language: "mandatory-language" | "prohibition" | "recommendation";
+  language: "mandatory-language" | "prohibition" | "recommendation" | "exemption";
   change: "baseline" | "added-or-reworded" | "existing";
   applicability: "potential-match" | "needs-context";
   reasons: string[]; questions: string[]; mappings: Mapping[];
   priority: "review-first" | "normal"; dateMentions: string[];
+  interpretation?: Interpretation;
 };
-export type Analysis = {engineVersion: string; candidates: Candidate[]; warnings: string[]; examinedCharacters: number; candidateLimitReached: boolean};
+export type Analysis = {engineVersion: string; candidates: Candidate[]; warnings: string[]; examinedCharacters: number; candidateLimitReached: boolean;grounding?:{proposed:number;retained:number;rejected:number;meaningVerified:false}};
 
 // These are reusable internal control themes, NOT certified framework equivalences.
 export const CONTROL_THEMES = [

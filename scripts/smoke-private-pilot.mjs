@@ -27,6 +27,8 @@ const server=spawn(process.execPath,["node_modules/next/dist/bin/next","start","
   ...process.env,
   NODE_ENV:"production",
   REGPILOT_AI_ENABLED:"false",
+  REGPILOT_SEMANTIC_ENABLED:"false",
+  REGPILOT_MONITORING_ENABLED:"false",
   REGPILOT_WORKSPACE_ENABLED:"false",
   AI_GATEWAY_API_KEY:"",
   VERCEL_OIDC_TOKEN:"",
@@ -75,8 +77,8 @@ try{
  assert.equal(noEvidence.status,503,"evidence API must fail closed without private storage and antivirus configuration");
  const noSources=await response("/api/workspace/sources?organizationId=123e4567-e89b-42d3-a456-426614174000");
  assert.equal(noSources.status,503,"team regulatory source API must fail closed when private workspace is disabled");
- for(const path of ["/api/workspace/intelligence","/api/workspace/intelligence/profile","/api/workspace/intelligence/123e4567-e89b-42d3-a456-426614174000"]){
-   const method=path.endsWith("profile")?"PUT":"POST";
+ for(const path of ["/api/workspace/intelligence","/api/workspace/intelligence/profile","/api/workspace/intelligence/semantic","/api/workspace/intelligence/monitoring","/api/internal/monitor","/api/workspace/intelligence/123e4567-e89b-42d3-a456-426614174000"]){
+   const method=(path.endsWith("profile")||path.endsWith("monitoring"))?"PUT":"POST";
    const result=await response(path,{method,headers:{"Content-Type":"application/json"},body:"{}"});
    assert.equal(result.status,503,path+" must fail closed");
  }

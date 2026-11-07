@@ -9,7 +9,7 @@ export class RegulatoryWatchError extends Error{
  constructor(message:string,status=400){super(message);this.name="RegulatoryWatchError";this.status=status;}
 }
 type Official={id:string;title:string;url:string;updatedAt:string|null;revisionAt:string|null;text:string};
-type Loader=(sourceId:string)=>Promise<Official|null>;
+export type Loader=(sourceId:string)=>Promise<Official|null>;
 const roles=["OWNER","ADMIN","EDITOR"];
 const validUuid=(x:unknown):x is string=>typeof x==="string"&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x);
 export async function listSourceSnapshots(ctx:AuthorizedContext){
@@ -19,7 +19,7 @@ export async function listSourceSnapshots(ctx:AuthorizedContext){
  });
  return snapshots.map(publicSnapshot);
 }
-export async function checkOfficialSource(ctx:AuthorizedContext,sourceId:string,loader:Loader=loadOfficialSource){
+export async function checkOfficialSource(ctx:AuthorizedContext,sourceId:string,loader:Loader=loadOfficialSource,guard?:(tx:Prisma.TransactionClient)=>Promise<void>){
  if(!roles.includes(ctx.role))throw new RegulatoryWatchError("Insufficient permission to check official source",403);
  if(!REGULATORY_SOURCES.some(s=>s.id===sourceId))throw new RegulatoryWatchError("Unknown official source",400);
  const previous=await db.regulatorySnapshot.findFirst({
@@ -35,6 +35,7 @@ export async function checkOfficialSource(ctx:AuthorizedContext,sourceId:string,
   throw new RegulatoryWatchError("The selected official publication is unavailable",503);
  const text=canonicalSourceText(official.text),hash=sourceTextHash(text);
  const result=await db.$transaction(async tx=>{
+  if(guard)await guard(tx);
   const latest=await tx.regulatorySnapshot.findFirst({
    where:{organizationId:ctx.organizationId,sourceId},orderBy:{firstCapturedAt:"desc"}
   });
