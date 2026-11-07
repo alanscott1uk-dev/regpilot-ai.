@@ -2,6 +2,10 @@ import { can } from "../permissions.mjs";
 import { db } from "./db";
 import type { AuthorizedContext } from "./authorization";
 import type { ObligationStatus } from "@prisma/client";
+import {completionAssessment} from "./assurance-service";
+import {downloadEvidence} from "./evidence-service";
+import type {EvidenceManifest} from "../evidence/assurance";
+import type {EvidenceObjectStore} from "./evidence-storage";
 
 export type NewObligation = { title: string; category: string; ownerName: string; dueDate: string; notes?: string; sourceUrl?:string; sourceCheckedAt?:string };
 
@@ -39,18 +43,34 @@ export async function createObligation(ctx: AuthorizedContext, input: NewObligat
   });
 }
 
-export async function changeObligationStatus(ctx: AuthorizedContext, id: string, status: ObligationStatus, opts?:{completionRationale?:string}) {
+export async function changeObligationStatus(ctx: AuthorizedContext, id: string, status: ObligationStatus, opts?:{completionRationale?:string;evidenceStore?:EvidenceObjectStore}) {
   if (!can(ctx.role, "obligation:write")) throw new Error("Forbidden");
   if (!["OPEN", "IN_PROGRESS", "COMPLETE"].includes(status)) throw new Error("Invalid status");
+  let verifiedAssessmentId:string|null=null;
+  const task=status==="COMPLETE"?await db.obligation.findFirst({where:{id,organizationId:ctx.organizationId}}):null;
+  if(task?.originKey){
+    const assessment=await completionAssessment(db,ctx.organizationId,id);
+    for(const evidence of assessment.evidenceManifest as unknown as EvidenceManifest[]){
+      const file=await downloadEvidence(ctx,evidence.id,opts?.evidenceStore);
+      if(file.sha256!==evidence.sha256)throw new Error("Completion requires verified unchanged evidence files");
+    }
+    verifiedAssessmentId=assessment.id;
+  }
   return db.$transaction(async tx => {
     const existing = await tx.obligation.findFirst({ where: { id, organizationId: ctx.organizationId } });
     if (!existing) return null;
+    const membership=await tx.membership.findUnique({where:{organizationId_userId:{organizationId:ctx.organizationId,userId:ctx.userId}}});
+    if(!membership||!can(membership.role,"obligation:write"))throw new Error("Forbidden");
+    if(status==="COMPLETE"&&existing.originKey){
+      const latest=await completionAssessment(tx,ctx.organizationId,id);
+      if(latest.id!==verifiedAssessmentId)throw new Error("Completion requires a fresh check of the current evidence assessment");
+    }
     const approvedEvidence = status==="COMPLETE" ? await tx.evidence.count({
       where:{organizationId:ctx.organizationId,obligationId:id,scanStatus:"CLEAN",reviewStatus:"APPROVED"}
     }):0;
     const rationale=opts?.completionRationale?.trim()||"";
     if(rationale.length>500)throw new Error("Completion rationale too long");
-    const exception=status==="COMPLETE"&&approvedEvidence===0;
+    const exception=status==="COMPLETE"&&approvedEvidence===0&&!verifiedAssessmentId;
     if(exception&&rationale.length<20)throw new Error("Completion requires independently reviewed evidence or a documented exception rationale of at least 20 characters");
     const updated = await tx.obligation.update({
       where:{id:existing.id},data:{
@@ -60,7 +80,7 @@ export async function changeObligationStatus(ctx: AuthorizedContext, id: string,
         completedAt:status==="COMPLETE"?new Date():null
       }
     });
-    await tx.auditEvent.create({ data: { organizationId: ctx.organizationId, actorId: ctx.userId, action: "obligation.status_changed", entityType: "Obligation", entityId: id, details: { from: existing.status, to: status, completionException:exception,approvedEvidence } } });
+    await tx.auditEvent.create({ data: { organizationId: ctx.organizationId, actorId: ctx.userId, action: "obligation.status_changed", entityType: "Obligation", entityId: id, details: { from: existing.status, to: status, completionException:exception,approvedEvidence,assessmentId:verifiedAssessmentId } } });
     return updated;
-  });
+  },{isolationLevel:"Serializable"});
 }

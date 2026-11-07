@@ -25,3 +25,17 @@ Next meaningful engineering benchmarks: a labelled UK multi-sector extraction co
 Release measurements should include expert-labelled extraction precision/recall (including exceptions and implicit duties), incorrect deadline/applicability rates, evidence-collection coverage, monitoring latency and missed-check rates, cost per organisation, and owner task-completion time. Results from mock providers must not be reported as live-model accuracy or as a head-to-head win over a competitor.
 
 Detailed scope, safeguards and remaining release gates: [monitoring and semantic analysis](monitoring-and-semantic-analysis.md).
+
+## Evidence-assurance upgrade — 7 November
+
+The next implementation closes a specific weakness in RegPilot's old completion logic: an approved attachment was sufficient even without a content-level link to the requirement. Source-linked tasks now require a separate, current, scoped evidence assessment.
+
+| Benchmark dimension | Implemented capability | Verification boundary |
+| --- | --- | --- |
+| Document understanding | Real bounded PDF text extraction with page anchors, coverage limits and ambiguity detection; AI Studio uses it too | Generated PDFs exercise the real parser. No OCR, table fidelity or authenticity validation |
+| Evidence assessment | Requirement-level AI checks, exact page citation validation, policy-versus-implementation prompt, independent scoped decisions | Model adapter/grounding tested with mocks; real semantic precision and recall still unmeasured |
+| Evidence reuse | Reuse one stored file across tasks with independent scope decisions; changes invalidate each use | Tenant isolation, shared-file revision and completion-gate tests |
+| Living review record | Source/profile/evidence/expiry and adverse-finding checks invalidate old assurance | Database integration tests, including bytes changed after approval |
+| Inspection support | Export source, evidence hashes, selected quotations, human rationale and current/stale state | Export hash and authorisation checked; not a digitally signed certification |
+
+These features address content-level assurance and explainability. Superiority over Vanta, Sprinto, Drata or CUBE still requires comparable hands-on evidence of accuracy, collection coverage, task-completion time, uptime and cost. See [evidence assurance](evidence-assurance.md) for scope and activation boundaries.

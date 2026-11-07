@@ -83,7 +83,7 @@ export default function IntelligenceWorkspace(){
     <aside className={shell.sidebar}>
       <a href="/workbench" className={shell.logo}><span className={shell.logoMark}>R</span><span>RegPilot <b>AI</b><small>YOUR COMPLIANCE WORKSPACE</small></span></a>
       <div className={shell.sideCaption}>PRIVATE WORKSPACE</div>
-      <nav className={shell.sideNav}><a className={shell.active} href="/team/intelligence" aria-current="page">◈ &nbsp; Regulatory inbox</a><a href="/team/sources">↗ &nbsp; Official sources</a><a href="/team">▤ &nbsp; Team tasks</a><a href="/team/evidence">▣ &nbsp; Evidence vault</a><a href="/ai">✦ &nbsp; AI Studio</a></nav>
+      <nav className={shell.sideNav}><a className={shell.active} href="/team/intelligence" aria-current="page">◈ &nbsp; Regulatory inbox</a><a href="/team/sources">↗ &nbsp; Official sources</a><a href="/team">▤ &nbsp; Team tasks</a><a href="/team/assurance">◎ &nbsp;Evidence assessment</a><a href="/team/evidence">▣ &nbsp; Evidence vault</a><a href="/ai">✦ &nbsp; AI Studio</a></nav>
       <div className={shell.sideFoot}><strong>Every recommendation has a source.</strong><p>Review the passage, confirm its relevance, then choose the next action.</p></div>
     </aside>
     <main className={shell.main}>

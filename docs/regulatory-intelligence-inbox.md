@@ -25,7 +25,7 @@ This batch extends the existing Next.js / Prisma / Supabase architecture. It is 
 
 ## AI review improvement
 
-Existing AI Gateway generation remains gated. Findings now carry a machine-calculated grounding classification, matched quotation coordinates, duplicate-quotation ambiguity and specific review checks. The UI reports dual source/document matches and unsupported findings. PDF quotations remain unverified by server text extraction. Text matching does not verify the model's reasoning, and no generated claim becomes an approval.
+Existing AI Gateway generation remains gated. Findings now carry a machine-calculated grounding classification, matched quotation coordinates, duplicate-quotation ambiguity and specific review checks. The UI reports dual source/document matches and unsupported findings. PDF quotations now use bounded server text extraction with page anchors; visual layout and meaning remain unverified. See [evidence assurance](evidence-assurance.md). Text matching does not verify the model's reasoning, and no generated claim becomes an approval.
 
 ## Important limits
 

@@ -1,6 +1,7 @@
 import {NextResponse} from "next/server";
 import {workspaceConfigured,authorisedWorkspaceContext,AccessError} from "../../../../../lib/server/ai-auth";
 import {changeObligationStatus} from "../../../../../lib/server/obligation-service";
+import {EvidenceError} from "../../../../../lib/evidence/file-guard.mjs";
 export const runtime="nodejs";export const dynamic="force-dynamic";
 type Context={params:Promise<{id:string}>};
 const reply=(body:unknown,status=200)=>NextResponse.json(body,{status,headers:{"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"}});
@@ -20,6 +21,8 @@ export async function PATCH(request:Request,{params}:Context){
   return reply({item:updated});
  }catch(error){
   if(error instanceof AccessError)return reply({error:error.message},error.status);
+  if(error instanceof EvidenceError)return reply({error:error.message},error.status);
+  if(error instanceof Error&&error.message==="Forbidden")return reply({error:"Your workspace permissions changed"},403);
   if(error instanceof SyntaxError)return reply({error:"Invalid JSON"},400);
   if(error instanceof Error&&/Completion requires|rationale too long/.test(error.message))return reply({error:error.message},409);
   return reply({error:"Cannot change task status"},503);

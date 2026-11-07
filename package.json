@@ -9,29 +9,31 @@
     "db:validate": "prisma validate",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "test": "node --test tests/*.test.mjs && node --import tsx --test tests/intelligence.test.ts tests/intelligence-http.test.ts tests/semantic.test.ts tests/monitoring-http.test.ts",
-    "test:integration": "node --import tsx --test tests/ai-tenancy.integration.test.ts tests/evidence-storage.integration.test.ts tests/regulatory-watch.integration.test.ts tests/intelligence.integration.test.ts tests/monitoring.integration.test.ts tests/semantic.integration.test.ts",
-    "test:smoke": "node scripts/smoke-private-pilot.mjs"
+    "test": "node --test tests/*.test.mjs && node --import tsx --test tests/intelligence.test.ts tests/intelligence-http.test.ts tests/semantic.test.ts tests/monitoring-http.test.ts tests/pdf-extraction.test.ts tests/assurance.test.ts tests/assurance-http.test.ts",
+    "test:integration": "node --import tsx --test tests/ai-tenancy.integration.test.ts tests/evidence-storage.integration.test.ts tests/regulatory-watch.integration.test.ts tests/intelligence.integration.test.ts tests/monitoring.integration.test.ts tests/semantic.integration.test.ts tests/assurance.integration.test.ts",
+    "test:smoke": "node scripts/smoke-private-pilot.mjs",
+    "test:pdf-runtime": "node scripts/check-pdf-runtime.mjs"
   },
   "dependencies": {
+    "@prisma/client": "6.19.3",
+    "@supabase/supabase-js": "2.118.0",
+    "ai": "6.0.320",
     "next": "15.5.29",
+    "pdfjs-dist": "6.5.438",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "@prisma/client": "6.19.3",
-    "ai": "6.0.320",
-    "zod": "4.6.7",
-    "@supabase/supabase-js": "2.118.0"
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "typescript": "^5.7.3",
     "@types/node": "^20.17.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "prisma": "6.19.3",
-    "tsx": "4.20.6"
+    "tsx": "4.20.6",
+    "typescript": "^5.7.3"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.13.0"
   },
   "overrides": {
     "deepmerge-ts": "8.0.0",

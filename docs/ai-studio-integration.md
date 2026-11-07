@@ -19,7 +19,7 @@ Vercel currently has only preview-public Supabase URL/publishable key env values
 ## Steps required to enable an authorised pilot
 1. Restore and validate staging PostgreSQL. Create the base schema and AiDailyUsage table via reviewed Prisma migration, then test cross-tenant access.
 2. Configure Supabase Auth redirect URLs for /ai and confirm email link flow, JWT verification, token expiry and revocation.
-3. Configure DATABASE_URL, Supabase public URL and key, REGPILOT_AI_ENABLED=true, exact allowlisted email addresses, and AI Gateway OIDC or a server-only gateway key in an approved environment.
+3. Configure DATABASE_URL, Supabase public URL and key, REGPILOT_AI_ENABLED=true, REGPILOT_AI_SAFEGUARDS_VERIFIED=true only after documented safeguards verification, exact allowlisted email addresses, and AI Gateway OIDC or a server-only gateway key in an approved environment.
 4. Set and verify a low Gateway budget and team/key spending alerts. Daily app quota is not an absolute monetary cap.
 5. Test a genuine authenticated model response, quota enforcement, blocked non-member, blocked VIEWER, bad PDF and browser action acceptance.
 6. Complete processor/data residency/UK GDPR review, audit integrity, encryption, malicious-document scanning, retention and incident response before actual customer data.
@@ -62,3 +62,5 @@ No model is assumed as a production default. The operator must select a currentl
 Saved AI drafts can be redacted through an authenticated DELETE endpoint even when paid AI generation is turned off, provided the separate private workspace is enabled. A record creator or an OWNER/ADMIN may remove the stored model output. The active record is overwritten with a small redaction marker and its SHA-256 hash is recalculated, with status REDACTED and version incremented. An audit event preserves content hashes and actor identifiers but **not** original generated text.
 
 **Important:** This is an active-record content-redaction mechanism, not a full GDPR data-erasure implementation. DB backups, AI provider processing/retention, and audit metadata need separate policy and deletion/expiry procedures before customer data is allowed. Previous reviewer rationale fields are blanked from the active record during redaction.
+
+PDF quotation grounding now uses bounded server-side extraction with page anchors and coverage reporting; original files still require visual review. See docs/evidence-assurance.md for current scope and parser limits.

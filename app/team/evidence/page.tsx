@@ -106,7 +106,7 @@ export default function TeamEvidence(){
   <aside className={shell.sidebar}>
    <a href="/workbench" className={shell.logo}><span className={shell.logoMark}>R</span><span>RegPilot <b>AI</b><small>PRIVATE EVIDENCE REVIEW</small></span></a>
    <div className={shell.sideCaption}>WORKSPACE</div>
-   <nav className={shell.sideNav}><a href="/workbench">◉ &nbsp;Today's demo</a><a href="/team/intelligence">◈ &nbsp;Regulatory inbox</a><a href="/team">▤ &nbsp;Private team tasks</a><a className={shell.active} aria-current="page" href="/team/evidence">▣ &nbsp;Evidence vault</a><a href="/ai">✦ &nbsp;AI Studio</a><a href="/traceability">◈ &nbsp;Traceability</a></nav>
+   <nav className={shell.sideNav}><a href="/workbench">◉ &nbsp;Today's demo</a><a href="/team/assurance">◎ &nbsp;Evidence assessment</a><a href="/team/intelligence">◈ &nbsp;Regulatory inbox</a><a href="/team">▤ &nbsp;Private team tasks</a><a className={shell.active} aria-current="page" href="/team/evidence">▣ &nbsp;Evidence vault</a><a href="/ai">✦ &nbsp;AI Studio</a><a href="/traceability">◈ &nbsp;Traceability</a></nav>
    <div className={shell.sideFoot}><strong>Controlled access</strong><p>Upload, scan, verify and request independent review. Files are stored in a private bucket only when the security services are configured.</p></div>
   </aside>
   <main className={shell.main}>

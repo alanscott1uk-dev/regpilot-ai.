@@ -64,6 +64,8 @@ model User {
   intelligenceReviewed IntelligenceDecision[]
   watchSchedules WatchSchedule[]
   semanticRequests SemanticRequest[]
+  assuranceCreated AssuranceAssessment[] @relation("AssuranceCreator")
+  assuranceReviewed AssuranceAssessment[] @relation("AssuranceReviewer")
 }
 
 model Organization {
@@ -83,6 +85,7 @@ model Organization {
   intelligenceRuns IntelligenceRun[]
   watchSchedules WatchSchedule[]
   semanticRequests SemanticRequest[]
+  assuranceAssessments AssuranceAssessment[]
 }
 
 model Membership {
@@ -114,6 +117,7 @@ model Obligation {
   evidence       Evidence[]
   originKey      String? @db.VarChar(64)
   intelligenceDecisions IntelligenceDecision[]
+  assuranceAssessments AssuranceAssessment[]
   @@unique([id, organizationId])
   @@unique([organizationId, originKey])
   @@index([organizationId, status, dueDate])
@@ -229,6 +233,7 @@ model RegulatorySnapshot {
   capturedBy       User @relation("RegulatorySnapshotCapturer",fields:[capturedById],references:[id],onDelete:Restrict)
   intelligenceRuns IntelligenceRun[]
   semanticRequests SemanticRequest[]
+  assuranceAssessments AssuranceAssessment[]
   @@unique([id, organizationId])
   @@index([organizationId,sourceId,firstCapturedAt])
 }
@@ -325,4 +330,36 @@ model SemanticRequest {
   creator User @relation(fields:[createdById],references:[id],onDelete:Restrict)
   @@unique([organizationId,snapshotId,profileVersion,engineVersion])
   @@index([organizationId,createdAt])
+}
+
+// Content-level evidence assessment. Draft interpretation is never an approval.
+model AssuranceAssessment {
+  id String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  obligationId String @db.Uuid
+  snapshotId String @db.Uuid
+  profileVersion Int
+  inputHash String @db.VarChar(64)
+  engineVersion String @db.VarChar(80)
+  method String @db.VarChar(20)
+  evidenceManifest Json
+  result Json?
+  resultHash String? @db.VarChar(64)
+  status String @default("PROCESSING") @db.VarChar(24)
+  failureCode String? @db.VarChar(40)
+  createdById String @db.Uuid
+  reviewerId String? @db.Uuid
+  reviewNotes String @default("") @db.VarChar(1200)
+  selectedPassages Json @default("[]")
+  reviewedAt DateTime?
+  validUntil DateTime?
+  version Int @default(1)
+  createdAt DateTime @default(now())
+  organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+  obligation Obligation @relation(fields:[obligationId,organizationId],references:[id,organizationId],onDelete:Restrict)
+  snapshot RegulatorySnapshot @relation(fields:[snapshotId,organizationId],references:[id,organizationId],onDelete:Restrict)
+  creator User @relation("AssuranceCreator",fields:[createdById],references:[id],onDelete:Restrict)
+  reviewer User? @relation("AssuranceReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+  @@unique([organizationId,inputHash,method])
+  @@index([organizationId,obligationId,createdAt])
 }

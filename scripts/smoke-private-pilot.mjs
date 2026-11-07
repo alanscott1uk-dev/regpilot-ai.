@@ -55,7 +55,7 @@ try{
  await waitForServer();
  const routes=[
   "/workbench","/register","/documents","/evidence","/controls",
-  "/assurance","/intelligence","/traceability","/team","/team/evidence","/team/sources","/team/intelligence","/ai"
+  "/assurance","/intelligence","/traceability","/team","/team/evidence","/team/sources","/team/intelligence","/team/assurance","/ai"
  ];
  for(const path of routes){
   const res=await response(path);
@@ -77,7 +77,7 @@ try{
  assert.equal(noEvidence.status,503,"evidence API must fail closed without private storage and antivirus configuration");
  const noSources=await response("/api/workspace/sources?organizationId=123e4567-e89b-42d3-a456-426614174000");
  assert.equal(noSources.status,503,"team regulatory source API must fail closed when private workspace is disabled");
- for(const path of ["/api/workspace/intelligence","/api/workspace/intelligence/profile","/api/workspace/intelligence/semantic","/api/workspace/intelligence/monitoring","/api/internal/monitor","/api/workspace/intelligence/123e4567-e89b-42d3-a456-426614174000"]){
+ for(const path of ["/api/workspace/assurance","/api/workspace/intelligence","/api/workspace/intelligence/profile","/api/workspace/intelligence/semantic","/api/workspace/intelligence/monitoring","/api/internal/monitor","/api/workspace/intelligence/123e4567-e89b-42d3-a456-426614174000"]){
    const method=(path.endsWith("profile")||path.endsWith("monitoring"))?"PUT":"POST";
    const result=await response(path,{method,headers:{"Content-Type":"application/json"},body:"{}"});
    assert.equal(result.status,503,path+" must fail closed");
