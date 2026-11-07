@@ -87,6 +87,12 @@ model User {
   auditRooms AuditRoom[]
   auditGrants AuditGrant[]
   auditQuestions AuditQuestion[]
+  policyDrafts PolicyRevision[] @relation("PolicyAuthor")
+  policyReviews PolicyRevision[] @relation("PolicyReviewer")
+  policyAssignments PolicyAssignment[]
+  vendors Vendor[]
+  vendorDrafts VendorReview[] @relation("VendorAuthor")
+  vendorReviews VendorReview[] @relation("VendorReviewer")
 }
 
 model Organization {
@@ -127,6 +133,11 @@ model Organization {
   auditRooms AuditRoom[]
   auditGrants AuditGrant[]
   auditQuestions AuditQuestion[]
+  policies Policy[]
+  policyRevisions PolicyRevision[]
+  policyAssignments PolicyAssignment[]
+  vendors Vendor[]
+  vendorReviews VendorReview[]
 }
 
 model PaidBudget {
@@ -809,4 +820,108 @@ model AuditQuestion {
  grant AuditGrant @relation(fields:[grantId,roomId,organizationId],references:[id,roomId,organizationId],onDelete:Restrict)
  answeredBy User? @relation(fields:[answeredById],references:[id],onDelete:Restrict)
  @@index([organizationId,roomId,createdAt])
+}
+
+model Policy {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ title String @db.VarChar(160)
+ currentRevision Int @default(0)
+ version Int @default(1)
+ active Boolean @default(true)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ revisions PolicyRevision[]
+ @@unique([id,organizationId])
+ @@index([organizationId,createdAt])
+}
+model PolicyRevision {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ policyId String @db.Uuid
+ number Int
+ summary String @db.VarChar(1200)
+ file Json
+ fileHash String @db.VarChar(64)
+ status String @default("DRAFT") @db.VarChar(16)
+ createdById String @db.Uuid
+ reviewerId String? @db.Uuid
+ reviewNotes String @default("") @db.VarChar(1200)
+ publishedAt DateTime?
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ policy Policy @relation(fields:[policyId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ author User @relation("PolicyAuthor",fields:[createdById],references:[id],onDelete:Restrict)
+ reviewer User? @relation("PolicyReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+ assignments PolicyAssignment[]
+ @@unique([id,organizationId])
+ @@unique([policyId,number])
+}
+model PolicyAssignment {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ revisionId String @db.Uuid
+ userId String @db.Uuid
+ dueDate DateTime @db.Date
+ status String @default("PENDING") @db.VarChar(16)
+ openedAt DateTime?
+ acknowledgedAt DateTime?
+ acknowledgedHash String? @db.VarChar(64)
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ revision PolicyRevision @relation(fields:[revisionId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ user User @relation(fields:[userId],references:[id],onDelete:Restrict)
+ @@unique([revisionId,userId])
+ @@index([organizationId,userId,status,dueDate])
+}
+model Vendor {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ name String @db.VarChar(160)
+ service String @db.VarChar(1200)
+ ownerId String @db.Uuid
+ criticality String @db.VarChar(12)
+ dataAccess String @db.VarChar(12)
+ systemAccess Boolean @default(false)
+ nextReviewAt DateTime @db.Date
+ active Boolean @default(true)
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ owner User @relation(fields:[ownerId],references:[id],onDelete:Restrict)
+ reviews VendorReview[]
+ @@unique([id,organizationId])
+ @@index([organizationId,active,nextReviewAt])
+}
+model VendorReview {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ vendorId String @db.Uuid
+ vendorVersion Int
+ baselineReviewId String? @db.Uuid
+ vendorSnapshot Json
+ evidenceManifest Json
+ assessment Json
+ inputHash String @db.VarChar(64)
+ recommendation String @db.VarChar(16)
+ rationale String @db.VarChar(2000)
+ followUpDue DateTime @db.Date
+ validUntil DateTime @db.Date
+ status String @default("DRAFT") @db.VarChar(16)
+ createdById String @db.Uuid
+ reviewerId String? @db.Uuid
+ reviewNotes String @default("") @db.VarChar(2000)
+ reviewedAt DateTime?
+ followUpTasks Json @default("[]")
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ vendor Vendor @relation(fields:[vendorId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ author User @relation("VendorAuthor",fields:[createdById],references:[id],onDelete:Restrict)
+ reviewer User? @relation("VendorReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+ @@unique([id,organizationId])
+ @@index([organizationId,vendorId,createdAt])
 }

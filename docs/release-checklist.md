@@ -60,3 +60,12 @@ For Word/document inspection release acceptance, follow [Document understanding]
 - Verify guests never gain team membership and cannot see unselected files, other reviewers' questions, staff identities or storage paths. Recheck expiry and revocation during retrieval against actual services.
 - Test signed-in mobile and desktop interactions, stale browser/session changes and human-readable error paths before customer activation.
 - Keep every paid provider and Vercel preview disabled. This batch requires no production deployment or hosted database change.
+
+
+## People and supplier assurance batch
+
+- Apply the additive people-vendor-assurance migration after auditor-workspace only as part of the reviewed release; it has not been applied to production.
+- Confirm all 40 private tables remain RLS enabled and inaccessible to Data API roles.
+- Run a fictional-data browser pilot: independent policy publication, staff download and acknowledgement, replacement policy history; supplier assessment, independent sign-off, follow-up handover, expired/stale reviews and archive.
+- Keep paid services, connector schedules and Vercel previews disabled until their separate activation is authorised.
+- Policy acknowledgements are not training certification. Supplier checks are internal review prompts, not validated regulatory mappings. Never advertise these development modules as verified live operation.

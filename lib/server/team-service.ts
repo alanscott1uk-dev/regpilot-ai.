@@ -102,7 +102,7 @@ export async function changeMember(ctx:AuthorizedContext,input:unknown){
   if(d.action==="ROLE"&&!d.role)throw new IntelligenceError("Choose a role");
   // Hand over open work atomically, preserving historical approvals and completed work.
   if(d.action==="REMOVE"||d.role==="VIEWER"){
-   const [controls,tasks,requirements]=await Promise.all([
+   const [controls,tasks,requirements,vendors]=await Promise.all([
     tx.managedControl.count({where:{organizationId:ctx.organizationId,ownerId:d.userId,enabled:true}}),
     tx.obligation.count({where:{organizationId:ctx.organizationId,assigneeId:d.userId,status:{not:"COMPLETE"}}}),
     tx.$queryRaw<Array<{id:string}>>`SELECT latest.id FROM (
@@ -111,21 +111,26 @@ export async function changeMember(ctx:AuthorizedContext,input:unknown){
       JOIN "LibraryRequirement" q ON q.id=r."requirementId" AND q."organizationId"=r."organizationId"
       WHERE a."organizationId"=${ctx.organizationId}::uuid AND r.status='ACCEPTED' AND r.number=q."currentRevision"
       ORDER BY a."revisionId",a."updatedAt" DESC,a.id DESC
-    ) latest WHERE latest."ownerId"=${d.userId}::uuid AND latest.decision='APPLIES'`
+    ) latest WHERE latest."ownerId"=${d.userId}::uuid AND latest.decision='APPLIES'`,
+    tx.vendor.count({where:{organizationId:ctx.organizationId,ownerId:d.userId,active:true}})
    ]);
-   if(controls+tasks+requirements.length){
-    if(!d.replacementId||d.replacementId===d.userId)throw new IntelligenceError(`Choose a replacement owner for ${controls} active controls, ${tasks} open tasks and ${requirements.length} requirements`,409);
+   if(controls+tasks+requirements.length+vendors){
+    if(!d.replacementId||d.replacementId===d.userId)throw new IntelligenceError(`Choose a replacement owner for ${controls} active controls, ${tasks} open tasks and ${requirements.length} requirements and ${vendors} active suppliers`,409);
     const replacement=await tx.membership.findUnique({where:{organizationId_userId:{organizationId:ctx.organizationId,userId:d.replacementId}},include:{user:{select:{email:true}}}});
     if(!replacement||replacement.role==="VIEWER")throw new IntelligenceError("Choose an active colleague who can edit work",409);
     eligible(replacement.user.email);
     await tx.managedControl.updateMany({where:{organizationId:ctx.organizationId,ownerId:d.userId,enabled:true},data:{ownerId:d.replacementId,version:{increment:1}}});
     await tx.obligation.updateMany({where:{organizationId:ctx.organizationId,assigneeId:d.userId,status:{not:"COMPLETE"}},data:{assigneeId:d.replacementId,ownerName:replacement.user.email}});
+    await tx.vendor.updateMany({where:{organizationId:ctx.organizationId,ownerId:d.userId,active:true},data:{ownerId:d.replacementId,version:{increment:1}}});
     // A handover is not an applicability approval. Existing relationship contexts become stale.
     await tx.libraryApplicability.updateMany({where:{organizationId:ctx.organizationId,id:{in:requirements.map(r=>r.id)}},data:{ownerId:d.replacementId,version:{increment:1}}});
-    await event(tx,ctx,"team.responsibilities_transferred",d.userId,{replacementId:d.replacementId,controls,tasks,requirements:requirements.length});
+    await event(tx,ctx,"team.responsibilities_transferred",d.userId,{replacementId:d.replacementId,controls,tasks,requirements:requirements.length,vendors});
    }
   }
-  if(d.action==="REMOVE")await tx.membership.delete({where:{organizationId_userId:key}});
+  if(d.action==="REMOVE"){
+   await tx.policyAssignment.updateMany({where:{organizationId:ctx.organizationId,userId:d.userId,status:"PENDING"},data:{status:"REVOKED",version:{increment:1}}});
+   await tx.membership.delete({where:{organizationId_userId:key}});
+  }
   else await tx.membership.update({where:{organizationId_userId:key},data:{role:d.role!}});
   if(d.action==="REMOVE"||d.role==="EDITOR"||d.role==="VIEWER"){
    // External disclosure never springs back to life if its issuer is re-promoted.

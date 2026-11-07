@@ -1,0 +1,4 @@
+import {openAssignedPolicy} from "../../../../../../lib/server/policy-service";
+import {context,reply,fail,readBody,validId} from "../../../../../../lib/server/operations-http";
+export const dynamic="force-dynamic";export const runtime="nodejs";export const maxDuration=60;
+export async function GET(request:Request,{params}:{params:Promise<{id:string}>}){try{const ctx=await context(request,new URL(request.url).searchParams.get("organizationId")),id=validId((await params).id),file=await openAssignedPolicy(ctx,id);return new Response(Buffer.from(file.bytes),{headers:{"Content-Type":file.contentType,"Content-Disposition":"attachment; filename*=UTF-8''"+encodeURIComponent(file.filename),"Cache-Control":"no-store","X-Content-Type-Options":"nosniff","Content-Security-Policy":"sandbox","X-Download-Options":"noopen"}});}catch(e){return fail(e);}}
