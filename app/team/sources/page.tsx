@@ -1,5 +1,5 @@
 "use client";
-import {useCallback,useEffect,useMemo,useState} from "react";
+import {useCallback,useEffect,useMemo,useState,useRef} from "react";
 import {browserAuth} from "../../../lib/client/supabase-auth";
 import {REGULATORY_SOURCES} from "../../../lib/regulatory-sources.mjs";
 import shell from "../../workbench/workbench.module.css";
@@ -12,6 +12,8 @@ const nextDate=(days:number)=>{const d=new Date();d.setDate(d.getDate()+days);re
 export default function OfficialSourceHistory(){
  const [user,setUser]=useState<{id:string;email:string}|null>(null);
  const [organisations,setOrganisations]=useState<Org[]>([]),[orgId,setOrgId]=useState("");
+ const activeOrg=useRef(orgId);activeOrg.current=orgId;
+ const [catalogue,setCatalogue]=useState([...REGULATORY_SOURCES]);
  const [selected,setSelected]=useState(REGULATORY_SOURCES[0].id);
  const [history,setHistory]=useState<Snapshot[]>([]);
  const [lastResult,setLastResult]=useState<CheckResult|null>(null);
@@ -29,15 +31,15 @@ export default function OfficialSourceHistory(){
  },[]);
  const loadHistory=useCallback(async(id:string)=>{
   if(!id)return;
-  try{const body=await request("/api/workspace/sources?organizationId="+encodeURIComponent(id));setHistory(Array.isArray(body.snapshots)?body.snapshots:[]);}
-  catch(e){setHistory([]);setMessage(e instanceof Error?e.message:"Source history unavailable")}
+  try{const body=await request("/api/workspace/sources?organizationId="+encodeURIComponent(id));if(activeOrg.current===id){setHistory(Array.isArray(body.snapshots)?body.snapshots:[]);setCatalogue(body.catalogue||[...REGULATORY_SOURCES]);}}
+  catch(e){if(activeOrg.current!==id)return;setHistory([]);setMessage(e instanceof Error?e.message:"Source history unavailable")}
  },[request]);
  useEffect(()=>{
   let alive=true;
   async function session(){
    try{
     const token=(await browserAuth().auth.getSession()).data.session?.access_token;
-    if(!token)return;
+    if(!token){if(alive){activeOrg.current="";setUser(null);setOrgId("");setOrganisations([]);setHistory([]);setLastResult(null);setCatalogue([...REGULATORY_SOURCES]);}return;}
     const response=await fetch("/api/ai/context",{headers:{authorization:"Bearer "+token},cache:"no-store"});
     if(!response.ok)throw new Error("Private workspace not configured");
     const body=await response.json();
@@ -50,9 +52,9 @@ export default function OfficialSourceHistory(){
   try{const {data}=browserAuth().auth.onAuthStateChange(()=>setTimeout(()=>{if(alive)void session()},0));void session();return()=>{alive=false;data.subscription.unsubscribe()}}
   catch{setMessage("Supabase sign-in is not configured");return()=>{alive=false}}
  },[]);
- useEffect(()=>{setHistory([]);setLastResult(null);if(user&&orgId)void loadHistory(orgId)},[orgId,user?.id,loadHistory]);
+ useEffect(()=>{setHistory([]);setLastResult(null);setCatalogue([...REGULATORY_SOURCES]);if(user&&orgId)void loadHistory(orgId)},[orgId,user?.id,loadHistory]);
  const currentOrg=organisations.find(x=>x.id===orgId);
- const activeSource=REGULATORY_SOURCES.find(x=>x.id===selected);
+ const activeSource=catalogue.find(x=>x.id===selected);
  const rows=useMemo(()=>history.filter(x=>x.sourceId===selected),[history,selected]);
  const latest=rows[0];
  const canCheck=currentOrg&&currentOrg.role!=="VIEWER";
@@ -96,23 +98,23 @@ export default function OfficialSourceHistory(){
   <aside className={shell.sidebar}>
    <a href="/workbench" className={shell.logo}><span className={shell.logoMark}>R</span><span>RegPilot <b>AI</b><small>REGULATORY SOURCE HISTORY</small></span></a>
    <div className={shell.sideCaption}>WORKSPACE</div>
-   <nav className={shell.sideNav}><a href="/team">▤ &nbsp;Team tasks</a><a href="/team/intelligence">◈ &nbsp;Regulatory inbox</a><a href="/team/evidence">▣ &nbsp;Evidence vault</a><a href="/intelligence">✦ &nbsp;Prototype intelligence</a><a className={shell.active} href="/team/sources" aria-current="page">◈ &nbsp;Source history</a><a href="/ai">◇ &nbsp;AI Studio</a></nav>
-   <div className={shell.sideFoot}><strong>Publication checks</strong><p>Compares text from a small GOV.UK catalogue. It does not autonomously monitor all UK regulations or determine legal effects.</p></div>
+   <nav className={shell.sideNav}><a href="/team/library">◇ &nbsp;Obligation library</a><a href="/team">▤ &nbsp;Team tasks</a><a href="/team/intelligence">◈ &nbsp;Regulatory inbox</a><a href="/team/evidence">▣ &nbsp;Evidence vault</a><a href="/intelligence">✦ &nbsp;Prototype intelligence</a><a className={shell.active} href="/team/sources" aria-current="page">◈ &nbsp;Source history</a><a href="/ai">◇ &nbsp;AI Studio</a></nav>
+   <div className={shell.sideFoot}><strong>Publication checks</strong><p>Compares text from your registered GOV.UK publications. It does not autonomously monitor all UK regulations or determine legal effects.</p></div>
   </aside>
   <main className={shell.main}>
    <div className={shell.topbar}><span className={shell.crumb}>Private workspace / Official source history</span><span className={shell.demo}>MANUAL CHECK · STAGING PILOT</span></div>
    <header className={ui.hero}><div><span>REGPILOT / REGULATORY CHANGE INTELLIGENCE</span><h1>Know what changed.<br/><em>Verify what it means.</em></h1><p>Capture the text of an official publication, compare future versions and give every potential change a named reviewer.</p></div><div className={ui.heroGlyph}>✦</div></header>
-   <div className={shell.warning}><strong>A changed publication is not automatically a changed law.</strong> This checks textual differences on a very small allowlisted GOV.UK catalogue. Human applicability and effective-date assessment are mandatory.</div>
+   <div className={shell.warning}><strong>A changed publication is not automatically a changed law.</strong> This checks textual differences on your selected GOV.UK publications. Human applicability and effective-date assessment are mandatory.</div>
    {message&&<div className={ui.notice} role="status">{message}</div>}
    {!user&&<div className={ui.card}>Sign in via the <a href="/team">private team workspace</a> before checking official sources.</div>}
    {user&&organisations.length>0&&<>
     <section className={ui.topCards}>
      <div><span>Saved publication versions</span><strong>{history.length}</strong></div><div><span>Awaiting human review</span><strong>{pending}</strong></div>
-     <div><label>Organisation<select value={orgId} onChange={e=>setOrgId(e.target.value)}>{organisations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></label></div>
+     <div><label>Organisation<select disabled={busy} value={orgId} onChange={e=>setOrgId(e.target.value)}>{organisations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></label></div>
     </section>
     <section className={ui.layout}>
-     <div className={ui.catalog}><div className={ui.heading}><span>01 / GOV.UK CATALOGUE</span><h2>Choose a publication</h2><p>Only these predefined primary-source locations can be queried.</p></div>
-      {REGULATORY_SOURCES.map(src=><button key={src.id} type="button" onClick={()=>{setSelected(src.id);setLastResult(null)}} className={selected===src.id?ui.selected:ui.source}>
+     <div className={ui.catalog}><div className={ui.heading}><span>01 / GOV.UK CATALOGUE</span><h2>Choose a publication</h2><a href="/team/library">Find and register publications ↗</a><p>Choose a seed reference or a publication registered by your organisation.</p></div>
+      {catalogue.map(src=><button key={src.id} type="button" onClick={()=>{setSelected(src.id);setLastResult(null)}} className={selected===src.id?ui.selected:ui.source}>
        <span>{src.agency} · {src.topic}</span><strong>{src.title}</strong></button>)}
      </div>
      <div className={ui.detail}><div className={ui.heading}><span>02 / TEXT-BASED VERSION CHECK</span><h2>{activeSource?.title}</h2><p>Manual, versioned publication snapshots for your organisation.</p></div>

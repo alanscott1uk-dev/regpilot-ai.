@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import {fixturePdf} from "../tests/helpers/pdf-fixture.mjs";
 // Verify the Next production trace actually contains the dynamic parser worker,
 // and execute it from an isolated package made ONLY from traced runtime files.
-const root=process.cwd(),files=new Set(),routes=["api/workspace/programme","api/workspace/assurance","api/workspace/assurance/[id]","api/ai/analyse"];
+const root=process.cwd(),files=new Set(),routes=["api/workspace/library/intake","api/workspace/library/revisions/[id]","api/workspace/library/coverage","api/workspace/library/coverage/[id]","api/workspace/programme","api/workspace/assurance","api/workspace/assurance/[id]","api/ai/analyse"];
 for(const route of routes){
   const tracePath=path.join(root,".next/server/app",route,"route.js.nft.json"),trace=JSON.parse(await readFile(tracePath,"utf8"));
   const relevant=trace.files.map(p=>path.resolve(path.dirname(tracePath),p)).filter(p=>/pdf-extraction-worker\.mjs|node_modules\/pdfjs-dist\/|node_modules\/@napi-rs\/canvas/.test(p));

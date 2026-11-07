@@ -5,7 +5,7 @@ import type {AuthorizedContext} from "./authorization";
 import {createIntelligenceRun,IntelligenceError,transaction} from "./intelligence-service";
 import {checkOfficialSource,type Loader} from "./regulatory-watch";
 import {loadOfficialSource} from "./ai-sources";
-import {REGULATORY_SOURCES} from "../regulatory-sources.mjs";
+import {resolveWorkspaceSource} from "./publication-catalogue";
 import {allowedEmail} from "../ai/security.mjs";
 
 export function monitoringEnabled(){return process.env.REGPILOT_MONITORING_ENABLED==="true";}
@@ -17,10 +17,11 @@ export function validMonitorSecret(request:Request){
 }
 export async function configureWatch(ctx:AuthorizedContext,input:{sourceId:string;enabled:boolean;intervalHours:number;version:number}){
   if(!["OWNER","ADMIN"].includes(ctx.role))throw new IntelligenceError("An administrator must configure monitoring",403);
-  if(!REGULATORY_SOURCES.some(s=>s.id===input.sourceId)||typeof input.enabled!=="boolean"||![24,168].includes(input.intervalHours)||!Number.isInteger(input.version)||input.version<0)throw new IntelligenceError("Choose a recognised source, daily or weekly schedule and current version");
+  if(typeof input.enabled!=="boolean"||![24,168].includes(input.intervalHours)||!Number.isInteger(input.version)||input.version<0)throw new IntelligenceError("Choose a recognised source, daily or weekly schedule and current version");
   return transaction(ctx,async tx=>{
     const member=await tx.membership.findUnique({where:{organizationId_userId:{organizationId:ctx.organizationId,userId:ctx.userId}}});
     if(!member||!["OWNER","ADMIN"].includes(member.role))throw new IntelligenceError("Your administration access changed",403);
+    if(!await resolveWorkspaceSource(tx,ctx.organizationId,input.sourceId))throw new IntelligenceError("Choose a registered official source");
     const key={organizationId:ctx.organizationId,sourceId:input.sourceId};
     const old=await tx.watchSchedule.findUnique({where:{organizationId_sourceId:key}});
     if((old?.version||0)!==input.version)throw new IntelligenceError("Monitoring settings changed. Refresh first.",409);
@@ -69,7 +70,7 @@ async function finish(job:WatchSchedule,outcome:string,failureCode:string|null){
     return halted?"ATTENTION":outcome;
   });
 }
-export async function executeWatch(job:WatchSchedule,loader:Loader=loadOfficialSource){
+export async function executeWatch(job:WatchSchedule,loader?:Loader){
   try{
     await db.$transaction(tx=>assertLease(tx,job));
     if(job.attempts>3)return await finish(job,"FAILED","INTERRUPTED_REPEATEDLY");

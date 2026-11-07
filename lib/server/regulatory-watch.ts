@@ -1,7 +1,7 @@
 import {db} from "./db";
 import type {AuthorizedContext} from "./authorization";
-import {loadOfficialSource} from "./ai-sources";
-import {REGULATORY_SOURCES} from "../regulatory-sources.mjs";
+import {loadOfficialSource,loadPublication} from "./ai-sources";
+import {resolveWorkspaceSource} from "./publication-catalogue";
 import {sourceTextHash,canonicalSourceText,compareSourceText,publicSnapshot} from "../regulatory/source-fingerprint.mjs";
 import {Prisma} from "@prisma/client";
 export class RegulatoryWatchError extends Error{
@@ -19,9 +19,10 @@ export async function listSourceSnapshots(ctx:AuthorizedContext){
  });
  return snapshots.map(publicSnapshot);
 }
-export async function checkOfficialSource(ctx:AuthorizedContext,sourceId:string,loader:Loader=loadOfficialSource,guard?:(tx:Prisma.TransactionClient)=>Promise<void>){
+export async function checkOfficialSource(ctx:AuthorizedContext,sourceId:string,loader?:Loader,guard?:(tx:Prisma.TransactionClient)=>Promise<void>){
  if(!roles.includes(ctx.role))throw new RegulatoryWatchError("Insufficient permission to check official source",403);
- if(!REGULATORY_SOURCES.some(s=>s.id===sourceId))throw new RegulatoryWatchError("Unknown official source",400);
+ const source=await resolveWorkspaceSource(db,ctx.organizationId,sourceId);
+ if(!source)throw new RegulatoryWatchError("Unknown official source",400);
  const previous=await db.regulatorySnapshot.findFirst({
   where:{organizationId:ctx.organizationId,sourceId},orderBy:{firstCapturedAt:"desc"}
  });
@@ -30,7 +31,7 @@ export async function checkOfficialSource(ctx:AuthorizedContext,sourceId:string,
   return {state:"COOLDOWN",snapshot:publicSnapshot(previous),comparison:{state:"UNCHANGED",changed:false,added:[],removed:[]},
    note:"Last check was less than 15 minutes ago; official source was not fetched again."};
  }
- const official=await loader(sourceId);
+ const official=await (loader?loader(sourceId):loadPublication(source));
  if(!official||official.id!==sourceId||typeof official.text!=="string")
   throw new RegulatoryWatchError("The selected official publication is unavailable",503);
  const text=canonicalSourceText(official.text),hash=sourceTextHash(text);

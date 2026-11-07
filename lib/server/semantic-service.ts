@@ -8,7 +8,7 @@ import {generateSemantic} from "./semantic-model";
 import {groundSemanticOutput,SEMANTIC_ENGINE_VERSION,type SemanticInput} from "../regulatory/semantic";
 import {hashValue,parseProfile} from "../regulatory/intelligence";
 import {sourceTextHash} from "../regulatory/source-fingerprint.mjs";
-import {REGULATORY_SOURCES} from "../regulatory-sources.mjs";
+import {resolveWorkspaceSource} from "./publication-catalogue";
 import {allowedEmail} from "../ai/security.mjs";
 
 export function semanticConfigured(){return aiConfigured()&&process.env.REGPILOT_SEMANTIC_ENABLED==="true"&&process.env.REGPILOT_AI_SAFEGUARDS_VERIFIED==="true";}
@@ -21,7 +21,7 @@ async function currentContext(tx:Prisma.TransactionClient,ctx:AuthorizedContext,
   if(!member||!["OWNER","ADMIN","EDITOR"].includes(member.role)||!allowedEmail(member.user.email,process.env.REGPILOT_AI_ALLOWED_EMAILS))throw new IntelligenceError("Your access changed. Sign in again.",403);
   const snapshot=await tx.regulatorySnapshot.findFirst({where:{id:snapshotId,organizationId:ctx.organizationId}});
   if(!snapshot)throw new IntelligenceError("Source snapshot not found",404);
-  const source=REGULATORY_SOURCES.find(s=>s.id===snapshot.sourceId);
+  const source=await resolveWorkspaceSource(tx,ctx.organizationId,snapshot.sourceId);
   if(!source||snapshot.url!=="https://www.gov.uk"+source.path||sourceTextHash(snapshot.bodyText)!==snapshot.contentHash)throw new IntelligenceError("Source integrity check failed",409);
   const profile=await tx.businessProfile.findUnique({where:{organizationId:ctx.organizationId}});
   const latest=await tx.regulatorySnapshot.findFirst({where:{organizationId:ctx.organizationId,sourceId:snapshot.sourceId},orderBy:{firstCapturedAt:"desc"}});

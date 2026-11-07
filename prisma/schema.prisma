@@ -73,6 +73,13 @@ model User {
   assignedTasks Obligation[]
   connectorConfigurations EvidenceConnector[]
   controlMappings ControlLink[]
+  registeredSources RegisteredSource[]
+  libraryDrafts LibraryRevision[] @relation("LibraryAuthor")
+  libraryReviews LibraryRevision[] @relation("LibraryReviewer")
+  applicabilityDecisions LibraryApplicability[] @relation("ApplicabilityReviewer")
+  applicabilityOwnership LibraryApplicability[] @relation("ApplicabilityOwner")
+  coverageRuns CoverageRun[]
+  coverageDecisions CoverageDecision[]
 }
 
 model Organization {
@@ -98,6 +105,12 @@ model Organization {
   evidenceConnectors EvidenceConnector[]
   connectorRuns ConnectorRun[]
   controlLinks ControlLink[]
+  registeredSources RegisteredSource[]
+  libraryRequirements LibraryRequirement[]
+  libraryRevisions LibraryRevision[]
+  libraryApplicability LibraryApplicability[]
+  coverageRuns CoverageRun[]
+  coverageDecisions CoverageDecision[]
 }
 
 model Membership {
@@ -263,6 +276,7 @@ model RegulatorySnapshot {
 
 // Server-only intelligence records; Data API access is revoked by security SQL.
 model BusinessProfile {
+  facts Json @default("{}")
   organizationId String @id @db.Uuid
   activities Json
   jurisdictions Json
@@ -439,6 +453,7 @@ model ManagedControl {
  tasks Obligation[]
  connectors EvidenceConnector[]
  links ControlLink[]
+ coverageDecisions CoverageDecision[]
  @@unique([id,organizationId])
  @@unique([importId,proposalKey])
  @@index([organizationId,enabled,nextReviewAt])
@@ -505,4 +520,125 @@ model ConnectorRun {
  organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
  connector EvidenceConnector @relation(fields:[connectorId,organizationId],references:[id,organizationId],onDelete:Restrict)
  @@index([organizationId,connectorId,capturedAt])
+}
+
+
+model RegisteredSource {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ sourceId String @db.VarChar(120)
+ path String @db.VarChar(450)
+ title String @db.VarChar(300)
+ documentType String @db.VarChar(120)
+ registeredById String @db.Uuid
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ registeredBy User @relation(fields:[registeredById],references:[id],onDelete:Restrict)
+ @@unique([organizationId,sourceId])
+ @@unique([organizationId,path])
+}
+
+model LibraryRequirement {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ collection String @db.VarChar(100)
+ reference String @db.VarChar(100)
+ currentRevision Int @default(0)
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ revisions LibraryRevision[]
+ @@unique([id,organizationId])
+ @@unique([organizationId,collection,reference])
+ @@index([organizationId,createdAt,id])
+}
+
+model LibraryRevision {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ requirementId String @db.Uuid
+ number Int
+ status String @default("DRAFT") @db.VarChar(20)
+ content Json
+ contentHash String @db.VarChar(64)
+ provenance Json
+ provenanceHash String @db.VarChar(64)
+ createdById String @db.Uuid
+ reviewerId String? @db.Uuid
+ reviewNotes String @default("") @db.VarChar(1200)
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ reviewedAt DateTime?
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ requirement LibraryRequirement @relation(fields:[requirementId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ creator User @relation("LibraryAuthor",fields:[createdById],references:[id],onDelete:Restrict)
+ reviewer User? @relation("LibraryReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+ applicability LibraryApplicability[]
+ coverageDecisions CoverageDecision[]
+ @@unique([id,organizationId])
+ @@unique([requirementId,number])
+ @@index([organizationId,status,createdAt])
+}
+
+model LibraryApplicability {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ revisionId String @db.Uuid
+ profileVersion Int
+ contextHash String @db.VarChar(64)
+ decision String @db.VarChar(30)
+ rationale String @db.VarChar(1200)
+ ownerId String? @db.Uuid
+ reviewerId String @db.Uuid
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ revision LibraryRevision @relation(fields:[revisionId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ reviewer User @relation("ApplicabilityReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+ owner User? @relation("ApplicabilityOwner",fields:[ownerId],references:[id],onDelete:Restrict)
+ @@unique([revisionId,contextHash])
+ @@index([organizationId,profileVersion])
+}
+
+model CoverageRun {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ createdById String @db.Uuid
+ inputHash String @db.VarChar(64)
+ method String @db.VarChar(20)
+ status String @default("PROCESSING") @db.VarChar(20)
+ context Json
+ result Json?
+ resultHash String? @db.VarChar(64)
+ attempts Int @default(1)
+ lastStartedAt DateTime @default(now())
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ creator User @relation(fields:[createdById],references:[id],onDelete:Restrict)
+ decisions CoverageDecision[]
+ @@unique([id,organizationId])
+ @@unique([organizationId,inputHash,method])
+ @@index([organizationId,createdAt])
+}
+
+model CoverageDecision {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ runId String @db.Uuid
+ key String @db.VarChar(64)
+ revisionId String @db.Uuid
+ controlId String @db.Uuid
+ reviewerId String @db.Uuid
+ decision String @db.VarChar(20)
+ rationale String @db.VarChar(1200)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ run CoverageRun @relation(fields:[runId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ revision LibraryRevision @relation(fields:[revisionId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ control ManagedControl @relation(fields:[controlId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ reviewer User @relation(fields:[reviewerId],references:[id],onDelete:Restrict)
+ @@unique([runId,key])
+ @@index([organizationId,revisionId,controlId,createdAt])
 }

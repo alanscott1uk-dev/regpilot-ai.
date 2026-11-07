@@ -9,8 +9,8 @@
     "db:validate": "prisma validate",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "test": "node --test tests/*.test.mjs && node --import tsx --test tests/intelligence.test.ts tests/intelligence-http.test.ts tests/semantic.test.ts tests/monitoring-http.test.ts tests/pdf-extraction.test.ts tests/assurance.test.ts tests/assurance-http.test.ts tests/programme.test.ts tests/connectors.test.ts tests/operations-http.test.ts",
-    "test:integration": "node --import tsx --test tests/ai-tenancy.integration.test.ts tests/evidence-storage.integration.test.ts tests/regulatory-watch.integration.test.ts tests/intelligence.integration.test.ts tests/monitoring.integration.test.ts tests/semantic.integration.test.ts tests/assurance.integration.test.ts tests/operations.integration.test.ts",
+    "test": "node --test tests/*.test.mjs && node --import tsx --test tests/intelligence.test.ts tests/intelligence-http.test.ts tests/semantic.test.ts tests/monitoring-http.test.ts tests/pdf-extraction.test.ts tests/assurance.test.ts tests/assurance-http.test.ts tests/programme.test.ts tests/connectors.test.ts tests/operations-http.test.ts tests/library.test.ts tests/library-http.test.ts",
+    "test:integration": "node --import tsx --test tests/ai-tenancy.integration.test.ts tests/evidence-storage.integration.test.ts tests/regulatory-watch.integration.test.ts tests/intelligence.integration.test.ts tests/monitoring.integration.test.ts tests/semantic.integration.test.ts tests/assurance.integration.test.ts tests/operations.integration.test.ts tests/library.integration.test.ts",
     "test:smoke": "node scripts/smoke-private-pilot.mjs",
     "test:pdf-runtime": "node scripts/check-pdf-runtime.mjs"
   },

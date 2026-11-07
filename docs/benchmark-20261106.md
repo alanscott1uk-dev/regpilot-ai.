@@ -52,3 +52,11 @@ These features address content-level assurance and explainability. Superiority o
 | Ease of use | One Operations workspace for Today, Import programme, Control library and Connections | Timed SME usability and authenticated browser acceptance remain unmeasured |
 
 Scope and release boundaries: [programme operations](programme-operations.md). Existing competitor references above describe vendor documentation, not a head-to-head performance experiment.
+
+## Obligation library development batch (7 November 2026)
+
+The subsequent batch replaces the fixed catalogue ceiling with organisation-scoped GOV.UK discovery/registration and adds a separate versioned requirement library. Business facts feed explicit three-valued scope rules; human applicability decisions and shared-control relationships are bound to source/profile/control/evidence context. Exact-quoted local and gated AI relationship proposals, independent decisions, stale-impact follow-ups and content removal now have implementation and automated regression coverage. See [obligation-library.md](obligation-library.md) for limits and activation prerequisites.
+
+This materially changes the comparison: “no maintained requirement library” and “14 fixed sources only” no longer describe the development implementation. It does not establish CUBE-scale regulatory coverage, expert-validated cross-framework content, live AI accuracy or competitor superiority. The previous source list remains 14 seed references; each organisation can register up to 200 additional canonical GOV.UK publications. Other regulator domains and annex retrieval remain gaps.
+
+The new workflow addresses CUBE-style requirement versioning/applicability and Drata-style suggested requirement/control/evidence relationships. Vanta/Sprinto breadth of customer integrations, independently demonstrated continuous operation, auditor collaboration and enterprise identity remain open benchmarks. A shared, expert-labelled evaluation and real SME pilot are required to compare accuracy, reviewer effort, time to resolution and cost fairly.

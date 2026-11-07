@@ -18,3 +18,11 @@ Verify provider privacy/retention and enforceable financial budgets before enabl
 Keep preview deployments disabled. Batch changes on the development branch, keep the draft PR unmerged until acceptance and reserve Vercel releases for approved substantial milestones.
 
 Runbooks: [programme operations](programme-operations.md), [evidence assurance](evidence-assurance.md), [monitoring and semantic interpretation](monitoring-and-semantic-analysis.md), [database security](database-deployment-security.md).
+
+### Obligation library batch
+
+- [ ] Apply `obligation-library.sql` after `programme-operations.sql`, verify zero schema drift and default-deny protection on all 26 private tables.
+- [ ] Keep `REGPILOT_LIBRARY_ENABLED` and `REGPILOT_LIBRARY_AI_ENABLED` off until the acceptance workflow in `docs/obligation-library.md` is completed.
+- [ ] Verify real GOV.UK discovery/identity/withdrawal behaviour and meaningful sector/devolved-nation coverage with a domain reviewer.
+- [ ] Run authenticated two-person library intake → applicability → shared controls → impact/withdrawal/redaction acceptance with fictional documents first.
+- [ ] Measure live AI relationship quality, review effort, spend enforcement and mobile usability; do not present quotation-grounding tests as legal accuracy or competitor superiority.

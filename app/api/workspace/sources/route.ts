@@ -1,3 +1,5 @@
+import {workspaceCatalogue} from "../../../../lib/server/publication-catalogue";
+import {requireMember,WRITER} from "../../../../lib/server/workspace-member";
 import {NextResponse} from "next/server";
 import {authorisedWorkspaceContext,workspaceConfigured,AccessError} from "../../../../lib/server/ai-auth";
 import {checkOfficialSource,listSourceSnapshots,RegulatoryWatchError} from "../../../../lib/server/regulatory-watch";
@@ -9,7 +11,7 @@ export async function GET(request:Request){
  try{
   const org=new URL(request.url).searchParams.get("organizationId")||"";
   const ctx=await authorisedWorkspaceContext(request,org);
-  return reply({snapshots:await listSourceSnapshots(ctx)});
+  const [snapshots,catalogue]=await Promise.all([listSourceSnapshots(ctx),workspaceCatalogue(ctx)]);return reply({snapshots,catalogue});
  }catch(e){
   if(e instanceof AccessError||e instanceof RegulatoryWatchError)return reply({error:e.message},e.status);
   return reply({error:"Source history unavailable"},503);
@@ -23,7 +25,7 @@ export async function POST(request:Request){
   const raw=await request.text();if(raw.length>700)return reply({error:"Source check request too large"},413);
   const data=JSON.parse(raw);
   const ctx=await authorisedWorkspaceContext(request,data.organizationId||"",["OWNER","ADMIN","EDITOR"]);
-  const result=await checkOfficialSource(ctx,data.sourceId);
+  const result=await checkOfficialSource(ctx,data.sourceId,undefined,async tx=>{await requireMember(tx,ctx,WRITER);});
   return reply(result);
  }catch(e){
   if(e instanceof SyntaxError)return reply({error:"Invalid JSON"},400);

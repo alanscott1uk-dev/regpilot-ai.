@@ -4,7 +4,7 @@ import {db} from "../lib/server/db";
 
 const PRIVATE_TABLES=[
  "User","Organization","Membership","Obligation","Evidence","AuditEvent",
- "AiDailyUsage","AiReview","RegulatorySnapshot","BusinessProfile","IntelligenceRun","IntelligenceDecision","WatchSchedule","SemanticRequest","AssuranceAssessment","ProgrammeImport","ManagedControl","ControlLink","EvidenceConnector","ConnectorRun"
+ "AiDailyUsage","AiReview","RegulatorySnapshot","BusinessProfile","IntelligenceRun","IntelligenceDecision","WatchSchedule","SemanticRequest","AssuranceAssessment","ProgrammeImport","ManagedControl","ControlLink","EvidenceConnector","ConnectorRun","RegisteredSource","LibraryRequirement","LibraryRevision","LibraryApplicability","CoverageRun","CoverageDecision"
 ];
 const UNTRUSTED_ROLES=["anon","authenticated","service_role"];
 
