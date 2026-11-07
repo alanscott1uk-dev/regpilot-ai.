@@ -67,7 +67,7 @@ test("connected supplier reviews freeze signals, require independent review and 
   detail=await vendorDetail(x.o,v.id);assert.equal(detail.reviewState,"CURRENT");assert.equal(detail.signalTasks[0].status,"COMPLETE");
   await collect(observation());assert.equal((await vendorDetail(x.o,v.id)).reviewState,"CURRENT","unchanged renewed observation preserves reviewed signal identity");
   const race=await prepare();await assert.rejects(()=>changeVendor(x.ad,v.id,accept(race.id),{...x.store,async get(k){const bytes=await x.store.get(k);await collect(observation("FAIL"));return bytes;}}),rejects(409));
-  detail=await vendorDetail(x.o,v.id);assert.equal(detail.reviewState,"STALE");assert.equal(detail.reviews.find(r=>r.id===draft.id)!.signal!.runId,firstRun,"accepted snapshot stays frozen");
+  detail=await vendorDetail(x.o,v.id);assert.equal(detail.reviewState,"STALE");assert.equal(detail.signalChanges[0].before,"PASS: active");assert.equal(detail.signalChanges[0].after,"FAIL: liquidation");assert.equal(detail.reviews.find(r=>r.id===draft.id)!.signal!.runId,firstRun,"accepted snapshot stays frozen");
   const open=await db.obligation.findMany({where:{vendorSignalId:v.id,status:"OPEN"}});assert.equal(open.length,1);assert.equal(open[0].assigneeId,x.editor.id);
   await collect(observation("FAIL"));assert.equal(await db.obligation.count({where:{vendorSignalId:v.id,status:"OPEN"}}),1,"same signal and baseline deduplicate follow-up");
   await assert.rejects(()=>prepare(),rejects(409));
@@ -77,7 +77,22 @@ test("connected supplier reviews freeze signals, require independent review and 
   assert.equal((await db.vendor.findUniqueOrThrow({where:{id:v.id}})).ownerId,x.replacement.id);assert.equal(await db.obligation.count({where:{vendorSignalId:v.id,status:"OPEN",assigneeId:x.replacement.id}}),1);
   await collect(observation("FAIL"));const restored=await prepare("CONDITIONAL",3);await changeVendor(x.ad,v.id,accept(restored.id),x.store);assert.equal((await vendorDetail(x.o,v.id)).reviewState,"CURRENT");
   const run=(await vendorDetail(x.o,v.id)).signal!.snapshot!;await db.$executeRaw`UPDATE "ConnectorRun" SET "capturedAt"="capturedAt"-interval '25 hours' WHERE "connectorId"=${saved.id}::uuid`;assert.equal((await vendorDetail(x.o,v.id)).reviewState,"STALE","overdue observation cannot sustain current review");
-  await db.connectorRun.update({where:{id:run.runId},data:{capturedAt:new Date()}});
+  await assert.rejects(()=>changeVendor(x.ed,v.id,{action:"FOLLOW_UP",version:3}),rejects(403));
+  await assert.rejects(()=>changeVendor(x.out,v.id,{action:"FOLLOW_UP",version:3}),rejects(404));
+  await assert.rejects(()=>changeVendor(x.o,v.id,{action:"FOLLOW_UP",version:2}),rejects(409));
+  process.env.REGPILOT_COMPANIES_HOUSE_ENABLED="false";
+  const results=await Promise.all([changeVendor(x.o,v.id,{action:"FOLLOW_UP",version:3}),changeVendor(x.ad,v.id,{action:"FOLLOW_UP",version:3})]);
+  assert.ok("taskId" in results[0]&&"taskId" in results[1]);assert.equal(results[0].taskId,results[1].taskId);
+  const taskId=results[0].taskId!;assert.equal((await db.obligation.findUniqueOrThrow({where:{id:taskId}})).assigneeId,x.replacement.id);
+  await db.obligation.update({where:{id:taskId},data:{status:"COMPLETE",completedAt:new Date(),completionException:true,completionRationale:"Fictional premature closure for reopening verification."}});
+  await changeVendor(x.o,v.id,{action:"FOLLOW_UP",version:3});assert.equal((await db.obligation.findUniqueOrThrow({where:{id:taskId}})).status,"OPEN");
+  assert.equal((await vendorDetail(x.o,v.id)).reviewState,"STALE","task closure/reopening does not replace independent review");
+  assert.equal(await db.auditEvent.count({where:{organizationId:x.a.id,entityId:v.id,action:"vendor.follow_up_reopened"}}),1);
+  process.env.REGPILOT_COMPANIES_HOUSE_ENABLED="true";
+  await collect(observation("FAIL"));const finalReview=await prepare("CONDITIONAL",3);await changeVendor(x.ad,v.id,accept(finalReview.id),x.store);
+  assert.equal((await db.obligation.findUniqueOrThrow({where:{id:taskId}})).status,"COMPLETE");
+  await assert.rejects(()=>changeVendor(x.o,v.id,{action:"FOLLOW_UP",version:3}),rejects(409));
+
   process.env.REGPILOT_COMPANIES_HOUSE_ENABLED="false";assert.equal((await vendorDetail(x.o,v.id)).reviewState,"STALE");
  }finally{await x.cleanup();}
 });

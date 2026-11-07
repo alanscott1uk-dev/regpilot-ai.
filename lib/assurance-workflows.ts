@@ -22,6 +22,7 @@ export const criterionSchema=z.object({id:z.enum(["service","security","privacy"
 export const assessmentSchema=z.array(criterionSchema).length(6).refine(v=>new Set(v.map(c=>c.id)).size===6,"Assess every criterion once");
 export const vendorReviewSchema=z.object({signalRunId:z.uuid().optional(),signalReviewed:z.literal(true).optional(),version:z.number().int().positive(),evidenceIds:z.array(z.uuid()).max(WORKFLOW_LIMITS.files).refine(v=>new Set(v).size===v.length),assessment:assessmentSchema,recommendation:z.enum(["APPROVE","CONDITIONAL","REJECT"]),rationale:z.string().trim().min(40).max(2000),followUpDue:z.iso.date(),validUntil:z.iso.date()});
 export const vendorActionSchema=z.discriminatedUnion("action",[
+ z.object({action:z.literal("FOLLOW_UP"),version:z.number().int().positive()}),
  z.object({action:z.literal("LINK_SIGNAL"),version:z.number().int().positive(),connectorId:z.uuid().nullable(),notes:z.string().trim().min(40).max(1600),confirm:z.literal(true)}),
  z.object({action:z.literal("UPDATE"),version:z.number().int().positive(),vendor:vendorSchema}),
  z.object({action:z.literal("ARCHIVE"),version:z.number().int().positive()}),
