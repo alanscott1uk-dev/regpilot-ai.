@@ -1,7 +1,7 @@
 import {z} from "zod";
 import {CollectionError,type ConnectorCheck} from "./github";
 import type {Observation} from "./observation";
-export const googleTarget=z.object({customerId:z.string().regex(/^C[A-Za-z0-9]{6,30}$/),clientId:z.string().regex(/^[A-Za-z0-9_-]{10,160}\.apps\.googleusercontent\.com$/)});
+export const googleTarget=z.object({customerId:z.string().regex(/^C[A-Za-z0-9]{6,30}$/),clientId:z.string().max(120).regex(/^[A-Za-z0-9_-]{10,160}\.apps\.googleusercontent\.com$/)});
 export const googleCredentials=z.object({clientSecret:z.string().min(16).max(512).regex(/^[^\r\n\0]+$/),refreshToken:z.string().min(20).max(4096).regex(/^[^\r\n\0]+$/)});
 export type GoogleTarget=z.infer<typeof googleTarget>;
 const BASE="https://admin.googleapis.com/admin/directory/v1";
