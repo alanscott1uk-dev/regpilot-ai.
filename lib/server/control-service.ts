@@ -1,6 +1,7 @@
 import type {AuthorizedContext} from "./authorization";
 import {z} from "zod";
 import {db} from "./db";
+import {workspaceConfigured} from "./ai-auth";
 import {transaction,IntelligenceError} from "./intelligence-service";
 import {requireMember,ADMIN} from "./workspace-member";
 import {hashValue} from "../regulatory/intelligence";
@@ -48,7 +49,7 @@ export async function generateDueReviews(ctx:AuthorizedContext,automated=false){
  });
 }
 export async function runReviewBatch(){
- if(process.env.REGPILOT_AUTOMATION_ENABLED!=="true")throw new IntelligenceError("Recurring automation awaits activation",503);
+ if(!workspaceConfigured()||process.env.REGPILOT_AUTOMATION_ENABLED!=="true")throw new IntelligenceError("Recurring automation awaits activation",503);
  const rows=await db.managedControl.findMany({where:{enabled:true,nextReviewAt:{lte:new Date()},tasks:{none:{connectorId:null,status:{not:"COMPLETE"}}}},orderBy:{nextReviewAt:"asc"},distinct:["organizationId"],take:5,select:{organizationId:true,scheduledById:true}});let processed=0,attention=0;
  for(const row of rows){if(!row.scheduledById){attention++;continue;}try{await generateDueReviews({organizationId:row.organizationId,userId:row.scheduledById,role:"ADMIN"},true);processed++;}catch(e){if(e instanceof IntelligenceError&&e.status===403){
     attention++;

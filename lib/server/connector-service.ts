@@ -2,6 +2,7 @@ import {Prisma,type EvidenceConnector} from "@prisma/client";
 import {randomUUID} from "node:crypto";
 import {z} from "zod";
 import {db} from "./db";
+import {workspaceConfigured} from "./ai-auth";
 import type {AuthorizedContext} from "./authorization";
 import {IntelligenceError,transaction} from "./intelligence-service";
 import {requireMember,ADMIN} from "./workspace-member";
@@ -9,7 +10,7 @@ import {encryptConnectorSecret,decryptConnectorSecret} from "./connector-secret"
 import {collectGithub,connectorOutcome,githubTarget,CollectionError,type GithubObservation} from "../connectors/github";
 import {hashValue} from "../regulatory/intelligence";
 const j=(v:unknown)=>v as Prisma.InputJsonValue;
-export const connectorsEnabled=()=>process.env.REGPILOT_CONNECTORS_ENABLED==="true"&&/^[a-f\d]{64}$/i.test(process.env.REGPILOT_CONNECTOR_ENCRYPTION_KEY||"");
+export const connectorsEnabled=()=>workspaceConfigured()&&process.env.REGPILOT_CONNECTORS_ENABLED==="true"&&/^[a-f\d]{64}$/i.test(process.env.REGPILOT_CONNECTOR_ENCRYPTION_KEY||"");
 const schema=githubTarget.extend({controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().regex(/^github_pat_[A-Za-z0-9_]{20,240}$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)])});
 export async function saveConnector(ctx:AuthorizedContext,input:unknown){
  if(!connectorsEnabled())throw new IntelligenceError("Evidence connectors await activation",503);
