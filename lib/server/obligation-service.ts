@@ -1,5 +1,6 @@
 import { can } from "../permissions.mjs";
 import { db } from "./db";
+import {transaction} from "./intelligence-service";
 import type { AuthorizedContext } from "./authorization";
 import type { ObligationStatus } from "@prisma/client";
 import {completionAssessment} from "./assurance-service";
@@ -56,7 +57,7 @@ export async function changeObligationStatus(ctx: AuthorizedContext, id: string,
     }
     verifiedAssessmentId=assessment.id;
   }
-  return db.$transaction(async tx => {
+  return transaction(ctx,async tx => {
     const existing = await tx.obligation.findFirst({ where: { id, organizationId: ctx.organizationId } });
     if (!existing) return null;
     const membership=await tx.membership.findUnique({where:{organizationId_userId:{organizationId:ctx.organizationId,userId:ctx.userId}}});
@@ -82,5 +83,5 @@ export async function changeObligationStatus(ctx: AuthorizedContext, id: string,
     });
     await tx.auditEvent.create({ data: { organizationId: ctx.organizationId, actorId: ctx.userId, action: "obligation.status_changed", entityType: "Obligation", entityId: id, details: { from: existing.status, to: status, completionException:exception,approvedEvidence,assessmentId:verifiedAssessmentId } } });
     return updated;
-  },{isolationLevel:"Serializable"});
+  });
 }

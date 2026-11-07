@@ -46,6 +46,11 @@ test("isolated PostgreSQL checks: tenant membership, distinct human review, inte
   assert.equal(await changeObligationStatus(outsiderCtx,task.id,"IN_PROGRESS"),null);
   const changedTask=await changeObligationStatus(creatorCtx,task.id,"IN_PROGRESS");
   assert.equal(changedTask?.status,"IN_PROGRESS");
+  const concurrentStatuses=await Promise.all([
+   changeObligationStatus(creatorCtx,task.id,"OPEN"),
+   changeObligationStatus(reviewerCtx,task.id,"IN_PROGRESS")
+  ]);
+  assert.ok(concurrentStatuses.every(Boolean),"concurrent status writes use bounded serialization retries");
   await assert.rejects(()=>changeObligationStatus(creatorCtx,task.id,"COMPLETE"),/Completion requires independently reviewed evidence/);
   const withException=await changeObligationStatus(creatorCtx,task.id,"COMPLETE",{
    completionRationale:"A reviewer must confirm why the supporting evidence was not available."
