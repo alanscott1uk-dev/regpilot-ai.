@@ -51,6 +51,7 @@ jobs:
       - run: npx prisma db execute --file prisma/changes/obligation-library.sql --schema prisma/schema.prisma
       - run: npx prisma db execute --file prisma/changes/team-access.sql --schema prisma/schema.prisma
       - run: npx prisma db execute --file prisma/changes/paid-services.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/auditor-workspace.sql --schema prisma/schema.prisma
       - run: npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
       # Protect Prisma tables from Supabase Data API roles and test the policy
       # using a disposable PostgreSQL 17 instance; NEVER run this fixture on Supabase.

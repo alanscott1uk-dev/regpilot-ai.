@@ -128,6 +128,13 @@ export async function changeMember(ctx:AuthorizedContext,input:unknown){
   if(d.action==="REMOVE")await tx.membership.delete({where:{organizationId_userId:key}});
   else await tx.membership.update({where:{organizationId_userId:key},data:{role:d.role!}});
   if(d.action==="REMOVE"||d.role==="EDITOR"||d.role==="VIEWER"){
+   // External disclosure never springs back to life if its issuer is re-promoted.
+   const rooms=await tx.auditRoom.findMany({where:{organizationId:ctx.organizationId,createdById:d.userId,status:{in:["DRAFT","PUBLISHED"]}},select:{id:true}});
+   if(rooms.length){
+    await tx.auditRoom.updateMany({where:{id:{in:rooms.map(r=>r.id)},organizationId:ctx.organizationId},data:{status:"CLOSED",version:{increment:1}}});
+    await tx.auditGrant.updateMany({where:{roomId:{in:rooms.map(r=>r.id)},organizationId:ctx.organizationId,status:{in:["PENDING","ACCEPTED"]}},data:{status:"REVOKED",version:{increment:1}}});
+    for(const room of rooms)await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"auditor.issuer_revoked",entityType:"AuditRoom",entityId:room.id,details:{}}});
+   }
    const connectors=await tx.evidenceConnector.updateMany({where:{organizationId:ctx.organizationId,configuredById:d.userId},data:{enabled:false,encryptedSecret:null,leaseToken:null,leaseUntil:null,version:{increment:1},failureCode:"PERMISSION_REVOKED"}});
    const watches=await tx.watchSchedule.updateMany({where:{organizationId:ctx.organizationId,configuredById:d.userId},data:{enabled:false,leaseToken:null,leaseUntil:null,version:{increment:1},failureCode:"PERMISSION_REVOKED"}});
    const schedules=await tx.managedControl.updateMany({where:{organizationId:ctx.organizationId,scheduledById:d.userId,enabled:true},data:{enabled:false,version:{increment:1}}});

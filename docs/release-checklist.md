@@ -51,3 +51,12 @@ For Word/document inspection release acceptance, follow [Document understanding]
 - [ ] Validate real Azure OCR, Resend delivery/suppression, Supabase IdP and Stripe test checkout/portal/webhooks without confidential records.
 - [ ] Configure provider-enforced spend limits. Application spending reservations are allocations, not verified actual bills.
 - [ ] Confirm service drafts, recurring reminder policies and billing events cannot activate providers, grant membership or bypass human evidence review.
+
+## Auditor workspace batch (7 November 2026)
+
+- Apply the additive auditor migration after paid-services; verify 35 private tables and no schema drift.
+- Add the two staging Auth redirect paths in `docs/auditor-workspace.md`.
+- Use fictional accounts: two organisations, two administrators and two external guests. Complete draft → disclosure preview → publish → invite → accept → selected download → question → response → resolve/reopen → revoke.
+- Verify guests never gain team membership and cannot see unselected files, other reviewers' questions, staff identities or storage paths. Recheck expiry and revocation during retrieval against actual services.
+- Test signed-in mobile and desktop interactions, stale browser/session changes and human-readable error paths before customer activation.
+- Keep every paid provider and Vercel preview disabled. This batch requires no production deployment or hosted database change.

@@ -84,6 +84,9 @@ model User {
   serviceJobs ServiceJob[]
   paidReservations PaidReservation[]
   paidBudgetConfigurations PaidBudget[]
+  auditRooms AuditRoom[]
+  auditGrants AuditGrant[]
+  auditQuestions AuditQuestion[]
 }
 
 model Organization {
@@ -121,6 +124,9 @@ model Organization {
   serviceJobs ServiceJob[]
   billingAccount BillingAccount?
   billingEvents BillingEvent[]
+  auditRooms AuditRoom[]
+  auditGrants AuditGrant[]
+  auditQuestions AuditQuestion[]
 }
 
 model PaidBudget {
@@ -741,4 +747,66 @@ model CoverageDecision {
  reviewer User @relation(fields:[reviewerId],references:[id],onDelete:Restrict)
  @@unique([runId,key])
  @@index([organizationId,revisionId,controlId,createdAt])
+}
+
+// External reviewers never acquire workspace membership. The manifest is a fixed,
+// deliberately selected disclosure; live evidence is revalidated at every download.
+model AuditRoom {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ createdById String @db.Uuid
+ title String @db.VarChar(160)
+ purpose String @db.VarChar(1200)
+ manifest Json
+ manifestHash String @db.VarChar(64)
+ status String @default("DRAFT") @db.VarChar(16)
+ expiresAt DateTime
+ publishedAt DateTime?
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ creator User @relation(fields:[createdById],references:[id],onDelete:Restrict)
+ grants AuditGrant[]
+ questions AuditQuestion[]
+ @@unique([id,organizationId])
+ @@index([organizationId,createdAt])
+}
+model AuditGrant {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ roomId String @db.Uuid
+ email String @db.VarChar(254)
+ userId String? @db.Uuid
+ status String @default("PENDING") @db.VarChar(16)
+ version Int @default(1)
+ expiresAt DateTime
+ acceptedAt DateTime?
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ room AuditRoom @relation(fields:[roomId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ user User? @relation(fields:[userId],references:[id],onDelete:Restrict)
+ questions AuditQuestion[]
+ @@unique([roomId,email])
+ @@unique([id,roomId,organizationId])
+ @@index([email,status,expiresAt])
+}
+model AuditQuestion {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ roomId String @db.Uuid
+ grantId String @db.Uuid
+ evidenceId String? @db.Uuid
+ question String @db.VarChar(2000)
+ response String @default("") @db.VarChar(4000)
+ responses Json @default("[]")
+ status String @default("OPEN") @db.VarChar(16)
+ answeredById String? @db.Uuid
+ answeredAt DateTime?
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ room AuditRoom @relation(fields:[roomId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ grant AuditGrant @relation(fields:[grantId,roomId,organizationId],references:[id,roomId,organizationId],onDelete:Restrict)
+ answeredBy User? @relation(fields:[answeredById],references:[id],onDelete:Restrict)
+ @@index([organizationId,roomId,createdAt])
 }
