@@ -170,3 +170,26 @@ export async function changeVendor(ctx:AuthorizedContext,id:string,input:unknown
   await tx.vendor.update({where:{id},data:{...fields,nextReviewAt,version:{increment:1}}});await event(tx,ctx,"updated",id);return {id};
  });
 }
+
+/** Current decision dossier; verify stored bytes and recheck context before releasing it. */
+export async function exportVendorReview(ctx:AuthorizedContext,id:string,store?:EvidenceObjectStore){
+ async function gather(tx:Prisma.TransactionClient){
+  await requireMember(tx,ctx,ADMIN);
+  const vendor=await tx.vendor.findFirst({where:{id,...org(ctx)}});
+  if(!vendor)throw new IntelligenceError("Supplier not found",404);
+  const review=await tx.vendorReview.findFirst({where:{vendorId:id,...org(ctx),status:"ACCEPTED"}});
+  if(!review||await reviewState(tx,ctx,vendor,review)!=="CURRENT")throw new IntelligenceError("A current independently accepted supplier review is required for export",409);
+  await owner(tx,ctx,vendor.ownerId);
+  return {vendor,review,...content(review)};
+ }
+ const before=await transaction(ctx,gather);await verifyReviewedBytes(ctx,before.files,store);
+ return transaction(ctx,async tx=>{
+  const after=await gather(tx);
+  if(after.review.id!==before.review.id||after.review.version!==before.review.version||after.review.inputHash!==before.review.inputHash)throw new IntelligenceError("Supplier review changed during export; refresh and retry",409);
+  const ids=z.array(z.uuid()).max(7).parse(after.review.followUpTasks);
+  const tasks=await tx.obligation.findMany({where:{...org(ctx),id:{in:ids}},orderBy:{id:"asc"},select:{id:true,title:true,status:true,dueDate:true,completedAt:true,completionException:true,completionRationale:true}});
+  if(tasks.length!==ids.length)throw new IntelligenceError("Supplier follow-up history is incomplete",409);
+  const record={format:"regpilot-supplier-review-v1",exportedAt:new Date().toISOString(),currentAtExport:true,reviewId:after.review.id,reviewVersion:after.review.version,vendor:after.review.vendorSnapshot,recommendation:after.review.recommendation,rationale:after.review.rationale,assessment:after.assessment,reviewedAt:after.review.reviewedAt?.toISOString()||null,reviewNotes:after.review.reviewNotes,validUntil:after.review.validUntil.toISOString(),evidence:after.files.map(({uploadedById,reviewerId,...f})=>f),registerObservation:after.signal,followUp:tasks.map(t=>({...t,dueDate:t.dueDate.toISOString(),completedAt:t.completedAt?.toISOString()||null})),limitations:["Internal supplier assessment, not certification, a credit opinion or a compliance verdict.","Evidence bytes were checked during export but are not embedded. Referenced files remain private in the evidence vault.","Currentness is established only at the export time; subsequent changes can invalidate this decision. Conditional/rejected outcomes are not upgraded by task completion.","Integrity hash detects content changes; it is not a digital signature."]};
+  const integrityHash=hashValue(record);await event(tx,ctx,"review_exported",id,{reviewId:after.review.id,integrityHash});return {...record,integrityHash};
+ });
+}

@@ -4,10 +4,11 @@ import {db} from "../lib/server/db";
 import {assuranceFixture,rejects,future} from "./helpers/assurance-fixture";
 import {saveConnector,claimConnector,executeConnector,disconnectConnector,exportConnectorRun} from "../lib/server/connector-service";
 import {operationsWorkspace} from "../lib/server/operations-service";
-import {createVendor,changeVendor,prepareVendorReview,vendorDetail} from "../lib/server/vendor-service";
+import {createVendor,changeVendor,prepareVendorReview,vendorDetail,exportVendorReview} from "../lib/server/vendor-service";
 import {VENDOR_CRITERIA} from "../lib/assurance-workflows";
 import {CollectionError} from "../lib/connectors/github";
 import type {Observation} from "../lib/connectors/observation";
+import {hashValue} from "../lib/regulatory/intelligence";
 import {changeMember} from "../lib/server/team-service";
 const token="fictional-read-only-secret-12345";
 function flags(){Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:"true",REGPILOT_CONNECTORS_ENABLED:"true",REGPILOT_GITLAB_ENABLED:"true",REGPILOT_CLOUDFLARE_ENABLED:"true",REGPILOT_COMPANIES_HOUSE_ENABLED:"true",REGPILOT_CONNECTOR_ENCRYPTION_KEY:"ab".repeat(32),SUPABASE_URL:"https://example.invalid",SUPABASE_PUBLISHABLE_KEY:"fixture"});}
@@ -92,6 +93,12 @@ test("connected supplier reviews freeze signals, require independent review and 
   await collect(observation("FAIL"));const finalReview=await prepare("CONDITIONAL",3);await changeVendor(x.ad,v.id,accept(finalReview.id),x.store);
   assert.equal((await db.obligation.findUniqueOrThrow({where:{id:taskId}})).status,"COMPLETE");
   await assert.rejects(()=>changeVendor(x.o,v.id,{action:"FOLLOW_UP",version:3}),rejects(409));
+  await assert.rejects(()=>exportVendorReview(x.out,v.id,x.store),rejects(404));await assert.rejects(()=>exportVendorReview(x.re,v.id,x.store),rejects(403));
+  const {integrityHash,...dossier}=await exportVendorReview(x.o,v.id,x.store);assert.equal(hashValue(JSON.parse(JSON.stringify(dossier))),integrityHash);assert.equal(dossier.recommendation,"CONDITIONAL");assert.equal(dossier.followUp.length,1);assert.doesNotMatch(JSON.stringify(dossier.evidence),/uploadedById|reviewerId|storageKey/);
+  await assert.rejects(()=>exportVendorReview(x.ad,v.id,{...x.store,async get(k){const bytes=await x.store.get(k);await changeMember(x.o,{action:"ROLE",userId:x.admin.id,expectedRole:"ADMIN",role:"EDITOR"});return bytes;}}),rejects(403));
+  await changeMember(x.o,{action:"ROLE",userId:x.admin.id,expectedRole:"EDITOR",role:"ADMIN"});
+  await assert.rejects(()=>exportVendorReview(x.o,v.id,{...x.store,async get(k){const bytes=await x.store.get(k);await collect(observation());return bytes;}}),rejects(409),"changed register during file retrieval blocks dossier release");
+
 
   process.env.REGPILOT_COMPANIES_HOUSE_ENABLED="false";assert.equal((await vendorDetail(x.o,v.id)).reviewState,"STALE");
  }finally{await x.cleanup();}
