@@ -1,0 +1,10 @@
+import type {ConnectorCheck} from "./github";
+export type Observation={engine:string;sourceUrl:string;capturedAt:string;checks:ConnectorCheck[];limitations:string[]};
+export type SignalChange={id:string;label:string;before:string;after:string;observedBefore:string;observedAfter:string};
+export function signalChanges(current:Observation,previous:Observation|null):SignalChange[]{
+ if(!previous||previous.engine!==current.engine)return [];
+ return current.checks.flatMap(check=>{const old=previous.checks.find(c=>c.id===check.id);return old&&(old.status!==check.status||old.observed!==check.observed)?[{id:check.id,label:check.label,before:old.status,after:check.status,observedBefore:old.observed,observedAfter:check.observed}]:[];});
+}
+export function observationOutcome(value:Observation){return value.checks.some(c=>c.status==="FAIL")?"FOLLOW_UP":!value.checks.length||value.checks.some(c=>c.status==="UNKNOWN")?"INCOMPLETE":"OBSERVED";}
+export function connectorLabel(row:{provider:string;repository:string;branch:string}){return row.provider==="MICROSOFT365"?"Microsoft 365 · "+row.repository.replace(/^microsoft365:/,""):row.repository+" · "+row.branch;}
+export function observationCurrent(row:{configVersion:number;capturedAt:Date},connector:{version:number;enabled:boolean;failureCode:string|null;intervalHours:number},latest:boolean){return latest&&row.configVersion===connector.version&&connector.enabled&&!connector.failureCode&&Date.now()-row.capturedAt.getTime()<connector.intervalHours*3600000;}

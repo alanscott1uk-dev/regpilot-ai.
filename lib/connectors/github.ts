@@ -2,7 +2,7 @@ import {z} from "zod";
 export const githubTarget=z.object({repository:z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_.-]{1,100}$/).refine(s=>![".",".."].includes(s.split("/")[1])),branch:z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/).refine(s=>!s.includes(".."))});
 export type ConnectorCheck={id:string;label:string;status:"PASS"|"FAIL"|"UNKNOWN";observed:string;nextStep:string};
 export type GithubObservation={engine:"github-branch-1.0.0";repository:string;branch:string;sourceUrl:string;capturedAt:string;checks:ConnectorCheck[];limitations:string[]};
-export class CollectionError extends Error{constructor(public code:string){super("Repository evidence could not be collected");}}
+export class CollectionError extends Error{constructor(public code:string){super("Connected evidence could not be collected");}}
 async function boundedJson(response:Response){
  if(!response.body)throw new CollectionError("EMPTY_RESPONSE");const reader=response.body.getReader();const chunks:Uint8Array[]=[];let total=0;
  try{while(true){const {done,value}=await reader.read();if(done)break;total+=value.length;if(total>65536)throw new CollectionError("RESPONSE_TOO_LARGE");chunks.push(value);}return JSON.parse(Buffer.concat(chunks).toString("utf8"));}catch(e){await reader.cancel().catch(()=>{});if(e instanceof CollectionError)throw e;throw new CollectionError("INVALID_RESPONSE");}

@@ -35,3 +35,11 @@ Runbooks: [programme operations](programme-operations.md), [evidence assurance](
 - [ ] Check mobile invitation acceptance, role changes and work handover with fictional records before customer use.
 
 For Word/document inspection release acceptance, follow [Document understanding](document-understanding.md). Verify the private bucket allows both PDF and standard Word MIME types. Do not enable customer processing solely because offline parsing and CI pass.
+
+### Connected identity monitoring batch
+
+- [ ] Complete [Microsoft 365 acceptance](connected-identity-monitoring.md) with a fictional test tenant before setting `REGPILOT_MICROSOFT365_ENABLED=true` for customer access.
+- [ ] Confirm tenant binding, least-privilege admin consent, report licensing/freshness, multi-page collection, credential rotation and revocation with the actual Microsoft service.
+- [ ] Verify before/after changes, owner task deduplication, retry/pause and historical exports through authenticated mobile and desktop sessions. A stalled worker is shown as stale; this batch does not deliver external alerts.
+- [ ] Review transient Microsoft identifiers, encrypted secrets, tenant offboarding, retention/deletion and logs. Only aggregated report observations may be retained.
+- [ ] Confirm the existing worker trigger runs reliably at the chosen interval. No new database migration, deployment, scheduler or paid service was activated by this batch.
