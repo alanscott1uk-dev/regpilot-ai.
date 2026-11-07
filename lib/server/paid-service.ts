@@ -73,14 +73,14 @@ export async function executeServiceJob(job:ServiceJob,deps:ServiceDependencies=
    if(!evidenceConfigured())throw new ProviderError("EVIDENCE_DISABLED");
    if(job.status==="PROCESSING"){
     const file=await downloadEvidence(ctx,job.targetId!,deps.storage);if(file.sha256!==job.sourceHash)throw new ProviderError("SOURCE_CHANGED");await transaction(ctx,tx=>assertJob(tx,job));const operation=await (deps.start||startOcr)(file.bytes,job.units);
-    return transaction(ctx,async tx=>{await assertJob(tx,job);await tx.serviceJob.update({where:{id:job.id},data:{status:"POLLING",result:j({operation}),resultHash:hashValue({operation}),leaseToken:null,leaseUntil:new Date(Date.now()+15000)}});return "POLLING";});
+    return await transaction(ctx,async tx=>{await assertJob(tx,job);await tx.serviceJob.update({where:{id:job.id},data:{status:"POLLING",result:j({operation}),resultHash:hashValue({operation}),leaseToken:null,leaseUntil:new Date(Date.now()+15000)}});return "POLLING";});
    }
    if(Date.now()-job.createdAt.getTime()>20*3600000)throw new ProviderError("OCR_OPERATION_EXPIRED");
    if(!job.result||hashValue(job.result)!==job.resultHash)throw new ProviderError("INTEGRITY_FAILED");const operation=(job.result as {operation:string}).operation;result=await (deps.poll||pollOcr)(operation,job.units);
-   if(!result)return transaction(ctx,async tx=>{await assertJob(tx,job);await tx.serviceJob.update({where:{id:job.id},data:{leaseToken:null,leaseUntil:new Date(Date.now()+15000)}});return "POLLING";});
+   if(!result)return await transaction(ctx,async tx=>{await assertJob(tx,job);await tx.serviceJob.update({where:{id:job.id},data:{leaseToken:null,leaseUntil:new Date(Date.now()+15000)}});return "POLLING";});
   }else if(job.kind==="EMAIL")result=await (deps.email||sendReminder)({jobId:job.id,taskId:job.targetId!,recipient:scope.recipient!});
   else result=await (deps.checkout||createCheckout)({jobId:job.id,organizationId:job.organizationId});
-  return transaction(ctx,async tx=>{await assertJob(tx,job);const providerId=(result as {providerId?:string}).providerId;await tx.serviceJob.update({where:{id:job.id},data:{status:"SUCCEEDED",result:j(result),resultHash:hashValue(result),providerId:providerId||null,leaseToken:null,leaseUntil:null}});await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.createdById,action:"services.result_recorded",entityType:"ServiceJob",entityId:job.id,details:{kind:job.kind,resultHash:hashValue(result)}}});return "SUCCEEDED";});
+  return await transaction(ctx,async tx=>{await assertJob(tx,job);const providerId=(result as {providerId?:string}).providerId;await tx.serviceJob.update({where:{id:job.id},data:{status:"SUCCEEDED",result:j(result),resultHash:hashValue(result),providerId:providerId||null,leaseToken:null,leaseUntil:null}});await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.createdById,action:"services.result_recorded",entityType:"ServiceJob",entityId:job.id,details:{kind:job.kind,resultHash:hashValue(result)}}});return "SUCCEEDED";});
  }catch(e){
   if(e instanceof Superseded)return "SUPERSEDED";
   const code=e instanceof ProviderError?e.code:e instanceof IntelligenceError&&[403,409].includes(e.status)?"AUTHORITY_OR_SOURCE_CHANGED":"OUTCOME_UNCERTAIN";
