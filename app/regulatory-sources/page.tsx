@@ -52,7 +52,7 @@ export default function RegulatorySources(){
   <a href="/" style={{color:"#3159df",fontSize:13}}>← Compliance dashboard</a>
   <p style={{fontSize:12,color:"#3159df",fontWeight:800,letterSpacing:1.5,marginTop:30}}>REGPILOT AI / LIVE PUBLIC SOURCES</p>
   <h1 style={{fontSize:"clamp(27px,5vw,38px)",letterSpacing:-1,margin:"6px 0"}}>UK official source coverage</h1>
-  <p style={{color:"#64748b"}}>GOV.UK publications and curated ICO, HSE and FCA pages, refreshed when you open this page and approximately every 15 minutes while it stays open.</p>
+  <p style={{color:"#64748b"}}>GOV.UK publications and selected official UK regulator and public-body pages, refreshed when you open this page and approximately every 15 minutes while it stays open.</p>
   <div style={{background:"#fff8e8",border:"1px solid #e8cf95",borderRadius:12,padding:14,fontSize:13,margin:"20px 0"}}>
    Updates are based on available publisher metadata, not verified changes in legal obligations. Comparisons use this browser's previous successful checks only. Pages without publisher dates need workspace text snapshots for change review. This public page does not provide background monitoring or licensing-portal access.
   </div>

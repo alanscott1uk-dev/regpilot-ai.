@@ -4,7 +4,13 @@ import type {Observation} from "./observation";
 import {providerReader,validCredential,booleanCheck} from "./bounded-http";
 
 export const gitlabTarget=z.object({projectPath:z.string().max(210).regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_.-]+)+$/).refine(s=>s.split("/").every(p=>p!=="."&&p!=="..")),branch:z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/).refine(s=>!s.includes(".."))});
-function matches(pattern:string,branch:string){const escaped=pattern.split("*").map(v=>v.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")).join(".*");return new RegExp("^"+escaped+"$").test(branch);}
+// Match only GitLab's '*' wildcard without compiling provider text into a regex.
+// Last-star scanning bounds work by the (255 x 120) pattern/branch size limits.
+function matches(pattern:string,branch:string){
+ let p=0,b=0,star=-1,retry=0;
+ while(b<branch.length){if(p<pattern.length&&pattern[p]!=="*"&&pattern[p]===branch[b]){p++;b++;}else if(pattern[p]==="*"){star=p++;retry=b;}else if(star>=0){p=star+1;b=++retry;}else return false;}
+ while(pattern[p]==="*")p++;return p===pattern.length;
+}
 function noPush(rule:any):boolean|undefined{
  const levels=rule.push_access_levels;if(!Array.isArray(levels)||!levels.length)return undefined;
  let unknown=false;

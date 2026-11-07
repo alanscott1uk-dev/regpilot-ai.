@@ -76,7 +76,7 @@ test("connected supplier reviews freeze signals, require independent review and 
   await changeMember(x.o,{action:"REMOVE",userId:x.editor.id,expectedRole:"EDITOR",replacementId:x.replacement.id});
   assert.equal((await db.vendor.findUniqueOrThrow({where:{id:v.id}})).ownerId,x.replacement.id);assert.equal(await db.obligation.count({where:{vendorSignalId:v.id,status:"OPEN",assigneeId:x.replacement.id}}),1);
   await collect(observation("FAIL"));const restored=await prepare("CONDITIONAL",3);await changeVendor(x.ad,v.id,accept(restored.id),x.store);assert.equal((await vendorDetail(x.o,v.id)).reviewState,"CURRENT");
-  const run=(await vendorDetail(x.o,v.id)).signal!.snapshot!;await db.connectorRun.update({where:{id:run.runId},data:{capturedAt:new Date(Date.now()-25*3600000)}});assert.equal((await vendorDetail(x.o,v.id)).reviewState,"STALE","overdue observation cannot sustain current review");
+  const run=(await vendorDetail(x.o,v.id)).signal!.snapshot!;await db.$executeRaw`UPDATE "ConnectorRun" SET "capturedAt"="capturedAt"-interval '25 hours' WHERE "connectorId"=${saved.id}::uuid`;assert.equal((await vendorDetail(x.o,v.id)).reviewState,"STALE","overdue observation cannot sustain current review");
   await db.connectorRun.update({where:{id:run.runId},data:{capturedAt:new Date()}});
   process.env.REGPILOT_COMPANIES_HOUSE_ENABLED="false";assert.equal((await vendorDetail(x.o,v.id)).reviewState,"STALE");
  }finally{await x.cleanup();}

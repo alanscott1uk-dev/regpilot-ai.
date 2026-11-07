@@ -14,6 +14,8 @@ function gitlabFetch(rules:unknown[],headers:Record<string,string>={}):typeof fe
 test("GitLab collection evaluates permissive overlapping wildcard rules and discards identity/contents",async()=>{
  const t={projectPath:project.path_with_namespace,branch:"main"};let r=await collectGitlab(t,token,gitlabFetch([rule(),rule("*")]));assert.ok(r.checks.every(c=>c.status==="PASS"));assert.doesNotMatch(JSON.stringify(r),/never-retain|owner|PRIVATE-TOKEN|fictional-read-only/);
  r=await collectGitlab(t,token,gitlabFetch([rule(),{...rule("*",true),push_access_levels:[{access_level:0,deploy_key_id:10}]}]));assert.equal(r.checks.find(c=>c.id==="force-push")!.status,"FAIL");assert.equal(r.checks.find(c=>c.id==="direct-push")!.status,"FAIL");
+ r=await collectGitlab(t,token,gitlabFetch([rule(),rule("m.*",true),rule("*a".repeat(100)+"z",true)]));assert.ok(r.checks.every(c=>c.status==="PASS"),"regex punctuation stays literal and hostile wildcard patterns cannot alter unrelated rules");
+ const hostile=gitlabFetch([rule("*"),rule("a*".repeat(100)+"z",true)]),longBranch="a".repeat(120);const bounded=await collectGitlab({...t,branch:longBranch},token,async(u,o)=>String(u).includes("/repository/branches/")?json({name:longBranch,protected:true}):hostile(u,o));assert.ok(bounded.checks.every(c=>c.status==="PASS"));
  r=await collectGitlab(t,token,gitlabFetch([{name:"main"}]));assert.equal(r.checks.find(c=>c.id==="force-push")!.status,"UNKNOWN");assert.equal(r.checks.find(c=>c.id==="direct-push")!.status,"UNKNOWN");
 });
 test("GitLab rejects wrong projects, incomplete/looping pages and unknown protection access",async()=>{

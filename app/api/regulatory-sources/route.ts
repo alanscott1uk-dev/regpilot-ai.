@@ -21,5 +21,5 @@ export async function GET() {
       return {id:source.id,agency:source.agency,topic:source.topic,title:source.title,url:officialSourceUrl(source),updatedAt:null,firstPublishedAt:null,description:"",status:"unavailable"};
     }
   }));
-  return NextResponse.json({source:"GOV.UK Content API and curated ICO, HSE and FCA pages",checkedAt:new Date().toISOString(),disclaimer:"Source metadata only; not proof of a regulatory change or compliance.",results},{headers:{"Cache-Control":"public, s-maxage=900, stale-while-revalidate=3600"}});
+  return NextResponse.json({source:"GOV.UK Content API and selected official UK regulator and public-body pages",checkedAt:new Date().toISOString(),disclaimer:"Source metadata only; not proof of a regulatory change or compliance.",results},{headers:{"Cache-Control":"public, s-maxage=900, stale-while-revalidate=3600"}});
 }
