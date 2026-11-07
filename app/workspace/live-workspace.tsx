@@ -1,0 +1,146 @@
+"use client";
+import { useEffect, useState } from "react";
+import { stagingSupabase } from "../../lib/staging-supabase";
+import DocumentMetadata from "./document-metadata";
+import OrganisationProfile from "./organisation-profile";
+import AssistantPanel from "./assistant-panel";
+import {guideForModule} from "../../lib/workflow-guides.mjs";
+import {suggestRecordNextSteps} from "../../lib/record-next-steps.mjs";
+import {regulatoryReferencesForModule} from "../../lib/regulatory-references.mjs";
+import { filterRecords, recordUrgency } from "../../lib/record-workspace.mjs";
+type Org = {organization_id:string;role:string;organizations:{name:string}|{name:string}[]|null};
+type Row = {id:string;module_id:string;title:string;owner_name:string;due_date:string|null;status:string;evidence_status:string;details?:Record<string,string>};
+export default function LiveWorkspace({onOpenBeta,moduleFilter}:{onOpenBeta:()=>void;moduleFilter?:string}) {
+ const [state,setState]=useState<"loading"|"signed-out"|"no-org"|"ready"|"error">("loading");
+ const [orgs,setOrgs]=useState<Org[]>([]);const [org,setOrg]=useState("");
+ const [rows,setRows]=useState<Row[]>([]);const [error,setError]=useState("");
+ const [filter,setFilter]=useState(moduleFilter??"all");
+ useEffect(()=>{setFilter(moduleFilter??"all");setShowCreate(false);},[moduleFilter]);
+ const [newTitle,setNewTitle]=useState("");
+ const [newOwner,setNewOwner]=useState("");
+ const [newDue,setNewDue]=useState("");
+ const [sopCode,setSopCode]=useState("");
+ const [sopRevision,setSopRevision]=useState("");
+ const [creating,setCreating]=useState(false);
+ const [showCreate,setShowCreate]=useState(false);
+ const [advanced,setAdvanced]=useState(false);
+ const [helpOpen,setHelpOpen]=useState(false);
+ const [guideOpen,setGuideOpen]=useState(false);
+ const [documentPicker,setDocumentPicker]=useState(false);
+ const [profileOpen,setProfileOpen]=useState(false);
+ const [assistantOpen,setAssistantOpen]=useState(false);
+ const [selectedRecord,setSelectedRecord]=useState<string|null>(null);
+ const [query,setQuery]=useState("");
+ const [urgency,setUrgency]=useState("all");
+ const [today,setToday]=useState("2026-10-27");
+ const [reload,setReload]=useState(0);
+ const [updating,setUpdating]=useState<string|null>(null);
+ useEffect(()=>{const d=new Date();setToday([d.getFullYear(),String(d.getMonth()+1).padStart(2,"0"),String(d.getDate()).padStart(2,"0")].join("-"));},[]);
+ useEffect(()=>{
+  let active=true;
+  if(!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY){setError("This preview needs a fresh deployment with Supabase configuration.");setState("error");return;}
+  let db: ReturnType<typeof stagingSupabase>;
+  try { db=stagingSupabase(); } catch {setError("Staging connection is not configured.");setState("error");return;}
+  async function init(){
+   const {data:{user},error:authError}=await db.auth.getUser();
+   if(!active)return;
+   if(authError||!user){setState("signed-out");return;}
+   const {data,error}=await db.from("organization_memberships").select("organization_id,role,organizations(name)");
+   if(!active)return;
+   if(error){setError(error.message);setState("error");return;}
+   const list=(data??[]) as unknown as Org[];
+   setOrgs(list);setOrg(list[0]?.organization_id??"");setState(list.length?"ready":"no-org");
+  }
+  init().catch(()=>{if(active){setState("error");setError("Unable to connect to staging.");}});
+  const {data:{subscription}}=db.auth.onAuthStateChange(()=>{void init();});
+  return()=>{active=false;subscription.unsubscribe();};
+ },[]);
+ useEffect(()=>{
+  if(!org){setRows([]);return;}
+  let active=true;
+  stagingSupabase().from("module_records").select("id,module_id,title,owner_name,due_date,status,evidence_status,details").eq("organization_id",org).order("created_at",{ascending:false}).limit(100).then(({data,error})=>{
+   if(!active)return;if(error){setError(error.message);setState("error");}else setRows((data??[]) as Row[]);
+  });
+  return()=>{active=false;};
+ },[org,reload]);
+ const panel:React.CSSProperties={padding:16,border:"1px solid #dbe3ee",borderRadius:16,background:"white"};
+ if(state==="loading")return <section style={panel} aria-live="polite">Loading your business workspace…</section>;
+ if(state==="signed-out"||state==="no-org")return <section style={panel}><h2>{state==="signed-out"?"Sign in to EAGNEXIS AI":"Create your test organisation"}</h2><p>Access saved records and departmental modules from one secure staging workspace.</p><button onClick={onOpenBeta} style={{padding:12,border:0,borderRadius:10,background:"#2659df",color:"white"}}>Open account setup</button></section>;
+ if(state==="error")return <section style={panel} role="alert"><h2>Unable to load workspace</h2><p>{error}</p></section>;
+ const visible=filterRecords(rows,{module:filter,query,urgency,today}) as Row[];
+ const selected=rows.find(r=>r.id===selectedRecord);
+ const role=orgs.find(o=>o.organization_id===org)?.role;
+ const canEdit=["OWNER","ADMIN","EDITOR"].includes(role??"");
+ async function createRecord(e:React.FormEvent<HTMLFormElement>){e.preventDefault();if(!canEdit||!org)return;setCreating(true);setError("");
+  const {data,error}=await stagingSupabase().from("module_records").insert({organization_id:org,module_id:filter==="all"?"obligations":filter,title:newTitle.trim(),owner_name:newOwner.trim(),due_date:newDue||null,status:"OPEN",notes:"",details:filter==="policies"?{documentCode:sopCode.trim(),revision:sopRevision.trim(),reviewDate:newDue}:{} }).select("id,module_id,title,owner_name,due_date,status,evidence_status").single();
+  if(error)setError(error.message);else{setRows(prev=>[data as Row,...prev]);setNewTitle("");setNewOwner("");setNewDue("");setSopCode("");setSopRevision("");setShowCreate(false);}
+  setCreating(false);
+ }
+ async function changeStatus(record:Row,next:string){if(!canEdit)return;setUpdating(record.id);setError("");const {data,error}=await stagingSupabase().from("module_records").update({status:next}).eq("organization_id",org).eq("id",record.id).select("id,status").single();if(error)setError(error.message);else setRows(prev=>prev.map(r=>r.id===data.id?{...r,status:data.status}:r));setUpdating(null);}
+ const modules=[...new Set([...rows.map(r=>r.module_id),...(moduleFilter?[moduleFilter]:[])])].sort();
+ const attention=rows.filter(r=>r.status!=="COMPLETE"&&["overdue","due-soon"].includes(recordUrgency(r,today)));
+ const missingEvidence=rows.filter(r=>r.evidence_status!=="APPROVED").length;
+ return <section style={{display:"grid",gap:16}}>
+  <div style={panel}><h2 style={{marginTop:0}}>Your business records</h2><p style={{color:"#64748b",fontSize:14}}>See what needs attention, add a task, or review your documents.</p><label style={{display:"flex",alignItems:"center",gap:9,fontSize:14,marginBottom:14}}><input type="checkbox" checked={advanced} onChange={e=>setAdvanced(e.target.checked)}/> Show advanced controls</label><button type="button" onClick={()=>setHelpOpen(v=>!v)} aria-expanded={helpOpen} style={{padding:10,marginBottom:12,display:"block",width:"100%",maxWidth:340,textAlign:"left",border:"1px solid #cbd5e1",borderRadius:9,background:"#f8fafc"}}>{helpOpen?"Hide help":"Need help getting started?"}</button>{helpOpen&&<section aria-label="Getting started guide" style={{padding:14,background:"#eef4ff",borderRadius:12,marginBottom:14}}><strong>Getting started — three easy steps</strong><ol style={{paddingLeft:20,lineHeight:1.8}}><li>Choose your business using the organisation menu.</li><li>Select Add task and describe what needs doing.</li><li>Open a saved task to see its details and linked document register.</li></ol><p style={{fontSize:13,marginBottom:0}}>A completed task does not mean regulatory compliance has been verified. Evidence must be reviewed separately.</p></section>}<label>Organisation<select value={org} onChange={e=>setOrg(e.target.value)} style={{display:"block",padding:11,marginTop:7,width:"100%",maxWidth:440,boxSizing:"border-box",borderRadius:10,border:"1px solid #cbd5e1",background:"#fff"}}>{orgs.map(o=><option key={o.organization_id} value={o.organization_id}>{Array.isArray(o.organizations)?o.organizations[0]?.name:o.organizations?.name??"Organisation"} ({o.role})</option>)}</select></label></div>
+  {!moduleFilter&&<><button type="button" onClick={()=>setAssistantOpen(v=>!v)} aria-expanded={assistantOpen} style={{padding:14,border:0,borderRadius:12,background:"#172d57",color:"#fff",fontWeight:700,textAlign:"left"}}>{assistantOpen?"Hide EAGNEXIS assistant":"Ask EAGNEXIS AI — Get guidance"}</button>{assistantOpen&&<AssistantPanel organizationId={org}/>}</>}
+  {!moduleFilter&&<><button type="button" onClick={()=>setProfileOpen(v=>!v)} aria-expanded={profileOpen} style={{padding:12,border:"1px solid #cbd5e1",borderRadius:11,background:"#fff",textAlign:"left"}}>{profileOpen?"Hide business profile":"Set up business activities & location"}</button>{profileOpen&&<OrganisationProfile orgId={org} canEdit={canEdit}/>}</>}
+  {!moduleFilter&&<div style={{padding:18,borderRadius:16,background:"#eef4ff",border:"1px solid #c7d8ff"}}>
+   <h2 style={{margin:"0 0 6px",fontSize:22}}>What needs your attention?</h2>
+   <p style={{color:"#475569",margin:"0 0 12px",fontSize:14}}>Based on your saved tasks. This is not a legal compliance assessment.</p>
+   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:10}}>
+    <div style={{background:"white",borderRadius:12,padding:13}}><strong style={{fontSize:26}}>{attention.length}</strong><div style={{fontSize:13,color:"#475569"}}>Due soon or overdue</div></div>
+    <div style={{background:"white",borderRadius:12,padding:13}}><strong style={{fontSize:26}}>{missingEvidence}</strong><div style={{fontSize:13,color:"#475569"}}>Without approved evidence</div></div>
+   </div>
+   {attention.length>0?<div style={{marginTop:12}}>{attention.slice(0,3).map(r=><button key={r.id} onClick={()=>setSelectedRecord(r.id)} style={{display:"block",width:"100%",textAlign:"left",background:"white",border:"1px solid #dbe3ee",borderRadius:10,padding:12,marginTop:7}}>{r.title} · {recordUrgency(r,today).replace("-"," ")}</button>)}</div>:<p style={{fontSize:14,marginBottom:0}}>No saved tasks are due within the next seven days or overdue.</p>}
+   </div>}
+  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12}}>{[["Saved records",rows.length],["Open",rows.filter(x=>x.status==="OPEN").length],["In progress",rows.filter(x=>x.status==="IN_PROGRESS").length],["Completed",rows.filter(x=>x.status==="COMPLETE").length]].map(([label,value])=><div key={label} style={panel}><div style={{fontSize:13,color:"#64748b"}}>{label}</div><strong style={{fontSize:27}}>{value}</strong></div>)}</div>
+  {moduleFilter==="policies"&&<section style={{padding:16,borderRadius:14,background:"#eef4ff",border:"1px solid #c7d8ff"}}>
+   <h2 style={{margin:"0 0 6px",fontSize:20}}>Add a test document</h2>
+   <p style={{fontSize:14,margin:"0 0 10px"}}>Choose which task or SOP the document belongs to. You'll then be guided through registration and test upload.</p>
+   <button type="button" onClick={()=>setDocumentPicker(v=>!v)} aria-expanded={documentPicker} style={{padding:12,borderRadius:10,border:0,background:"#2659df",color:"#fff"}}>{documentPicker?"Hide task selection":"Choose a task to upload to"}</button>
+   {documentPicker&&<div style={{display:"grid",gap:8,marginTop:12}}>{rows.length?rows.map(r=><button key={r.id} onClick={()=>{setSelectedRecord(r.id);setDocumentPicker(false);}} style={{padding:12,textAlign:"left",border:"1px solid #cbd5e1",borderRadius:10,background:"#fff"}}>{r.title} — {r.module_id}</button>):<p>No tasks yet. Choose Add task below first.</p>}</div>}
+   <p style={{fontSize:12,color:"#64748b",marginBottom:0}}>Fictional files only. Uploads are quarantined and not approved evidence.</p>
+  </section>}
+  <div style={panel}><div style={{display:"flex",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}><h2 style={{margin:0}}>Your tasks and records</h2><div style={{display:"flex",gap:8}}><button onClick={()=>setReload(v=>v+1)}>Refresh</button>{canEdit&&<button onClick={()=>setShowCreate(v=>!v)}>{showCreate?"Cancel":"Add task"}</button>}</div></div><label style={{display:"block",marginTop:16}}>Module<select style={{display:"block",padding:10,marginTop:5,width:"100%",maxWidth:350}} value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All modules</option>{modules.map(m=><option key={m} value={m}>{m}</option>)}</select></label>
+   {advanced&&<div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:14}}><button type="button" onClick={()=>{setFilter("policies");setShowCreate(false);}}>Policies &amp; SOPs</button><button type="button" onClick={()=>{setFilter("suppliers");setShowCreate(false);}}>Suppliers</button><button type="button" onClick={()=>{setFilter("licences");setShowCreate(false);}}>Licences</button></div>}
+   {showCreate&&canEdit&&<form onSubmit={createRecord} style={{display:"grid",gap:10,padding:16,marginTop:14,background:"#f8fafc",borderRadius:12}}>
+    <strong>Add a task</strong><p style={{fontSize:13,color:"#64748b",margin:0}}>Give the task a name, choose who is responsible and add a date if needed.</p>
+    <label>Action title<input required maxLength={160} value={newTitle} onChange={e=>setNewTitle(e.target.value)} style={{display:"block",padding:10,width:"100%",boxSizing:"border-box"}}/></label>
+    <label>Who is responsible?<input required maxLength={80} value={newOwner} onChange={e=>setNewOwner(e.target.value)} style={{display:"block",padding:10,width:"100%",boxSizing:"border-box"}}/></label>
+    {filter==="policies"&&<><label>Document code<input required maxLength={80} value={sopCode} onChange={e=>setSopCode(e.target.value)} placeholder="SOP-001" style={{display:"block",padding:10,width:"100%",boxSizing:"border-box"}}/></label><label>Revision<input required maxLength={30} value={sopRevision} onChange={e=>setSopRevision(e.target.value)} placeholder="1.0" style={{display:"block",padding:10,width:"100%",boxSizing:"border-box"}}/></label><p style={{fontSize:12,color:"#64748b"}}>This saves SOP metadata only. No document file or approval is stored.</p></>}
+    <label>When should this be reviewed?<input type="date" value={newDue} onChange={e=>setNewDue(e.target.value)} style={{display:"block",padding:10,width:"100%",boxSizing:"border-box"}}/></label>
+    <button disabled={creating} style={{padding:11,background:"#2659df",color:"white",border:0,borderRadius:10}}>{creating?"Saving…":"Save action"}</button>
+   </form>}
+   {advanced&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10,marginTop:12}}>
+    <label>Search<input aria-label="Search records" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Title, owner or module" style={{display:"block",padding:10,width:"100%",boxSizing:"border-box",marginTop:5}}/></label>
+    <label>Deadline<select aria-label="Deadline filter" value={urgency} onChange={e=>setUrgency(e.target.value)} style={{display:"block",padding:10,width:"100%",marginTop:5}}><option value="all">All deadlines</option><option value="overdue">Overdue</option><option value="due-soon">Due within 7 days</option><option value="upcoming">Due within 30 days</option><option value="undated">No date</option><option value="complete">Complete</option></select></label>
+   </div>}
+   {selected&&guideOpen&&<section aria-label="Guided next steps" style={{padding:16,marginTop:12,border:"1px solid #cbd5e1",borderRadius:12,background:"#fff"}}>
+    <h3 style={{margin:"0 0 8px"}}>{guideForModule(selected.module_id).title}</h3>
+    <ol style={{paddingLeft:22,lineHeight:1.8,fontSize:14}}>
+     {guideForModule(selected.module_id).steps.map((step:string,i:number)=><li key={i}>{step}</li>)}
+    </ol>
+    <p style={{fontSize:12,color:"#64748b",marginBottom:0}}>This is general workflow guidance, not a determination of regulatory compliance.</p>
+   </section>}
+   {selected&&<aside style={{border:"1px solid #c7d8ff",background:"#f4f7ff",borderRadius:14,padding:16,marginTop:16}} aria-label="Selected action details">
+    <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"center"}}><h3 style={{margin:0}}>{selected.title}</h3><button onClick={()=>{setSelectedRecord(null);setGuideOpen(false);}}>Close</button></div>
+    <div style={{padding:12,borderRadius:10,background:"#fff",border:"1px solid #dbe3ee",margin:"10px 0"}}><strong>Suggested next steps</strong>{suggestRecordNextSteps(selected,today).map((x:{id:string;text:string})=><p key={x.id} style={{fontSize:13,margin:"8px 0"}}>{x.text}</p>)}</div>
+    <p style={{fontSize:13,color:"#475569"}}>Owner: {selected.owner_name} · Module: {selected.module_id} · Due: {selected.due_date??"Not set"}</p>
+    <button type="button" onClick={()=>setGuideOpen(v=>!v)} aria-expanded={guideOpen} style={{display:"block",padding:10,marginBottom:12,borderRadius:9,border:"1px solid #cbd5e1",background:"#fff"}}>{guideOpen?"Hide next steps":"Guide me through this task"}</button><strong>Supporting evidence — {selected.evidence_status==="APPROVED"?"Approved":selected.evidence_status==="PENDING_REVIEW"?"Pending review":selected.evidence_status==="REJECTED"?"Rejected":"Not submitted"}</strong>
+    <p style={{fontSize:13,color:"#64748b"}}>Test-file uploads are available below in private quarantine. Files are not scanned or approved; do not upload real business documents.</p>
+    {advanced&&regulatoryReferencesForModule(selected.module_id).length>0&&<section style={{background:"#fff",border:"1px solid #dbe3ee",padding:12,borderRadius:10,marginTop:12}}>
+     <strong>Regulatory reference library</strong>
+     <p style={{fontSize:12,color:"#64748b"}}>These are potential references for professional review, not confirmed legal obligations.</p>
+     {regulatoryReferencesForModule(selected.module_id).map((r:{id:string;title:string;regulator:string;url:string;status:string})=><div key={r.id} style={{padding:"8px 0",borderBottom:"1px solid #e2e8f0",fontSize:13}}><a href={r.url} target="_blank" rel="noopener noreferrer">{r.regulator}: {r.title}</a><div style={{color:"#64748b"}}>{r.status.replaceAll("_"," ").toLowerCase()}</div></div>)}
+    </section>}
+    <DocumentMetadata orgId={org} actionId={selected.id} canEdit={canEdit} moduleId={selected.module_id}/>
+    <button onClick={onOpenBeta}>Open record management</button>
+   </aside>}
+   {error&&<p role="alert" style={{color:"#b91c1c"}}>{error}</p>}
+   <p style={{fontSize:13,color:"#64748b"}}>{visible.length} of {rows.length} records · Ordered by due date and urgency</p>
+   <p style={{fontSize:13,color:"#475569",margin:"12px 0"}}>Select a task name below to see its details, supporting documents and next steps. Use Add task to create a new one.</p>
+   {moduleFilter==="policies"&&<p style={{fontSize:13,padding:12,background:"#eef4ff",borderRadius:10}}>To upload a test document: select a saved SOP or task below, then follow the two-step upload form. If no record exists, choose Add task first.</p>}
+   {visible.length===0?<p style={{color:"#64748b"}}>Nothing here yet. Choose Add task to create your first record, or change the module filter.</p>:visible.map(r=><article key={r.id} style={{padding:"15px 0",borderBottom:"1px solid #e2e8f0"}}><button onClick={()=>setSelectedRecord(r.id)} style={{background:"transparent",border:0,padding:0,fontWeight:750,color:"#2144a4",cursor:"pointer",textAlign:"left"}}>{r.title}</button><div style={{fontSize:13,color:"#64748b"}}>{r.module_id} · {r.owner_name} {r.module_id==="policies"&&r.details?.documentCode?" · "+r.details.documentCode+" rev "+(r.details.revision??""):""} · {r.due_date??"No review date"} · {recordUrgency(r,today).replace("-"," ")} · Evidence: {r.evidence_status==="APPROVED"?"approved":r.evidence_status==="PENDING_REVIEW"?"pending review":r.evidence_status==="REJECTED"?"rejected":"not submitted"}</div>{canEdit?<label style={{display:"block",marginTop:10,fontSize:13}}>Status <select aria-label={"Status for "+r.title} value={r.status} disabled={updating===r.id} onChange={e=>void changeStatus(r,e.target.value)}><option value="OPEN">Open</option><option value="IN_PROGRESS">In progress</option><option value="COMPLETE">Complete</option></select></label>:<span style={{fontSize:12}}>Status: {r.status}</span>}</article>)}
+  </div>
+ </section>;
+}

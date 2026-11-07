@@ -1,0 +1,24 @@
+name: Release assurance
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  release-assurance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Check documented release controls
+        id: assurance
+        run: node scripts/check-release.mjs assurance/release-evidence.json assurance/release-report.json
+      - name: Upload evidence gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assurance-report
+          path: assurance/release-report.json
+          if-no-files-found: warn
