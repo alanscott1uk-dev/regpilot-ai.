@@ -6,8 +6,8 @@ The current development branch contains authenticated workspace, regulatory moni
 
 - Unit, HTTP gate, parser, provider-adapter and grounding tests.
 - Prisma validation and generation; full additive migration chain on disposable PostgreSQL 17; zero schema drift.
-- Default-deny checks for all 32 private tables and PostgreSQL integration workflows, including tenant boundaries, independent reviews, stored-byte integrity, concurrent jobs, revoked permissions, redaction and duplicate prevention.
-- Production build; isolated PDF extraction from all ten traced route packages and Word extraction from nine independently packaged routes; 18-page and gated-API smoke checks; dependency audit.
+- Default-deny checks for all 41 private tables and PostgreSQL integration workflows, including tenant boundaries, independent reviews, stored-byte integrity, concurrent jobs, revoked permissions, redaction and duplicate prevention.
+- Production build; isolated PDF extraction from all ten traced route packages and Word extraction from nine independently packaged routes; 23-page and gated-API smoke checks; dependency audit.
 
 ## Service acceptance before release
 
@@ -69,3 +69,13 @@ For Word/document inspection release acceptance, follow [Document understanding]
 - Run a fictional-data browser pilot: independent policy publication, staff download and acknowledgement, replacement policy history; supplier assessment, independent sign-off, follow-up handover, expired/stale reviews and archive.
 - Keep paid services, connector schedules and Vercel previews disabled until their separate activation is authorised.
 - Policy acknowledgements are not training certification. Supplier checks are internal review prompts, not validated regulatory mappings. Never advertise these development modules as verified live operation.
+
+
+## Audit requests, Google Workspace and official web sources
+
+- Apply `audit-evidence-requests.sql` after `people-vendor-assurance.sql`; verify zero schema drift and all 41 private tables protected.
+- Follow [the batch acceptance runbook](audit-period-and-coverage.md). Complete request → owned task → independently reviewed upload → sample/period submission → independent acceptance → disclosure preview → publish → guest download using fictional accounts.
+- Check stale controls/files, permissions changed during retrieval, request cancellation, unresolved requests, room expiry and historical package downloads in desktop/mobile sessions.
+- Keep `REGPILOT_GOOGLE_WORKSPACE_ENABLED=false`. Before separate activation, validate the read-only OAuth scopes, customer binding, pagination, missing fields, credential rotation and revoked consent against a dedicated synthetic Google tenant.
+- Confirm the selected ICO, HSE and FCA pages remain retrievable and meaningful. ICO returned HTTP 403 from the development environment; never count that as successful monitoring. Source excerpts and proposed mappings still require qualified applicability/interpretation review.
+- Browser QA is pending: the managed preview runner injected unsupported Vite options into `next dev`. No framework change or deployment was made to work around it.

@@ -4,8 +4,8 @@ Administrators prepare a deliberate external disclosure at `/team/audits`. Named
 
 ## Complete workflow
 
-1. Create a task, upload fictional evidence and obtain an independent owner/admin review. Only clean, independently approved files are eligible. The selection screen links back to these steps if no eligible files exist.
-2. Choose up to 50 files, a room title, a clear purpose and expiry within 90 days. Preparing a draft freezes file metadata and related task titles. Later uploads never join the share automatically.
+1. Create a task, upload fictional evidence and obtain an independent owner/admin review. Only clean, independently approved files are eligible. Alternatively, define an audit period and prepare an empty draft, then use control-linked requests to collect evidence.
+2. Choose up to 50 files, a room title, a clear purpose, an audit period and expiry within 90 days. Preparing a draft freezes file metadata and related task titles. Later uploads never join the share automatically.
 3. Preview the exact disclosure. Publish requires the current room version, manifest fingerprint and explicit disclosure acknowledgement. Changed evidence prevents publication. The owner must check document contents, names and task titles for disclosure suitability.
 4. Create up to ten email-bound guest invitations. A seven-day invitation acceptance deadline is capped by room expiry. Share the ordinary `/auditor` address manually; there are no bearer-token links or automatic invitation emails. The guest must already be an approved, verified pilot Auth account. Add `/auditor` and `/team/audits` to the approved Auth redirect list when activating staging.
 5. Once accepted, the reviewer can see the fixed manifest and download selected current files until room expiry or revocation. They can ask general or file-specific questions. Administrators answer, the reviewer resolves, and the reviewer can reopen. Previous responses are retained and visible in that question's history; other guests cannot see these conversations.
@@ -29,3 +29,8 @@ Apply `prisma/changes/auditor-workspace.sql` after `paid-services.sql` on a revi
 Tests cover explicit disclosure, unpublished/expired rooms, cross-tenant identifiers, verified-email collisions, acceptance races, no membership escalation, private question threads, retained replies, later uploads excluded, manifest/review changes, corrupt bytes, quarantine/revocation/expiry/issuer removal during downloads and composite foreign-key boundaries. HTTP tests cover activation gates, uncached errors, authentication before body parsing and rejection of forged guest identity. PostgreSQL tests use a disposable GitHub CI database; Auth, scanner and object storage use fictional injected fixtures.
 
 The private-service switches and every paid integration remain disabled. This code does not buy services, activate subscriptions, send invitations, run paid calls or enable Vercel previews. It is not live customer operation, formal certification, qualified legal validation or demonstrated competitor parity. Signed-in desktop/mobile acceptance against actual Auth and Storage, retention/erasure, provider session revocation guarantees, penetration testing and production migration remain release work.
+
+
+## Audit-period requests
+
+See [Audit periods and wider coverage](audit-period-and-coverage.md) for the added owned-request workflow, submission history, independently accepted samples and JSON package index. The current UI requires an explicit period; legacy file-only manifests remain readable. Empty period drafts cannot publish. Request acceptance only changes the draft; external access still requires deliberate publication and a named invitation.

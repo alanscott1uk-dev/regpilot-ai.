@@ -44,7 +44,7 @@ export default function TeamEvidence(){
     if(active.current.userId!==d.userId){setRows([]);setTasks([]);setTaskId("");}
     setUser({id:d.userId||"",email:d.email});
     const list:Array<Org>=d.organisations||[];
-    setOrgs(list);setOrgId(prev=>list.find(x=>x.id===prev)?prev:list[0]?.id||"");
+    setOrgs(list);setOrgId(prev=>list.find(x=>x.id===prev)?prev:list.find(x=>x.id===new URLSearchParams(window.location.search).get("organizationId"))?.id||list[0]?.id||"");
    }catch(e){if(alive&&seq===sequence){setUser(null);setOrgs([]);setOrgId("");setRows([]);setTasks([]);setTaskId("");setNotice(e instanceof Error?e.message:"Please sign in from the team workspace");}}
   }
   try{const {data}=browserAuth().auth.onAuthStateChange(event=>{if(event==="SIGNED_OUT"){sequence++;setUser(null);setRows([]);setOrgs([]);setOrgId("");setTasks([]);setTaskId("");active.current={orgId:"",taskId:"",userId:undefined};}else setTimeout(()=>{if(alive)void load()},0);});void load();return()=>{alive=false;sequence++;data.subscription.unsubscribe()}}catch{setEnabled(false);return()=>{alive=false}};

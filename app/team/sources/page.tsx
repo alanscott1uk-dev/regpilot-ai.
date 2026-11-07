@@ -1,4 +1,5 @@
 "use client";
+import {officialSourceUrl} from "../../../lib/regulatory-sources.mjs";
 import {useCallback,useEffect,useMemo,useState,useRef} from "react";
 import {browserAuth} from "../../../lib/client/supabase-auth";
 import {REGULATORY_SOURCES} from "../../../lib/regulatory-sources.mjs";
@@ -88,7 +89,7 @@ export default function OfficialSourceHistory(){
    await request("/api/workspace/obligations",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({organizationId:orgId,title:("Assess publication impact: "+latest.title).slice(0,160),
      category:"Regulatory intelligence",ownerName:owner.trim().slice(0,80),dueDate:nextDate(14),
-     notes:"Review the actual GOV.UK publication text differences and identify any practical impact. A text change does NOT establish a new legal obligation.",
+     notes:"Review the actual official publication text differences and identify any practical impact. A text change does NOT establish a new legal obligation.",
      sourceUrl:latest.url,sourceCheckedAt:nextDate(0)})});
    setMessage("A human-requested follow-up task was created in the private team queue.");
   }catch(e){setMessage(e instanceof Error?e.message:"Could not create a follow-up task")}
@@ -99,12 +100,12 @@ export default function OfficialSourceHistory(){
    <a href="/workbench" className={shell.logo}><span className={shell.logoMark}>R</span><span>RegPilot <b>AI</b><small>REGULATORY SOURCE HISTORY</small></span></a>
    <div className={shell.sideCaption}>WORKSPACE</div>
    <nav className={shell.sideNav}><a href="/team/library">◇ &nbsp;Obligation library</a><a href="/team">▤ &nbsp;Team tasks</a><a href="/team/intelligence">◈ &nbsp;Regulatory inbox</a><a href="/team/evidence">▣ &nbsp;Evidence vault</a><a href="/intelligence">✦ &nbsp;Prototype intelligence</a><a className={shell.active} href="/team/sources" aria-current="page">◈ &nbsp;Source history</a><a href="/ai">◇ &nbsp;AI Studio</a></nav>
-   <div className={shell.sideFoot}><strong>Publication checks</strong><p>Compares text from your registered GOV.UK publications. It does not autonomously monitor all UK regulations or determine legal effects.</p></div>
+   <div className={shell.sideFoot}><strong>Publication checks</strong><p>Compares text from your selected official publications. It does not autonomously monitor all UK regulations or determine legal effects.</p></div>
   </aside>
   <main className={shell.main}>
    <div className={shell.topbar}><span className={shell.crumb}>Private workspace / Official source history</span><span className={shell.demo}>MANUAL CHECK · STAGING PILOT</span></div>
    <header className={ui.hero}><div><span>REGPILOT / REGULATORY CHANGE INTELLIGENCE</span><h1>Know what changed.<br/><em>Verify what it means.</em></h1><p>Capture the text of an official publication, compare future versions and give every potential change a named reviewer.</p></div><div className={ui.heroGlyph}>✦</div></header>
-   <div className={shell.warning}><strong>A changed publication is not automatically a changed law.</strong> This checks textual differences on your selected GOV.UK publications. Human applicability and effective-date assessment are mandatory.</div>
+   <div className={shell.warning}><strong>A changed publication is not automatically a changed law.</strong> This checks textual differences on your selected official publications. Human applicability and effective-date assessment are mandatory.</div>
    {message&&<div className={ui.notice} role="status">{message}</div>}
    {!user&&<div className={ui.card}>Sign in via the <a href="/team">private team workspace</a> before checking official sources.</div>}
    {user&&organisations.length>0&&<>
@@ -113,12 +114,12 @@ export default function OfficialSourceHistory(){
      <div><label>Organisation<select disabled={busy} value={orgId} onChange={e=>setOrgId(e.target.value)}>{organisations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></label></div>
     </section>
     <section className={ui.layout}>
-     <div className={ui.catalog}><div className={ui.heading}><span>01 / GOV.UK CATALOGUE</span><h2>Choose a publication</h2><a href="/team/library">Find and register publications ↗</a><p>Choose a seed reference or a publication registered by your organisation.</p></div>
+     <div className={ui.catalog}><div className={ui.heading}><span>01 / OFFICIAL SOURCE CATALOGUE</span><h2>Choose a publication</h2><a href="/team/library">Find and register publications ↗</a><p>Choose a seed reference or a publication registered by your organisation.</p></div>
       {catalogue.map(src=><button key={src.id} type="button" onClick={()=>{setSelected(src.id);setLastResult(null)}} className={selected===src.id?ui.selected:ui.source}>
        <span>{src.agency} · {src.topic}</span><strong>{src.title}</strong></button>)}
      </div>
      <div className={ui.detail}><div className={ui.heading}><span>02 / TEXT-BASED VERSION CHECK</span><h2>{activeSource?.title}</h2><p>Manual, versioned publication snapshots for your organisation.</p></div>
-      <div className={ui.line}><a href={"https://www.gov.uk"+(activeSource?.path||"")} target="_blank" rel="noopener noreferrer">Open source on GOV.UK ↗</a>
+      <div className={ui.line}><a href={activeSource?officialSourceUrl(activeSource):"/team/sources"} target="_blank" rel="noopener noreferrer">Open official source ↗</a>
        {canCheck&&<button type="button" disabled={busy} onClick={()=>void check()}>{busy?"Checking…":latest?"Compare latest text":"Create first baseline"}</button>}
       </div>
       {latest?<div className={ui.snapshot}><div className={ui.versionHead}><span>{latest.reviewStatus.replaceAll("_"," ")}</span><span>{latest.contentHash.slice(0,14)}…</span></div>

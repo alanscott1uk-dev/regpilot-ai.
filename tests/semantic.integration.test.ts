@@ -43,9 +43,14 @@ test("semantic workflow: consent, single reservation, tenant isolation, independ
     const before=calls;await assert.rejects(()=>createSemanticRun(ctx,snapshot.id,true,generate),(e:any)=>e.status===409);assert.equal(calls,before,"failed attempts are never silently replayed");
     const activity=await semanticActivity(ctx);assert.equal(activity.filter(r=>r.status==="FAILED").length,2);assert.doesNotMatch(JSON.stringify(activity),/credential/);
     assert.equal((await semanticActivity({...ctx,organizationId:ids[1]})).length,0);
+    // Curated non-GOV.UK snapshots follow the same grounding/review flow; URL identity remains exact.
+    const web=await db.regulatorySnapshot.create({data:{organizationId:ctx.organizationId,sourceId:"hse-risk-controls",title:"Fictional HSE-shaped source fixture",url:"https://example.invalid/wrong",bodyText:text,contentHash:sourceTextHash(text),capturedById:ctx.userId}});
+    await assert.rejects(()=>createSemanticRun(ctx,web.id,true,generate),(e:any)=>e.status===409);
+    await db.regulatorySnapshot.update({where:{id:web.id},data:{url:"https://www.hse.gov.uk/simple-health-safety/risk/steps-needed-to-manage-risk.htm"}});
+    assert.equal((await createSemanticRun(ctx,web.id,true,generate)).reused,false);
     await saveBusinessProfile(ctx,profile,3);
     await assert.rejects(()=>createSemanticRun(ctx,snapshot.id,true,async()=>{await db.membership.delete({where:{organizationId_userId:{organizationId:ctx.organizationId,userId:ctx.userId}}});return output;}),(e:any)=>e.status===403);
-    assert.equal(await db.intelligenceRun.count({where:{organizationId:ids[0]}}),1);
+    assert.equal(await db.intelligenceRun.count({where:{organizationId:ids[0]}}),2);
   }finally{
     await db.intelligenceDecision.deleteMany({where:{organizationId:{in:ids}}});await db.semanticRequest.deleteMany({where:{organizationId:{in:ids}}});await db.intelligenceRun.deleteMany({where:{organizationId:{in:ids}}});await db.businessProfile.deleteMany({where:{organizationId:{in:ids}}});
     await db.auditEvent.deleteMany({where:{organizationId:{in:ids}}});await db.aiDailyUsage.deleteMany({where:{organizationId:{in:ids}}});await db.obligation.deleteMany({where:{organizationId:{in:ids}}});await db.regulatorySnapshot.deleteMany({where:{organizationId:{in:ids}}});await db.membership.deleteMany({where:{organizationId:{in:ids}}});await db.organization.deleteMany({where:{id:{in:ids}}});await db.user.deleteMany({where:{id:{in:users.map(u=>u.id)}}});

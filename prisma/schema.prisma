@@ -46,6 +46,8 @@ enum ReviewStatus {
 }
 
 model User {
+ auditSubmissions AuditRequest[] @relation("AuditRequestSubmitter")
+ auditRequestReviews AuditRequest[] @relation("AuditRequestReviewer")
   id          String       @id @default(uuid()) @db.Uuid
   externalId  String       @unique
   email       String       @unique
@@ -96,6 +98,7 @@ model User {
 }
 
 model Organization {
+ auditRequests AuditRequest[]
   id          String       @id @default(uuid()) @db.Uuid
   name        String
   createdAt   DateTime     @default(now())
@@ -240,6 +243,7 @@ model Membership {
 }
 
 model Obligation {
+ auditRequest AuditRequest?
   id             String           @id @default(uuid()) @db.Uuid
   organizationId String           @db.Uuid
   title          String
@@ -547,6 +551,7 @@ model ProgrammeImport {
 }
 
 model ManagedControl {
+ auditRequests AuditRequest[]
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid
  importId String @db.Uuid
@@ -763,6 +768,7 @@ model CoverageDecision {
 // External reviewers never acquire workspace membership. The manifest is a fixed,
 // deliberately selected disclosure; live evidence is revalidated at every download.
 model AuditRoom {
+ requests AuditRequest[]
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid
  createdById String @db.Uuid
@@ -924,4 +930,35 @@ model VendorReview {
  reviewer User? @relation("VendorReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
  @@unique([id,organizationId])
  @@index([organizationId,vendorId,createdAt])
+}
+
+// Administrative evidence requests. Acceptance is not a control-effectiveness verdict.
+model AuditRequest {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ roomId String @db.Uuid
+ taskId String @unique @db.Uuid
+ controlId String @db.Uuid
+ controlSnapshot Json
+ controlHash String @db.VarChar(64)
+ title String @db.VarChar(160)
+ instructions String @db.VarChar(1600)
+ status String @default("OPEN") @db.VarChar(24)
+ submission Json?
+ submissionHash String? @db.VarChar(64)
+ submittedById String? @db.Uuid
+ reviewerId String? @db.Uuid
+ reviewNotes String @default("") @db.VarChar(1600)
+ history Json @default("[]")
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ reviewedAt DateTime?
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ room AuditRoom @relation(fields:[roomId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ task Obligation @relation(fields:[taskId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ control ManagedControl @relation(fields:[controlId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ submitter User? @relation("AuditRequestSubmitter",fields:[submittedById],references:[id],onDelete:Restrict)
+ reviewer User? @relation("AuditRequestReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+ @@unique([taskId,organizationId])
+ @@index([organizationId,roomId,status])
 }

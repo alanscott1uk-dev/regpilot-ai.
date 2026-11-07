@@ -51,10 +51,10 @@ export default function RegulatorySources(){
  return <main style={{maxWidth:940,margin:"auto",padding:"24px 16px 60px",fontFamily:"Arial,sans-serif",color:"#17253b",lineHeight:1.5}}>
   <a href="/" style={{color:"#3159df",fontSize:13}}>← Compliance dashboard</a>
   <p style={{fontSize:12,color:"#3159df",fontWeight:800,letterSpacing:1.5,marginTop:30}}>REGPILOT AI / LIVE PUBLIC SOURCES</p>
-  <h1 style={{fontSize:"clamp(27px,5vw,38px)",letterSpacing:-1,margin:"6px 0"}}>MHRA & Home Office updates</h1>
-  <p style={{color:"#64748b"}}>Direct links to official GOV.UK publications, refreshed when you open this page and approximately every 15 minutes while it stays open.</p>
+  <h1 style={{fontSize:"clamp(27px,5vw,38px)",letterSpacing:-1,margin:"6px 0"}}>UK official source coverage</h1>
+  <p style={{color:"#64748b"}}>GOV.UK publications and curated ICO, HSE and FCA pages, refreshed when you open this page and approximately every 15 minutes while it stays open.</p>
   <div style={{background:"#fff8e8",border:"1px solid #e8cf95",borderRadius:12,padding:14,fontSize:13,margin:"20px 0"}}>
-   Updates are based on GOV.UK publication metadata, not verified changes in legal obligations. Comparisons use this browser's previous successful checks only. No background server monitoring or licensing-portal access is active.
+   Updates are based on available publisher metadata, not verified changes in legal obligations. Comparisons use this browser's previous successful checks only. Pages without publisher dates need workspace text snapshots for change review. This public page does not provide background monitoring or licensing-portal access.
   </div>
   <button type="button" disabled={loading} onClick={()=>void refresh()} style={{border:0,background:"#3159df",color:"white",borderRadius:9,padding:"11px 17px",fontWeight:700,cursor:"pointer"}}>{loading?"Checking official sources…":"Check for updates now"}</button>
   {error&&<p role="alert" style={{color:"#b45309"}}>{error}</p>}

@@ -8,6 +8,7 @@ import {IntelligenceError,transaction} from "./intelligence-service";
 import {requireMember,ADMIN} from "./workspace-member";
 import {encryptConnectorSecret,decryptConnectorSecret} from "./connector-secret";
 import {collectGithub,githubTarget,CollectionError} from "../connectors/github";
+import {collectGoogleWorkspace,googleTarget,googleCredentials} from "../connectors/google-workspace";
 import {collectMicrosoft365,microsoftTarget} from "../connectors/microsoft365";
 import {observationOutcome,observationCurrent,signalChanges,type Observation} from "../connectors/observation";
 import {hashValue} from "../regulatory/intelligence";
@@ -15,6 +16,8 @@ const j=(v:unknown)=>v as Prisma.InputJsonValue;
 export const connectorsEnabled=()=>workspaceConfigured()&&process.env.REGPILOT_CONNECTORS_ENABLED==="true"&&/^[a-f\d]{64}$/i.test(process.env.REGPILOT_CONNECTOR_ENCRYPTION_KEY||"");
 const schema=githubTarget.extend({provider:z.literal("GITHUB").default("GITHUB"),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().regex(/^github_pat_[A-Za-z0-9_]{20,240}$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)])});
 export const microsoft365Enabled=()=>connectorsEnabled()&&process.env.REGPILOT_MICROSOFT365_ENABLED==="true";
+export const googleWorkspaceEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_GOOGLE_WORKSPACE_ENABLED==="true";
+const googleSchema=googleTarget.extend({provider:z.literal("GOOGLE_WORKSPACE"),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:googleCredentials.shape.clientSecret.optional(),refreshToken:googleCredentials.shape.refreshToken.optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)}).refine(v=>!!v.clientSecret===!!v.refreshToken,"Rotate both Google credentials together");
 const microsoftSchema=microsoftTarget.extend({provider:z.literal("MICROSOFT365"),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:z.string().min(16).max(512).regex(/^[^\r\n\0]+$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)});
 type Collector=(target:{provider?:string;repository:string;branch:string},secret:string)=>Promise<Observation>;
 export const collectConfiguredConnector:Collector=async(target,secret)=>{
@@ -24,14 +27,21 @@ export const collectConfiguredConnector:Collector=async(target,secret)=>{
   if(!target.repository.startsWith("microsoft365:"))throw new CollectionError("INVALID_TARGET");
   return collectMicrosoft365({tenantId:target.repository.slice(13),clientId:target.branch},secret);
  }
+ if(target.provider==="GOOGLE_WORKSPACE"){
+  if(!googleWorkspaceEnabled())throw new CollectionError("PROVIDER_DISABLED");
+  if(!target.repository.startsWith("googleworkspace:"))throw new CollectionError("INVALID_TARGET");
+  return collectGoogleWorkspace({customerId:target.repository.slice(16),clientId:target.branch},secret);
+ }
  throw new CollectionError("PROVIDER_UNSUPPORTED");
 };
 export async function saveConnector(ctx:AuthorizedContext,input:unknown){
  if(!connectorsEnabled())throw new IntelligenceError("Evidence connectors await activation",503);
- const microsoft=(input as {provider?:string})?.provider==="MICROSOFT365";
- const parsed=(microsoft?microsoftSchema:schema).safeParse(input);if(!parsed.success)throw new IntelligenceError("Check the provider, target, credentials, control and version");
+ const provider=(input as {provider?:string})?.provider,microsoft=provider==="MICROSOFT365",google=provider==="GOOGLE_WORKSPACE";
+ const parsed=(google?googleSchema:microsoft?microsoftSchema:schema).safeParse(input);if(!parsed.success)throw new IntelligenceError("Check the provider, target, credentials, control and version");
  if(microsoft&&!microsoft365Enabled())throw new IntelligenceError("Microsoft 365 collection awaits activation",503);
- const raw=parsed.data;const v=raw.provider==="MICROSOFT365"?{...raw,repository:"microsoft365:"+raw.tenantId.toLowerCase(),branch:raw.clientId.toLowerCase(),token:raw.clientSecret}:raw;
+ if(google&&!googleWorkspaceEnabled())throw new IntelligenceError("Google Workspace collection awaits activation",503);
+ const raw=parsed.data;const v=raw.provider==="MICROSOFT365"?{...raw,repository:"microsoft365:"+raw.tenantId.toLowerCase(),branch:raw.clientId.toLowerCase(),token:raw.clientSecret}:raw.provider==="GOOGLE_WORKSPACE"?{...raw,repository:"googleworkspace:"+raw.customerId,branch:raw.clientId,token:raw.clientSecret?JSON.stringify({clientSecret:raw.clientSecret,refreshToken:raw.refreshToken}):undefined}:raw;
+ const repository=google?v.repository:v.repository.toLowerCase();
  return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);
   const control=await tx.managedControl.findFirst({where:{id:v.controlId,organizationId:ctx.organizationId,enabled:true}});if(!control)throw new IntelligenceError("Choose an active control from this organisation",404);
   const old=v.id?await tx.evidenceConnector.findFirst({where:{id:v.id,organizationId:ctx.organizationId}}):null;
@@ -39,9 +49,9 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
   if(old&&old.provider!==v.provider)throw new IntelligenceError("Create a separate connection when changing provider",409);
   if((old?.version||0)!==v.version)throw new IntelligenceError("Connector settings changed",409);
   if(!v.token&&!old?.encryptedSecret)throw new IntelligenceError("A restricted provider credential is required");
-  if(old&&!v.token&&(old.repository!==v.repository.toLowerCase()||old.branch!==v.branch))throw new IntelligenceError("Supply a newly scoped credential when changing target");
+  if(old&&!v.token&&(old.repository!==repository||old.branch!==v.branch))throw new IntelligenceError("Supply a newly scoped credential when changing target");
   if(!old&&await tx.evidenceConnector.count({where:{organizationId:ctx.organizationId}})>=20)throw new IntelligenceError("Connector limit reached",429);
-  const id=old?.id||randomUUID();const data={provider:v.provider,controlId:v.controlId,repository:v.repository.toLowerCase(),branch:v.branch,configuredById:ctx.userId,enabled:v.enabled,intervalHours:v.intervalHours,encryptedSecret:v.token?encryptConnectorSecret(v.token,ctx.organizationId,id):old!.encryptedSecret,nextRunAt:new Date(),leaseToken:null,leaseUntil:null,attempts:0,failureCode:null};
+  const id=old?.id||randomUUID();const data={provider:v.provider,controlId:v.controlId,repository,branch:v.branch,configuredById:ctx.userId,enabled:v.enabled,intervalHours:v.intervalHours,encryptedSecret:v.token?encryptConnectorSecret(v.token,ctx.organizationId,id):old!.encryptedSecret,nextRunAt:new Date(),leaseToken:null,leaseUntil:null,attempts:0,failureCode:null};
   if(!old&&await tx.evidenceConnector.findUnique({where:{organizationId_repository_branch:{organizationId:ctx.organizationId,repository:data.repository,branch:data.branch}}}))throw new IntelligenceError("This target already has a connector",409);
   const saved=old?await tx.evidenceConnector.update({where:{id},data:{...data,version:{increment:1}}}):await tx.evidenceConnector.create({data:{id,organizationId:ctx.organizationId,...data}});
   await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"connector.configured",entityType:"EvidenceConnector",entityId:id,details:{version:saved.version,controlId:v.controlId,enabled:v.enabled,credentialRotated:!!v.token}}});return {id,version:saved.version};
@@ -50,7 +60,7 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
 export async function disconnectConnector(ctx:AuthorizedContext,id:string,version:number){return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const changed=await tx.evidenceConnector.updateMany({where:{id,organizationId:ctx.organizationId,version},data:{enabled:false,encryptedSecret:null,leaseToken:null,leaseUntil:null,version:{increment:1}}});if(!changed.count)throw new IntelligenceError("Connector changed",409);await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"connector.disconnected",entityType:"EvidenceConnector",entityId:id,details:{}}});return {id};});}
 export async function requestConnectorRun(ctx:AuthorizedContext,id:string,version:number){return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const row=await tx.evidenceConnector.findFirst({where:{id,organizationId:ctx.organizationId,version,enabled:true}});if(!row)throw new IntelligenceError("Active connector not found or changed",409);if(row.leaseUntil&&row.leaseUntil>new Date())throw new IntelligenceError("A collection is already running",409);if(row.lastSuccessAt&&Date.now()-row.lastSuccessAt.getTime()<300000)throw new IntelligenceError("Wait five minutes between successful collections",429);await tx.evidenceConnector.update({where:{id},data:{nextRunAt:new Date()}});return {id};});}
 export async function claimConnector():Promise<EvidenceConnector|null>{
- const token=randomUUID(),microsoft=microsoft365Enabled();const rows=await db.$queryRaw<EvidenceConnector[]>`WITH due AS (SELECT id FROM "EvidenceConnector" WHERE enabled=true AND (provider='GITHUB' OR (provider='MICROSOFT365' AND ${microsoft})) AND "encryptedSecret" IS NOT NULL AND "nextRunAt"<=NOW() AND ("leaseUntil" IS NULL OR "leaseUntil"<=NOW()) ORDER BY "nextRunAt",id FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE "EvidenceConnector" c SET "leaseToken"=${token}::uuid,"leaseUntil"=NOW()+interval '90 seconds',attempts=c.attempts+1,"updatedAt"=NOW() FROM due WHERE c.id=due.id RETURNING c.*`;return rows[0]||null;
+ const token=randomUUID(),microsoft=microsoft365Enabled(),google=googleWorkspaceEnabled();const rows=await db.$queryRaw<EvidenceConnector[]>`WITH due AS (SELECT id FROM "EvidenceConnector" WHERE enabled=true AND (provider='GITHUB' OR (provider='MICROSOFT365' AND ${microsoft}) OR (provider='GOOGLE_WORKSPACE' AND ${google})) AND "encryptedSecret" IS NOT NULL AND "nextRunAt"<=NOW() AND ("leaseUntil" IS NULL OR "leaseUntil"<=NOW()) ORDER BY "nextRunAt",id FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE "EvidenceConnector" c SET "leaseToken"=${token}::uuid,"leaseUntil"=NOW()+interval '90 seconds',attempts=c.attempts+1,"updatedAt"=NOW() FROM due WHERE c.id=due.id RETURNING c.*`;return rows[0]||null;
 }
 class Superseded extends Error{}
 async function followUp(tx:Prisma.TransactionClient,job:EvidenceConnector,reason:string){
@@ -63,7 +73,7 @@ async function followUp(tx:Prisma.TransactionClient,job:EvidenceConnector,reason
  return true;
 }
 async function assertJob(tx:Prisma.TransactionClient,job:EvidenceConnector){
- if(!connectorsEnabled()||job.provider==="MICROSOFT365"&&!microsoft365Enabled())throw new Superseded();
+ if(!connectorsEnabled()||job.provider==="MICROSOFT365"&&!microsoft365Enabled()||job.provider==="GOOGLE_WORKSPACE"&&!googleWorkspaceEnabled())throw new Superseded();
  const rows=await tx.$queryRaw<Array<{id:string}>>`SELECT id FROM "EvidenceConnector" WHERE id=${job.id}::uuid AND "organizationId"=${job.organizationId}::uuid AND enabled=true AND version=${job.version} AND "leaseToken"=${job.leaseToken}::uuid AND "leaseUntil">NOW() FOR UPDATE`;
  if(!rows.length)throw new Superseded();
  await requireMember(tx,{organizationId:job.organizationId,userId:job.configuredById,role:"ADMIN"},ADMIN);
