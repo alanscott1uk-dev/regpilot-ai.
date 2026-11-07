@@ -9,19 +9,36 @@
     "db:validate": "prisma validate",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs && node --import tsx --test tests/intelligence.test.ts tests/intelligence-http.test.ts tests/semantic.test.ts tests/monitoring-http.test.ts tests/pdf-extraction.test.ts tests/assurance.test.ts tests/assurance-http.test.ts tests/programme.test.ts tests/connectors.test.ts tests/operations-http.test.ts tests/library.test.ts tests/library-http.test.ts tests/team-access.test.ts tests/document-extraction.test.ts tests/microsoft365.test.ts",
+    "test:integration": "node --import tsx --test --test-concurrency=1 tests/ai-tenancy.integration.test.ts tests/evidence-storage.integration.test.ts tests/regulatory-watch.integration.test.ts tests/intelligence.integration.test.ts tests/monitoring.integration.test.ts tests/semantic.integration.test.ts tests/assurance.integration.test.ts tests/operations.integration.test.ts tests/library.integration.test.ts tests/team-access.integration.test.ts tests/document-workflow.integration.test.ts tests/microsoft365.integration.test.ts",
+    "test:smoke": "node scripts/smoke-private-pilot.mjs",
+    "test:pdf-runtime": "node scripts/check-pdf-runtime.mjs && node scripts/check-docx-runtime.mjs"
   },
   "dependencies": {
-    "next": "14.2.35",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "@prisma/client": "^6.19.0"
+    "@prisma/client": "6.19.3",
+    "@supabase/supabase-js": "2.118.0",
+    "ai": "6.0.320",
+    "next": "15.5.29",
+    "pdfjs-dist": "6.5.438",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "saxes": "6.0.0",
+    "yauzl": "3.4.0",
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "typescript": "^5.7.3",
     "@types/node": "^20.17.0",
-    "@types/react": "^18.3.0",
-    "@types/react-dom": "^18.3.0",
-    "prisma": "^6.19.0"
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "prisma": "6.19.3",
+    "tsx": "4.20.6",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "overrides": {
+    "deepmerge-ts": "8.0.0",
+    "postcss": "8.5.23"
   }
 }
