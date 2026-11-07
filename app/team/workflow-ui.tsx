@@ -4,10 +4,10 @@ import {auditRequest} from "./audits/audit-session";
 export const day=(offset=0)=>new Date(Date.now()+offset*86400000).toISOString().slice(0,10);
 export function useRecordWorkspace<T,D>(resource:"policies"|"vendors",orgId:string){
  const [data,setData]=useState<T|null>(null),[detail,setDetail]=useState<D|null>(null),[selected,setSelected]=useState(""),[busy,setBusy]=useState(false),[notice,setNotice]=useState("");
- const alive=useRef(true),lock=useRef(false),epoch=useRef(0),selection=useRef("");
+ const alive=useRef(true),lock=useRef(false),epoch=useRef(0),rootEpoch=useRef(0),selection=useRef("");
  const base="/api/workspace/"+resource,query="?organizationId="+encodeURIComponent(orgId);
- async function refresh(){const value=await auditRequest(base+query);if(alive.current)setData(value);}
- useEffect(()=>{alive.current=true;void refresh().catch(e=>{if(alive.current)setNotice(e.message);});return()=>{alive.current=false;epoch.current++;};},[orgId,resource]);
+ async function refresh(){const gen=++rootEpoch.current;const value=await auditRequest(base+query);if(alive.current&&gen===rootEpoch.current)setData(value);}
+ useEffect(()=>{alive.current=true;void refresh().catch(e=>{if(alive.current)setNotice(e.message);});return()=>{alive.current=false;epoch.current++;rootEpoch.current++;};},[orgId,resource]);
  async function open(id:string,extraQuery=""){
   const gen=++epoch.current;selection.current=id;setSelected(id);setDetail(null);setNotice("");
   try{const value=await auditRequest(base+"/"+id+query+extraQuery);if(alive.current&&gen===epoch.current)setDetail(value);}catch(e){if(alive.current&&gen===epoch.current)setNotice(e instanceof Error?e.message:"Could not load this record");}

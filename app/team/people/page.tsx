@@ -16,9 +16,9 @@ function Home({ctx}:{ctx:Context}){
 }
 function Reading({orgId}:{orgId:string}){
  const [items,setItems]=useState<Inbox|null>(null),[notice,setNotice]=useState(""),[busy,setBusy]=useState(""),[confirmed,setConfirmed]=useState<string[]>([]);
- const alive=useRef(true),lock=useRef(false),query="?organizationId="+encodeURIComponent(orgId),base="/api/workspace/policy-inbox";
- async function refresh(){const r=await auditRequest(base+query);if(alive.current)setItems(r.assignments);}
- useEffect(()=>{alive.current=true;void refresh().catch(e=>{if(alive.current)setNotice(e.message);});return()=>{alive.current=false;};},[orgId]);
+ const alive=useRef(true),lock=useRef(false),epoch=useRef(0),query="?organizationId="+encodeURIComponent(orgId),base="/api/workspace/policy-inbox";
+ async function refresh(){const gen=++epoch.current;const r=await auditRequest(base+query);if(alive.current&&gen===epoch.current)setItems(r.assignments);}
+ useEffect(()=>{alive.current=true;void refresh().catch(e=>{if(alive.current)setNotice(e.message);});return()=>{alive.current=false;epoch.current++;};},[orgId]);
  async function act(item:Inbox[number],download:boolean){
   if(lock.current)return;lock.current=true;setBusy(item.id);setNotice("");
   try{
