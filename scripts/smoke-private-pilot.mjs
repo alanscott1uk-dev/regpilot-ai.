@@ -97,7 +97,8 @@ try{
  const noTeam=await response("/api/workspace/obligations?organizationId=123e4567-e89b-42d3-a456-426614174000");
  assert.equal(noTeam.status,503,"private team API must fail closed");
  const rootResponse=await response("/");
- assert.ok([301,302,303,307,308].includes(rootResponse.status),"root should redirect to main workbench");
+ assert.ok([301,302,303,307,308].includes(rootResponse.status),"root should redirect to secure operations");
+ assert.equal(new URL(rootResponse.headers.get("location")||"",root).pathname,"/team/operations","landing route must prefer authenticated operations, not local demo");
  console.log("RegPilot local smoke PASS: "+routes.length+" pages, gated AI routes, private work queue, and root redirect.");
 }catch(error){
  console.error("RegPilot local smoke FAILED:",error instanceof Error?error.message:String(error));
