@@ -3,6 +3,7 @@ import {useCallback,useEffect,useMemo,useState} from "react";
 import {browserAuth} from "../../../lib/client/supabase-auth";
 import {coverageDashboard,exportCoverageCsv} from "../../../lib/regulatory/coverage-dashboard.mjs";
 import type {CoverageDashboard,SourceHealth} from "../../../lib/regulatory/coverage-dashboard.mjs";
+import type {ConnectorHealthItem} from "../../../lib/connectors/health-dashboard.mjs";
 import shell from "../../workbench/workbench.module.css";
 import css from "./coverage.module.css";
 type Org={id:string;name:string;role:string};
@@ -14,6 +15,8 @@ const format=(s:string|null)=>s&&!Number.isNaN(Date.parse(s))?new Date(s).toLoca
 function saveCsv(value:string){const url=URL.createObjectURL(new Blob([value],{type:"text/csv;charset=utf-8"}));const a=document.createElement("a");a.href=url;a.download="regpilot-source-monitoring-coverage.csv";a.click();setTimeout(()=>URL.revokeObjectURL(url),500);}
 export default function Coverage(){
  const [orgs,setOrgs]=useState<Org[]>([]),[orgId,setOrgId]=useState(""),[feed,setFeed]=useState<Feed|null>(null);
+ const [connections,setConnections]=useState<{items:ConnectorHealthItem[];total:number;observed:number;needsAttention:number;notice:string}|null>(null);
+ const [connectionError,setConnectionError]=useState("");
  const [loading,setLoading]=useState(true),[error,setError]=useState(""),[term,setTerm]=useState(""),[status,setStatus]=useState("attention"),[agency,setAgency]=useState("all");
  const loadSession=useCallback(async()=>{
   const token=(await browserAuth().auth.getSession()).data.session?.access_token;
@@ -33,7 +36,7 @@ export default function Coverage(){
   return()=>{alive=false;unsub();};
  },[loadSession]);
  useEffect(()=>{
-  setFeed(null);if(!orgId)return;
+  setFeed(null);setConnections(null);setConnectionError("");if(!orgId)return;
   const controller=new AbortController();let alive=true;setLoading(true);setError("");
   (async()=>{
    try{
@@ -43,6 +46,13 @@ export default function Coverage(){
     const data=await r.json();if(!r.ok)throw new Error(data.error||"Could not load source coverage");
     if(!Array.isArray(data.catalogue)||!Array.isArray(data.coverage))throw new Error("Invalid source coverage");
     if(alive)setFeed({catalogue:data.catalogue,coverage:data.coverage});
+    try{
+     const health=await fetch("/api/workspace/connectors/health?organizationId="+encodeURIComponent(orgId),{headers:{authorization:"Bearer "+token},cache:"no-store",signal:controller.signal});
+     if(!health.ok)throw new Error("Connector health requires an enabled private workspace");
+     const h=await health.json();
+     if(!Array.isArray(h.items))throw new Error("Connector health response invalid");
+     if(alive)setConnections(h);
+    }catch{if(alive)setConnectionError("Could not independently retrieve the latest connector health. Previously recorded signals should not be treated as current.");}
    }catch(e){if(alive)setError(e instanceof Error?e.message:"Monitoring coverage unavailable");}
    finally{if(alive)setLoading(false);}
   })();
@@ -62,7 +72,7 @@ export default function Coverage(){
    <nav className={shell.sideNav} aria-label="Main navigation">
     <a href="/team/operations">◉ &nbsp; Operations</a>
     <a className={shell.active} aria-current="page" href="/team/coverage">◈ &nbsp; Monitoring health</a>
-    <a href="/team/sources">▤ &nbsp; Publications &amp; version history</a>
+    <a href="/team/sources">▤ &nbsp; Publications &amp; version history</a><a href="/team/briefing">✦ &nbsp; Weekly briefing</a>
     <a href="/team/intelligence">✦ &nbsp; Impact assessment</a>
     <a href="/team/changes">◇ &nbsp; Change response</a>
     <a href="/team/evidence">▣ &nbsp; Evidence vault</a>
@@ -89,6 +99,20 @@ export default function Coverage(){
    <p className={css.disclaimer}>{dashboard.caveat} A configured schedule only counts as current after a successful, timely collection. Latest snapshot age is separate from source change significance.</p>
    <section className={css.sectors}><div className={css.heading}><h2>Regulator coverage</h2><small>Baselines, monitored publications and unresolved attention by publisher</small></div>
     <div className={css.agencyGrid}>{dashboard.agencies.map(a=><button key={a.agency} onClick={()=>{setAgency(a.agency);setStatus("all")}} aria-label={"Filter "+a.agency}><strong>{a.agency}</strong><span>{a.baseline} of {a.total} baselines</span><small>{a.attention} need attention</small></button>)}</div>
+   </section>
+   <section className={css.sectors} aria-label="Connected evidence health">
+    <div className={css.heading}><div><h2>Evidence integration health</h2><small>Read-only provider collection, integrity and freshness — not a compliance verdict</small></div>
+     <a href="/team/operations?view=connections" style={{fontSize:12,fontWeight:750,color:"#68429c",textDecoration:"none"}}>Manage connections</a></div>
+    {connectionError&&<p className={css.error} role="status">{connectionError}</p>}
+    {connections&&<><div className={css.connectMetrics}><span><b>{connections.total}</b> connections configured</span><span><b>{connections.observed}</b> recent clean observations</span><span><b>{connections.needsAttention}</b> require investigation or verification</span></div>
+     {connections.items.length===0?<p className={css.empty}>No evidence connections configured. Set up a read-only provider in Operations.</p>:
+      <div className={css.connectionGrid}>{connections.items.map(c=><article key={c.id} className={css.connection}>
+       <div className={css.sourceTop}><span>{c.provider}</span><span className={css.state} data-state={c.status==="observed"?"current":c.status==="failed"?"failed":"stale"}>{c.status.replaceAll("-"," ")}</span></div>
+       <h3>{c.target}</h3><p>{c.reason}</p>
+       <small>{c.checksFailed} failing observations · {c.checksUnknown} unknown · last retrieved {format(c.lastSuccessAt)}</small>
+       <a href={c.href}>Inspect connection and actual signals →</a>
+      </article>)}</div>}
+     <p className={css.disclaimer}>{connections.notice}</p></>}
    </section>
    <section className={css.results}>
     <div className={css.heading}><div><h2>Publication health</h2><small>{results.length} displayed · Check date, action required and monitoring state</small></div><div className={css.filters}>
