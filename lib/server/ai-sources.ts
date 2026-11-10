@@ -21,7 +21,14 @@ export async function loadPublication(source:RegulatorySource){
   try{return await loadGovUkHtml(source);}
   catch{throw new SourceUnavailable("Official source API and verified HTML fallback are unavailable");}
  }
- if(raw?.base_path!==source.path||raw?.document_type==="redirect"||raw?.withdrawn_notice)throw new SourceUnavailable("Publication identity changed or was withdrawn; inspect the original");
+ if(raw?.document_type==="redirect"||raw?.withdrawn_notice)throw new SourceUnavailable("Publication explicitly redirected or withdrawn; inspect the original");
+ if(raw?.base_path!==source.path){
+  // A Content API mismatch cannot be accepted as a published version. A separate
+  // full HTML identity check at the fixed original URL can establish a safe body,
+  // but never automatically approves the document's legal effect.
+  try{return await loadGovUkHtml(source);}
+  catch{throw new SourceUnavailable("GOV.UK publication identity is not verifiable in API or HTML");}
+ }
  let meta;
  try{meta=normaliseContent(source,raw)}catch{throw new SourceUnavailable("Official source data invalid")}
  const text=extractGovBody(raw);
