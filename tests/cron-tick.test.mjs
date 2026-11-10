@@ -25,3 +25,19 @@ test("disabled work is explicit rather than reported as successful live monitori
  assert.equal(result.modules.connectors.state,"disabled");
  assert.equal(result.modules.controlReviews.state,"disabled");
 });
+
+test("partial connector failures trigger a non-green worker result with actionable attention",async()=>{
+ const result=await executeScheduledTick({sources:async()=>({processed:2,outcomes:["UNCHANGED","CONTENT_CHANGED"]}),
+ connectors:async()=>({processed:3,outcomes:["OBSERVED","RETRY_SCHEDULED","ATTENTION"]}),
+ controlReviews:async()=>({processed:2,attention:1})});
+ assert.equal(result.ok,false);
+ assert.equal(result.modules.sources.state,"completed");
+ assert.equal(result.modules.connectors.state,"attention");
+ assert.equal(result.modules.connectors.attention,2);
+ assert.equal(result.modules.controlReviews.state,"attention");
+});
+test("fully processed but bounded backlog remains visible and never silently claims full coverage",async()=>{
+ const result=await executeScheduledTick({sources:async()=>({processed:12,limitReached:true,outcomes:["UNCHANGED"]})});
+ assert.equal(result.modules.sources.state,"backlog");
+ assert.equal(result.modules.sources.processed,12);
+});
