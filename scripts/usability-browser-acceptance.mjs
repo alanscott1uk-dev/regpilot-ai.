@@ -70,7 +70,7 @@ async function testJourney(name,viewport){
   await page.goto(base+"/team/sources",{waitUntil:"domcontentloaded"});
   assert.ok(await page.getByRole("heading",{name:/Know what changed/i}).isVisible());
   await page.goto(base+"/team/operations",{waitUntil:"domcontentloaded"});
-  assert.ok(await page.getByText(/private workspace|sign in/i).first().isVisible());
+  assert.ok(await page.getByRole("heading",{name:/A clearer day/i}).isVisible(),"secure workspace heading must remain visible on return to mobile");
   assert.deepEqual(errors,[],"no client runtime exceptions");
   await page.goto(base+"/workbench",{waitUntil:"domcontentloaded"});
   await mkdir("artifacts/usability",{recursive:true});
