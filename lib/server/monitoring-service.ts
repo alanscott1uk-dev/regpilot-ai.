@@ -110,7 +110,12 @@ export async function executeWatch(job:WatchSchedule,loader?:Loader){
     const checked=await checkOfficialSource(ctx,job.sourceId,loader,guard);
     // The monitored publication may have changed; create an owned investigation only
     // for a *new content version*, never for the baseline, metadata or an outage.
-    if(checked.state==="CONTENT_CHANGED")await queueChangedSourceReview(ctx,job,checked.snapshot,guard);
+    if(checked.state==="CONTENT_CHANGED"){
+      const {id,contentHash,title,url}=checked.snapshot;
+      if(typeof id!=="string"||typeof contentHash!=="string"||typeof title!=="string"||typeof url!=="string")
+        throw new IntelligenceError("Changed official source snapshot is missing verified identity",503);
+      await queueChangedSourceReview(ctx,job,{id,contentHash,title,url},guard);
+    }
     // Checkpoint is already persisted. A retry reuses the snapshot and unique analysis.
     if(await db.businessProfile.findUnique({where:{organizationId:job.organizationId}}))await createIntelligenceRun(ctx,checked.snapshot.id,guard);
     // No AI, no accepted decisions, no task creation or notification side effects here.
