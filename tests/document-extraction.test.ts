@@ -49,7 +49,7 @@ test("empty Word files and extraction limits are surfaced without inventing OCR 
   const long=await read(fixtureDocx(Array.from({length:510},(_,i)=>paragraph("Fictional independent record "+i+" unique marker "+(i*9197))).join("")));assert.equal(long.totalPages,510);assert.equal(long.pages.length,500);assert.equal(long.truncated,true);
 });
 test("AI Word inputs have bounded, mutually exclusive files and block-labelled quote grounding",async()=>{
-  const file=fixtureDocx(),base={organizationId:id,mode:"document",consent:true,docxBase64:file.toString("base64")};
+  const file=fixtureDocx(),base={organizationId:id,mode:"document",consent:true,docxBase64:file.toString("base64"),purpose:"business-compliance-assistance",dataCategory:"synthetic",recordPurpose:"working-draft",humanReviewAcknowledged:true,solelyAutomatedDecision:false,externalProcessingAcknowledged:true};
   assert.equal(validateAiRequest(base).fileFormat,"DOCX");assert.throws(()=>validateAiRequest({...base,evidenceId:id}));assert.throws(()=>validateAiRequest({...base,pdfBase64:"AAAA"}));assert.throws(()=>validateAiRequest({...base,mode:"assistant",question:"What changed?"}));
   const doc=await read(file),result=validateAndAnnotateAiOutput({findings:[{documentQuote:quote,sourceQuote:quote}]},{documentUnitKind:"block",documentPages:doc.pages,sourceText:quote,sourceVerified:true,documentCoverage:{unitKind:"block"}});
   assert.equal(result.findings[0].documentAnchor.coordinateSystem,"normalised-word-block");assert.match(result.findings[0].documentAnchor.label,/paragraph 1/);assert.equal(result.groundingSummary.pdfCoverage,undefined);assert.equal(result.groundingSummary.documentCoverage.unitKind,"block");
