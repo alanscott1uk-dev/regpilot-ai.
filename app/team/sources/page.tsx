@@ -1,6 +1,7 @@
 "use client";
 import {TERRITORIES,SOURCE_ACTIVITIES,matchingSources,sourceNextStep,type SourceCoverage} from "../../../lib/regulatory/source-coverage";
 import {officialSourceUrl} from "../../../lib/regulatory-sources.mjs";
+import {recommendSourcePortfolio} from "../../../lib/regulatory/portfolio-recommendations.mjs";
 import {useCallback,useEffect,useMemo,useState,useRef} from "react";
 import {browserAuth} from "../../../lib/client/supabase-auth";
 import {REGULATORY_SOURCES} from "../../../lib/regulatory-sources.mjs";
@@ -17,10 +18,17 @@ export default function OfficialSourceHistory(){
  const activeOrg=useRef(orgId);activeOrg.current=orgId;
  const [catalogue,setCatalogue]=useState([...REGULATORY_SOURCES]);
  const [selected,setSelected]=useState(REGULATORY_SOURCES[0].id);
- useEffect(()=>{const requested=new URLSearchParams(window.location.search).get("sourceId");if(requested&&catalogue.some(x=>x.id===requested)&&selected!==requested)setSelected(requested);},[catalogue,selected]);
+ const deepLinkApplied=useRef(false);
+ useEffect(()=>{if(deepLinkApplied.current)return;const requested=new URLSearchParams(window.location.search).get("sourceId");if(!requested){deepLinkApplied.current=true;return;}if(catalogue.some(x=>x.id===requested)){deepLinkApplied.current=true;setSelected(requested);}},[catalogue]);
  const activeSelection=useRef(selected);activeSelection.current=selected;
  const [coverage,setCoverage]=useState<SourceCoverage[]>([]),[territory,setTerritory]=useState(""),[activity,setActivity]=useState(""),[search,setSearch]=useState("");
- const filtered=useMemo(()=>matchingSources(catalogue,territory,activity,search),[catalogue,territory,activity,search]);
+ const [businessProfile,setBusinessProfile]=useState<{activities:string[];jurisdictions:string[]}|null>(null);
+ const [recommendedOnly,setRecommendedOnly]=useState(false);
+ const recommendations=useMemo(()=>recommendSourcePortfolio(catalogue,businessProfile),[catalogue,businessProfile]);
+ const filtered=useMemo(()=>{
+  const ids=new Set(recommendations.suggested.map(x=>x.id));
+  return matchingSources(catalogue,territory,activity,search).filter(s=>!recommendedOnly||ids.has(s.id));
+ },[catalogue,territory,activity,search,recommendedOnly,recommendations]);
  const [history,setHistory]=useState<Snapshot[]>([]);
  const [lastResult,setLastResult]=useState<CheckResult|null>(null);
  const [reviewNotes,setReviewNotes]=useState("");
@@ -36,6 +44,14 @@ export default function OfficialSourceHistory(){
   if(!response.ok){const body=await response.json().catch(()=>({error:"Request unavailable"}));throw new Error(body.error||"Source request unavailable");}
   return response.json();
  },[]);
+ useEffect(()=>{
+  let active=true;setBusinessProfile(null);setRecommendedOnly(false);
+  if(!orgId)return;
+  void request("/api/workspace/intelligence/profile?organizationId="+encodeURIComponent(orgId)).then(body=>{
+   if(active){const p=body.profile;if(p&&Array.isArray(p.activities)&&Array.isArray(p.jurisdictions))setBusinessProfile({activities:p.activities,jurisdictions:p.jurisdictions});}
+  }).catch(()=>{if(active)setBusinessProfile(null)});
+  return()=>{active=false};
+ },[orgId,request]);
  const loadHistory=useCallback(async(id:string)=>{
   if(!id)return;
   try{const body=await request("/api/workspace/sources?organizationId="+encodeURIComponent(id)+"&sourceId="+encodeURIComponent(selected));if(activeOrg.current===id&&activeSelection.current===selected){setCoverage(body.coverage||[]);setHistory(Array.isArray(body.snapshots)?body.snapshots:[]);setCatalogue(body.catalogue||[...REGULATORY_SOURCES]);}}
@@ -134,7 +150,16 @@ export default function OfficialSourceHistory(){
     </section>
     <section className={ui.layout}>
      <div className={ui.catalog}><div className={ui.heading}><span>01 / OFFICIAL SOURCE CATALOGUE</span><h2>Choose a publication</h2><a href="/team/library">Find and register publications ↗</a><p>Find a relevant starting point. Territory and topic tags do not determine legal applicability; unclassified publications remain visible.</p></div>
-      <div className={ui.filters}><label>Business location<select value={territory} onChange={e=>setTerritory(e.target.value)}><option value="">All locations</option>{TERRITORIES.map(t=><option key={t}>{t}</option>)}</select></label><label>Activity<select value={activity} onChange={e=>setActivity(e.target.value)}><option value="">All activities</option>{Object.entries(SOURCE_ACTIVITIES).map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label><label>Find a publication<input type="search" value={search} onChange={e=>setSearch(e.target.value)} maxLength={100}/></label><p>{filtered.length} references shown. {coverage.filter(x=>!x.snapshotId).length} catalogue references have no saved baseline.</p>
+      <div className={ui.filters}>
+      <div style={{background:"#f8f5fc",border:"1px solid #dfd2eb",padding:12,borderRadius:10,marginBottom:11}}>
+       <strong style={{display:"block",fontSize:13}}>Recommended source starting points</strong>
+       {businessProfile?<><p style={{fontSize:12}}>{recommendations.suggested.length} references share business activity and territory discovery tags. {recommendations.differentTerritory.length} have different territory tags; {recommendations.uncategorised.length} are unclassified and remain available manually.</p>
+       <label style={{display:"flex",gap:8,alignItems:"center",fontSize:12}}>
+       <input type="checkbox" checked={recommendedOnly} onChange={e=>setRecommendedOnly(e.target.checked)} />
+       Show my suggested starting points only
+       </label><p style={{fontSize:11}}>These are suggestions for review, not verified duties or exemptions. Inspect every original publication before enabling a monitor.</p></>
+        :<p style={{fontSize:12}}>Declare your activities and UK nations in <a href="/team/intelligence">Regulatory intelligence</a> to find relevant starting points. Unclassified publications remain visible.</p>}
+      </div><label>Business location<select value={territory} onChange={e=>setTerritory(e.target.value)}><option value="">All locations</option>{TERRITORIES.map(t=><option key={t}>{t}</option>)}</select></label><label>Activity<select value={activity} onChange={e=>setActivity(e.target.value)}><option value="">All activities</option>{Object.entries(SOURCE_ACTIVITIES).map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label><label>Find a publication<input type="search" value={search} onChange={e=>setSearch(e.target.value)} maxLength={100}/></label><p>{filtered.length} references shown. {coverage.filter(x=>!x.snapshotId).length} catalogue references have no saved baseline.</p>
  {canReview&&<div className={ui.review} style={{padding:12,marginTop:8}}>
   <strong style={{display:"block",fontSize:13,marginBottom:7}}>Monitor this filtered source portfolio</strong>
   <label style={{display:"block",fontSize:12}}>Check frequency<select value={monitorEvery} onChange={e=>setMonitorEvery(e.target.value as "24"|"168")}>
