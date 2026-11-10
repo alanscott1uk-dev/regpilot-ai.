@@ -36,6 +36,8 @@ export default function AiStudio(){
  const [sourceId,setSourceId]=useState("");
  const [owner,setOwner]=useState("");
  const [consent,setConsent]=useState(false);
+ const [scopeConfirmed,setScopeConfirmed]=useState(false);
+ const [dataCategory,setDataCategory]=useState<"synthetic"|"non-sensitive-business">("synthetic");
  const [retainDraft,setRetainDraft]=useState(false);
  const [busy,setBusy]=useState(false);
  const [message,setMessage]=useState("");
@@ -161,12 +163,12 @@ export default function AiStudio(){
  async function run(e:React.FormEvent){
   e.preventDefault();setMessage("");setBusy(true);setResult(null);setAccepted([]);setSavedReviewId("");
   try{
-   if(!consent)throw new Error("Explicit consent to external AI processing is required");
+   if(!consent||!scopeConfirmed)throw new Error("Confirm the intended-use boundary, data classification and independent human review before external AI processing");
    const token=(await browserAuth().auth.getSession()).data.session?.access_token;
    if(!token)throw new Error("You are not signed in");
    let pdfBase64="",docxBase64="";
    if(file&&!evidenceId){if(!/\.(pdf|docx)$/i.test(file.name)||file.size>2_000_000||file.size<30)throw new Error("Choose a PDF or Word document smaller than 2 MB");const encoded=toBase64(new Uint8Array(await file.arrayBuffer()));if(file.name.toLowerCase().endsWith(".docx"))docxBase64=encoded;else pdfBase64=encoded;}
-   const response=await fetch("/api/ai/analyse",{method:"POST",headers:{"Content-Type":"application/json",authorization:"Bearer "+token},body:JSON.stringify({organizationId:orgId,mode,documentText,question,businessContext,sourceId,pdfBase64,docxBase64,evidenceId,consent:true,retainDraft})});
+   const response=await fetch("/api/ai/analyse",{method:"POST",headers:{"Content-Type":"application/json",authorization:"Bearer "+token},body:JSON.stringify({organizationId:orgId,mode,documentText,question,businessContext,sourceId,pdfBase64,docxBase64,evidenceId,consent:true,retainDraft,purpose:"business-compliance-assistance",dataCategory,recordPurpose:"working-draft",humanReviewAcknowledged:scopeConfirmed,solelyAutomatedDecision:false,externalProcessingAcknowledged:consent})});
    const json=await response.json();
    if(!response.ok)throw new Error(json.error||"AI request could not complete");
    setResult(json.ai as Result);setRequestId(json.requestId||"");
@@ -266,9 +268,15 @@ export default function AiStudio(){
       {mode==="document"&&<label>Or upload a non-sensitive example PDF or Word document (max 2 MB)<input type="file" accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" onChange={e=>{setEvidenceId("");setFile(e.target.files?.[0]||null);}}/></label>}
       {mode!=="document"&&<label>Your question<input maxLength={1500} value={question} onChange={e=>setQuestion(e.target.value)} placeholder="What could this change affect?"/></label>}
       {mode==="document"&&<label>Question (optional)<input maxLength={1500} value={question} onChange={e=>setQuestion(e.target.value)} placeholder="Which sections might need review?"/></label>}
-      <label className={ui.check}><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/><span>I confirm this contains fictional or non-sensitive content and I consent to external AI processing.</span></label>
+      <div className={ui.warning} role="note"><strong>AI scope: business compliance draft only.</strong> RegPilot is not authorised for diagnosis, treatment, prescribing, patient records, controlled GxP original records, or solely automated significant decisions. Regulated GxP use needs customer-specific validation and independent sign-off. External model processing may take place outside the UK.</div>
+      <label>Content classification<select value={dataCategory} onChange={e=>setDataCategory(e.target.value as "synthetic"|"non-sensitive-business")}>
+       <option value="synthetic">Fictional / synthetic example</option>
+       <option value="non-sensitive-business">Non-sensitive business working draft</option>
+      </select></label>
+      <label className={ui.check}><input type="checkbox" checked={scopeConfirmed} onChange={e=>setScopeConfirmed(e.target.checked)}/><span>I confirm this is only a working draft, contains no personal, health or controlled GxP records, and that a responsible person will independently review all AI suggestions before any action. The AI will not make a significant decision about any person.</span></label>
+      <label className={ui.check}><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/><span>I am authorised to share this non-sensitive material with the external AI provider and acknowledge its processing. This acknowledgment does not replace a lawful basis, DPIA or supplier agreement.</span></label>
       <label className={ui.check}><input type="checkbox" checked={retainDraft} onChange={e=>setRetainDraft(e.target.checked)}/><span>Optionally retain this generated AI draft in our organisation's private review inbox. Output may contain short document excerpts; original document/text is not saved by the review service.</span></label>
-      <button type="submit" className={ui.run} disabled={!canRun||working||!consent}>{busy?"Running secure analysis…":"Run AI review →"}</button>
+      <button type="submit" className={ui.run} disabled={!canRun||working||!consent||!scopeConfirmed}>{busy?"Running secure analysis…":"Run AI review →"}</button>
       <p className={ui.hint}>A daily user/organisation limit is enforced by the database. AI Gateway spend must also be capped in Vercel. Your document contents are not stored by this route.</p>
      </form>
     </section>
