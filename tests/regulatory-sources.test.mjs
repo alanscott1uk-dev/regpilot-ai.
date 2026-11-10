@@ -11,7 +11,7 @@ test("catalogue includes meaningful cross-sector coverage without treating tags 
  for(const id of ["companies-house-identity","employer-right-work-guide","modern-slavery-supply","food-labelling","mhra-gmp-gdp","mhra-manufacturer-wholesale"]){
    const source=REGULATORY_SOURCES.find(s=>s.id===id);
    assert.ok(source && source.activities?.length && source.jurisdictions?.length && source.scopeNote);
-   assert.match(source.path,/^\\/[a-z0-9/-]+$/);
+   assert.match(source.path,new RegExp("^/[a-z0-9/-]+$"));
  }
 });
 test("normalises public source metadata without interpreting compliance",()=>{
