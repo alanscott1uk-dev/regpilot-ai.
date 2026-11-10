@@ -1,6 +1,6 @@
 import {loadOfficialWeb} from "./official-web-source";
 import {loadGovUkHtml} from "./govuk-html-source";
-import {REGULATORY_SOURCES,normaliseContent} from "../regulatory-sources.mjs";
+import {REGULATORY_SOURCES,normaliseContent,publicationIsWithdrawn} from "../regulatory-sources.mjs";
 import {boundedPublicJson} from "./publication-catalogue";
 import type {RegulatorySource} from "../regulatory-sources.mjs";
 import {extractGovBody} from "../ai/security.mjs";
@@ -21,7 +21,7 @@ export async function loadPublication(source:RegulatorySource){
   try{return await loadGovUkHtml(source);}
   catch{throw new SourceUnavailable("Official source API and verified HTML fallback are unavailable");}
  }
- if(raw?.document_type==="redirect"||raw?.withdrawn_notice)throw new SourceUnavailable("Publication explicitly redirected or withdrawn; inspect the original");
+ if(raw?.document_type==="redirect"||publicationIsWithdrawn(raw))throw new SourceUnavailable("Publication explicitly redirected or withdrawn; inspect the original");
  if(raw?.base_path!==source.path){
   // A Content API mismatch cannot be accepted as a published version. A separate
   // full HTML identity check at the fixed original URL can establish a safe body,
