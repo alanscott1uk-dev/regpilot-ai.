@@ -91,3 +91,44 @@ test("a bulk monitoring portfolio is scoped, idempotent and does not invent lega
   await db.user.delete({where:{id:user.id}});
  }
 });
+
+test("real monitoring workflow links changed source text to one human-owned task, never a baseline or duplicate",async()=>{
+ const stamp=randomUUID(),user=await db.user.create({data:{externalId:"review-"+stamp,email:stamp+"@example.invalid"}}),
+ org=await db.organization.create({data:{name:"Fictional monitor-to-action "+stamp}});
+ const ctx:AuthorizedContext={organizationId:org.id,userId:user.id,role:"OWNER"};
+ const sourceId="uk-data-protection",url="https://www.gov.uk/data-protection-your-business";
+ const first={id:sourceId,title:"Fictional current publication",url,updatedAt:null,revisionAt:null,
+  text:"Fictional publication contains a continuing baseline requirement to document employee training and keep records of activity to be checked by an operator."};
+ const later={...first,text:first.text+" This revised fictional publication adds a changed section that must be assessed by a human specialist."};
+ process.env.REGPILOT_AI_ALLOWED_EMAILS=user.email;process.env.REGPILOT_MONITORING_ENABLED="true";
+ try{
+  await db.membership.create({data:{organizationId:org.id,userId:user.id,role:"OWNER"}});
+  const watch=await configureWatch(ctx,{sourceId,enabled:true,intervalHours:24,version:0});
+  let firstJob=await claimWatch();assert.ok(firstJob);
+  assert.equal(await executeWatch(firstJob!,async()=>first),"BASELINE");
+  assert.equal(await db.obligation.count({where:{organizationId:org.id}}),0,"a baseline is not a changed law");
+  await db.regulatorySnapshot.updateMany({where:{organizationId:org.id},data:{lastCheckedAt:new Date(Date.now()-3600000)}});
+  await db.watchSchedule.update({where:{id:watch.id},data:{nextCheckAt:new Date(Date.now()-1000)}});
+  const job=await claimWatch();assert.ok(job);
+  assert.equal(await executeWatch(job!,async()=>later),"CONTENT_CHANGED");
+  const tasks=await db.obligation.findMany({where:{organizationId:org.id}});
+  assert.equal(tasks.length,1);assert.equal(tasks[0].assigneeId,user.id);
+  assert.match(tasks[0].title,/Review changed publication/);
+  assert.match(tasks[0].notes,/not automatically a legal change/);
+  assert.ok(tasks[0].automationKey?.startsWith("source-review:"));
+  assert.equal((await db.regulatorySnapshot.findFirst({where:{organizationId:org.id},orderBy:{firstCapturedAt:"desc"}}))?.reviewStatus,"NEEDS_REVIEW");
+  await db.watchSchedule.update({where:{id:watch.id},data:{nextCheckAt:new Date(Date.now()-1000)}});
+  const same=await claimWatch();assert.ok(same);
+  assert.equal(await executeWatch(same!,async()=>later),"COOLDOWN");
+  assert.equal((await db.obligation.count({where:{organizationId:org.id}})),1);
+ }finally{
+  await db.watchSchedule.deleteMany({where:{organizationId:org.id}});
+  await db.intelligenceRun.deleteMany({where:{organizationId:org.id}});
+  await db.obligation.deleteMany({where:{organizationId:org.id}});
+  await db.auditEvent.deleteMany({where:{organizationId:org.id}});
+  await db.regulatorySnapshot.deleteMany({where:{organizationId:org.id}});
+  await db.membership.deleteMany({where:{organizationId:org.id}});
+  await db.organization.delete({where:{id:org.id}});
+  await db.user.delete({where:{id:user.id}});
+ }
+});
