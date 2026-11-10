@@ -87,14 +87,23 @@ export async function executeWatch(job:WatchSchedule,loader?:Loader){
     return await finish(job,"FAILED",error instanceof PermissionLost?"PERMISSION_REVOKED":"CHECK_OR_ANALYSIS_FAILED");
   }
 }
-export async function runMonitoringBatch(){
+export async function runMonitoringBatch(limit=2,parallelism=1){
   if(!monitoringEnabled())throw new IntelligenceError("Scheduled monitoring is disabled",503);
-  const outcomes:string[]=[];
-  // Bounded sequential work avoids a backlog creating unbounded function cost.
-  for(let n=0;n<2;n++){
-    if(!monitoringEnabled())break;
-    const job=await claimWatch();if(!job)break;
-    outcomes.push(await executeWatch(job));
+  if(!Number.isInteger(limit)||limit<1||limit>12||!Number.isInteger(parallelism)||parallelism<1||parallelism>3)
+    throw new IntelligenceError("Monitoring worker bounds invalid",400);
+  const outcomes:Array<{index:number;outcome:string}>=[];
+  const deadline=Date.now()+45000;
+  let claimed=0;
+  async function worker(){
+    while(monitoringEnabled()&&Date.now()<deadline&&claimed<limit){
+      const index=claimed++;
+      const job=await claimWatch();
+      if(!job)return;
+      const outcome=await executeWatch(job);
+      outcomes.push({index,outcome});
+    }
   }
-  return {processed:outcomes.length,outcomes};
+  await Promise.all(Array.from({length:Math.min(limit,parallelism)},()=>worker()));
+  outcomes.sort((a,b)=>a.index-b.index);
+  return {processed:outcomes.length,outcomes:outcomes.map(x=>x.outcome),limitReached:outcomes.length===limit};
 }
