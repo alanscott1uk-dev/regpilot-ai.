@@ -13,7 +13,7 @@ export async function GET(request:Request){
   return reply({error:"Scheduled production automation awaits verified activation"},503);
  const jobs={
   ...(monitoringEnabled()?{sources:()=>runMonitoringBatch(12,3)}:{}),
-  ...(connectorsEnabled()?{connectors:()=>runConnectorBatch(4,2)}:{})
+  ...(connectorsEnabled()?{connectors:()=>runConnectorBatch(4,2)}:{}),
   controlReviews:runReviewBatch
  };
  try{
