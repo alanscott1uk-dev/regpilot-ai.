@@ -14,7 +14,7 @@ test("AI grounding preserves machine-checked anchors and explicit interpretation
  assert.equal(quoteAnchor("invented evidence","unrelated text"),null);
 });
 import {validateAiRequest,validateAndAnnotateAiOutput,corroborateQuote,safeModelName,InputError} from "../lib/ai/contract.mjs";
-const example={organizationId:"123e4567-e89b-42d3-a456-426614174000",mode:"document",consent:true,documentText:"This is a fictional example policy with details about weekly reviews and quality management.",sourceId:"mhra-safety"};
+const example={organizationId:"123e4567-e89b-42d3-a456-426614174000",mode:"document",consent:true,documentText:"This is a fictional example policy with details about weekly reviews and quality management.",sourceId:"mhra-safety",purpose:"business-compliance-assistance",dataCategory:"synthetic",recordPurpose:"working-draft",humanReviewAcknowledged:true,solelyAutomatedDecision:false,externalProcessingAcknowledged:true};
 test("requires an authorised organisation and explicit AI processing consent",()=>{
  assert.throws(()=>validateAiRequest({...example,consent:false}),InputError);
  assert.throws(()=>validateAiRequest({...example,organizationId:"../../other-org"}),InputError);
@@ -80,4 +80,24 @@ test("private evidence ID can drive document review but cannot be used in chat o
  assert.throws(()=>validateAiRequest({...example,documentText:"",evidenceId:"../../other-org"}),InputError);
  assert.throws(()=>validateAiRequest({...example,mode:"assistant",question:"What are the requirements?",evidenceId:id}),InputError);
  assert.throws(()=>validateAiRequest({...example,evidenceId:id,pdfBase64:Buffer.from("%PDF-1.7\n%%EOF").toString("base64")}),InputError);
+});
+
+test("UK compliance AI boundary requires declared working-draft non-sensitive human-reviewed use",()=>{
+ const validated=validateAiRequest(example);
+ assert.equal(validated.useDeclaration.purpose,"business-compliance-assistance");
+ assert.equal(validated.useDeclaration.humanReviewRequired,true);
+ for(const invalid of [
+  {purpose:"clinical-decision"},
+  {dataCategory:"patient-record"},
+  {dataCategory:"special-category"},
+  {recordPurpose:"controlled-gxp-original"},
+  {recordPurpose:"medical-case-file"},
+  {humanReviewAcknowledged:false},
+  {solelyAutomatedDecision:true},
+  {externalProcessingAcknowledged:false}
+ ]){
+  assert.throws(()=>validateAiRequest({...example,...invalid}),InputError);
+ }
+ assert.throws(()=>validateAiRequest({...example,purpose:undefined}),InputError);
+ assert.equal(validateAiRequest({...example,dataCategory:"non-sensitive-business"}).useDeclaration.dataCategory,"non-sensitive-business");
 });
