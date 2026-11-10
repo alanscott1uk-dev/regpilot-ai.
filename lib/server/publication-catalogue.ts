@@ -4,7 +4,7 @@ import {db} from "./db";
 import {workspaceConfigured} from "./ai-auth";
 import {transaction,IntelligenceError} from "./intelligence-service";
 import {requireMember,ADMIN} from "./workspace-member";
-import {REGULATORY_SOURCES,type RegulatorySource} from "../regulatory-sources.mjs";
+import {REGULATORY_SOURCES,publicationIsWithdrawn,type RegulatorySource} from "../regulatory-sources.mjs";
 import {hashValue} from "../regulatory/intelligence";
 import type {AuthorizedContext} from "./authorization";
 export const libraryEnabled=()=>workspaceConfigured()&&process.env.REGPILOT_LIBRARY_ENABLED==="true";
@@ -31,7 +31,7 @@ export async function registerPublication(ctx:AuthorizedContext,input:unknown,fe
  await transaction(ctx,tx=>requireMember(tx,ctx,ADMIN));
  const raw=await boundedPublicJson("https://www.gov.uk/api/content"+parsed.data.path,fetcher);
  // Do not silently follow renamed publications, external redirects or withdrawn content.
- if(!raw||raw.base_path!==parsed.data.path||typeof raw.title!=="string"||typeof raw.document_type!=="string"||raw.document_type==="redirect"||raw.withdrawn_notice)throw new IntelligenceError("Publication identity changed, was withdrawn or is unsupported; inspect the original",409);
+ if(!raw||raw.base_path!==parsed.data.path||typeof raw.title!=="string"||typeof raw.document_type!=="string"||raw.document_type==="redirect"||publicationIsWithdrawn(raw))throw new IntelligenceError("Publication identity changed, was withdrawn or is unsupported; inspect the original",409);
  const base=REGULATORY_SOURCES.find(s=>s.path===parsed.data.path);if(base)return {sourceId:base.id,reused:true};
  return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);requireLibrary();const sourceId="govuk-"+hashValue(parsed.data.path).slice(0,32);const old=await tx.registeredSource.findUnique({where:{organizationId_sourceId:{organizationId:ctx.organizationId,sourceId}}});if(old)return {sourceId,reused:true};if(await tx.registeredSource.count({where:{organizationId:ctx.organizationId}})>=200)throw new IntelligenceError("This organisation's 200-publication pilot limit has been reached",429);
  const row=await tx.registeredSource.create({data:{organizationId:ctx.organizationId,sourceId,path:parsed.data.path,title:raw.title.slice(0,300),documentType:raw.document_type.slice(0,120),registeredById:ctx.userId}});await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"publication.registered",entityType:"RegisteredSource",entityId:row.id,details:{sourceId}}});return {sourceId,reused:false};});
