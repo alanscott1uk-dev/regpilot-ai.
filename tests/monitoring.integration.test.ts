@@ -4,6 +4,7 @@ import {randomUUID} from "node:crypto";
 import {db} from "../lib/server/db";
 import {configureWatch,claimWatch,executeWatch,listWatches} from "../lib/server/monitoring-service";
 import {saveBusinessProfile} from "../lib/server/intelligence-service";
+import {configureWatchPortfolio,planSourcePortfolio} from "../lib/server/watch-portfolio";
 import type {AuthorizedContext} from "../lib/server/authorization";
 
 test("monitoring leases, recovery, bounded retries, tenant isolation and revoked permissions",async()=>{
@@ -58,4 +59,35 @@ test("monitoring leases, recovery, bounded retries, tenant isolation and revoked
     await db.watchSchedule.deleteMany({where:{organizationId:{in:ids}}});await db.intelligenceRun.deleteMany({where:{organizationId:{in:ids}}});await db.businessProfile.deleteMany({where:{organizationId:{in:ids}}});
     await db.auditEvent.deleteMany({where:{organizationId:{in:ids}}});await db.regulatorySnapshot.deleteMany({where:{organizationId:{in:ids}}});await db.membership.deleteMany({where:{organizationId:{in:ids}}});await db.organization.deleteMany({where:{id:{in:ids}}});await db.user.delete({where:{id:user.id}});
   }
+});
+
+test("a bulk monitoring portfolio is scoped, idempotent and does not invent legal decisions",async()=>{
+ const marker=randomUUID();
+ const user=await db.user.create({data:{externalId:"portfolio-"+marker,email:marker+"@example.invalid"}});
+ const org=await db.organization.create({data:{name:"Fictional portfolio "+marker}});
+ const ctx:AuthorizedContext={organizationId:org.id,userId:user.id,role:"OWNER"};
+ const ids=["uk-data-protection","mhra-gmp-gdp","companies-house-identity"];
+ process.env.REGPILOT_AI_ALLOWED_EMAILS=user.email;
+ try{
+  await db.membership.create({data:{organizationId:org.id,userId:user.id,role:"OWNER"}});
+  assert.equal(planSourcePortfolio({sourceIds:ids,enabled:true,intervalHours:24},ids).sourceIds.length,3);
+  assert.throws(()=>planSourcePortfolio({sourceIds:[ids[0],ids[0]],enabled:true,intervalHours:24},ids));
+  assert.throws(()=>planSourcePortfolio({sourceIds:["https://internal.invalid"],enabled:true,intervalHours:24},ids));
+  const first=await configureWatchPortfolio(ctx,{sourceIds:ids,enabled:true,intervalHours:24});
+  assert.equal(first.created,3);
+  const second=await configureWatchPortfolio(ctx,{sourceIds:ids,enabled:true,intervalHours:24});
+  assert.equal(second.unchanged,3);
+  assert.equal((await db.watchSchedule.count({where:{organizationId:org.id}})),3);
+  const third=await configureWatchPortfolio(ctx,{sourceIds:[ids[0]],enabled:true,intervalHours:168});
+  assert.equal(third.updated,1);
+  assert.equal((await db.watchSchedule.findUniqueOrThrow({where:{organizationId_sourceId:{organizationId:org.id,sourceId:ids[0]}}})).intervalHours,168);
+  assert.equal(await db.regulatorySnapshot.count({where:{organizationId:org.id}}),0);
+  await assert.rejects(()=>configureWatchPortfolio({...ctx,role:"VIEWER"},{sourceIds:ids,enabled:true,intervalHours:24}),(e:any)=>e.status===403);
+ }finally{
+  await db.watchSchedule.deleteMany({where:{organizationId:org.id}});
+  await db.auditEvent.deleteMany({where:{organizationId:org.id}});
+  await db.membership.deleteMany({where:{organizationId:org.id}});
+  await db.organization.delete({where:{id:org.id}});
+  await db.user.delete({where:{id:user.id}});
+ }
 });
