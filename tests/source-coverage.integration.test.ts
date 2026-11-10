@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {db} from "../lib/server/db";
 import {assuranceFixture,rejects} from "./helpers/assurance-fixture";
 import {sourceCoverage} from "../lib/server/source-coverage";
+import {REGULATORY_SOURCES} from "../lib/regulatory-sources.mjs";
 import {listSourceSnapshots} from "../lib/server/regulatory-watch";
 test("source coverage spans old baselines independently of history pagination and isolates organisation status",async()=>{
  const x=await assuranceFixture();
@@ -13,7 +14,7 @@ test("source coverage spans old baselines independently of history pagination an
   assert.equal((await listSourceSnapshots(x.o)).length,60);assert.equal((await listSourceSnapshots(x.o,"acas-disciplinary"))[0].id,old.id);
   await db.watchSchedule.create({data:{organizationId:x.a.id,sourceId:base.sourceId,configuredById:x.owner.id,enabled:true,intervalHours:24,nextCheckAt:new Date()}});
   process.env.REGPILOT_MONITORING_ENABLED="false";
-  const rows=await sourceCoverage(x.o),row=rows.find(r=>r.sourceId===base.sourceId)!;assert.equal(rows.length,25);assert.equal(row.snapshotId,old.id);assert.equal(row.reviewStatus,"REVIEWED");assert.equal(row.monitoring,"Awaiting activation");
+  const rows=await sourceCoverage(x.o),row=rows.find(r=>r.sourceId===base.sourceId)!;assert.equal(rows.length,REGULATORY_SOURCES.length);assert.equal(row.snapshotId,old.id);assert.equal(row.reviewStatus,"REVIEWED");assert.equal(row.monitoring,"Awaiting activation");
   assert.equal((await sourceCoverage(x.out)).find(r=>r.sourceId===base.sourceId)!.snapshotId,null);
   await assert.rejects(()=>sourceCoverage({...x.out,organizationId:x.a.id}),rejects(403));
   process.env.REGPILOT_MONITORING_ENABLED="true";await db.watchSchedule.updateMany({where:{organizationId:x.a.id},data:{failureCode:"CHECK_OR_ANALYSIS_FAILED"}});assert.equal((await sourceCoverage(x.o)).find(r=>r.sourceId===base.sourceId)!.monitoring,"Collection needs attention");
