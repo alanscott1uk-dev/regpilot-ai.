@@ -70,6 +70,37 @@ async function finish(job:WatchSchedule,outcome:string,failureCode:string|null){
     return halted?"ATTENTION":outcome;
   });
 }
+/**
+ * Monitoring content changes create one owned investigation, not a compliance
+ * determination. Exact source snapshot version is captured; human assessment
+ * and downstream acceptance remain independent.
+ */
+async function queueChangedSourceReview(ctx:AuthorizedContext,job:WatchSchedule,snapshot:{id:string;contentHash:string;title:string;url:string},guard:(tx:Prisma.TransactionClient)=>Promise<void>){
+ const key="source-review:"+snapshot.id;
+ return db.$transaction(async tx=>{
+  await guard(tx);
+  const current=await tx.regulatorySnapshot.findFirst({where:{id:snapshot.id,organizationId:ctx.organizationId,sourceId:job.sourceId,reviewStatus:"NEEDS_REVIEW"}});
+  if(!current||current.contentHash!==snapshot.contentHash)return {created:false};
+  const earlier=await tx.obligation.findUnique({where:{organizationId_automationKey:{organizationId:ctx.organizationId,automationKey:key}}});
+  if(earlier)return {created:false};
+  const reviewer=await tx.membership.findUnique({where:{organizationId_userId:{organizationId:ctx.organizationId,userId:ctx.userId}}});
+  if(!reviewer||!["OWNER","ADMIN"].includes(reviewer.role))return {created:false};
+  const owner=await tx.user.findUnique({where:{id:ctx.userId},select:{email:true}});
+  if(!owner)return {created:false};
+  const due=new Date(Date.now()+7*86400000);
+  const item=await tx.obligation.create({data:{
+   organizationId:ctx.organizationId,automationKey:key,assigneeId:ctx.userId,ownerName:owner.email,
+   title:("Review changed publication: "+current.title).slice(0,160),
+   category:"Regulatory source monitoring",dueDate:due,
+   sourceUrl:current.url,sourceCheckedAt:new Date(),status:"OPEN",
+   notes:"Published source text changed against the previously captured snapshot. Review the actual official text, assess jurisdiction, applicability and effective dates, and arrange independent source review. An observed text change is not automatically a legal change."
+  }});
+  await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,
+   action:"monitoring.source_review_task_created",entityType:"Obligation",entityId:item.id,
+   details:{sourceId:job.sourceId,snapshotId:current.id,contentHash:current.contentHash,scheduledById:job.configuredById}}});
+  return {created:true};
+ },{isolationLevel:"Serializable",maxWait:3500,timeout:10000});
+}
 export async function executeWatch(job:WatchSchedule,loader?:Loader){
   try{
     await db.$transaction(tx=>assertLease(tx,job));
@@ -77,6 +108,9 @@ export async function executeWatch(job:WatchSchedule,loader?:Loader){
     const ctx:AuthorizedContext={organizationId:job.organizationId,userId:job.configuredById,role:"ADMIN"};
     const guard=(tx:Prisma.TransactionClient)=>assertLease(tx,job);
     const checked=await checkOfficialSource(ctx,job.sourceId,loader,guard);
+    // The monitored publication may have changed; create an owned investigation only
+    // for a *new content version*, never for the baseline, metadata or an outage.
+    if(checked.state==="CONTENT_CHANGED")await queueChangedSourceReview(ctx,job,checked.snapshot,guard);
     // Checkpoint is already persisted. A retry reuses the snapshot and unique analysis.
     if(await db.businessProfile.findUnique({where:{organizationId:job.organizationId}}))await createIntelligenceRun(ctx,checked.snapshot.id,guard);
     // No AI, no accepted decisions, no task creation or notification side effects here.
