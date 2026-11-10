@@ -35,7 +35,7 @@ async function worker(){
       const r=await fetch("https://www.gov.uk/api/content"+source.path,{method:"GET",redirect:"error",signal:AbortSignal.timeout(7000)});
       const body=r.ok?await r.json():null;
       record.govApiDiagnostics={status:r.status,basePath:typeof body?.base_path==="string"?body.base_path.slice(0,170):null,
-        kind:typeof body?.document_type==="string"?body.document_type:null,withdrawn:!!body?.withdrawn_notice,
+        kind:typeof body?.document_type==="string"?body.document_type:null,withdrawn:!!body?.withdrawn_notice,withdrawalKeys:body?.withdrawn_notice&&typeof body.withdrawn_notice==="object"?Object.keys(body.withdrawn_notice).slice(0,8):null,withdrawnAt:typeof body?.withdrawn_notice?.withdrawn_at==="string"?body.withdrawn_notice.withdrawn_at.slice(0,32):null,
         titleMatch:typeof body?.title==="string"?body.title.toLowerCase().includes(source.title.toLowerCase()):null};
     }catch{record.govApiDiagnostics={status:"failed"};}
    }
