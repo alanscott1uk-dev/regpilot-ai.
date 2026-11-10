@@ -2,6 +2,7 @@ import {paidMaster} from "../services/config";
 import {db} from "./db";
 import {authorizeOrganization} from "./authorization";
 import {allowedEmail} from "../ai/security.mjs";
+import {aiGovernanceAttested} from "../ai/regulated-use.mjs";
 
 export class AccessError extends Error {
  status:number;
@@ -15,7 +16,7 @@ export function workspaceConfigured(){
 export function aiConfigured(){
  const configuredModel=process.env.REGPILOT_AI_MODEL||"";
  return paidMaster()&&workspaceConfigured()&&process.env.REGPILOT_AI_ENABLED==="true"&&process.env.REGPILOT_AI_SAFEGUARDS_VERIFIED==="true"&&
-  process.env.REGPILOT_AI_PROCESSOR_REVIEWED==="true"&&process.env.REGPILOT_AI_TRANSFER_REVIEWED==="true"&&process.env.REGPILOT_AI_INTENDED_USE_REVIEWED==="true"&&
+  aiGovernanceAttested(process.env)&&
   /^[a-z0-9-]+\/[a-z0-9._-]+$/i.test(configuredModel)&&
   !!(process.env.AI_GATEWAY_API_KEY||process.env.VERCEL_OIDC_TOKEN);
 }
