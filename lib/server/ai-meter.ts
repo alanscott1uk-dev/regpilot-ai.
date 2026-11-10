@@ -9,7 +9,7 @@ const max=(value:string|undefined,fallback:number,upper:number)=>{
 export function aiDailyLimits(){
  return {perUser:max(process.env.REGPILOT_AI_DAILY_USER_LIMIT,10,100),perOrg:max(process.env.REGPILOT_AI_DAILY_ORG_LIMIT,40,1000)};
 }
-export async function reserveAiRequest(ctx:AuthorizedContext,mode:string){
+export async function reserveAiRequest(ctx:AuthorizedContext,mode:string,useDeclaration?:{purpose:string;dataCategory:string;recordPurpose:string;humanReviewRequired:boolean}){
  const {perUser,perOrg}=aiDailyLimits();
  const day=new Date(new Date().toISOString().slice(0,10)+"T00:00:00.000Z");
  const id=crypto.randomUUID();
@@ -27,7 +27,7 @@ export async function reserveAiRequest(ctx:AuthorizedContext,mode:string){
   });
   if(changed.count!==1)throw new DailyLimitError();
   await tx.auditEvent.create({
-   data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"ai.request_reserved",entityType:"AiRequest",entityId:id,details:{mode,day:day.toISOString().slice(0,10)}}
+   data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"ai.request_reserved",entityType:"AiRequest",entityId:id,details:{mode,day:day.toISOString().slice(0,10),...(useDeclaration?{purpose:useDeclaration.purpose,dataCategory:useDeclaration.dataCategory,recordPurpose:useDeclaration.recordPurpose,humanReviewRequired:useDeclaration.humanReviewRequired}:{})}}
   });
  },{isolationLevel:"Serializable",maxWait:3000,timeout:6000});
  return id;
