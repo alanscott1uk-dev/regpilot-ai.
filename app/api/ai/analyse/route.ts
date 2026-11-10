@@ -42,6 +42,7 @@ export async function POST(request:Request){
   const ctx=await authorisedAiContext(request,input.organizationId);
   const official=await loadOfficialSource(input.sourceId);
   let aiInput:Parameters<typeof runRegPilotAi>[0]=input;
+  if(input.evidenceId&&process.env.REGPILOT_AI_PRIVATE_EVIDENCE_APPROVED!=="true")return json({error:"AI processing of private evidence is not approved for this pilot. Use a synthetic working draft instead."},403);
   if(input.evidenceId){
    if(!evidenceConfigured())return json({error:"Private evidence vault not configured"},503);
    const stored=await downloadEvidence(ctx,input.evidenceId);
@@ -49,7 +50,7 @@ export async function POST(request:Request){
    aiInput={...input,fileBytes:Uint8Array.from(stored.bytes),fileFormat:stored.filename.toLowerCase().endsWith(".docx")?"DOCX":"PDF"};
   }
   if(aiInput.fileBytes){const extracted=await extractDocument(aiInput.fileBytes,aiInput.fileFormat==="DOCX"?"input.docx":"input.pdf",{allowEmpty:true});aiInput={...aiInput,fileBytes:extracted.format==="DOCX"?null:aiInput.fileBytes,documentUnitKind:extracted.unitKind,documentPages:extracted.pages,documentCoverage:{...coverageOf(extracted),unreadablePages:extracted.skippedPages}};}
-  requestId=await reserveAiRequest(ctx,input.mode);
+  requestId=await reserveAiRequest(ctx,input.mode,input.useDeclaration);
   const ai=await runRegPilotAi(aiInput,official);
   let reviewId:string|null=null,storageWarning:string|null=null;
   if(input.retainDraft){
