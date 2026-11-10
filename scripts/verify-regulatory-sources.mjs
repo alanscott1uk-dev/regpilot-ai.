@@ -31,6 +31,13 @@ async function worker(){
       record.htmlProbeType=probe.headers.get("content-type")?.split(";")[0]||"unknown";
       await probe.body?.cancel();
     }catch{record.htmlProbeStatus="network-unavailable";}
+    try{
+      const r=await fetch("https://www.gov.uk/api/content"+source.path,{method:"GET",redirect:"error",signal:AbortSignal.timeout(7000)});
+      const body=r.ok?await r.json():null;
+      record.govApiDiagnostics={status:r.status,basePath:typeof body?.base_path==="string"?body.base_path.slice(0,170):null,
+        kind:typeof body?.document_type==="string"?body.document_type:null,withdrawn:!!body?.withdrawn_notice,
+        titleMatch:typeof body?.title==="string"?body.title.toLowerCase().includes(source.title.toLowerCase()):null};
+    }catch{record.govApiDiagnostics={status:"failed"};}
    }
   }
   results[index]=record;
@@ -48,7 +55,7 @@ await mkdir("artifacts",{recursive:true});
 await writeFile("artifacts/official-source-probe.json",JSON.stringify(report,null,2)+"\n",{mode:0o600});
 console.log("Official source probe:",success,"text bodies retrieved,",total-success,"unavailable of",total);
 console.log("Coverage by regulator:",[...new Set(results.map(x=>x.agency))].map(agency=>({agency,retrieved:results.filter(x=>x.agency===agency&&x.state==="text-retrieved").length,total:results.filter(x=>x.agency===agency).length})));
-console.log("Official HTML fallback diagnostics (non-sensitive):",results.slice(0,3).map(x=>({id:x.id,htmlProbeStatus:x.htmlProbeStatus||"not-run",htmlProbeType:x.htmlProbeType||"not-run",safeLoaderReason:x.safeLoaderReason||"not-recorded"})));
+console.log("Official HTML fallback diagnostics (non-sensitive):",results.slice(0,3).map(x=>({id:x.id,htmlProbeStatus:x.htmlProbeStatus||"not-run",htmlProbeType:x.htmlProbeType||"not-run",safeLoaderReason:x.safeLoaderReason||"not-recorded",govApiDiagnostics:x.govApiDiagnostics||null})));
 if(process.env.GITHUB_STEP_SUMMARY)await writeFile(process.env.GITHUB_STEP_SUMMARY,
   "## UK official regulatory coverage probe\n\n**"+success+"/"+total+"** publication texts fetched and extracted on "+checkedAt+". "+(total-success)+" source(s) unavailable; inspect uploaded manifest before release. No legal conclusions made.\n",{flag:"a"});
 // Failure makes degradation visible in the independent job rather than claiming coverage.
