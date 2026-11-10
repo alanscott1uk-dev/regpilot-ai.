@@ -69,13 +69,20 @@ async function testJourney(name,viewport){
   assert.ok(overflow<=3,"horizontal page overflow "+overflow+"px at "+viewport.width);
   await page.goto(base+"/team/sources",{waitUntil:"domcontentloaded"});
   assert.ok(await page.getByRole("heading",{name:/Know what changed/i}).isVisible());
+  for(const [route,heading] of [["/team/coverage",/See what's covered/i],["/team/briefing",/What's changed/i]]){
+   const view=await page.goto(base+route,{waitUntil:"domcontentloaded"});
+   assert.equal(view?.status(),200,"secure module should render");
+   assert.ok(await page.getByRole("heading",{name:heading}).isVisible(),"module heading is visible");
+   const over=await page.evaluate(()=>Math.max(0,document.documentElement.scrollWidth-innerWidth));
+   assert.ok(over<=3,"secure module "+route+" has horizontal overflow of "+over+"px");
+  }
   await page.goto(base+"/team/operations",{waitUntil:"domcontentloaded"});
   assert.ok(await page.getByRole("heading",{name:/A clearer day/i}).isVisible(),"secure workspace heading must remain visible on return to mobile");
   assert.deepEqual(errors,[],"no client runtime exceptions");
   await page.goto(base+"/workbench",{waitUntil:"domcontentloaded"});
   await mkdir("artifacts/usability",{recursive:true});
   await page.screenshot({path:"artifacts/usability/"+name+".png",fullPage:true});
-  observations.push({scenario:name,passed:true,durationMs:Date.now()-start,overflowPx:overflow,keyboardFocus:focus,steps:8});
+  observations.push({scenario:name,passed:true,durationMs:Date.now()-start,overflowPx:overflow,keyboardFocus:focus,steps:10});
  }catch(e){
   observations.push({scenario:name,passed:false,durationMs:Date.now()-start,error:e instanceof Error?e.message.slice(0,500):"Failed"});
  }finally{await ctx.close();}
