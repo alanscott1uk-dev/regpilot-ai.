@@ -9,6 +9,7 @@ import {downloadEvidence} from "../../../../lib/server/evidence-service";
 import {evidenceConfigured} from "../../../../lib/server/evidence-storage";
 import {EvidenceError} from "../../../../lib/evidence/file-guard.mjs";
 import {validateAiRequest,InputError} from "../../../../lib/ai/contract.mjs";
+import {aiBoundarySummary} from "../../../../lib/ai/regulated-use.mjs";
 import {extractDocument} from "../../../../lib/server/document-extraction";
 import {coverageOf} from "../../../../lib/documents/coverage";
 export const runtime="nodejs";export const dynamic="force-dynamic";export const maxDuration=60;
@@ -25,7 +26,7 @@ async function limitedBody(request:Request){
  return JSON.parse(Buffer.concat(chunks.map(x=>Buffer.from(x))).toString("utf8"));
 }
 export async function GET(){
- return json({enabled:aiConfigured(),workspaceEnabled:workspaceConfigured(),mode:"private-pilot",privacy:"Use fictional or non-sensitive data only. Model processing may occur outside the UK.",requiresAuth:true});
+ return json({enabled:aiConfigured(),workspaceEnabled:workspaceConfigured(),mode:"private-pilot",privacy:"Use fictional or non-sensitive working drafts only. Model processing may occur outside the UK.",requiresAuth:true,intendedUse:aiBoundarySummary()});
 }
 export async function POST(request:Request){
  if(!aiConfigured())return json({error:"Private AI pilot not configured"},503);
