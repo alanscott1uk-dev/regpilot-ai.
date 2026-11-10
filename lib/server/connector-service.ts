@@ -77,6 +77,34 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
 }
 export async function disconnectConnector(ctx:AuthorizedContext,id:string,version:number){return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const changed=await tx.evidenceConnector.updateMany({where:{id,organizationId:ctx.organizationId,version},data:{enabled:false,encryptedSecret:null,leaseToken:null,leaseUntil:null,version:{increment:1}}});if(!changed.count)throw new IntelligenceError("Connector changed",409);await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"connector.disconnected",entityType:"EvidenceConnector",entityId:id,details:{}}});return {id};});}
 export async function requestConnectorRun(ctx:AuthorizedContext,id:string,version:number){return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const row=await tx.evidenceConnector.findFirst({where:{id,organizationId:ctx.organizationId,version,enabled:true}});if(!row)throw new IntelligenceError("Active connector not found or changed",409);if(row.leaseUntil&&row.leaseUntil>new Date())throw new IntelligenceError("A collection is already running",409);if(row.lastSuccessAt&&Date.now()-row.lastSuccessAt.getTime()<300000)throw new IntelligenceError("Wait five minutes between successful collections",429);await tx.evidenceConnector.update({where:{id},data:{nextRunAt:new Date()}});return {id};});}
+/**
+ * Read-only, operator-triggered LIVE provider verification.
+ * Claims only the exact organisation-scoped connection, never an unrelated queued job.
+ * Reuses the normal encrypted-secret collector, lease fencing, evidence and audit path.
+ * A successful observation verifies connectivity/target at that moment, not compliance.
+ */
+export async function verifyConnectorNow(ctx:AuthorizedContext,id:string,version:number,collector:Collector=collectConfiguredConnector){
+ if(!connectorsEnabled())throw new IntelligenceError("Evidence collectors await activation",503);
+ if(!z.uuid().safeParse(id).success||!Number.isInteger(version)||version<1)throw new IntelligenceError("Invalid connector selection");
+ const now=new Date(),token=randomUUID();
+ const job=await transaction(ctx,async tx=>{
+  await requireMember(tx,ctx,ADMIN);
+  const record=await tx.evidenceConnector.findFirst({where:{id,organizationId:ctx.organizationId,version}});
+  if(!record)throw new IntelligenceError("Connection not found or settings changed",404);
+  if(!record.enabled||!connectorProviderEnabled(record.provider)||!record.encryptedSecret)throw new IntelligenceError("Active provider and credential required",409);
+  if(record.lastSuccessAt&&now.getTime()-record.lastSuccessAt.getTime()<300000)throw new IntelligenceError("Wait five minutes before another successful verification",429);
+  const claim=await tx.evidenceConnector.updateMany({where:{
+   id,organizationId:ctx.organizationId,version,enabled:true,encryptedSecret:{not:null},
+   OR:[{leaseUntil:null},{leaseUntil:{lte:now}}]
+  },data:{leaseToken:token,leaseUntil:new Date(now.getTime()+90000),attempts:{increment:1},nextRunAt:now}});
+  if(claim.count!==1)throw new IntelligenceError("This connection is already being verified or was changed",409);
+  return tx.evidenceConnector.findUniqueOrThrow({where:{id}});
+ });
+ const outcome=await executeConnector(job,collector);
+ return {connectorId:id,version,observed:outcome==="OBSERVED"||outcome==="FOLLOW_UP"||outcome==="INCOMPLETE",
+  outcome,verifiedAt:new Date().toISOString(),
+  note:"Read-only observation only. Inspect the saved signals, collection limits, and required human review."};
+}
 export async function claimConnector():Promise<EvidenceConnector|null>{
  if(!connectorsEnabled())return null;const token=randomUUID(),microsoft=microsoft365Enabled(),google=googleWorkspaceEnabled(),gitlab=gitlabEnabled(),cloudflare=cloudflareEnabled(),registry=companiesHouseEnabled();const rows=await db.$queryRaw<EvidenceConnector[]>`WITH due AS (SELECT id FROM "EvidenceConnector" WHERE enabled=true AND (provider='GITHUB' OR (provider='MICROSOFT365' AND ${microsoft}) OR (provider='GOOGLE_WORKSPACE' AND ${google}) OR (provider='GITLAB' AND ${gitlab}) OR (provider='CLOUDFLARE' AND ${cloudflare}) OR (provider='COMPANIES_HOUSE' AND ${registry})) AND "encryptedSecret" IS NOT NULL AND "nextRunAt"<=NOW() AND ("leaseUntil" IS NULL OR "leaseUntil"<=NOW()) ORDER BY "nextRunAt",id FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE "EvidenceConnector" c SET "leaseToken"=${token}::uuid,"leaseUntil"=NOW()+interval '90 seconds',attempts=c.attempts+1,"updatedAt"=NOW() FROM due WHERE c.id=due.id RETURNING c.*`;return rows[0]||null;
 }
