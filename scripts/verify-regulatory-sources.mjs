@@ -23,6 +23,14 @@ async function worker(){
   }catch(e){
    // Error text is not returned or stored: providers may leak headers or tokens.
    record.reason=e?.name==="SourceUnavailable"?"source-or-parser-unavailable":"fetch-or-extraction-failed";
+   if(index<3 && source.provider!=="OFFICIAL_WEB"){
+    try{
+      const probe=await fetch("https://www.gov.uk"+source.path,{method:"GET",redirect:"error",signal:AbortSignal.timeout(7000),headers:{accept:"text/html"}});
+      record.htmlProbeStatus=probe.status;
+      record.htmlProbeType=probe.headers.get("content-type")?.split(";")[0]||"unknown";
+      await probe.body?.cancel();
+    }catch{record.htmlProbeStatus="network-unavailable";}
+   }
   }
   results[index]=record;
  }
