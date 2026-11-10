@@ -26,6 +26,7 @@ export default function OfficialSourceHistory(){
  const [decision,setDecision]=useState<"REVIEWED"|"NOT_APPLICABLE">("REVIEWED");
  const [owner,setOwner]=useState("Regulatory lead");
  const [message,setMessage]=useState("");
+ const [monitorEvery,setMonitorEvery]=useState<"24"|"168">("168");
  const [busy,setBusy]=useState(false);
  const request=useCallback(async(url:string,options:RequestInit={})=>{
   const token=(await browserAuth().auth.getSession()).data.session?.access_token;
@@ -88,6 +89,18 @@ export default function OfficialSourceHistory(){
   }catch(e){setMessage(e instanceof Error?e.message:"Review decision unavailable")}
   finally{setBusy(false)}
  }
+ async function monitorPortfolio(){
+  if(!orgId||busy)return;
+  if(!filtered.length||filtered.length>30){setMessage("Filter to between 1 and 30 publications before enabling portfolio monitoring.");return;}
+  setBusy(true);setMessage("");
+  try{
+   const result=await request("/api/workspace/monitoring/portfolio",{method:"POST",headers:{"Content-Type":"application/json"},
+     body:JSON.stringify({organizationId:orgId,sourceIds:filtered.map(s=>s.id),enabled:true,intervalHours:Number(monitorEvery)})});
+   setMessage(result.created+" new, "+result.updated+" updated, "+result.unchanged+" already scheduled. Collection starts only when the secure worker is enabled.");
+   await loadHistory(orgId);
+  }catch(e){setMessage(e instanceof Error?e.message:"Could not configure the monitoring portfolio");}
+  finally{setBusy(false);}
+ }
  async function createAction(){
   if(!latest||!activeSource)return;setBusy(true);setMessage("");
   try{
@@ -120,7 +133,15 @@ export default function OfficialSourceHistory(){
     </section>
     <section className={ui.layout}>
      <div className={ui.catalog}><div className={ui.heading}><span>01 / OFFICIAL SOURCE CATALOGUE</span><h2>Choose a publication</h2><a href="/team/library">Find and register publications ↗</a><p>Find a relevant starting point. Territory and topic tags do not determine legal applicability; unclassified publications remain visible.</p></div>
-      <div className={ui.filters}><label>Business location<select value={territory} onChange={e=>setTerritory(e.target.value)}><option value="">All locations</option>{TERRITORIES.map(t=><option key={t}>{t}</option>)}</select></label><label>Activity<select value={activity} onChange={e=>setActivity(e.target.value)}><option value="">All activities</option>{Object.entries(SOURCE_ACTIVITIES).map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label><label>Find a publication<input type="search" value={search} onChange={e=>setSearch(e.target.value)} maxLength={100}/></label><p>{filtered.length} references shown. {coverage.filter(x=>!x.snapshotId).length} catalogue references have no saved baseline.</p></div>
+      <div className={ui.filters}><label>Business location<select value={territory} onChange={e=>setTerritory(e.target.value)}><option value="">All locations</option>{TERRITORIES.map(t=><option key={t}>{t}</option>)}</select></label><label>Activity<select value={activity} onChange={e=>setActivity(e.target.value)}><option value="">All activities</option>{Object.entries(SOURCE_ACTIVITIES).map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label><label>Find a publication<input type="search" value={search} onChange={e=>setSearch(e.target.value)} maxLength={100}/></label><p>{filtered.length} references shown. {coverage.filter(x=>!x.snapshotId).length} catalogue references have no saved baseline.</p>
+ {canReview&&<div className={ui.review} style={{padding:12,marginTop:8}}>
+  <strong style={{display:"block",fontSize:13,marginBottom:7}}>Monitor this filtered source portfolio</strong>
+  <label style={{display:"block",fontSize:12}}>Check frequency<select value={monitorEvery} onChange={e=>setMonitorEvery(e.target.value as "24"|"168")}>
+   <option value="168">Weekly</option><option value="24">Daily</option></select></label>
+  <button type="button" disabled={busy||filtered.length<1||filtered.length>30} onClick={()=>void monitorPortfolio()}>
+   {busy?"Saving…":"Enable monitoring for "+filtered.length+" shown source(s)"}</button>
+  <p style={{fontSize:11}}>Choose a location, industry or search to limit selection to 30. Official text checks require an activated scheduler; source changes still require human interpretation.</p>
+ </div>}</div>
       {filtered.length===0&&<p>No references match these filters. This does not mean no requirements apply.</p>}
       {filtered.map(src=><button key={src.id} type="button" disabled={busy} onClick={()=>{setSelected(src.id);setLastResult(null)}} className={selected===src.id?ui.selected:ui.source}>
        <span>{src.agency} · {src.topic}</span><strong>{src.title}</strong><small>{src.jurisdictions?.join(", ")||"Territory scope needs review"}</small><small>{sourceNextStep(coverage.find(x=>x.sourceId===src.id))}</small></button>)}
