@@ -58,3 +58,22 @@ test("evidence assessment refuses self-approved or unscanned files and never cla
   const result=evidenceReadiness([{...row,reviewerId:"two"}]);
   assert.equal(result.independentlyReviewed,1);assert.match(result.nextStep,/cannot establish adequacy/);
 });
+
+test("new UK source catalogue provides activity-aware intelligence suggestions without invented legal applicability",()=>{
+ const quote="Manufacturers must retain documented staff training and pharmaceutical manufacturing records for independent review.";
+ const medicine=analysePublication({sourceId:"mhra-gmp-gdp",text:quote,profile:{activities:["medicines"],jurisdictions:["Scotland"]}});
+ assert.equal(medicine.candidates[0].applicability,"potential-match");
+ assert.ok(medicine.candidates[0].reasons.some(s=>s.includes("discovery tags")));
+ const supply=analysePublication({sourceId:"modern-slavery-supply",text:quote,profile:{activities:["supply-chain"],jurisdictions:["Wales"]}});
+ assert.equal(supply.candidates[0].applicability,"potential-match");
+});
+test("devolved nation tags cannot silently create irrelevant matched obligations",()=>{
+ const quote="Employers must retain documented records of workforce policies and related training.";
+ const ni=analysePublication({sourceId:"acas-disciplinary",text:quote,profile:{activities:["employing-staff"],jurisdictions:["Northern Ireland"]}});
+ assert.equal(ni.candidates[0].applicability,"needs-context");
+ assert.ok(ni.candidates[0].reasons.some(x=>x.includes("territory tags do not overlap")));
+ const gb=analysePublication({sourceId:"acas-disciplinary",text:quote,profile:{activities:["employing-staff"],jurisdictions:["Scotland"]}});
+ assert.equal(gb.candidates[0].applicability,"potential-match");
+ const england=analysePublication({sourceId:"fss-starting-business",text:quote,profile:{activities:["food-business"],jurisdictions:["England"]}});
+ assert.equal(england.candidates[0].applicability,"needs-context");
+});
