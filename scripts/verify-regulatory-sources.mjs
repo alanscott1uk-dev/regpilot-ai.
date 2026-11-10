@@ -2,7 +2,9 @@
 import {mkdir,writeFile} from "node:fs/promises";
 import {createHash} from "node:crypto";
 import {REGULATORY_SOURCES} from "../lib/regulatory-sources.mjs";
-import {loadPublication} from "../lib/server/ai-sources.ts";
+import * as sourceModule from "../lib/server/ai-sources.ts";
+const loadPublication=sourceModule.loadPublication||sourceModule.default?.loadPublication;
+if(typeof loadPublication!=="function")throw Error("Official publication loader unavailable");
 
 const results=new Array(REGULATORY_SOURCES.length),checkedAt=new Date().toISOString();
 let cursor=0;
