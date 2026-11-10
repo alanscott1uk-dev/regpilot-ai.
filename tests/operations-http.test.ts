@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {POST as INSPECT} from "../app/api/workspace/evidence/[id]/inspect/route";
 import {GET,POST} from "../app/api/workspace/operations/route";
 import {GET as CRON} from "../app/api/internal/cron/route";
+import {GET as BRIEF} from "../app/api/workspace/briefing/route";
 import {POST as VERIFY} from "../app/api/workspace/connectors/[id]/verify/route";
 import {POST as PORTFOLIO} from "../app/api/workspace/monitoring/portfolio/route";
 import {POST as IMPORT} from "../app/api/workspace/programme/route";
@@ -19,6 +20,7 @@ test("production cron and manual verification fail closed before any live provid
  const secret="r".repeat(48);
  Object.assign(process.env,{CRON_SECRET:secret,REGPILOT_CRON_ENABLED:"false",REGPILOT_AUTOMATION_ENABLED:"false",REGPILOT_WORKSPACE_ENABLED:"false"});
  const request=(auth="")=>new Request("https://example.invalid/api/internal/cron",{headers:auth?{authorization:auth}:{}});
+ assert.equal((await BRIEF(new Request("https://example.invalid/api/workspace/briefing?organizationId="+id))).status,503);
  assert.equal((await CRON(request())).status,401);
  assert.equal((await CRON(request("Bearer invalid"))).status,401);
  assert.equal((await CRON(request("Bearer "+secret))).status,503);
