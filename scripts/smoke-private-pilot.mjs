@@ -62,7 +62,7 @@ async function waitForServer(){
 try{
  await waitForServer();
  const routes=[
-  "/team/access-reviews","/team/answers","/team/questionnaires","/team/trust","/trust","/team/audit-requests","/team/changes","/team/people","/team/vendors","/team/audits","/auditor","/team/services","/team/settings","/team/operations","/team/library","/workbench","/register","/documents","/evidence","/controls",
+  "/team/coverage","/team/access-reviews","/team/answers","/team/questionnaires","/team/trust","/trust","/team/audit-requests","/team/changes","/team/people","/team/vendors","/team/audits","/auditor","/team/services","/team/settings","/team/operations","/team/library","/workbench","/register","/documents","/evidence","/controls",
   "/assurance","/intelligence","/traceability","/team","/team/evidence","/team/sources","/team/intelligence","/team/assurance","/ai"
  ];
  for(const path of routes){
