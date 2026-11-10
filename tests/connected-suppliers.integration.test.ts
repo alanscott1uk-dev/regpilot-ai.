@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {db} from "../lib/server/db";
 import {assuranceFixture,rejects,future} from "./helpers/assurance-fixture";
-import {saveConnector,claimConnector,executeConnector,disconnectConnector,exportConnectorRun} from "../lib/server/connector-service";
+import {saveConnector,claimConnector,executeConnector,disconnectConnector,exportConnectorRun,verifyConnectorNow} from "../lib/server/connector-service";
 import {operationsWorkspace} from "../lib/server/operations-service";
 import {createVendor,changeVendor,prepareVendorReview,vendorDetail,exportVendorReview} from "../lib/server/vendor-service";
 import {VENDOR_CRITERIA} from "../lib/assurance-workflows";
@@ -101,5 +101,26 @@ test("connected supplier reviews freeze signals, require independent review and 
 
 
   process.env.REGPILOT_COMPANIES_HOUSE_ENABLED="false";assert.equal((await vendorDetail(x.o,v.id)).reviewState,"STALE");
+ }finally{await x.cleanup();}
+});
+
+
+test("manual live connector verification is tenant-scoped, lease-fenced, persisted and rate-limited",async()=>{
+ const x=await assuranceFixture();flags();
+ try{
+  const c=await control(x);
+  const saved=await saveConnector(x.o,{provider:"COMPANIES_HOUSE",companyNumber:"SC123456",controlId:c.id,version:0,token,consent:true,enabled:true,intervalHours:24});
+  await assert.rejects(()=>verifyConnectorNow(x.ed,saved.id,saved.version),rejects(403));
+  await assert.rejects(()=>verifyConnectorNow(x.out,saved.id,saved.version),rejects(404));
+  let called=0;
+  const result=await verifyConnectorNow(x.o,saved.id,saved.version,async(target,secret)=>{
+   called++;assert.equal(target.provider,"COMPANIES_HOUSE");assert.equal(secret,token);
+   return observation();
+  });
+  assert.equal(called,1);assert.equal(result.outcome,"OBSERVED");assert.equal(result.observed,true);
+  assert.equal(await db.connectorRun.count({where:{connectorId:saved.id,organizationId:x.a.id}}),1);
+  assert.doesNotMatch(JSON.stringify(result),/fictional-read-only-secret/);
+  await assert.rejects(()=>verifyConnectorNow(x.o,saved.id,saved.version,async()=>{throw Error("second request not allowed");}),rejects(429));
+  assert.equal((await db.evidenceConnector.findUniqueOrThrow({where:{id:saved.id}})).leaseToken,null);
  }finally{await x.cleanup();}
 });
