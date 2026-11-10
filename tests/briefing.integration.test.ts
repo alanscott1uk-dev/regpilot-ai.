@@ -9,6 +9,8 @@ test("seven-day regulatory briefing isolates tenants and distinguishes text chan
  const mark=randomUUID();
  const users=await Promise.all(["one","two"].map(n=>db.user.create({data:{externalId:"brief-"+n+mark,email:"brief-"+n+mark+"@example.invalid"}})));
  const orgs=await Promise.all(["A","B"].map(n=>db.organization.create({data:{name:"Fictional briefing "+n+mark}})));
+ const oldAllowed=process.env.REGPILOT_AI_ALLOWED_EMAILS;
+ process.env.REGPILOT_AI_ALLOWED_EMAILS=users.map(u=>u.email).join(",");
  const a:AuthorizedContext={userId:users[0].id,organizationId:orgs[0].id,role:"OWNER"};
  const b:AuthorizedContext={userId:users[1].id,organizationId:orgs[1].id,role:"OWNER"};
  try{
@@ -42,5 +44,6 @@ test("seven-day regulatory briefing isolates tenants and distinguishes text chan
   await db.membership.deleteMany({where:{organizationId:{in:ids}}});
   await db.organization.deleteMany({where:{id:{in:ids}}});
   await db.user.deleteMany({where:{id:{in:users.map(u=>u.id)}}});
+  if(oldAllowed===undefined)delete process.env.REGPILOT_AI_ALLOWED_EMAILS;else process.env.REGPILOT_AI_ALLOWED_EMAILS=oldAllowed;
  }
 });
