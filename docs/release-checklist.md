@@ -110,3 +110,17 @@ For Word/document inspection release acceptance, follow [Document understanding]
 - Before activation, validate restricted credentials and real responses against approved test targets. Confirm partial/unknown settings never become a passing result.
 - Recheck the eight additional official references and assess applicability, territory, legal effect and control relationships with a qualified reviewer. Successful retrieval is not expert validation or complete regulatory coverage.
 - Verify source filters, per-source history and supplier forms in authenticated desktop/mobile sessions. CI and public retrieval evidence do not replace staged provider/Auth/Storage acceptance.
+
+## UK AI, ICO and MHRA scope gate — 10 November 2026
+
+See [UK AI and MHRA regulatory applicability assessment](uk-ai-mhra-regulatory-assessment-20261110.md).
+
+- [ ] Obtain signed nonclinical intended-purpose assessment against MHRA's **6 November 2026** software medical-device guidance; review functionality and actual marketing, not simply UI disclaimers.
+- [ ] ICO-focused privacy screening: controller/processor roles, Article 28 agreement, DPIA where required, UK GDPR lawful basis, data-subject rights, retention and complaint handling after the Data (Use and Access) Act 2025.
+- [ ] Contractually and technically verify AI model provider terms for prompt/response retention, training, subprocessors, overseas transfers, deletion and incident support; record accountable sign-offs before setting any `REGPILOT_AI_*_REVIEWED=true` gate.
+- [ ] Confirm all AI request pathways require exact declared `business-compliance-assistance`, `working-draft`, non-sensitive/synthetic category and independent human review. Confirm clinical, significant automated decisions and GxP original records fail closed before model calls or spending reservations.
+- [ ] Complete security and adversarial prompt-injection/PII leakage testing, source accuracy/uncertainty benchmark, human review tests and model version/change control for every deployed model.
+- [ ] If a pharmaceutical customer wants RegPilot as a **GxP system of record**, obtain qualified assessment, URS/risk analysis, intended-use validation and evidence of ALCOA+ principles, audit trails, verified records, appropriate e-signatures, access and supplier/retention/backup controls. No GxP certification claim based on code alone.
+- [ ] For patient-specific clinical function, stop and obtain regulatory medical-device qualification and appropriate market route first. Do not broaden the current pilot intended use through a prompt, checkbox, feature flag or wording-only change.
+- [ ] Verify remote staging services, independent security/privacy and pharmaceutical QA acceptance. A passing GitHub Actions workflow is development verification, not a regulator's acceptance.
+
