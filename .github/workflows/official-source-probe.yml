@@ -1,0 +1,29 @@
+name: Independent official regulatory source probe
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci --no-audit --no-fund
+      - name: Retrieve public sources and validate exact text extraction
+        run: node --import tsx scripts/verify-regulatory-sources.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: official-uk-source-probe
+          path: artifacts/official-source-probe.json
+          retention-days: 14
