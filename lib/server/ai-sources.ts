@@ -25,6 +25,11 @@ export async function loadPublication(source:RegulatorySource){
  let meta;
  try{meta=normaliseContent(source,raw)}catch{throw new SourceUnavailable("Official source data invalid")}
  const text=extractGovBody(raw);
- if(text.length<80)throw new SourceUnavailable("Publication text unavailable: review the original official page");
+ if(text.length<80){
+  // Some GOV.UK content items expose metadata or navigation without a useful body.
+  // This is NOT proof the source is missing: try the exact official published HTML.
+  try{return await loadGovUkHtml(source);}
+  catch{throw new SourceUnavailable("Publication body could not be verified through API or HTML");}
+ }
  return {id:source.id,title:meta.title,url:meta.url,updatedAt:meta.updatedAt,revisionAt:meta.revisionAt,text};
 }
