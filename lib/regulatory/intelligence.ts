@@ -1,8 +1,9 @@
 import {createHash} from "node:crypto";
 import type {Interpretation} from "./semantic";
+import {REGULATORY_SOURCES} from "../regulatory-sources.mjs";
 
 export const ENGINE_VERSION = "obligation-triage-1.1.0";
-export const ACTIVITIES = ["personal-data", "employing-staff", "premises", "medicines", "controlled-drugs", "food-business", "consumer-sales", "vat-registered", "limited-company", "commercial-waste"] as const;
+export const ACTIVITIES = ["personal-data", "employing-staff", "premises", "medicines", "controlled-drugs", "food-business", "consumer-sales", "vat-registered", "limited-company", "commercial-waste", "supply-chain", "sponsored-workers"] as const;
 export const JURISDICTIONS = ["England", "Scotland", "Wales", "Northern Ireland"] as const;
 export type BusinessProfile = {activities: string[]; jurisdictions: string[]};
 export type Mapping = {id: string; title: string; matchedTerms: string[]; evidenceNeeded: string[]; domains: string[]};
@@ -71,8 +72,15 @@ export function analysePublication(input: {sourceId: string; text: string; previ
     seen.add(key);
     const start = segment.index! + segment[0].indexOf(quote), end = start + quote.length;
     const language = /\b(must not|shall not)\b/i.test(quote) ? "prohibition" : /\b(must|shall|required to|need to)\b/i.test(quote) ? "mandatory-language" : "recommendation";
-    const relevant = (sourceActivities[input.sourceId] || []).filter(a => profile.activities.includes(a));
-    const reasons = relevant.length ? ["Publication topic matches declared activities: " + relevant.join(", ") + "."] : ["No confirmed match between this source topic and the selected activities. Absence of a match does not establish an exemption."];
+    const catalogue=REGULATORY_SOURCES.find(s=>s.id===input.sourceId);
+    const knownActivities=catalogue?.activities?.length?catalogue.activities:(sourceActivities[input.sourceId]||[]);
+    const relevant=knownActivities.filter(a=>profile.activities.includes(a));
+    const territories=catalogue?.jurisdictions||[];
+    const territoryMatch=!territories.length||!profile.jurisdictions.length||territories.some(t=>profile.jurisdictions.includes(t));
+    const reasons=relevant.length
+      ?["Curated discovery tags overlap declared activities: "+relevant.join(", ")+". This is not a validated legal applicability decision."]
+      :["No confirmed match between the publication's discovery tags and selected activities. Absence of a match does not establish an exemption."];
+    if(!territoryMatch)reasons.push("The catalogue territory tags do not overlap the declared business locations. Check the original publication before concluding that it is inapplicable.");
     const questions = ["Does the whole publication apply to this business, including any exceptions?", "What is the legal status and effective date of this passage?"];
     if (/\b(if|unless|except|where|when|provided that)\b/i.test(quote)) questions.push("Check the condition or exception in this passage before assigning work.");
     if (/\b(not required|do not need|does not need|need not|no longer|not necessary)\b/i.test(quote)) questions.push("This passage may describe an exemption or removal of a requirement; do not turn it into a positive duty.");
@@ -80,7 +88,7 @@ export function analysePublication(input: {sourceId: string; text: string; previ
     if (profile.jurisdictions.includes("Scotland") || profile.jurisdictions.includes("Northern Ireland")) questions.push("Confirm the territorial scope; this GOV.UK page may link to different rules for Scotland or Northern Ireland.");
     const change = input.previousText === undefined ? "baseline" : input.previousText.includes(quote) ? "existing" : "added-or-reworded";
     candidates.push({key,quote,start,end,language,change,
-      applicability:relevant.length && profile.jurisdictions.length ? "potential-match" : "needs-context",
+      applicability:relevant.length && profile.jurisdictions.length && territoryMatch ? "potential-match" : "needs-context",
       reasons,questions,mappings:matchControls(quote),priority:change === "added-or-reworded" && language !== "recommendation" ? "review-first" : "normal",
       dateMentions:[...new Set(quote.match(/\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b|\b\d{4}-\d{2}-\d{2}\b/gi) || [])]
     });
