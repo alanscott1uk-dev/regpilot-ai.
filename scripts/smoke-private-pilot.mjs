@@ -62,7 +62,7 @@ async function waitForServer(){
 try{
  await waitForServer();
  const routes=[
-  "/team/coverage","/team/briefing","/team/access-reviews","/team/answers","/team/questionnaires","/team/trust","/trust","/team/audit-requests","/team/changes","/team/people","/team/vendors","/team/audits","/auditor","/team/services","/team/settings","/team/operations","/team/library","/workbench","/register","/documents","/evidence","/controls",
+  "/team/coverage","/team/briefing","/team/recognition","/recognition","/team/access-reviews","/team/answers","/team/questionnaires","/team/trust","/trust","/team/audit-requests","/team/changes","/team/people","/team/vendors","/team/audits","/auditor","/team/services","/team/settings","/team/operations","/team/library","/workbench","/register","/documents","/evidence","/controls",
   "/assurance","/intelligence","/traceability","/team","/team/evidence","/team/sources","/team/intelligence","/team/assurance","/ai"
  ];
  for(const path of routes){
@@ -83,6 +83,13 @@ try{
  assert.equal(noReview.status,503,"private AI review access must fail closed");
  const noEvidence=await response("/api/workspace/evidence?organizationId=123e4567-e89b-42d3-a456-426614174000&obligationId=123e4567-e89b-42d3-a456-426614174001");
  assert.equal(noEvidence.status,503,"evidence API must fail closed without private storage and antivirus configuration");
+ const publicRecognitions=await response("/recognition");
+ assert.equal(publicRecognitions.status,200);
+ const pubHtml=await publicRecognitions.text();
+ assert.match(pubHtml,/No current independently verified award/);
+ assert.doesNotMatch(pubHtml,/MHRA approved AI|government-approved AI/);
+ const privateRecognitions=await response("/api/workspace/recognition?organizationId=123e4567-e89b-42d3-a456-426614174000");
+ assert.equal(privateRecognitions.status,503,"private recognition tracking must be authenticated and disabled by default");
  const noSources=await response("/api/workspace/sources?organizationId=123e4567-e89b-42d3-a456-426614174000");
  assert.equal(noSources.status,503,"team regulatory source API must fail closed when private workspace is disabled");
  for(const path of ["/api/workspace/operations","/api/workspace/programme","/api/workspace/connectors","/api/workspace/controls","/api/workspace/assurance","/api/workspace/intelligence","/api/workspace/intelligence/profile","/api/workspace/intelligence/semantic","/api/workspace/intelligence/monitoring","/api/internal/monitor","/api/workspace/intelligence/123e4567-e89b-42d3-a456-426614174000"]){
