@@ -13,14 +13,17 @@ try {
   for (const model of models) {
     if (!tables.some(t => t.tablename === model && t.rowsecurity)) throw new Error('Required private table or RLS missing');
     const checks = await db.$queryRaw`
-      SELECT has_table_privilege(current_user, format('public.%I', ${model}::text), 'SELECT,INSERT,UPDATE,DELETE') AS runtime_access,
+      SELECT (has_table_privilege(current_user, format('public.%I', ${model}::text), 'SELECT')
+        AND has_table_privilege(current_user, format('public.%I', ${model}::text), 'INSERT')
+        AND has_table_privilege(current_user, format('public.%I', ${model}::text), 'UPDATE')
+        AND has_table_privilege(current_user, format('public.%I', ${model}::text), 'DELETE')) AS runtime_access,
         has_table_privilege('anon', format('public.%I', ${model}::text), 'SELECT,INSERT,UPDATE,DELETE') AS anon_access,
         has_table_privilege('authenticated', format('public.%I', ${model}::text), 'SELECT,INSERT,UPDATE,DELETE') AS api_access`;
     if (!checks[0]?.runtime_access || checks[0].anon_access || checks[0].api_access) throw new Error('Private table grants are incorrect');
   }
   // Exercise actual generated Prisma mappings without returning stored data.
   await db.organization.findFirst({select:{id:true}});
-  const isolation = await db.$queryRaw`SELECT has_table_privilege(current_user, 'auth.users', 'SELECT') AS auth_access,
+  const isolation = await db.$queryRaw`SELECT has_schema_privilege(current_user, 'auth', 'USAGE') AS auth_access,
     has_table_privilege(current_user, 'public.organizations', 'SELECT') AS legacy_access`;
   if (isolation[0].auth_access || isolation[0].legacy_access) throw new Error('Runtime role can read unrelated data');
   console.log(`Staging database verified: ${models.length} private tables, RLS and restricted runtime role.`);
