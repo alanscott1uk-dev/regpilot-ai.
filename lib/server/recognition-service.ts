@@ -7,18 +7,22 @@ import {RECOGNITION_TRACKS,buildRecognitionRegister,isRecognitionTrack} from "..
 const taskKey=(id:string)=>"recognition:"+id;
 const safeUser=(user:string)=>user.length<=80?user:user.slice(0,80);
 export async function recognitionWorkspace(ctx:AuthorizedContext){
- const existing=await db.$transaction(async tx=>{
+ const {existing,files}=await db.$transaction(async tx=>{
   await requireMember(tx,ctx);
-  return tx.obligation.findMany({where:{organizationId:ctx.organizationId,automationKey:{in:RECOGNITION_TRACKS.map(x=>taskKey(x.id))}},
+  const existing=await tx.obligation.findMany({where:{organizationId:ctx.organizationId,automationKey:{in:RECOGNITION_TRACKS.map(x=>taskKey(x.id))}},
     orderBy:{dueDate:"asc"},take:20,select:{id:true,title:true,automationKey:true,ownerName:true,status:true,dueDate:true,completionException:true}});
+  const files=existing.length?await tx.evidence.findMany({where:{organizationId:ctx.organizationId,obligationId:{in:existing.map(t=>t.id)}},
+    select:{id:true,obligationId:true,scanStatus:true,reviewStatus:true,reviewerId:true,uploadedById:true,reviewedAt:true},take:100}):[];
+  return {existing,files};
  });
  const tasks=new Map(existing.map(t=>[t.automationKey,t]));
+ const approved=new Map(existing.map(t=>[t.id,files.filter(f=>f.obligationId===t.id&&f.scanStatus==="CLEAN"&&f.reviewStatus==="APPROVED"&&!!f.reviewerId&&!!f.uploadedById&&f.reviewerId!==f.uploadedById&&!!f.reviewedAt).length]));
  const publicRegister=buildRecognitionRegister();
  return {tracks:RECOGNITION_TRACKS.map(t=>{
    const existingTask=tasks.get(taskKey(t.id));
    return {...t,publicStatus:publicRegister.records.find(x=>x.id===t.id)?.status||"NOT_VERIFIED",
-    task:existingTask?{id:existingTask.id,title:existingTask.title,ownerName:existingTask.ownerName,status:existingTask.status,dueDate:existingTask.dueDate.toISOString().slice(0,10),completionException:existingTask.completionException}:null};
- }),notice:"Internal tasks and completed documents do not constitute certifications, government endorsements, MHRA approvals or customer-specific GxP validation."};
+    task:existingTask?{id:existingTask.id,title:existingTask.title,ownerName:existingTask.ownerName,status:existingTask.status,dueDate:existingTask.dueDate.toISOString().slice(0,10),completionException:existingTask.completionException,independentlyReviewedFiles:approved.get(existingTask.id)||0}:null};
+ }),notice:"File counts reflect internal scan/review metadata only; not issuer confirmation, verified file bytes, MHRA approvals, external certification or customer GxP validation."};
 }
 export async function createRecognitionAction(ctx:AuthorizedContext,trackId:string){
  if(!["OWNER","ADMIN"].includes(ctx.role))throw new IntelligenceError("An administrator is required to prepare external assurance",403);
