@@ -27,8 +27,8 @@ test("external assurance work is tenant isolated, idempotent and cannot award re
   assert.equal(initial.tracks.length,7);
   assert.ok(initial.tracks.every(t=>t.publicStatus==="NOT_VERIFIED"&&!t.task));
   assert.equal((await recognitionWorkspace(outside)).tracks.every(t=>!t.task),true);
-  await assert.rejects(()=>createRecognitionAction(viewer,"iso-42001"),e=>e?.status===403);
-  await assert.rejects(()=>createRecognitionAction(ctx,"fabricated-official-approval"),e=>e?.status===400);
+  await assert.rejects(()=>createRecognitionAction(viewer,"iso-42001"),(e:any)=>e?.status===403);
+  await assert.rejects(()=>createRecognitionAction(ctx,"fabricated-official-approval"),(e:any)=>e?.status===400);
   const outcomes=await Promise.all([createRecognitionAction(ctx,"iso-42001"),createRecognitionAction(ctx,"iso-42001")]);
   assert.equal(outcomes[0].taskId,outcomes[1].taskId);
   assert.equal(outcomes.filter(o=>o.reused).length,1);
