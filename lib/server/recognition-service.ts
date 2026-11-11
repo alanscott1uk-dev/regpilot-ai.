@@ -21,6 +21,7 @@ export async function recognitionWorkspace(ctx:AuthorizedContext){
  }),notice:"Internal tasks and completed documents do not constitute certifications, government endorsements, MHRA approvals or customer-specific GxP validation."};
 }
 export async function createRecognitionAction(ctx:AuthorizedContext,trackId:string){
+ if(!["OWNER","ADMIN"].includes(ctx.role))throw new IntelligenceError("An administrator is required to prepare external assurance",403);
  if(!isRecognitionTrack(trackId))throw new IntelligenceError("Unknown assurance pathway",400);
  const track=RECOGNITION_TRACKS.find(x=>x.id===trackId)!;
  return transaction(ctx,async tx=>{
