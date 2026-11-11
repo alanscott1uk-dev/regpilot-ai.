@@ -5,7 +5,7 @@ import {RECOGNITION_TRACKS} from "../../../lib/recognition/registry.mjs";
 import shell from "../../workbench/workbench.module.css";
 import styles from "./recognition.module.css";
 type Org={id:string;name:string;role:"OWNER"|"ADMIN"|"EDITOR"|"VIEWER"};
-type Work={tracks:Array<typeof RECOGNITION_TRACKS[number]&{publicStatus:string;task:null|{id:string;title:string;ownerName:string;status:string;dueDate:string;completionException:boolean}}>;notice:string};
+type Work={tracks:Array<typeof RECOGNITION_TRACKS[number]&{publicStatus:string;task:null|{id:string;title:string;ownerName:string;status:string;dueDate:string;completionException:boolean;independentlyReviewedFiles:number}}>;notice:string};
 export default function RecognitionWorkspace(){
  const [orgs,setOrgs]=useState<Org[]>([]),[selected,setSelected]=useState(""),[data,setData]=useState<Work|null>(null);
  const [message,setMessage]=useState(""),[loading,setLoading]=useState(true),[working,setWorking]=useState("");
@@ -74,7 +74,7 @@ export default function RecognitionWorkspace(){
     <span className={styles.kind}>{t.kind.replaceAll("_"," ")} · {t.issuer}</span><h2>{t.title}</h2><p>{t.purpose}</p>
     <h3>Evidence to assemble</h3><ul>{t.requirements.map(x=><li key={x}>{x}</li>)}</ul>
     {t.task?<div className={styles.task}><p>Task: <strong>{t.task.status.replaceAll("_"," ")}</strong> · owner {t.task.ownerName} · target {t.task.dueDate}</p>
-      <a href={"/team?taskId="+encodeURIComponent(t.task.id)}>Open existing evidence task →</a>
+      <a href={"/team?taskId="+encodeURIComponent(t.task.id)}>Open existing evidence task →</a><p><strong>{t.task.independentlyReviewedFiles}</strong> clean file(s) with independent internal approval recorded. This does not prove issuer validity or current GxP acceptance.</p><a href="/team/evidence">Open private evidence vault →</a>
       {t.task.completionException&&<p>Recorded completion exception. No external recognition is implied.</p>}
      </div>:admin&&selected?<button type="button" disabled={!!working||loading} onClick={()=>void create(t.id)}>{working===t.id?"Creating…":"Create evidence action"}</button>
        :<p className={styles.await}>An owner or administrator may create a tracked evidence action.</p>}
