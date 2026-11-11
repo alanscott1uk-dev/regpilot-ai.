@@ -13,9 +13,9 @@ try {
   for (const model of models) {
     if (!tables.some(t => t.tablename === model && t.rowsecurity)) throw new Error('Required private table or RLS missing');
     const checks = await db.$queryRaw`
-      SELECT has_table_privilege(current_user, format('public.%I', ${model}), 'SELECT,INSERT,UPDATE,DELETE') AS runtime_access,
-        has_table_privilege('anon', format('public.%I', ${model}), 'SELECT,INSERT,UPDATE,DELETE') AS anon_access,
-        has_table_privilege('authenticated', format('public.%I', ${model}), 'SELECT,INSERT,UPDATE,DELETE') AS api_access`;
+      SELECT has_table_privilege(current_user, format('public.%I', ${model}::text), 'SELECT,INSERT,UPDATE,DELETE') AS runtime_access,
+        has_table_privilege('anon', format('public.%I', ${model}::text), 'SELECT,INSERT,UPDATE,DELETE') AS anon_access,
+        has_table_privilege('authenticated', format('public.%I', ${model}::text), 'SELECT,INSERT,UPDATE,DELETE') AS api_access`;
     if (!checks[0]?.runtime_access || checks[0].anon_access || checks[0].api_access) throw new Error('Private table grants are incorrect');
   }
   // Exercise actual generated Prisma mappings without returning stored data.
@@ -27,6 +27,7 @@ try {
 } catch (error) {
   console.error('Staging database preflight failed. Check connectivity, schema and runtime grants.');
   console.error('Database error category:', error?.code || error?.constructor?.name || 'unknown');
+  if (error?.meta?.code) console.error('SQL state:', error.meta.code);
   process.exitCode = 1;
 } finally {
   await db.$disconnect();
