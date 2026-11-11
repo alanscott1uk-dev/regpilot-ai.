@@ -19,6 +19,7 @@
 - ICO on DUAA commencement, 19 June 2026: https://ico.org.uk/about-the-ico/what-we-do/legislation-we-cover/data-use-and-access-act-2025/the-data-use-and-access-act-2025-what-does-it-mean-for-organisations/
 - **SI 2026/425 (in force 12 May 2026):** directs the ICO to develop a code of practice for AI and automated decision-making; it does not itself certify or license private AI services. The ICO code draft was expected in spring 2027; track its publication and review requirements once issued: https://www.legislation.gov.uk/uksi/2026/425/made\n- ICO privacy by design (updated 5 February 2026): https://ico.org.uk/for-organisations/uk-gdpr-guidance-and-resources/accountability-and-governance/guide-to-accountability-and-governance/data-protection-by-design-and-by-default
 - MHRA GxP data integrity, revision 1 March 2018: https://www.gov.uk/government/publications/guidance-on-gxp-data-integrity
+- Government voluntary AI Cyber Security Code of Practice (31 January 2025; includes prompt injection, supply-chain assurance and secure model development): https://www.gov.uk/government/publications/ai-cyber-security-code-of-practice/code-of-practice-for-the-cyber-security-of-ai
 - MHRA SaMD market-entry guidance, 6 November 2026: https://www.gov.uk/government/publications/guidance-on-bringing-software-as-a-medical-device-to-market
 - Government response to the National AI Commission, 6 October 2026 (proposals vs current legislation must be distinguished): https://www.gov.uk/government/publications/government-response-to-the-national-commissions-recommendations-on-the-regulation-of-ai-in-healthcare
 
@@ -29,6 +30,7 @@
 - Model instructions rule out diagnosis, prescribing, dosing, treatment, significant individual decisions, original GxP record creation, RP/QP release, regulatory signoff and MHRA certification.
 - AI model output remains a draft with source-quote matching, explicit unverified semantics, independent reviewer separation, content hashes and authenticated organisation scoping, where configured.
 - Environment activation now requires separately recorded `REGPILOT_AI_PROCESSOR_REVIEWED`, `REGPILOT_AI_TRANSFER_REVIEWED` and `REGPILOT_AI_INTENDED_USE_REVIEWED` attestations in addition to existing safeguard/provider/workspace gates. **Environment flags are assertions, not evidence of due diligence.**
+- Private-vault document transfer to external models is independently disabled unless `REGPILOT_AI_PRIVATE_EVIDENCE_APPROVED=true` after separate scope/privacy sign-off. Request use classifications are logged as metadata; raw document contents are not copied into that audit event.
 - An authenticated source and evidence system is developed, but production integration and true validation for actual regulated records are **not demonstrated** by unit tests.
 
 ## 3. Essential pre-launch evidence and accountable sign-off
