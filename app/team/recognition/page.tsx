@@ -13,6 +13,9 @@ export default function RecognitionWorkspace(){
  const [message,setMessage]=useState(""),[loading,setLoading]=useState(true),[working,setWorking]=useState("");
  const [generation,setGeneration]=useState(0),[packTrack,setPackTrack]=useState("");
  const scope=useRef(createRequestScope()),preferred=useRef(""),mutation=useRef(false);
+ const scopeCheck=useCallback(()=>{
+  const current=scope.current.capture();return current.scope===selected&&current.version===generation&&!current.signal.aborted;
+ },[selected,generation]);
  const replaceScope=useCallback((next:string)=>{
   const version=scope.current.invalidate(next);
   setData(null);setPackTrack("");setWorking("");setSelected(next);setGeneration(version);
@@ -102,7 +105,7 @@ export default function RecognitionWorkspace(){
     {t.task.completionException&&<p>Completion exception recorded. No external recognition is implied.</p>}
     {admin&&<p><button type="button" disabled={!!working} aria-expanded={packTrack===t.id} onClick={()=>setPackTrack(current=>current===t.id?"":t.id)}>{packTrack===t.id?"Close pack builder":"Prepare assessment pack"}</button></p>}
    </div>:admin&&selected?<button type="button" disabled={!!working||loading} onClick={()=>void create(t.id)}>{working===t.id?"Creating…":"Create evidence action"}</button>:<p className={styles.await}>An owner or administrator may create a tracked evidence action.</p>}
-   {admin&&t.task&&packTrack===t.id&&<PackagePanel key={selected+":"+generation+":"+t.id} organizationId={selected} trackId={t.id} request={send}/>}
+   {admin&&t.task&&packTrack===t.id&&<PackagePanel key={selected+":"+generation+":"+t.id} organizationId={selected} trackId={t.id} request={send} isCurrent={scopeCheck}/>}
    <div className={styles.legal}>{t.publicNote}</div>
   </section>)}</div>
   <footer className={styles.footer}><strong>Release control:</strong> Private pack downloads are audited, not automatically submitted. No action here awards certification, publishes evidence, contacts a regulator or activates paid services.</footer>
