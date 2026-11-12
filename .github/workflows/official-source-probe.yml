@@ -2,8 +2,6 @@ name: Independent official regulatory source probe
 on:
   pull_request:
     branches: [main]
-  schedule:
-    - cron: "17 */6 * * *"
   workflow_dispatch:
 permissions:
   contents: read

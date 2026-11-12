@@ -13,7 +13,7 @@ This batch deepens existing collectors and makes public-source checks repeatable
 
 ## Scheduler release
 
-GitHub schedules execute only from the default branch. The feature-branch workflow alone is not an active scheduler. Release the dedicated default-branch public-watch workflow with its checkout pinned to the tested feature commit. It runs at 00:17, 06:17, 12:17 and 18:17 UTC, with overlap prevention, bounded runtime, read-only repository permissions and 30-day JSON artifacts. GitHub may delay scheduled runs; this is periodic monitoring, not an uninterrupted real-time stream or SLA.
+GitHub schedules execute only from the default branch. The feature-branch workflow alone is not an active scheduler. The dedicated default-branch public-watch workflow is installed at main commit `baed55b322bdef5240d004798a7bca292016710b`, with checkout pinned to tested commit `4f392ab2b09b9aafd126dadf20e3b574fca08203`. It runs at 00:17, 06:17, 12:17 and 18:17 UTC, with overlap prevention, bounded runtime, read-only repository permissions and 30-day JSON artifacts. GitHub may delay scheduled runs; this is periodic monitoring, not an uninterrupted real-time stream or SLA.
 
 The default-branch operational release includes an exact-message Vercel ignored-build rule so that installing this scheduler cannot publish the older application tree. No application merge or production promotion is part of this batch. Public-watch history is isolated from pull-request caches and contains no private tenant data. A future application release can replace the operational Vercel configuration with its own reviewed configuration.
 
@@ -26,3 +26,12 @@ The stable staging alias now permits access to RegPilot's own sign-in screen wit
 ## Verification
 
 Local: 352 unit/API tests passed and TypeScript passed. Database recovery/idempotency assertions run in disposable PostgreSQL CI, not in staging. The live contract report, public-source manifest and comparison report are produced by CI and the default-branch scheduler; inspect their actual results before claiming coverage. Provider documentation: GitHub REST rules and Actions permissions, Microsoft Graph conditional-access policy list (v1.0).
+
+Verified release evidence:
+- Feature CI: https://github.com/alanscott1uk-dev/regpilot-ai./actions/runs/43131220125 (passed, including PostgreSQL integration and access isolation).
+- Desktop/mobile acceptance: https://github.com/alanscott1uk-dev/regpilot-ai./actions/runs/43131220053 (passed).
+- Independent live probe: https://github.com/alanscott1uk-dev/regpilot-ai./actions/runs/43131220005 (38/38 texts retrieved; actual GitHub read contract passed).
+- Default-branch scheduler initial run: https://github.com/alanscott1uk-dev/regpilot-ai./actions/runs/43131452511 (passed; 38 baselines persisted; cache saved in main scope). The scheduled trigger is installed; the first observed execution was its push trigger, not six hours of uptime evidence.
+- GitHub read observation: 5 actual API reads; 1 configuration signal passed, 6 active-ruleset requirements absent, 5 settings unknown. Contract verification is not a clean security assessment.
+- Preview deployment `dpl_8D2iTPPWS6SsXFUXMpGwtmvSUYJs` READY on tested code.
+- Operational main deployment `dpl_6rLPabCcuidnnA8qyvFJSEyJVmS8` CANCELED by the ignored-build rule; no production promotion.
