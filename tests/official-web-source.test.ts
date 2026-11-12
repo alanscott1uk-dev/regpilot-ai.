@@ -61,10 +61,10 @@ test("official text reads recover transient errors but retain permanent failure 
  assert.equal(calls,1);
  await assert.rejects(()=>loadOfficialWeb(source,async()=>{throw Error("secret provider detail")}), (e:any)=>e instanceof OfficialWebUnavailable&&e.reasonCode==="PROVIDER_UNAVAILABLE"&&!e.message.includes("secret"));
 });
-test("SEPA uses the verified canonical trailing-slash publication URL",async()=>{
+test("SEPA uses the verified replacement publication linked from its current waste index",async()=>{
  const sepa=REGULATORY_SOURCES.find(s=>s.id==="sepa-waste-duty")!;
  const r=await loadOfficialWeb(sepa,async(url,options)=>{
-  assert.equal(url,"https://beta.sepa.scot/topics/waste/duty-of-care/");assert.equal(options?.redirect,"error");
+  assert.equal(url,"https://beta.sepa.scot/regulation/waste/duty-of-care/");assert.equal(options?.redirect,"error");
   return response(`<main><h1>Duty of Care</h1><p>${"Fictional waste guidance. ".repeat(15)}</p></main>`);
  });
  assert.equal(r.url,sepa.url);assert.equal(r.id,sepa.id);
