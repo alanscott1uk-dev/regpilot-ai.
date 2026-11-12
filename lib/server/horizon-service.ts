@@ -6,7 +6,9 @@ import {transaction,IntelligenceError} from './intelligence-service';
 import {requireMember,WRITER} from './workspace-member';
 import type {AuthorizedContext} from './authorization';
 export async function readPublicHorizon():Promise<HorizonReport>{
- const raw=await boundedJson(PUBLIC_HORIZON_URL,(url,init)=>fetch(url,{...init,next:{revalidate:300}}),MAX_REPORT_BYTES,'force-cache');
+ // The data branch is the durable snapshot. Read it afresh so platform cache
+ // revalidation cannot hide a successfully published collection from the UI.
+ const raw=await boundedJson(PUBLIC_HORIZON_URL,fetch,MAX_REPORT_BYTES,'no-store');
  return validateReport(raw);
 }
 const hash=z.string().regex(/^[a-f0-9]{32}$/);
