@@ -1,9 +1,10 @@
+import {collectMicrosoftPolicy} from "./microsoft-policy";
 import {z} from "zod";
 import {CollectionError,type ConnectorCheck} from "./github";
 import type {Observation} from "./observation";
 export const microsoftTarget=z.object({tenantId:z.uuid(),clientId:z.uuid()});
 export type MicrosoftTarget=z.infer<typeof microsoftTarget>;
-export type MicrosoftObservation=Observation&{engine:"microsoft365-identity-1.0.0";tenantId:string;coverage:{records:number;members:number;guests:number;unknownType:number;pages:number;complete:boolean;reportAvailable:boolean;staleRecords:number;missingDates:number};};
+export type MicrosoftObservation=Observation&{engine:"microsoft365-identity-2.0.0";tenantId:string;policyCoverage:Awaited<ReturnType<typeof collectMicrosoftPolicy>>["coverage"];coverage:{records:number;members:number;guests:number;unknownType:number;pages:number;complete:boolean;reportAvailable:boolean;staleRecords:number;missingDates:number};};
 const GRAPH="https://graph.microsoft.com",REPORT="/v1.0/reports/authenticationMethods/userRegistrationDetails";
 async function json(response:Response,max=1_000_000){
  if(!response.body)throw new CollectionError("EMPTY_RESPONSE");const reader=response.body.getReader(),chunks:Uint8Array[]=[];let size=0;
@@ -23,7 +24,7 @@ export async function collectMicrosoft365(target:MicrosoftTarget,secret:string,f
  const get=async(url:string)=>{const response=await fetcher(url,{method:"GET",headers:{Authorization:"Bearer "+token.access_token,Accept:"application/json"},redirect:"error",cache:"no-store",signal});if(response.status===401){await response.body?.cancel();throw new CollectionError("CREDENTIAL_REJECTED");}return response;};
  const org=await get(GRAPH+"/v1.0/organization?$select=id");if(!org.ok){await org.body?.cancel();throw new CollectionError("TENANT_VERIFICATION_FAILED");}
  const organisation=await json(org,20000);if(!Array.isArray(organisation?.value)||organisation.value.length!==1||String(organisation.value[0]?.id).toLowerCase()!==t.tenantId.toLowerCase())throw new CollectionError("TARGET_MISMATCH");
- const limitations=["Point-in-time Microsoft Graph observations, not a compliance verdict or proof of MFA enforcement at sign-in.","The registration report excludes disabled users and can lag changes. Guest accounts are counted separately; policy effectiveness, conditional-access scope and sign-in activity are not evaluated.","Only aggregate counts/settings are retained. Microsoft responses may contain identifiers in transient server memory; no user names, emails or account IDs are saved in this observation."];
+ const limitations=["Point-in-time Microsoft Graph observations, not a compliance verdict or proof of MFA enforcement at sign-in.","The registration report excludes disabled users and can lag changes. Guest accounts are counted separately; conditional-access policy counts and explicit MFA grant settings are collected separately; policy effectiveness, scope and sign-in activity are not evaluated.","Only aggregate counts/settings are retained. Microsoft responses may contain identifiers in transient server memory; no user names, emails or account IDs are saved in this observation."];
  let defaults:boolean|null=null;
  const defaultsResponse=await get(GRAPH+"/v1.0/policies/identitySecurityDefaultsEnforcementPolicy?$select=isEnabled");
  if(defaultsResponse.ok){const body=await json(defaultsResponse,20000);if(typeof body?.isEnabled==="boolean")defaults=body.isEnabled;else limitations.push("Security-default response was incomplete.");}else{await defaultsResponse.body?.cancel();limitations.push("Security defaults could not be read. Verify Policy.Read.All consent and service availability.");}
@@ -58,5 +59,6 @@ export async function collectMicrosoft365(target:MicrosoftTarget,secret:string,f
   {id:"registration-coverage",label:"Registration report complete and recent within this collection",status:fresh&&complete&&coverage.records>0?"PASS":"UNKNOWN",observed:`${coverage.records} records across ${coverage.pages} pages; ${coverage.staleRecords} older than 48 hours or future-dated; ${coverage.missingDates} missing dates; ${coverage.unknownType} unknown account types`,nextStep:"Resolve missing permissions, licensing, report freshness or collection limits before relying on aggregate coverage."}
  ];
  if(!coverage.complete)limitations.push("Collection is incomplete: limit, permissions or availability prevented reading the entire report. No all-account pass is inferred.");
- return {engine:"microsoft365-identity-1.0.0",tenantId:t.tenantId.toLowerCase(),sourceUrl:"https://entra.microsoft.com/",capturedAt:new Date().toISOString(),checks,coverage,limitations};
+ const policy=await collectMicrosoftPolicy(get,json);
+ return {engine:"microsoft365-identity-2.0.0",tenantId:t.tenantId.toLowerCase(),sourceUrl:"https://entra.microsoft.com/",capturedAt:new Date().toISOString(),checks:[...checks,...policy.checks],coverage,policyCoverage:policy.coverage,limitations};
 }

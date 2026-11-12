@@ -4,7 +4,6 @@ import {db} from "./db";
 import type {AuthorizedContext} from "./authorization";
 import {createIntelligenceRun,IntelligenceError,transaction} from "./intelligence-service";
 import {checkOfficialSource,type Loader} from "./regulatory-watch";
-import {loadOfficialSource} from "./ai-sources";
 import {resolveWorkspaceSource} from "./publication-catalogue";
 import {allowedEmail} from "../ai/security.mjs";
 
@@ -62,7 +61,7 @@ async function finish(job:WatchSchedule,outcome:string,failureCode:string|null){
     const halted=!!failureCode&&(job.attempts>=3||failureCode==="PERMISSION_REVOKED");
     const changed=await tx.watchSchedule.updateMany({where:{id:job.id,organizationId:job.organizationId,enabled:true,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},data:{
       leaseToken:null,leaseUntil:null,lastOutcome:outcome,failureCode,enabled:!halted,
-      nextCheckAt:new Date(Date.now()+(failureCode?(job.attempts===1?5:30)*60000:job.intervalHours*3600000)),
+      nextCheckAt:new Date(Date.now()+(failureCode?(job.attempts===1?5:30)*60000:outcome==="RECOVERY_BACKLOG"?60000:job.intervalHours*3600000)),
       ...(!failureCode?{lastSuccessAt:new Date(),attempts:0}:{})
     }});
     if(!changed.count)return "SUPERSEDED";
@@ -101,12 +100,32 @@ async function queueChangedSourceReview(ctx:AuthorizedContext,job:WatchSchedule,
   return {created:true};
  },{isolationLevel:"Serializable",maxWait:3500,timeout:10000});
 }
+/** Reconcile persisted changed snapshots before fetching again. A worker can stop
+ * after capture commits but before task creation; a cooldown/unchanged result must
+ * not lose that work. The capture audit and hash prove a change, not a baseline. */
+export async function reconcileSourceReviews(ctx:AuthorizedContext,job:WatchSchedule,guard:(tx:Prisma.TransactionClient)=>Promise<void>){
+ const pending=await db.$queryRaw<Array<{id:string;contentHash:string;title:string;url:string}>>`
+  SELECT DISTINCT s.id,s."contentHash",s.title,s.url,s."firstCapturedAt"
+  FROM "RegulatorySnapshot" s JOIN "AuditEvent" e
+   ON e."organizationId"=s."organizationId" AND e."entityId"=s.id::text
+   AND e.action='regulatory.source_text_changed' AND e."entityType"='RegulatorySnapshot'
+   AND e.details->>'hash'=s."contentHash" AND e.details->>'changedText'='true'
+   AND e.details->>'previousHash' IS NOT NULL
+  LEFT JOIN "Obligation" o ON o."organizationId"=s."organizationId" AND o."automationKey"='source-review:'||s.id::text
+  WHERE s."organizationId"=${ctx.organizationId}::uuid AND s."sourceId"=${job.sourceId}
+   AND s."reviewStatus"='NEEDS_REVIEW' AND o.id IS NULL
+  ORDER BY s."firstCapturedAt",s.id LIMIT 11`;
+ let created=0;
+ for(const snapshot of pending.slice(0,10))if((await queueChangedSourceReview(ctx,job,snapshot,guard)).created)created++;
+ return {created,backlog:pending.length>10};
+}
 export async function executeWatch(job:WatchSchedule,loader?:Loader){
   try{
     await db.$transaction(tx=>assertLease(tx,job));
     if(job.attempts>3)return await finish(job,"FAILED","INTERRUPTED_REPEATEDLY");
     const ctx:AuthorizedContext={organizationId:job.organizationId,userId:job.configuredById,role:"ADMIN"};
     const guard=(tx:Prisma.TransactionClient)=>assertLease(tx,job);
+    const recovered=await reconcileSourceReviews(ctx,job,guard);
     const checked=await checkOfficialSource(ctx,job.sourceId,loader,guard);
     // The monitored publication may have changed; create an owned investigation only
     // for a *new content version*, never for the baseline, metadata or an outage.
@@ -118,9 +137,9 @@ export async function executeWatch(job:WatchSchedule,loader?:Loader){
     }
     // Checkpoint is already persisted. A retry reuses the snapshot and unique analysis.
     if(await db.businessProfile.findUnique({where:{organizationId:job.organizationId}}))await createIntelligenceRun(ctx,checked.snapshot.id,guard);
-    // No AI, no accepted decisions, no task creation or notification side effects here.
+    // Human review remains required; no paid AI, accepted legal decisions or outbound notifications.
     await db.$transaction(tx=>assertLease(tx,job));
-    return await finish(job,checked.state,null);
+    return await finish(job,recovered.backlog?"RECOVERY_BACKLOG":checked.state,null);
   }catch(error){
     if(error instanceof LeaseLost)return "SUPERSEDED";
     return await finish(job,"FAILED",error instanceof PermissionLost?"PERMISSION_REVOKED":"CHECK_OR_ANALYSIS_FAILED");
@@ -131,7 +150,8 @@ export async function runMonitoringBatch(limit=2,parallelism=1){
   if(!Number.isInteger(limit)||limit<1||limit>12||!Number.isInteger(parallelism)||parallelism<1||parallelism>3)
     throw new IntelligenceError("Monitoring worker bounds invalid",400);
   const outcomes:Array<{index:number;outcome:string}>=[];
-  const deadline=Date.now()+45000;
+  // Reserve time for a bounded fetch and transactional completion before route timeout.
+  const deadline=Date.now()+20000;
   let claimed=0;
   async function worker(){
     while(monitoringEnabled()&&Date.now()<deadline&&claimed<limit){

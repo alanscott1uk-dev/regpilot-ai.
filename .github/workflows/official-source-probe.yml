@@ -3,10 +3,13 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    - cron: "0 7 * * *"
+    - cron: "17 */6 * * *"
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: regpilot-public-watch-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   probe:
     runs-on: ubuntu-latest
@@ -19,11 +22,28 @@ jobs:
         with:
           node-version: "22"
       - run: npm ci --no-audit --no-fund
-      - name: Retrieve public sources and validate exact text extraction
+      - name: Restore last good public-source hashes
+        uses: actions/cache/restore@v4
+        with:
+          path: artifacts/source-history.json
+          key: source-watch-v1-${{ github.ref }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: source-watch-v1-${{ github.ref }}-
+      - name: Retrieve official text and compare against last good captures
         run: node --import tsx scripts/verify-regulatory-sources.mjs
+      - name: Verify real GitHub API contract with repository-scoped credentials
+        if: ${{ !cancelled() }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node --import tsx scripts/verify-live-integrations.mjs
+      - name: Preserve known source hashes through partial outages
+        if: ${{ !cancelled() && hashFiles('artifacts/source-history.json') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: artifacts/source-history.json
+          key: source-watch-v1-${{ github.ref }}-${{ github.run_id }}-${{ github.run_attempt }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: official-uk-source-probe
-          path: artifacts/official-source-probe.json
-          retention-days: 14
+          path: artifacts/*.json
+          retention-days: 30

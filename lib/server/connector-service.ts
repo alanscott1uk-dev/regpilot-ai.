@@ -159,7 +159,7 @@ export async function runConnectorBatch(limit=2,parallelism=1){
  if(!Number.isInteger(limit)||limit<1||limit>6||!Number.isInteger(parallelism)||parallelism<1||parallelism>2)
   throw new IntelligenceError("Connector worker bounds invalid",400);
  let claimed=0;const collected:Array<{index:number;outcome:string}>=[];
- const deadline=Date.now()+45000;
+ const deadline=Date.now()+20000;
  async function worker(){while(connectorsEnabled()&&Date.now()<deadline&&claimed<limit){
   const index=claimed++;const job=await claimConnector();if(!job)return;
   collected.push({index,outcome:await executeConnector(job)});

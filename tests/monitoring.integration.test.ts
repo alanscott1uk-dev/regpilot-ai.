@@ -1,3 +1,4 @@
+import {checkOfficialSource} from "../lib/server/regulatory-watch";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {randomUUID} from "node:crypto";
@@ -121,6 +122,21 @@ test("real monitoring workflow links changed source text to one human-owned task
   const same=await claimWatch();assert.ok(same);
   assert.equal(await executeWatch(same!,async()=>later),"COOLDOWN");
   assert.equal((await db.obligation.count({where:{organizationId:org.id}})),1);
+
+  // Simulate capture committing, followed by process termination before enqueue.
+  // Two later snapshots must both be recovered, including the older changed version.
+  const beforeRecovery=await db.obligation.count({where:{organizationId:org.id}});
+  for(let revision=1;revision<=2;revision++){
+   await db.regulatorySnapshot.updateMany({where:{organizationId:org.id},data:{lastCheckedAt:new Date(Date.now()-3600000)}});
+   assert.equal((await checkOfficialSource(ctx,sourceId,async()=>({...later,text:later.text+" Interrupted committed revision "+revision+" requires its own review."}))).state,"CONTENT_CHANGED");
+  }
+  assert.equal(await db.obligation.count({where:{organizationId:org.id}}),beforeRecovery);
+  await db.watchSchedule.update({where:{id:watch.id},data:{nextCheckAt:new Date(Date.now()-1000)}});
+  assert.equal(await executeWatch((await claimWatch())!,async()=>{throw Error("cooldown must not refetch");}),"COOLDOWN");
+  assert.equal(await db.obligation.count({where:{organizationId:org.id}}),beforeRecovery+2);
+  await db.watchSchedule.update({where:{id:watch.id},data:{nextCheckAt:new Date(Date.now()-1000)}});
+  await executeWatch((await claimWatch())!,async()=>later);
+  assert.equal(await db.obligation.count({where:{organizationId:org.id}}),beforeRecovery+2,"recovery must be idempotent");
  }finally{
   await db.watchSchedule.deleteMany({where:{organizationId:org.id}});
   await db.intelligenceRun.deleteMany({where:{organizationId:org.id}});
