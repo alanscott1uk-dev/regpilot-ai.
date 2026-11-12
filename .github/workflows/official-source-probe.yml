@@ -36,6 +36,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node --import tsx scripts/verify-live-integrations.mjs
+      - name: Check infrastructure contract harness without customer credentials
+        if: ${{ !cancelled() }}
+        run: node --import tsx scripts/verify-infrastructure-integrations.mjs
       - name: Preserve known source hashes through partial outages
         if: ${{ !cancelled() && hashFiles('artifacts/source-history.json') != '' }}
         uses: actions/cache/save@v4

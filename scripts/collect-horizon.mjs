@@ -1,8 +1,8 @@
 import {mkdir,writeFile} from 'node:fs/promises';
 import * as module from '../lib/horizon/collector.ts';
 import * as model from '../lib/horizon/model.ts';
-const {collectHorizon,boundedJson}=module.default||module,{PUBLIC_HORIZON_URL}=model.default||model;
-let previous=null;try{previous=await boundedJson(PUBLIC_HORIZON_URL);}catch{}
+const {collectHorizon,boundedJson}=module.default||module,{PUBLIC_HORIZON_URL,MAX_REPORT_BYTES}=model.default||model;
+let previous=null;try{previous=await boundedJson(PUBLIC_HORIZON_URL,fetch,MAX_REPORT_BYTES);}catch{}
 const report=await collectHorizon(previous,fetch,new Date(),{codeCommit:process.env.REGPILOT_VERIFIED_CODE_SHA||process.env.GITHUB_SHA||null,runId:process.env.GITHUB_RUN_ID||null});
 await mkdir('artifacts',{recursive:true});await writeFile('artifacts/horizon.json',JSON.stringify(report)+'\n',{mode:0o600});
 const unavailable=report.feeds.filter(f=>f.state==='unavailable').length,limited=report.feeds.filter(f=>f.state==='limited').length;

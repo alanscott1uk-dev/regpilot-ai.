@@ -17,11 +17,13 @@ async function control(x:Awaited<ReturnType<typeof assuranceFixture>>){
  return db.managedControl.create({data:{organizationId:x.a.id,importId:p.id,proposalKey:"fictional-connected",title:"Fictional connected control",description:"Review fictional aggregate settings",testProcedure:"Inspect observations and limitations",theme:"security",ownerId:x.ed.userId,scheduledById:x.o.userId,intervalDays:30,nextReviewAt:new Date()}});
 }
 const observation=(status:"PASS"|"FAIL"="PASS"):Observation=>({engine:"companies-house-profile-1.0.0",sourceUrl:"https://find-and-update.company-information.service.gov.uk/company/SC123456",capturedAt:new Date().toISOString(),checks:[{id:"company-status",label:"Fictional company register status",status,observed:status==="PASS"?"active":"liquidation",nextStep:"Inspect the exact legal entity and independently assess the finding."}],limitations:["Fictional fixture; no provider calls or customer information."]});
-test("all three new configurations encrypt credentials, isolate tenants and fence disabled providers and rotation",async()=>{
+test("all extended configurations encrypt credentials, isolate tenants and fence disabled providers and rotation",async()=>{
  const x=await assuranceFixture();flags();
  try{
   const c=await control(x);
   for(const [flag,target,repository,branch] of [
+   ["REGPILOT_VERCEL_ENABLED",{provider:"VERCEL",projectId:"prj_CaseSensitive123",teamId:"team_CaseSensitive123"},"vercel:prj_CaseSensitive123","team_CaseSensitive123"],
+   ["REGPILOT_SUPABASE_ENABLED",{provider:"SUPABASE",projectRef:"abcdefghijklmnopqrst",providerOrganizationId:"orgabcdefghijklmnopq"},"supabase:abcdefghijklmnopqrst","orgabcdefghijklmnopq"],
    ["REGPILOT_GITLAB_ENABLED",{provider:"GITLAB",projectPath:"fictional/demo",branch:"Main"},"gitlab:fictional/demo","Main"],
    ["REGPILOT_CLOUDFLARE_ENABLED",{provider:"CLOUDFLARE",zoneId:"ab".repeat(16),accountId:"cd".repeat(16)},"cloudflare:"+"ab".repeat(16),"cd".repeat(16)],
    ["REGPILOT_COMPANIES_HOUSE_ENABLED",{provider:"COMPANIES_HOUSE",companyNumber:"SC123456"},"companieshouse:SC123456","profile"]
@@ -122,5 +124,21 @@ test("manual live connector verification is tenant-scoped, lease-fenced, persist
   assert.doesNotMatch(JSON.stringify(result),/fictional-read-only-secret/);
   await assert.rejects(()=>verifyConnectorNow(x.o,saved.id,saved.version,async()=>{throw Error("second request not allowed");}),rejects(429));
   assert.equal((await db.evidenceConnector.findUniqueOrThrow({where:{id:saved.id}})).leaseToken,null);
+ }finally{await x.cleanup();}
+});
+
+test("provider throttling preserves retry budget and defers work without fabricating evidence",async()=>{
+ const x=await assuranceFixture();flags();
+ try{
+  const c=await control(x),saved=await saveConnector(x.o,{provider:"COMPANIES_HOUSE",companyNumber:"SC123456",controlId:c.id,version:0,token,consent:true,enabled:true,intervalHours:24});
+  for(let n=0;n<4;n++){
+   await db.evidenceConnector.update({where:{id:saved.id},data:{nextRunAt:new Date(0)}});
+   const job=(await claimConnector())!;assert.ok(job);
+   assert.equal(await executeConnector(job,async()=>{throw new CollectionError("RATE_LIMITED",7200);}),"RETRY_SCHEDULED");
+   const stored=await db.evidenceConnector.findUniqueOrThrow({where:{id:saved.id}});
+   assert.equal(stored.enabled,true);assert.equal(stored.attempts,0);assert.ok(stored.nextRunAt.getTime()>Date.now()+7190*1000);
+  }
+  assert.equal(await db.connectorRun.count({where:{connectorId:saved.id}}),0);
+  assert.equal(await db.obligation.count({where:{connectorId:saved.id}}),1,"follow-up remains deduplicated");
  }finally{await x.cleanup();}
 });

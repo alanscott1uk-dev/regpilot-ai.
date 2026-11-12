@@ -1,3 +1,4 @@
+import {resilientGet} from './resilient-http';
 import {collectMicrosoftPolicy} from "./microsoft-policy";
 import {z} from "zod";
 import {CollectionError,type ConnectorCheck} from "./github";
@@ -17,11 +18,12 @@ function reportUrl(value:string){
 /** Read-only global-cloud adapter. No user identifiers, secrets or raw API responses
  * enter the returned observation. Registration/capability is never MFA enforcement. */
 export async function collectMicrosoft365(target:MicrosoftTarget,secret:string,fetcher:typeof fetch=fetch):Promise<MicrosoftObservation>{
- const t=microsoftTarget.parse(target),signal=AbortSignal.timeout(25000);
+ const t=microsoftTarget.parse(target),started=Date.now(),signal=AbortSignal.timeout(25000);
  const auth=await fetcher("https://login.microsoftonline.com/"+t.tenantId+"/oauth2/v2.0/token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({client_id:t.clientId,client_secret:secret,scope:GRAPH+"/.default",grant_type:"client_credentials"}).toString(),redirect:"error",cache:"no-store",signal});
  if(!auth.ok){await auth.body?.cancel();throw new CollectionError(auth.status===400||auth.status===401?"CREDENTIAL_REJECTED":"AUTH_UNAVAILABLE");}
  const token=await json(auth,20000);if(typeof token?.access_token!=="string"||token.access_token.length<10||token.access_token.length>16000||/[\r\n]/.test(token.access_token)||String(token.token_type).toLowerCase()!=="bearer")throw new CollectionError("INVALID_AUTH_RESPONSE");
- const get=async(url:string)=>{const response=await fetcher(url,{method:"GET",headers:{Authorization:"Bearer "+token.access_token,Accept:"application/json"},redirect:"error",cache:"no-store",signal});if(response.status===401){await response.body?.cancel();throw new CollectionError("CREDENTIAL_REJECTED");}return response;};
+ const read=resilientGet(fetcher,GRAPH,{Authorization:'Bearer '+token.access_token,Accept:'application/json'},{timeoutMs:Math.max(1,25000-(Date.now()-started)),maxRequests:32});
+ const get=async(url:string)=>{const response=await read(url);if(response.status===401){await response.body?.cancel();throw new CollectionError("CREDENTIAL_REJECTED");}return response;};
  const org=await get(GRAPH+"/v1.0/organization?$select=id");if(!org.ok){await org.body?.cancel();throw new CollectionError("TENANT_VERIFICATION_FAILED");}
  const organisation=await json(org,20000);if(!Array.isArray(organisation?.value)||organisation.value.length!==1||String(organisation.value[0]?.id).toLowerCase()!==t.tenantId.toLowerCase())throw new CollectionError("TARGET_MISMATCH");
  const limitations=["Point-in-time Microsoft Graph observations, not a compliance verdict or proof of MFA enforcement at sign-in.","The registration report excludes disabled users and can lag changes. Guest accounts are counted separately; conditional-access policy counts and explicit MFA grant settings are collected separately; policy effectiveness, scope and sign-in activity are not evaluated.","Only aggregate counts/settings are retained. Microsoft responses may contain identifiers in transient server memory; no user names, emails or account IDs are saved in this observation."];

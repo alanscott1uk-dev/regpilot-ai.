@@ -5,4 +5,6 @@ export const googleWorkspaceEnabled=()=>connectorsEnabled()&&process.env.REGPILO
 export const gitlabEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_GITLAB_ENABLED==="true";
 export const cloudflareEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_CLOUDFLARE_ENABLED==="true";
 export const companiesHouseEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_COMPANIES_HOUSE_ENABLED==="true";
-export function connectorProviderEnabled(provider:string){return provider==="GITHUB"?connectorsEnabled():provider==="MICROSOFT365"?microsoft365Enabled():provider==="GOOGLE_WORKSPACE"?googleWorkspaceEnabled():provider==="GITLAB"?gitlabEnabled():provider==="CLOUDFLARE"?cloudflareEnabled():provider==="COMPANIES_HOUSE"?companiesHouseEnabled():false;}
+export const vercelEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_VERCEL_ENABLED==="true";
+export const supabaseEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_SUPABASE_ENABLED==="true";
+export function connectorProviderEnabled(provider:string){return provider==="VERCEL"?vercelEnabled():provider==="SUPABASE"?supabaseEnabled():provider==="GITHUB"?connectorsEnabled():provider==="MICROSOFT365"?microsoft365Enabled():provider==="GOOGLE_WORKSPACE"?googleWorkspaceEnabled():provider==="GITLAB"?gitlabEnabled():provider==="CLOUDFLARE"?cloudflareEnabled():provider==="COMPANIES_HOUSE"?companiesHouseEnabled():false;}

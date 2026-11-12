@@ -1,12 +1,12 @@
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
-import {PUBLIC_HORIZON_URL,validateReport,reportState,type HorizonReport} from '../horizon/model';
+import {PUBLIC_HORIZON_URL,MAX_REPORT_BYTES,validateReport,reportState,type HorizonReport} from '../horizon/model';
 import {boundedJson} from '../horizon/collector';
 import {transaction,IntelligenceError} from './intelligence-service';
 import {requireMember,WRITER} from './workspace-member';
 import type {AuthorizedContext} from './authorization';
 export async function readPublicHorizon():Promise<HorizonReport>{
- const raw=await boundedJson(PUBLIC_HORIZON_URL,(url,init)=>fetch(url,{...init,next:{revalidate:300}}),2_000_000,'force-cache');
+ const raw=await boundedJson(PUBLIC_HORIZON_URL,(url,init)=>fetch(url,{...init,next:{revalidate:300}}),MAX_REPORT_BYTES,'force-cache');
  return validateReport(raw);
 }
 const hash=z.string().regex(/^[a-f0-9]{32}$/);

@@ -1,8 +1,10 @@
+import {resilientGet} from './resilient-http';
+import {CollectionError} from './collection-error';
+export {CollectionError} from './collection-error';
 import {z} from "zod";
 export const githubTarget=z.object({repository:z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_.-]{1,100}$/).refine(s=>![".",".."].includes(s.split("/")[1])),branch:z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/).refine(s=>!s.includes(".."))});
 export type ConnectorCheck={id:string;label:string;status:"PASS"|"FAIL"|"UNKNOWN";observed:string;nextStep:string};
 export type GithubObservation={engine:"github-branch-2.0.0";repository:string;branch:string;sourceUrl:string;capturedAt:string;checks:ConnectorCheck[];limitations:string[]};
-export class CollectionError extends Error{constructor(public code:string){super("Connected evidence could not be collected");}}
 async function boundedJson(response:Response){
  if(!response.headers.get("content-type")?.includes("json"))throw new CollectionError("INVALID_RESPONSE");
  if(!response.body)throw new CollectionError("EMPTY_RESPONSE");const reader=response.body.getReader(),chunks:Uint8Array[]=[];let total=0;
@@ -12,10 +14,10 @@ async function boundedJson(response:Response){
  * actual enforcement are separate questions. Missing access never means compliant. */
 export async function collectGithub(target:{repository:string;branch:string},token:string,fetcher:typeof fetch=fetch):Promise<GithubObservation>{
  const value=githubTarget.parse(target),[owner,repo]=value.repository.split("/"),branch=encodeURIComponent(value.branch);
- const base="https://api.github.com/repos/"+encodeURIComponent(owner)+"/"+encodeURIComponent(repo),signal=AbortSignal.timeout(25000);
+ const base="https://api.github.com/repos/"+encodeURIComponent(owner)+"/"+encodeURIComponent(repo);
+ const read=resilientGet(fetcher,'https://api.github.com',{Accept:'application/vnd.github+json',Authorization:'Bearer '+token,'X-GitHub-Api-Version':'2026-03-10'});
  const get=async(path:string,optional=false)=>{
-  const url=base+path;
-  let r:Response;try{r=await fetcher(url,{method:"GET",headers:{Accept:"application/vnd.github+json",Authorization:"Bearer "+token,"X-GitHub-Api-Version":"2026-03-10"},redirect:"error",cache:"no-store",signal});}catch{throw new CollectionError("PROVIDER_UNAVAILABLE");}
+  const url=base+path,r=await read(url);
   if(r.url&&r.url!==url){await r.body?.cancel();throw new CollectionError("TARGET_MISMATCH");}
   if(!r.ok){await r.body?.cancel();if(optional&&[403,404].includes(r.status))return null;throw new CollectionError(r.status===401?"CREDENTIAL_REJECTED":[403,429].includes(r.status)?"ACCESS_OR_RATE_LIMIT":"COLLECTION_UNAVAILABLE");}
   return {body:await boundedJson(r),more:/rel="next"/.test(r.headers.get("link")||"")};

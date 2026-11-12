@@ -4,7 +4,7 @@ on:
     branches: [main]
     paths: ['.github/workflows/continuous-public-watch.yml']
   schedule:
-    - cron: "17 */6 * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
 permissions:
   contents: read
@@ -42,6 +42,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node --import tsx scripts/verify-live-integrations.mjs
+      - name: Verify optional infrastructure read contracts
+        if: ${{ !cancelled() }}
+        env:
+          REGPILOT_VERCEL_PROJECT_ID: ${{ vars.REGPILOT_VERCEL_PROJECT_ID }}
+          REGPILOT_VERCEL_TEAM_ID: ${{ vars.REGPILOT_VERCEL_TEAM_ID }}
+          REGPILOT_VERCEL_READ_TOKEN: ${{ secrets.REGPILOT_VERCEL_READ_TOKEN }}
+          REGPILOT_SUPABASE_PROJECT_REF: ${{ vars.REGPILOT_SUPABASE_PROJECT_REF }}
+          REGPILOT_SUPABASE_ORGANIZATION_ID: ${{ vars.REGPILOT_SUPABASE_ORGANIZATION_ID }}
+          REGPILOT_SUPABASE_READ_TOKEN: ${{ secrets.REGPILOT_SUPABASE_READ_TOKEN }}
+        run: node --import tsx scripts/verify-infrastructure-integrations.mjs
       - name: Preserve known source hashes through partial outages
         if: ${{ !cancelled() && hashFiles('artifacts/source-history.json') != '' }}
         uses: actions/cache/save@v4

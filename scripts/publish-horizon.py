@@ -3,8 +3,8 @@ import datetime, json, os, pathlib, re, sys, urllib.request, urllib.error, base6
 REPOSITORY='alanscott1uk-dev/regpilot-ai.'
 BRANCH='regpilot-public-feed'
 PUBLISHERS={'mhra','home-office','hmrc','companies-house','business-trade','cma','environment-agency','defra','dwp','product-safety','dsit','dhsc'}
-def validate(data, expected_commit=None):
-    assert set(data)=={'format','generatedAt','windowStart','codeCommit','runId','previousAvailable','feeds','items','limitations'}
+def validate(data, expected_commit=None, max_age_hours=2):
+    assert set(data)-{'pipeline'}=={'format','generatedAt','windowStart','codeCommit','runId','previousAvailable','feeds','items','limitations'}
     assert data['format']=='regpilot-horizon-v1'
     now=datetime.datetime.now(datetime.timezone.utc)
     def date(v):
@@ -12,7 +12,7 @@ def validate(data, expected_commit=None):
         d=datetime.datetime.fromisoformat(v.replace('Z','+00:00'))
         assert d.tzinfo and d<=now+datetime.timedelta(minutes=5)
         return d
-    generated=date(data['generatedAt']);assert now-generated<datetime.timedelta(hours=2)
+    generated=date(data['generatedAt']);assert now-generated<datetime.timedelta(hours=max_age_hours)
     assert date(data['windowStart'])<=generated
     assert isinstance(data['previousAvailable'],bool)
     assert data['codeCommit'] is None or re.fullmatch('[a-f0-9]{40}',data['codeCommit'])
@@ -23,10 +23,10 @@ def validate(data, expected_commit=None):
     for f in feeds:
         assert set(f)=={'id','state','checkedAt','total','retrieved','reason'}
         assert f['state'] in ('available','limited','unavailable') and date(f['checkedAt'])<=generated
-        assert isinstance(f['retrieved'],int) and 0<=f['retrieved']<=100
+        assert isinstance(f['retrieved'],int) and 0<=f['retrieved']<=2000
         assert f['total'] is None or isinstance(f['total'],int) and f['total']>=0
         assert f['reason'] is None or isinstance(f['reason'],str) and len(f['reason'])<=100
-    assert isinstance(data['items'],list) and len(data['items'])<=1500
+    assert isinstance(data['items'],list) and len(data['items'])<=10000
     ids=set()
     for item in data['items']:
         assert set(item)=={'id','revision','path','url','title','summary','documentType','kind','publisherIds','updatedAt','firstSeenAt','observedAt','discovery'}
@@ -39,10 +39,23 @@ def validate(data, expected_commit=None):
         assert isinstance(item['publisherIds'],list) and 1<=len(item['publisherIds'])<=12 and set(item['publisherIds'])<=PUBLISHERS
         assert date(item['firstSeenAt'])<=date(item['observedAt'])<=generated;date(item['updatedAt'])
         assert item['discovery'] in ('BASELINE','FIRST_SEEN','METADATA_UPDATED','UNCHANGED')
+    if 'pipeline' in data:
+        p=data['pipeline'];assert set(p)=={'cadenceMinutes','durationMs','requests','retries','retentionLimited','history'}
+        assert p['cadenceMinutes']==60 and isinstance(p['retentionLimited'],bool)
+        for key,limit in [('durationMs',720000),('requests',720),('retries',720)]:assert type(p[key]) is int and 0<=p[key]<=limit
+        assert isinstance(p['history'],list) and len(p['history'])<=48
+        seen=set()
+        for h in p['history']:
+            assert set(h)=={'generatedAt','runId','publications','available','limited','unavailable'}
+            assert date(h['generatedAt'])<=generated and h['generatedAt'] not in seen;seen.add(h['generatedAt'])
+            assert h['runId'] is None or re.fullmatch('[0-9]{1,30}',h['runId'])
+            assert type(h['publications']) is int and 0<=h['publications']<=10000
+            for k in ['available','limited','unavailable']:assert type(h[k]) is int and 0<=h[k]<=12
+            assert h['available']+h['limited']+h['unavailable']==12
     return data
 
 def main():
-    path=pathlib.Path('artifacts/horizon.json');assert path.stat().st_size<=2_000_000
+    path=pathlib.Path('artifacts/horizon.json');assert path.stat().st_size<=4_000_000
     data=validate(json.loads(path.read_text()),os.environ.get('REGPILOT_VERIFIED_CODE_SHA'))
     if '--validate-only' in sys.argv:print('Public horizon payload validated');return
     assert os.environ.get('GITHUB_REPOSITORY')==REPOSITORY
@@ -51,13 +64,18 @@ def main():
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self,*args,**kwargs):return None
     opener=urllib.request.build_opener(NoRedirect)
-    def request(url,method='GET',body=None):
-        r=urllib.request.Request(url,data=json.dumps(body).encode() if body is not None else None,method=method,headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2026-03-10','Content-Type':'application/json'})
+    def request(url,method='GET',body=None,raw=False):
+        r=urllib.request.Request(url,data=json.dumps(body).encode() if body is not None else None,method=method,headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github.raw+json' if raw else 'application/vnd.github+json','X-GitHub-Api-Version':'2026-03-10','Content-Type':'application/json'})
         with opener.open(r,timeout=20) as response:
-            result=response.read(3_000_001);assert len(result)<=3_000_000
+            result=response.read(20_000_001);assert len(result)<=20_000_000
             return json.loads(result)
     sha=None
-    try:sha=request(endpoint+'?ref='+BRANCH)['sha']
+    try:
+        sha=request(endpoint+'?ref='+BRANCH)['sha']
+        previous=request(endpoint+'?ref='+BRANCH,raw=True)
+        assert isinstance(previous.get('generatedAt'),str)
+        if previous['generatedAt']>=data['generatedAt']:
+            print('Skipped older or duplicate public horizon publication');return
     except urllib.error.HTTPError as e:
         if e.code!=404:raise RuntimeError('Could not read the public data branch') from None
     payload={'message':'Refresh public regulatory horizon metadata','branch':BRANCH,'content':base64.b64encode((json.dumps(data,separators=(',',':'))+'\n').encode()).decode()}

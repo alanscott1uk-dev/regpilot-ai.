@@ -1,3 +1,4 @@
+import {resilientGet} from './resilient-http';
 import {z} from "zod";
 import {CollectionError,type ConnectorCheck} from "./github";
 import type {Observation} from "./observation";
@@ -13,12 +14,13 @@ async function json(response:Response,max=500000){
 export async function collectGoogleWorkspace(target:GoogleTarget,credential:string,fetcher:typeof fetch=fetch){
  const t=googleTarget.parse(target);let secret:z.infer<typeof googleCredentials>;
  try{secret=googleCredentials.parse(JSON.parse(credential));}catch{throw new CollectionError("CREDENTIAL_UNAVAILABLE");}
- const signal=AbortSignal.timeout(25000);
+ const started=Date.now(),signal=AbortSignal.timeout(25000);
  const auth=await fetcher("https://oauth2.googleapis.com/token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({client_id:t.clientId,client_secret:secret.clientSecret,refresh_token:secret.refreshToken,grant_type:"refresh_token"}).toString(),cache:"no-store",redirect:"error",signal});
  if(!auth.ok){await auth.body?.cancel();throw new CollectionError([400,401].includes(auth.status)?"CREDENTIAL_REJECTED":"AUTH_UNAVAILABLE");}
  const token=await json(auth,20000);
  if(typeof token.access_token!=="string"||token.access_token.length<10||token.access_token.length>16000||/[\r\n]/.test(token.access_token)||String(token.token_type).toLowerCase()!=="bearer")throw new CollectionError("INVALID_AUTH_RESPONSE");
- const get=async(url:string)=>{const r=await fetcher(url,{method:"GET",headers:{Authorization:"Bearer "+token.access_token,Accept:"application/json"},cache:"no-store",redirect:"error",signal});if(r.status===401){await r.body?.cancel();throw new CollectionError("CREDENTIAL_REJECTED");}return r;};
+ const read=resilientGet(fetcher,'https://admin.googleapis.com',{Authorization:'Bearer '+token.access_token,Accept:'application/json'},{timeoutMs:Math.max(1,25000-(Date.now()-started)),maxRequests:24});
+ const get=async(url:string)=>{const r=await read(url);if(r.status===401){await r.body?.cancel();throw new CollectionError("CREDENTIAL_REJECTED");}return r;};
  const customerResponse=await get(BASE+"/customers/"+encodeURIComponent(t.customerId)+"?fields=id");
  if(!customerResponse.ok){await customerResponse.body?.cancel();throw new CollectionError("TENANT_VERIFICATION_FAILED");}
  const customer=await json(customerResponse,20000);if(customer?.id!==t.customerId)throw new CollectionError("TARGET_MISMATCH");

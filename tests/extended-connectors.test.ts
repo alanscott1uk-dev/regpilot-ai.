@@ -43,7 +43,7 @@ test("Companies House verifies the company number, retains only indicators and u
  await assert.rejects(()=>collectCompaniesHouse(target,token,async()=>json({...profile,company_number:"12345678"})),code("TARGET_MISMATCH"));
 });
 test("extended collectors bound payloads, reject credentials/targets and sanitize provider failures",async()=>{
- const target={companyNumber:"SC123456"};await assert.rejects(()=>collectCompaniesHouse(target,token,async()=>new Response(null,{status:429})),code("ACCESS_OR_RATE_LIMIT"));
+ const target={companyNumber:"SC123456"};await assert.rejects(()=>collectCompaniesHouse(target,token,async()=>new Response(null,{status:429})),code("RATE_LIMITED"));
  await assert.rejects(()=>collectCompaniesHouse(target,token,async()=>new Response("not json",{headers:{"content-type":"application/json"}})),code("INVALID_RESPONSE"));
  await assert.rejects(()=>collectCompaniesHouse(target,token,async()=>json({...profile,padding:"x".repeat(262145)})),code("RESPONSE_TOO_LARGE"));
  for(const t of ["http://127.0.0.1/","SC123456/../secret"])await assert.rejects(()=>collectCompaniesHouse({companyNumber:t},token,async()=>assert.fail("no request")),code("INVALID_TARGET"));

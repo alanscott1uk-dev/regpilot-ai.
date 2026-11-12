@@ -1,0 +1,28 @@
+name: Independent public pipeline watchdog
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/public-pipeline-health.yml']
+  schedule:
+    - cron: "47 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: regpilot-pipeline-watchdog
+  cancel-in-progress: false
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 27e1b73bb0c67630e8f4936d1f389c11ead0f8bb
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/check-horizon-health.py
+            scripts/publish-horizon.py
+          sparse-checkout-cone-mode: false
+      - name: Check published data independently of collection jobs
+        run: python scripts/check-horizon-health.py

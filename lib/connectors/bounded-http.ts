@@ -1,13 +1,13 @@
+import {resilientGet} from './resilient-http';
 import {CollectionError, type ConnectorCheck} from "./github";
 
 /** Provider adapters supply fixed HTTPS origins; callers never supply request URLs. */
 export function providerReader(fetcher:typeof fetch,headers:Record<string,string>,timeoutMs=25000){
- const signal=AbortSignal.timeout(timeoutMs);let total=0,calls=0;
+ let total=0,calls=0;let read:ReturnType<typeof resilientGet>|undefined;
  return async(url:string,optional=false):Promise<{body:any;headers:Headers}|null>=>{
   if(++calls>12)throw new CollectionError("REQUEST_LIMIT");
-  let response:Response;
-  try{response=await fetcher(url,{method:"GET",headers:{Accept:"application/json",...headers},redirect:"error",cache:"no-store",signal});}
-  catch{throw new CollectionError("PROVIDER_UNAVAILABLE");}
+  read??=resilientGet(fetcher,new URL(url).origin,{Accept:'application/json',...headers},{timeoutMs});
+  const response=await read(url);
   if(response.url&&response.url!==url){await response.body?.cancel();throw new CollectionError("TARGET_MISMATCH");}
   if(!response.ok){await response.body?.cancel();if(optional&&[403,404].includes(response.status))return null;throw new CollectionError(response.status===401?"CREDENTIAL_REJECTED":[403,429].includes(response.status)?"ACCESS_OR_RATE_LIMIT":"PROVIDER_UNAVAILABLE");}
   if(!response.headers.get("content-type")?.toLowerCase().includes("json")){await response.body?.cancel();throw new CollectionError("INVALID_RESPONSE");}

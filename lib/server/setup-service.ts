@@ -37,7 +37,7 @@ export async function getSetupWorkspace(ctx:AuthorizedContext){
  const [catalogue,coverage,connections]=await Promise.all([workspaceCatalogue(ctx),sourceCoverage(ctx),getConnectorHealth(ctx)]);
  return {...summary,catalogue,coverage,connections,recommendations:recommendSourcePortfolio(catalogue,summary.profile),
   features:{monitoring:process.env.REGPILOT_MONITORING_ENABLED==='true'&&process.env.REGPILOT_AUTOMATION_ENABLED==='true'&&process.env.REGPILOT_CRON_ENABLED==='true',evidence:!!evidenceConfigured(),
-   providers:['GITHUB','MICROSOFT365','GOOGLE_WORKSPACE','GITLAB','CLOUDFLARE','COMPANIES_HOUSE'].map(id=>({id,configured:connectorProviderEnabled(id)}))},generatedAt:new Date().toISOString()};
+   providers:['GITHUB','MICROSOFT365','GOOGLE_WORKSPACE','GITLAB','CLOUDFLARE','COMPANIES_HOUSE','VERCEL','SUPABASE'].map(id=>({id,configured:connectorProviderEnabled(id)}))},generatedAt:new Date().toISOString()};
 }
 // Profile and schedules are one reviewed, version-checked transaction. No provider calls or activation.
 export async function saveSetupWorkspace(ctx:AuthorizedContext,input:unknown){
