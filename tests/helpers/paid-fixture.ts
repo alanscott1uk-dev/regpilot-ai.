@@ -1,2 +1,0 @@
-// Fictional fixture allowances only. Provider calls are injected; no live credentials.
-Object.assign(process.env,{REGPILOT_PAID_SERVICES_ENABLED:"true",REGPILOT_PAID_SAFEGUARDS_VERIFIED:"true",REGPILOT_PAID_PLATFORM_MONTHLY_MICROS:"2000000000",REGPILOT_PAID_ORG_MONTHLY_MICROS:"1000000000",REGPILOT_AI_RESERVE_MICROS:"100000"});

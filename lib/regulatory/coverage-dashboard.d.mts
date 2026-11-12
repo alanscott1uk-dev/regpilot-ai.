@@ -1,6 +1,0 @@
-export type SourceWatchStatus="failed"|"overdue"|"review-needed"|"awaiting-activation"|"never-checked"|"paused"|"unmonitored"|"stale"|"current";
-export type SourceHealth={id:string;title:string;agency:string;topic:string;kind:string;jurisdictions:string[];activities:string[];sourceUrl:string;status:SourceWatchStatus;detail:string;reviewNeeded:boolean;reviewStatus:string;baseline:boolean;lastCheckedAt:string|null;lastSuccessAt:string|null;intervalHours:number|null;failureCode:string|null;attention:boolean;sort:number;observedAt:string|null};
-export type CoverageDashboard={generatedAt:string;rows:SourceHealth[];agencies:{agency:string;total:number;baseline:number;monitored:number;attention:number}[];summary:{listed:number;baselined:number;scheduled:number;current:number;reviewNeeded:number;failed:number;overdue:number;stale:number;awaiting:number;attention:number};states:Record<string,number>;caveat:string};
-export declare function classifySource(source:any,coverage:any,now?:number):SourceHealth;
-export declare function coverageDashboard(catalogue:readonly any[],coverage:readonly any[],now?:number):CoverageDashboard;
-export declare function exportCoverageCsv(rows:readonly SourceHealth[]):string;

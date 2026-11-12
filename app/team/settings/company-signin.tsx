@@ -1,7 +1,0 @@
-"use client";
-import {useEffect,useState} from "react";
-import {browserAuth} from "../../../lib/client/supabase-auth";
-import ui from "../operations/operations.module.css";
-export default function CompanySignIn(){const [enabled,setEnabled]=useState(false),[busy,setBusy]=useState(false),[notice,setNotice]=useState("");useEffect(()=>{const c=new AbortController();void fetch("/api/auth/sso",{cache:"no-store",signal:c.signal}).then(r=>r.json()).then(d=>setEnabled(d.enabled===true)).catch(()=>{});return()=>c.abort();},[]);if(!enabled)return null;
- return <section className={ui.card}><h2>Sign in with your company</h2><p>Use your approved company identity provider. Your workspace role still controls access.</p><form className={ui.formGrid} onSubmit={async e=>{e.preventDefault();const domain=String(new FormData(e.currentTarget).get("domain")||"");setBusy(true);try{const r=await fetch("/api/auth/sso",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({domain})}),data=await r.json();if(!r.ok)throw Error(data.error);const {error}=await browserAuth().auth.signInWithSSO({domain:data.domain,options:{redirectTo:data.redirectTo}});if(error)throw error;}catch{setNotice("Company sign-in is unavailable. Contact your workspace administrator.");}finally{setBusy(false);}}}><label>Company domain<input name="domain" placeholder="yourcompany.co.uk" required maxLength={253}/></label><button disabled={busy}>Continue with company sign-in</button></form>{notice&&<p role="status">{notice}</p>}</section>;
-}

@@ -1,2 +1,0 @@
-import {serviceReady,appOrigin} from "./config";
-export function approvedSsoDomain(raw:unknown){if(!serviceReady("SSO")||typeof raw!=="string")return null;const domain=raw.toLowerCase().trim();if(!/^[a-z0-9](?:[a-z0-9.-]{0,250}[a-z0-9])?\.[a-z]{2,}$/.test(domain)||domain.includes(".."))return null;const allowed=(process.env.REGPILOT_SSO_DOMAINS||"").split(",").map(s=>s.trim().toLowerCase());return allowed.includes(domain)?{domain,redirectTo:appOrigin()+"/team/settings"}:null;}
