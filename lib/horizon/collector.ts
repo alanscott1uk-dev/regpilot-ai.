@@ -1,3 +1,4 @@
+import {CollectionError} from '../connectors/collection-error';
 import {resilientGet} from '../connectors/resilient-http';
 import {createHash} from 'node:crypto';
 import {PUBLISHERS,MAX_PUBLISHER_RESULTS,MAX_RETAINED_ITEMS,MAX_REPORT_BYTES,horizonPath,validateReport,type HorizonItem,type HorizonReport} from './model';
@@ -24,6 +25,8 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
  const prior=new Map((old?.items||[]).filter(i=>Date.parse(i.updatedAt)>=Date.parse(windowStart)).map(i=>[i.id,i]));
  const collected=new Map<string,HorizonItem>(),feeds:HorizonReport['feeds']=new Array(PUBLISHERS.length);let cursor=0;
  async function worker(){while(cursor<PUBLISHERS.length){const index=cursor++,publisher=PUBLISHERS[index];let total:number|null=null,retrieved=0,indexChanged=false;const staged:HorizonItem[]=[];const seen=new Set<string>();
+  const priorFeed=old?.feeds.find(f=>f.id===publisher.id);
+  if(priorFeed?.state==='unavailable'&&(priorFeed.reason==='RETRY_REQUIRES_REVIEW'||priorFeed.retryAt&&Date.parse(priorFeed.retryAt)>now.getTime())){feeds[index]={...priorFeed,retrieved:0};continue;}
   const feedMetrics={requests:0,retries:0};
   const retryRead=resilientGet(fetcher,'https://www.gov.uk',{accept:'application/json'},{timeoutMs:90000,maxRequests:60,metrics:feedMetrics});
   try{for(let page=0;page<MAX_PUBLISHER_RESULTS/50;page++){
@@ -44,8 +47,9 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
   }
   for(const item of staged)if(collected.has(item.id)&&collected.get(item.id)!.revision!==item.revision)throw Error('INCONSISTENT_PUBLICATION');
   for(const item of staged){const existing=collected.get(item.id);if(existing){existing.publisherIds=[...new Set([...existing.publisherIds,publisher.id])];}else collected.set(item.id,item);}
-  feeds[index]={id:publisher.id,state:total!>retrieved||indexChanged?'limited':'available',checkedAt:generatedAt,total,retrieved,reason:indexChanged?'INDEX_CHANGED':total!>retrieved?'RESULT_LIMIT':null};
-  }catch{feeds[index]={id:publisher.id,state:'unavailable',checkedAt:generatedAt,total,retrieved:0,reason:'FETCH_OR_IDENTITY_FAILED'};}finally{metrics.requests+=feedMetrics.requests;metrics.retries+=feedMetrics.retries;}
+  feeds[index]={id:publisher.id,state:total!>retrieved||indexChanged?'limited':'available',checkedAt:generatedAt,total,retrieved,reason:indexChanged?'INDEX_CHANGED':total!>retrieved?'RESULT_LIMIT':null,retryAt:null,failureCount:0};
+  }catch(error){const failureCount=Math.min(100,(priorFeed?.failureCount||0)+1),delay=error instanceof CollectionError&&error.code==='RATE_LIMITED'?error.retryAfterSeconds||60:Math.min(21600,900*2**Math.min(5,failureCount-1));
+   feeds[index]={id:publisher.id,state:'unavailable',checkedAt:generatedAt,total,retrieved:0,reason:error instanceof CollectionError?error.code:'FETCH_OR_IDENTITY_FAILED',retryAt:error instanceof CollectionError&&error.code==='RETRY_REQUIRES_REVIEW'?null:new Date(now.getTime()+delay*1000).toISOString(),failureCount};}finally{metrics.requests+=feedMetrics.requests;metrics.retries+=feedMetrics.retries;}
  }}
  await Promise.all(Array.from({length:3},()=>worker()));
  // Earlier metadata is retained through outages, with its old observation time.

@@ -14,7 +14,7 @@ export async function infrastructureJourney(browser,base,viewport,name){
  await context.route('**/api/workspace/connectors',route=>{payloads.push(route.request().postDataJSON());return route.fulfill({json:{id:control,version:1}})});
  try{
   await page.goto(base+'/team/operations?view=connections',{waitUntil:'domcontentloaded'});
-  await page.getByLabel('System',{exact:true}).selectOption('SUPABASE');
+  await page.getByRole('combobox',{name:'System',exact:true}).selectOption('SUPABASE');
   await page.getByLabel('Responsible control').selectOption(control);
   await page.getByLabel('Supabase project reference').fill('abcdefghijklmnopqrst');
   await page.getByLabel('Supabase organization ID').fill('orgabcdefghijklmnopq');
@@ -25,7 +25,7 @@ export async function infrastructureJourney(browser,base,viewport,name){
   await page.getByRole('status').filter({hasText:'Connection saved.'}).waitFor();
   assert.equal(payloads.length,1);assert.equal(payloads[0].organizationId,org);assert.equal(payloads[0].providerOrganizationId,'orgabcdefghijklmnopq');assert.equal(payloads[0].provider,'SUPABASE');
   assert.equal(await page.getByLabel('Scoped Supabase management token',{exact:true}).inputValue(),'');
-  await page.getByLabel('System',{exact:true}).selectOption('VERCEL');
+  await page.getByRole('combobox',{name:'System',exact:true}).selectOption('VERCEL');
   await page.getByLabel('Vercel project ID').fill('prj_CaseSensitive123');await page.getByLabel('Vercel team ID').fill('team_CaseSensitive123');
   await page.getByLabel('Read-only Vercel project token',{exact:true}).fill('fictional-dedicated-read-only-token');
   await page.getByRole('checkbox',{name:/I authorise read-only collection/}).check();
@@ -33,7 +33,7 @@ export async function infrastructureJourney(browser,base,viewport,name){
   await page.getByRole('status').filter({hasText:'Connection saved.'}).waitFor();
   assert.equal(payloads.length,2);assert.equal(payloads[1].projectId,'prj_CaseSensitive123');assert.equal(payloads[1].teamId,'team_CaseSensitive123');
   const overflow=await page.evaluate(()=>Math.max(0,document.documentElement.scrollWidth-innerWidth));assert.ok(overflow<=3,'infrastructure form overflow '+overflow);
-  role='VIEWER';await page.reload({waitUntil:'domcontentloaded'});await page.getByText('Collect evidence. Spot changes. Assign action.').waitFor();assert.equal(await page.getByLabel('System',{exact:true}).count(),0);
+  role='VIEWER';await page.reload({waitUntil:'domcontentloaded'});await page.getByText('Collect evidence. Spot changes. Assign action.').waitFor();assert.equal(await page.getByRole('combobox',{name:'System',exact:true}).count(),0);
   assert.deepEqual(errors,[]);return {scenario:'infrastructure-'+name,passed:true,overflowPx:overflow,steps:12,testType:'fictional connector UI fixture; no customer credential assertion'};
- }finally{await context.close();}
+ }catch(e){throw new Error(e.message+'; browser errors: '+JSON.stringify(errors));}finally{await context.close();}
 }

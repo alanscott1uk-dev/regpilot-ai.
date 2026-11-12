@@ -2,9 +2,9 @@ import {CollectionError} from './collection-error';
 export type ReadMetrics={requests:number;retries:number};
 export function retryAfterSeconds(headers:Headers,now=Date.now()):number|null{
  const value=headers.get('retry-after');
- if(value!==null){const seconds=/^\d+$/.test(value)?Number(value):Math.ceil((Date.parse(value)-now)/1000);if(Number.isFinite(seconds)&&seconds>=0)return Math.min(86400,Math.max(1,seconds));}
+ if(value!==null){const seconds=/^\d+$/.test(value)?Number(value):Math.ceil((Date.parse(value)-now)/1000);if(Number.isFinite(seconds)&&seconds>=0)return Math.min(Number.MAX_SAFE_INTEGER,Math.max(1,seconds));}
  const reset=headers.get('x-ratelimit-reset');
- if(headers.get('x-ratelimit-remaining')==='0'&&reset&&/^\d+$/.test(reset))return Math.min(86400,Math.max(1,Math.ceil(Number(reset)-now/1000)));
+ if(headers.get('x-ratelimit-remaining')==='0'&&reset&&/^\d+$/.test(reset))return Math.min(Number.MAX_SAFE_INTEGER,Math.max(1,Math.ceil(Number(reset)-now/1000)));
  return null;
 }
 /** Retries only idempotent reads on a fixed HTTPS origin. One shared deadline and
@@ -26,6 +26,7 @@ export function resilientGet(fetcher:typeof fetch,origin:string,headers:Record<s
    if(!transient)return response!;
    const instructed=response?retryAfterSeconds(response.headers,clock()):null;
    await response?.body?.cancel();
+   if(instructed!==null&&instructed>7*86400)throw new CollectionError('RETRY_REQUIRES_REVIEW');
    const delay=instructed!==null?instructed*1000:Math.round(250*2**attempt+random()*150);
    // Never shorten Retry-After to fit a request. Persist long waits in the job schedule.
    if(attempt===2||delay>2000||clock()+delay+1000>=deadline)throw new CollectionError(rateLimited?'RATE_LIMITED':'PROVIDER_UNAVAILABLE',rateLimited?instructed??60:undefined);

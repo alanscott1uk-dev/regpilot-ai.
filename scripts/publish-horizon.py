@@ -21,7 +21,10 @@ def validate(data, expected_commit=None, max_age_hours=2):
     assert isinstance(data['limitations'],list) and len(data['limitations'])<=8 and all(isinstance(v,str) and len(v)<=400 for v in data['limitations'])
     feeds=data['feeds'];assert len(feeds)==12 and {f['id'] for f in feeds}==PUBLISHERS
     for f in feeds:
-        assert set(f)=={'id','state','checkedAt','total','retrieved','reason'}
+        assert set(f)-{'retryAt','failureCount'}=={'id','state','checkedAt','total','retrieved','reason'}
+        if 'failureCount' in f:assert type(f['failureCount']) is int and 0<=f['failureCount']<=100
+        if f.get('retryAt') is not None:
+            retry=datetime.datetime.fromisoformat(f['retryAt'].replace('Z','+00:00'));assert retry.tzinfo and generated<=retry<=generated+datetime.timedelta(days=7)
         assert f['state'] in ('available','limited','unavailable') and date(f['checkedAt'])<=generated
         assert isinstance(f['retrieved'],int) and 0<=f['retrieved']<=2000
         assert f['total'] is None or isinstance(f['total'],int) and f['total']>=0

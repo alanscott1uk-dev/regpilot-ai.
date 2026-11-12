@@ -2,7 +2,7 @@
 
 ## Running pipeline
 
-This batch expands the GOV.UK collector from 100 to 2,000 results per publisher, with a fixed end timestamp, pagination identity checks, explicit index-change/limit states, a 90-second deadline per publisher, three concurrent publishers and bounded retries. A failed publisher does not overwrite its previously observed records. The retained report is bounded to 10,000 records or 4 MB, whichever comes first, to remain within hosting response limits. Retention limits are explicit.
+This batch expands the GOV.UK collector from 100 to 2,000 results per publisher, with a fixed end timestamp, pagination identity checks, explicit index-change/limit states, a 90-second deadline per publisher, three concurrent publishers and bounded retries. A failed publisher does not overwrite its previously observed records. Per-publisher cooldowns and consecutive-failure counts survive in the published checkpoint: transient failures back off from 15 minutes to six hours, and explicit provider delays up to seven days are preserved. Longer delays require operator review rather than an early retry. The retained report is bounded to 10,000 records or 4 MB, whichever comes first, to remain within hosting response limits. Retention limits are explicit.
 
 The direct external run returned 2,508 distinct publications, twelve responding feeds and zero result-limited feeds. HMRC returned 1,092 records; these are discovery metadata, not verified legal obligations. Selected publishers and the 30-day window remain deliberate coverage boundaries. The existing 38 official-text checks continue separately.
 
@@ -12,7 +12,7 @@ The collection and publishing jobs remain separate. Only the pinned standard-lib
 
 ## Integration infrastructure
 
-One fixed-origin, deadline-bounded GET transport now serves GitHub, Microsoft Graph, Google Directory, GitLab, Cloudflare, Companies House, Vercel and Supabase adapters. It retries transient network/502/503/504 failures and throttling at most three attempts, with a total request budget, bounded exponential jitter and support for `Retry-After` dates/seconds and GitHub rate-reset headers. It does not follow redirects, retry permission denials or retry OAuth POST requests. Long provider waits become a persisted connector `nextRunAt`; rate limiting does not exhaust the permanent failure allowance. Last good evidence is preserved and follow-up tasks remain deduplicated. Other persistent failures still use the existing pause/recovery controls.
+One fixed-origin, deadline-bounded GET transport now serves GitHub, Microsoft Graph, Google Directory, GitLab, Cloudflare, Companies House, Vercel and Supabase adapters. It retries transient network/502/503/504 failures and throttling at most three attempts, with a total request budget, bounded exponential jitter and support for `Retry-After` dates/seconds and GitHub rate-reset headers. It does not follow redirects, retry permission denials or retry OAuth POST requests. Long provider waits up to seven days become a persisted connector `nextRunAt`, with longer delays pausing for operator review; rate limiting does not exhaust the permanent failure allowance. Last good evidence is preserved and follow-up tasks remain deduplicated. Other persistent failures still use the existing pause/recovery controls.
 
 Two new read-only adapters are integrated through configuration validation, encrypted secrets, version fencing, concurrent claims, observations, follow-up tasks, export, setup status and the Connections UI:
 

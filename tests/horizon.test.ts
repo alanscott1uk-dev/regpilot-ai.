@@ -48,3 +48,12 @@ test('changing provider totals never claim complete collection',async()=>{
  const f=fixture('','',80);const report=await collectHorizon(null,async(u,o)=>{const response=await f.fetch(u,o),data=await response.json();if(new URL(String(u)).searchParams.get('start')==='50')data.total=81;return Response.json(data);},now);
  assert.ok(report.feeds.every(f=>f.state==='limited'&&f.reason==='INDEX_CHANGED'));
 });
+
+test('publisher cooldown survives published checkpoints and skips early retry while preserving old observation time',async()=>{
+ const initial=await collectHorizon(null,fixture().fetch,now),f=fixture();
+ const failed=await collectHorizon(initial,async(u,o)=>new URL(String(u)).searchParams.get('filter_organisations')===PUBLISHERS[0].slug?new Response(null,{status:429,headers:{'retry-after':'7200'}}):f.fetch(u,o),new Date(now.getTime()+60000));
+ assert.equal(failed.feeds[0].failureCount,1);assert.equal(failed.feeds[0].reason,'RATE_LIMITED');
+ const next=fixture();const recovered=await collectHorizon(failed,next.fetch,new Date(now.getTime()+3600000));
+ assert.equal(next.calls.length,11);assert.equal(recovered.feeds[0].checkedAt,failed.generatedAt);assert.equal(recovered.items.find(i=>i.publisherIds.includes('mhra'))?.observedAt,initial.generatedAt);
+ const due=fixture();const fresh=await collectHorizon(recovered,due.fetch,new Date(now.getTime()+3*3600000));assert.equal(due.calls.length,12);assert.equal(fresh.feeds[0].failureCount,0);assert.equal(fresh.feeds[0].state,'available');
+});

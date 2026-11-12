@@ -29,3 +29,10 @@ test('network retries are bounded and credentials never enter error text',async(
  const moved=Response.json({});Object.defineProperty(moved,'url',{value:'https://other.invalid/'});
  await assert.rejects(()=>resilientGet(async()=>moved,origin,{})(origin),code('TARGET_MISMATCH'));
 });
+
+test('provider delays beyond a day are preserved; excessive delays require review instead of early retry',async()=>{
+ const get=resilientGet(async()=>new Response(null,{status:429,headers:{'retry-after':'172800'}}),origin,{});
+ await assert.rejects(()=>get(origin),(e:any)=>e.code==='RATE_LIMITED'&&e.retryAfterSeconds===172800);
+ const excessive=resilientGet(async()=>new Response(null,{status:429,headers:{'retry-after':'999999999999'}}),origin,{});
+ await assert.rejects(()=>excessive(origin),code('RETRY_REQUIRES_REVIEW'));
+});

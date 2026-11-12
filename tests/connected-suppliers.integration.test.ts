@@ -11,7 +11,7 @@ import type {Observation} from "../lib/connectors/observation";
 import {hashValue} from "../lib/regulatory/intelligence";
 import {changeMember} from "../lib/server/team-service";
 const token="fictional-read-only-secret-12345";
-function flags(){Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:"true",REGPILOT_CONNECTORS_ENABLED:"true",REGPILOT_GITLAB_ENABLED:"true",REGPILOT_CLOUDFLARE_ENABLED:"true",REGPILOT_COMPANIES_HOUSE_ENABLED:"true",REGPILOT_CONNECTOR_ENCRYPTION_KEY:"ab".repeat(32),SUPABASE_URL:"https://example.invalid",SUPABASE_PUBLISHABLE_KEY:"fixture"});}
+function flags(){Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:"true",REGPILOT_CONNECTORS_ENABLED:"true",REGPILOT_GITLAB_ENABLED:"true",REGPILOT_CLOUDFLARE_ENABLED:"true",REGPILOT_COMPANIES_HOUSE_ENABLED:"true",REGPILOT_VERCEL_ENABLED:"true",REGPILOT_SUPABASE_ENABLED:"true",REGPILOT_CONNECTOR_ENCRYPTION_KEY:"ab".repeat(32),SUPABASE_URL:"https://example.invalid",SUPABASE_PUBLISHABLE_KEY:"fixture"});}
 async function control(x:Awaited<ReturnType<typeof assuranceFixture>>){
  const p=await db.programmeImport.create({data:{organizationId:x.a.id,createdById:x.o.userId,inputHash:x.a.id,method:"SEARCH",status:"ACCEPTED",evidenceManifest:[]}});
  return db.managedControl.create({data:{organizationId:x.a.id,importId:p.id,proposalKey:"fictional-connected",title:"Fictional connected control",description:"Review fictional aggregate settings",testProcedure:"Inspect observations and limitations",theme:"security",ownerId:x.ed.userId,scheduledById:x.o.userId,intervalDays:30,nextReviewAt:new Date()}});
