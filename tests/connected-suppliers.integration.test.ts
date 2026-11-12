@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {db} from "../lib/server/db";
 import {assuranceFixture,rejects,future} from "./helpers/assurance-fixture";
-import {saveConnector,claimConnector,executeConnector,disconnectConnector,exportConnectorRun,verifyConnectorNow} from "../lib/server/connector-service";
+import {saveConnector,claimConnector,executeConnector,disconnectConnector,exportConnectorRun,verifyConnectorNow,requestConnectorRun} from "../lib/server/connector-service";
 import {operationsWorkspace} from "../lib/server/operations-service";
 import {createVendor,changeVendor,prepareVendorReview,vendorDetail,exportVendorReview} from "../lib/server/vendor-service";
 import {VENDOR_CRITERIA} from "../lib/assurance-workflows";
@@ -137,6 +137,8 @@ test("provider throttling preserves retry budget and defers work without fabrica
    assert.equal(await executeConnector(job,async()=>{throw new CollectionError("RATE_LIMITED",7200);}),"RETRY_SCHEDULED");
    const stored=await db.evidenceConnector.findUniqueOrThrow({where:{id:saved.id}});
    assert.equal(stored.enabled,true);assert.equal(stored.attempts,0);assert.ok(stored.nextRunAt.getTime()>Date.now()+7190*1000);
+   await assert.rejects(()=>requestConnectorRun(x.o,saved.id,stored.version),rejects(429));
+   await assert.rejects(()=>verifyConnectorNow(x.o,saved.id,stored.version,async()=>{throw Error("cooldown must block collection")}),rejects(429));
   }
   assert.equal(await db.connectorRun.count({where:{connectorId:saved.id}}),0);
   assert.equal(await db.obligation.count({where:{connectorId:saved.id}}),1,"follow-up remains deduplicated");

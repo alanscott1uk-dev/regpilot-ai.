@@ -81,7 +81,7 @@ def main():
             print('Skipped older or duplicate public horizon publication');return
     except urllib.error.HTTPError as e:
         if e.code!=404:raise RuntimeError('Could not read the public data branch') from None
-    payload={'message':'Refresh public regulatory horizon metadata','branch':BRANCH,'content':base64.b64encode((json.dumps(data,separators=(',',':'))+'\n').encode()).decode()}
+    payload={'message':'Refresh public regulatory horizon metadata','branch':BRANCH,'content':base64.b64encode((json.dumps(data,separators=(',',':'),ensure_ascii=False)+'\n').encode()).decode()}
     if sha:payload['sha']=sha
     try:result=request(endpoint,'PUT',payload)
     except urllib.error.HTTPError as e:raise RuntimeError('Public data update rejected: '+str(e.code)) from None
