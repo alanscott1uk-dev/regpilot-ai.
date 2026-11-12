@@ -10,7 +10,7 @@ export async function setupJourney(browser,base,viewport,name){
  let role='OWNER',writes=0,captures=0;
  const payloads=[];
  const data={role,profile:null,watches:[],independentReviewers:1,evidence:{total:0,approved:0},controls:0,openTasks:0,
- catalogue:[{id:'uk-data-protection',title:'Fictional data protection publication',agency:'Fictional publisher',path:'/fictional-publication',activities:['personal-data'],jurisdictions:['Scotland']}],
+ catalogue:[{id:'uk-data-protection',title:'Fictional data protection publication',agency:'Fictional publisher',path:'/fictional-publication',activities:['personal-data'],jurisdictions:['Scotland']},...Array.from({length:12},(_,i)=>({id:'fictional-extra-'+i,title:'Fictional medicines publication '+String(i).padStart(2,'0'),agency:'Fictional publisher',path:'/fictional-extra-'+i,activities:['medicines'],jurisdictions:['Scotland']}))],
  coverage:[{sourceId:'uk-data-protection',snapshotId:null,reviewStatus:null,schedule:null,monitoring:'Not scheduled'}],
  connections:{observed:0,total:0,needsAttention:0,listLimitReached:false},features:{monitoring:false,evidence:false,providers:[]},generatedAt:new Date().toISOString()};
  await context.route('https://auth-fixture.example.invalid/**',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({user:session.user})}));
@@ -27,6 +27,9 @@ export async function setupJourney(browser,base,viewport,name){
   await page.goto(base+'/team/setup',{waitUntil:'domcontentloaded'});
   const save=page.getByRole('button',{name:'Save profile and schedules',exact:true});await save.waitFor();
   assert.equal(await save.isEnabled(),false,'empty setup cannot save');
+  const choices=page.getByRole('region',{name:'Publication choices'});assert.equal(await choices.getByRole('article').count(),8,'large catalogues start with a bounded list');
+  await page.getByLabel('Search publications').fill('publication 11');await choices.getByText('Fictional medicines publication 11',{exact:true}).waitFor();
+  await page.getByLabel('Search publications').fill('');
   await page.getByRole('checkbox',{name:'Handling personal data',exact:true}).check();
   await page.getByRole('checkbox',{name:'Scotland',exact:true}).check();
   await page.getByRole('button',{name:/Select suggested sources/}).click();
