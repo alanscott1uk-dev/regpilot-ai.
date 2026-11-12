@@ -39,4 +39,22 @@ Dedicated read-only credentials are required. The two customer collectors remain
 
 ## Release evidence
 
-Release commit, successful CI runs, activated schedule and staging deployment are recorded after verification. The old production application is not implicitly promoted by the scheduler-only main commit.
+Verified code commit: `7a58c2bc060a416dc95be884fc807f58854996fd`.
+
+- [CI 43137931673](https://github.com/alanscott1uk-dev/regpilot-ai./actions/runs/43137931673) passed: 182 JavaScript tests, 188 TypeScript/API tests, 37 PostgreSQL integration tests and 2 RLS tests (409 total), plus type checking, dependency audit, production build, PDF/Word runtime and 33-page smoke checks.
+- [Browser acceptance 43137931668](https://github.com/alanscott1uk-dev/regpilot-ai./actions/runs/43137931668) passed all eight desktop/mobile journeys. The connection and private-workspace journeys use fictional fixtures; they do not establish real customer authentication or provider credential acceptance.
+- [Independent external probe 43137931706](https://github.com/alanscott1uk-dev/regpilot-ai./actions/runs/43137931706) retrieved 38/38 selected text bodies and 2,508 distinct publications, with all 12 publisher feeds available and none result-limited. The GitHub read contract passed. Dedicated Vercel/Supabase contracts reported NOT_CONFIGURED, as expected without customer credentials.
+- The default-branch activation commit is `8ffe92c203b9fbc8e277989cf4a19ecf4d48ef2e`. Collection is scheduled at minute 17 of every hour; the separate read-only watchdog at minute 47. Both pin the verified code above and all actions in these workflows pin verified release SHAs. GitHub schedule timing is best effort, not an uptime guarantee.
+- The [independent watchdog activation run 43138303863](https://github.com/alanscott1uk-dev/regpilot-ai./actions/runs/43138303863) succeeded. That initial check ran before the new collection was published and validated the still-fresh earlier report. A subsequent direct execution checks the expanded report below.
+- Staging deployment `dpl_ArBHeNmxbkePuGfKbKGcEA13T1h8` reached READY for the verified code. Its public health endpoint returned HTTP 200, and unauthenticated `/api/workspace/horizon` returned HTTP 401 with Cache-Control: no-store. The scheduler-only main deployment `dpl_FZs8sJZqJ9VbM4oKixvbHwhxVqEx` was canceled by the existing build guard; the old production application was not promoted.
+
+Provider maintenance responses with Retry-After also persist a cooldown. Manual collection requests cannot override an active provider cooldown. No paid service or dedicated customer provider collector was activated.
+
+
+### First expanded publication
+
+[Collection and publishing run 43138303864](https://github.com/alanscott1uk-dev/regpilot-ai./actions/runs/43138303864) completed successfully: 38/38 text bodies, a passing GitHub read contract and a validated public report at `2026-11-12T02:00:26.616Z`. Public data commit: `697700151a19315890212b01895886fd8e0f590f`.
+
+The published report contains 2,508 records, 12 available feeds, zero unavailable or result-limited feeds, 56 HTTP requests, zero retries on this successful run, an 8,161 ms collection duration, and a retained history entry for the earlier 1,008-record run. The independent watchdog script was executed directly against this new published report and returned `current`, with zero unavailable feeds. This proves the first expanded publication and check, not sustained uptime. The app caches public metadata for five minutes and revalidates it on request.
+
+The public staging page was reachable without email authentication, but the final UI check still displayed the earlier cached 1,008-record report. The expanded data-branch report and independent script check were verified; the refreshed 2,508-record page remains unverified.

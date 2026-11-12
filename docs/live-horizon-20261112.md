@@ -1,5 +1,7 @@
 # Live horizon discovery — 12 November 2026
 
+This records the initial release. The subsequent [infrastructure reliability release](infrastructure-reliability-20261112.md) supersedes the collection limits, cadence and deployment evidence below.
+
 The existing 38-publication watch detects changes to already selected text. This batch adds discovery of recently published or updated items across twelve GOV.UK publishers, a public horizon screen, and authenticated revision-specific review decisions.
 
 ## Public discovery and operation
