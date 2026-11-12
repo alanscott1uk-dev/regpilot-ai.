@@ -24,6 +24,8 @@ async function worker(){
   }catch(e){
    // Error text is not returned or stored: providers may leak headers or tokens.
    record.reason=e?.name==="SourceUnavailable"?"source-or-parser-unavailable":"fetch-or-extraction-failed";
+   if(e?.name==="SourceUnavailable"&&typeof e.reasonCode==="string"&&/^[A-Z_0-9]{1,50}$/.test(e.reasonCode))record.reasonCode=e.reasonCode;
+   if(Number.isInteger(e?.httpStatus)&&e.httpStatus>=100&&e.httpStatus<=599)record.httpStatus=e.httpStatus;
    if(index<3 && e?.name==="SourceUnavailable")record.safeLoaderReason=String(e.message).slice(0,120);
    if(index<3 && source.provider!=="OFFICIAL_WEB"){
     try{
@@ -62,6 +64,7 @@ await writeFile("artifacts/source-changes.json",JSON.stringify(comparison,null,2
 console.log("Compared with last good captures:",comparison.counts);
 
 console.log("Official source probe:",success,"text bodies retrieved,",total-success,"unavailable of",total);
+console.log("Unavailable source diagnostics:",results.filter(x=>x.state==="unavailable").map(x=>({id:x.id,agency:x.agency,reason:x.reasonCode||x.reason,httpStatus:x.httpStatus||null})));
 console.log("Coverage by regulator:",[...new Set(results.map(x=>x.agency))].map(agency=>({agency,retrieved:results.filter(x=>x.agency===agency&&x.state==="text-retrieved").length,total:results.filter(x=>x.agency===agency).length})));
 console.log("Official HTML fallback diagnostics (non-sensitive):",results.slice(0,3).map(x=>({id:x.id,htmlProbeStatus:x.htmlProbeStatus||"not-run",htmlProbeType:x.htmlProbeType||"not-run",safeLoaderReason:x.safeLoaderReason||"not-recorded",govApiDiagnostics:x.govApiDiagnostics||null})));
 if(process.env.GITHUB_STEP_SUMMARY)await writeFile(process.env.GITHUB_STEP_SUMMARY,

@@ -1,5 +1,9 @@
 import {REGULATORY_SOURCES,type RegulatorySource} from "../regulatory-sources.mjs";
-export class OfficialWebUnavailable extends Error{}
+import {resilientGet} from "../connectors/resilient-http";
+import {CollectionError} from "../connectors/collection-error";
+export class OfficialWebUnavailable extends Error{
+ constructor(message:string,readonly reasonCode="EXTRACTION_FAILED",readonly httpStatus?:number){super(message);}
+}
 function plain(html:string){return html.replace(/<(script|style|nav|aside|footer|form)\b[^>]*>[\s\S]*?<\/\1\s*>/gi," ").replace(/<!--[^]*?-->/g," ").replace(/<[^>]*>/g," ").replace(/&#(x[0-9a-f]+|\d+);/gi,(_,v)=>{const n=v[0].toLowerCase()==="x"?parseInt(v.slice(1),16):parseInt(v,10);return n>0&&n<=0x10ffff?String.fromCodePoint(n):" ";}).replace(/&(nbsp|amp|lt|gt|quot|apos);/g,(_,v)=>({nbsp:" ",amp:"&",lt:"<",gt:">",quot:'"',apos:"'"}[v as string]||" ")).replace(/\s+/g," ").trim();}
 export function officialMainText(html:string,heading:string){
  // Ignore commented templates and scripts before locating the single semantic main region.
@@ -18,8 +22,11 @@ export function officialMainText(html:string,heading:string){
 export async function loadOfficialWeb(source:RegulatorySource,fetcher:typeof fetch=fetch){
  const known=REGULATORY_SOURCES.find(s=>s.id===source.id&&s.provider==="OFFICIAL_WEB");
  if(!known?.url||!known.heading||source.url!==known.url||source.path!==known.path)throw new OfficialWebUnavailable("Only curated official pages can be fetched");
- const response=await fetcher(known.url,{method:"GET",headers:{Accept:"text/html"},cache:"no-store",redirect:"error",signal:AbortSignal.timeout(9000)});
- if(!response.ok||!response.headers.get("content-type")?.includes("text/html")||response.url&&response.url!==known.url){await response.body?.cancel();throw new OfficialWebUnavailable("Official page unavailable, moved or unsupported");}
+ const read=resilientGet(fetcher,new URL(known.url).origin,{Accept:"text/html"},{timeoutMs:25000,maxRequests:3});
+ let response:Response;
+ try{response=await read(known.url);}catch(error){throw new OfficialWebUnavailable("Official page request failed",error instanceof CollectionError?error.code:"FETCH_FAILED");}
+ if(!response.ok){await response.body?.cancel();throw new OfficialWebUnavailable("Official page returned an unsuccessful status","HTTP_STATUS",response.status);}
+ if(!response.headers.get("content-type")?.includes("text/html")||response.url&&response.url!==known.url){await response.body?.cancel();throw new OfficialWebUnavailable("Official page unavailable, moved or unsupported","RESPONSE_IDENTITY_OR_TYPE");}
  const reader=response.body?.getReader();if(!reader)throw new OfficialWebUnavailable("Official page was empty");const chunks:Uint8Array[]=[];let bytes=0;
  try{while(true){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>1000000)throw new OfficialWebUnavailable("Official page exceeds the safe size limit");chunks.push(value);}}finally{await reader.cancel().catch(()=>{});}
  const text=officialMainText(Buffer.concat(chunks).toString("utf8"),known.heading);

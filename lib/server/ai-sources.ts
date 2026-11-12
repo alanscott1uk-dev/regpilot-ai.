@@ -1,10 +1,10 @@
-import {loadOfficialWeb} from "./official-web-source";
+import {loadOfficialWeb,OfficialWebUnavailable} from "./official-web-source";
 import {loadGovUkHtml} from "./govuk-html-source";
 import {REGULATORY_SOURCES,normaliseContent,publicationIsWithdrawn} from "../regulatory-sources.mjs";
 import {boundedPublicJson} from "./publication-catalogue";
 import type {RegulatorySource} from "../regulatory-sources.mjs";
 import {extractGovBody} from "../ai/security.mjs";
-export class SourceUnavailable extends Error {constructor(message:string){super(message);this.name="SourceUnavailable"}}
+export class SourceUnavailable extends Error {constructor(message:string,readonly reasonCode="SOURCE_UNAVAILABLE",readonly httpStatus?:number){super(message);this.name="SourceUnavailable"}}
 export async function loadOfficialSource(sourceId:string){
  if(!sourceId)return null;
  const source=REGULATORY_SOURCES.find(s=>s.id===sourceId);
@@ -12,7 +12,7 @@ export async function loadOfficialSource(sourceId:string){
  return loadPublication(source);
 }
 export async function loadPublication(source:RegulatorySource){
- if(source.provider==="OFFICIAL_WEB"){try{return await loadOfficialWeb(source);}catch{throw new SourceUnavailable("Official page unavailable or changed; inspect the original");}}
+ if(source.provider==="OFFICIAL_WEB"){try{return await loadOfficialWeb(source);}catch(error){throw new SourceUnavailable("Official page unavailable or changed; inspect the original",error instanceof OfficialWebUnavailable?error.reasonCode:"FETCH_OR_EXTRACTION_FAILED",error instanceof OfficialWebUnavailable?error.httpStatus:undefined);}}
  let raw:any;
  try{raw=await boundedPublicJson("https://www.gov.uk/api/content"+source.path);}catch{
   // The authenticated identity of the article is checked again against a fixed

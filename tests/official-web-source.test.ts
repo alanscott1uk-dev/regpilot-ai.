@@ -21,7 +21,7 @@ test("semantic main divs and commented templates do not change article boundarie
 });
 test("official source failures and changed page identities never become valid snapshots",async()=>{
  for(const value of [response(html(),403),response(html(),200,"application/json"),response(""),response(html().replace(/main/g,"article")),response(html()+html()),response(html().replace(source.heading!,"Page not found")),response(html().replace('</main>','<h1>Another title</h1></main>')),response(`<main><h1>${source.heading}</h1>Too short</main>`),response(html("x".repeat(60000))),response(html("x".repeat(1000000)))])await assert.rejects(()=>loadOfficialWeb(source,async()=>value),OfficialWebUnavailable);
- await assert.rejects(()=>loadOfficialWeb(source,async()=>{throw new TypeError("redirect blocked");}),TypeError);
+ await assert.rejects(()=>loadOfficialWeb(source,async()=>{throw new TypeError("redirect blocked");}),OfficialWebUnavailable);
  const moved=response();Object.defineProperty(moved,"url",{value:"https://example.invalid/moved"});await assert.rejects(()=>loadOfficialWeb(source,async()=>moved),OfficialWebUnavailable);
  assert.throws(()=>officialMainText('<main><h1>Verify you are human</h1>'+"x".repeat(250)+'</main>',"Verify you are human"),OfficialWebUnavailable);
 });
@@ -49,4 +49,23 @@ test("GOV.UK fallback rejects moved, mismatched, oversized and arbitrary pages",
   await assert.rejects(()=>loadGovUkHtml(source,async()=>response),OfficialWebUnavailable);
  const moved=mocked(valid);Object.defineProperty(moved,"url",{value:"https://www.gov.uk/different"});
  await assert.rejects(()=>loadGovUkHtml(source,async()=>moved),OfficialWebUnavailable);
+});
+
+
+test("official text reads recover transient errors but retain permanent failure diagnostics",async()=>{
+ let calls=0;
+ const recovered=await loadOfficialWeb(source,async()=>++calls===1?response("",503):response());
+ assert.equal(calls,2);assert.match(recovered.text,/Fictional accountability/);
+ calls=0;
+ await assert.rejects(()=>loadOfficialWeb(source,async()=>{calls++;return response("",404)}),(e:any)=>e instanceof OfficialWebUnavailable&&e.reasonCode==="HTTP_STATUS"&&e.httpStatus===404);
+ assert.equal(calls,1);
+ await assert.rejects(()=>loadOfficialWeb(source,async()=>{throw Error("secret provider detail")}), (e:any)=>e instanceof OfficialWebUnavailable&&e.reasonCode==="PROVIDER_UNAVAILABLE"&&!e.message.includes("secret"));
+});
+test("SEPA uses the verified canonical trailing-slash publication URL",async()=>{
+ const sepa=REGULATORY_SOURCES.find(s=>s.id==="sepa-waste-duty")!;
+ const r=await loadOfficialWeb(sepa,async(url,options)=>{
+  assert.equal(url,"https://beta.sepa.scot/topics/waste/duty-of-care/");assert.equal(options?.redirect,"error");
+  return response(`<main><h1>Duty of Care</h1><p>${"Fictional waste guidance. ".repeat(15)}</p></main>`);
+ });
+ assert.equal(r.url,sepa.url);assert.equal(r.id,sepa.id);
 });
