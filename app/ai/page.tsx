@@ -1,5 +1,6 @@
 "use client";
 import {useCallback,useEffect,useState} from "react";
+import EmailSignIn from "../components/email-sign-in";
 import {browserAuth} from "../../lib/client/supabase-auth";
 import {readDemoCertificateFile} from "../../lib/demo-certificate-files.mjs";
 import {validDocumentMetadata} from "../../lib/document-categories.mjs";
@@ -25,7 +26,6 @@ export default function AiStudio(){
  const [organisations,setOrganisations]=useState<Org[]>([]);
  const [orgId,setOrgId]=useState("");
  const [company,setCompany]=useState("RegPilot pilot business");
- const [email,setEmail]=useState("");
  const [mode,setMode]=useState<Mode>("document");
  const [documentText,setDocumentText]=useState("");
  const [file,setFile]=useState<File|null>(null);
@@ -142,13 +142,6 @@ export default function AiStudio(){
   }catch(error){setMessage(error instanceof Error?error.message:"Could not save decision")}
   finally{setReviewBusy(false)}
  }
- async function sendMagicLink(e:React.FormEvent){
-  e.preventDefault();setMessage("");setBusy(true);
-  try{
-   const {error}=await browserAuth().auth.signInWithOtp({email:email.trim(),options:{emailRedirectTo:window.location.origin+"/ai",shouldCreateUser:false}});
-   if(error)throw error;setMessage("Check your inbox for the secure sign-in link. Return to this device and browser.");
-  }catch(e){setMessage(e instanceof Error?e.message:"Unable to send email")}finally{setBusy(false)}
- }
  async function signOut(){try{await browserAuth().auth.signOut();setUser(null);setOrganisations([]);setOrgId("");setResult(null);setSavedReviews([]);setActiveReview(null)}catch{setMessage("Sign-out failed")}}
  async function bootstrap(e:React.FormEvent){
   e.preventDefault();setBusy(true);setMessage("");
@@ -254,7 +247,7 @@ export default function AiStudio(){
     <section className={ui.controls}>
      <div className={ui.sectionHead}><span>01 / ACCESS</span><h2>Secure pilot session</h2></div>
      {user?<div className={ui.session}><div><strong>{user.email}</strong><small>Verified pilot email</small></div><button type="button" onClick={()=>void signOut()}>Sign out</button></div>:
-      <form onSubmit={sendMagicLink} className={ui.smallForm}><label>Email address<input required type="email" autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@company.co.uk"/></label><button type="submit" disabled={working||workspaceFeature!==true}>Email me a sign-in link</button></form>}
+      <EmailSignIn destination="/ai" disabled={working||workspaceFeature!==true}/>}
      {user&&organisations.length>0&&<label className={ui.fieldLabel}>Authorised business<select value={orgId} onChange={e=>setOrgId(e.target.value)}>{organisations.map(o=><option key={o.id} value={o.id}>{o.name} ({o.role})</option>)}</select></label>}
      {user&&organisations.length===0&&<form className={ui.smallForm} onSubmit={bootstrap}><label>Pilot business name<input value={company} minLength={3} maxLength={100} onChange={e=>setCompany(e.target.value)}/></label><button disabled={working}>Set up pilot company</button></form>}
      <div className={ui.sectionHead}><span>02 / AI WORKFLOW</span><h2>What should RegPilot review?</h2></div>

@@ -1,5 +1,6 @@
 "use client";
 import {useCallback,useEffect,useState} from "react";
+import EmailSignIn from "../components/email-sign-in";
 import {browserAuth} from "../../lib/client/supabase-auth";
 import shell from "../workbench/workbench.module.css";
 import ui from "./team.module.css";
@@ -10,7 +11,7 @@ const today=()=>{const d=new Date();return [d.getFullYear(),String(d.getMonth()+
 export default function Team(){
  const [ready,setReady]=useState(false),[user,setUser]=useState<{email:string}|null>(null);
  const [organisations,setOrganisations]=useState<Org[]>([]),[orgId,setOrgId]=useState("");
- const [company,setCompany]=useState("Demo pilot business"),[email,setEmail]=useState("");
+ const [company,setCompany]=useState("Demo pilot business");
  const [items,setItems]=useState<Task[]>([]),[busy,setBusy]=useState(false),[message,setMessage]=useState("");
  const [search,setSearch]=useState(""),[filter,setFilter]=useState("all"),[showCreate,setShowCreate]=useState(false);
  const [completionNotes,setCompletionNotes]=useState<Record<string,string>>({});
@@ -52,12 +53,6 @@ export default function Team(){
   }catch(e){setMessage(e instanceof Error?e.message:"Could not load tasks")}
  },[]);
  useEffect(()=>{setItems([]);if(orgId&&user)void loadTasks(orgId)},[orgId,user?.email,loadTasks]);
- async function login(e:React.FormEvent){
-  e.preventDefault();setBusy(true);try{
-   const {error}=await browserAuth().auth.signInWithOtp({email:email.trim(),options:{emailRedirectTo:window.location.origin+"/team",shouldCreateUser:false}});
-   if(error)throw error;setMessage("Sign-in link sent. Open it using this browser.");
-  }catch(e){setMessage(e instanceof Error?e.message:"Could not send sign-in link")}finally{setBusy(false)}
- }
  async function bootstrap(e:React.FormEvent){
   e.preventDefault();setBusy(true);try{
    const token=await sessionToken();if(!token)throw new Error("Sign in first");
@@ -97,13 +92,13 @@ export default function Team(){
    <div className={shell.sideFoot}><strong>Private pilot only</strong><p>Work items are stored in a tenant-scoped database when this feature is enabled. Real sensitive records remain prohibited until security testing is complete.</p></div>
   </aside>
   <main className={shell.main}>
-   <div className={shell.topbar}><span className={shell.crumb}>Workspace / Team tasks</span><span className={shell.demo}>PRIVATE PILOT · DISABLED BY DEFAULT</span></div>
+   <div className={shell.topbar}><span className={shell.crumb}>Workspace / Team tasks</span><span className={shell.demo}>PRIVATE PILOT</span></div>
    <header className={ui.hero}><div><span className={ui.overline}>REGPILOT / TEAM OPERATIONS</span><h1>One team.<br/><em>Clear ownership.</em></h1><p>Authenticated work items, assigned responsibility, due dates and auditable changes. AI suggestions enter this queue only when a user deliberately accepts them.</p></div><span className={ui.heroMark}>R</span></header>
-   <div className={shell.warning}><strong>Staging-first:</strong> This feature requires verified Supabase authentication and a migrated PostgreSQL database. Private evidence files can be stored only after configuring a private bucket and antivirus scanner. Neither a file nor a work status certifies compliance. Do not use confidential or regulated information.</div>
+   <div className={shell.warning}><strong>Private pilot:</strong> Use fictional or non-sensitive information while live service testing is completed. Evidence uploads and AI require separate activation. Work status does not certify compliance.</div>
    {message&&<p className={ui.message} role="status">{message}</p>}
    <section className={ui.bar}>
     {user?<><div><span className={ui.overline}>SIGNED IN AS</span><strong>{user.email}</strong></div><button onClick={()=>void signOut()} disabled={busy}>Sign out</button></>:
-    <form onSubmit={login} className={ui.login}><label>Email sign-in<input type="email" autoComplete="email" required placeholder="you@company.co.uk" value={email} onChange={e=>setEmail(e.target.value)}/></label><button disabled={busy}>Send secure link</button></form>}
+    <EmailSignIn destination="/team" disabled={!ready}/>}
    </section>
    {user&&organisations.length===0&&<section className={ui.card}><h2>Start an approved pilot workspace</h2><p>Only invited, email-verified pilot accounts can create a company.</p><form onSubmit={bootstrap} className={ui.newForm}><label>Company name<input value={company} minLength={3} maxLength={100} onChange={e=>setCompany(e.target.value)}/></label><button disabled={busy}>Create pilot workspace</button></form></section>}
    {user&&organisations.length>0&&<>

@@ -1,2 +1,3 @@
 import {redirect} from "next/navigation";
-export default function Home(){redirect("/team/operations");}
+import {homeDestination} from '../lib/auth-flow.mjs';
+export default async function Home({searchParams}:{searchParams:Promise<Record<string,string|string[]|undefined>>}){redirect(homeDestination(await searchParams));}

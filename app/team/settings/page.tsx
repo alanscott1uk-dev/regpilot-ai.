@@ -1,5 +1,6 @@
 "use client";
 import {useCallback,useEffect,useRef,useState} from "react";
+import EmailSignIn from "../../components/email-sign-in";
 import {browserAuth} from "../../../lib/client/supabase-auth";
 import type {teamWorkspace,invitationInbox} from "../../../lib/server/team-service";
 import {mayManageRole} from "../../../lib/team-policy";
@@ -15,7 +16,7 @@ type Context={email:string;userId:string|null;organisations:Array<{id:string;nam
 const date=(s:string)=>new Date(s).toLocaleString("en-GB",{dateStyle:"medium",timeStyle:"short"});
 export default function TeamSettings(){
  const [ctx,setCtx]=useState<Context|null>(null),[orgId,setOrgId]=useState(""),[data,setData]=useState<Team|null>(null),[invitations,setInvitations]=useState<Invitations>([]);
- const [enabled,setEnabled]=useState<boolean|null>(null),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[notice,setNotice]=useState(""),[email,setEmail]=useState("");
+ const [enabled,setEnabled]=useState<boolean|null>(null),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[notice,setNotice]=useState("");
  const epoch=useRef(0),orgEpoch=useRef(0),busyRef=useRef(false),active=useRef("");active.current=orgId;
  const request=useCallback(async(path:string,options:RequestInit={})=>{
   const token=(await browserAuth().auth.getSession()).data.session?.access_token;if(!token)throw new Error("Sign in with your approved pilot email.");
@@ -45,13 +46,13 @@ export default function TeamSettings(){
   catch(e){if(epoch.current===generation&&active.current===selected)setNotice(e instanceof Error?e.message:"Could not save change");}
   finally{busyRef.current=false;setBusy(false);}
  }
- async function login(e:React.FormEvent){e.preventDefault();setBusy(true);try{const {error}=await browserAuth().auth.signInWithOtp({email:email.trim(),options:{emailRedirectTo:window.location.origin+"/team/settings",shouldCreateUser:false}});if(error)throw error;setNotice("Open the sign-in email in this browser to continue.");}catch{setNotice("Could not request sign-in. Use your approved pilot account or contact the workspace owner.");}finally{setBusy(false);}}
+
  return <div className={shell.app}><aside className={shell.sidebar}><a className={shell.logo} href="/team/operations"><span className={shell.logoMark}>R</span><span>RegPilot <b>AI</b><small>TEAM WORKSPACE</small></span></a><nav className={shell.sideNav}><a href="/team/operations">Operations</a><a href="/team/library">Obligation Library</a><a href="/team">Team tasks</a><a href="/team/evidence">Evidence vault</a><a href="/team/services">Services & spending</a><a className={shell.active} href="/team/settings" aria-current="page">Team & access</a><a href="/team/people">People &amp; policies</a><a href="/team/vendors">Vendor assurance</a><a href="/team/audits">Auditor workspace</a></nav></aside>
  <main className={shell.main}><div className={shell.topbar}><span className={shell.crumb}>Workspace / Team & access</span><span className={shell.demo}>PRIVATE PILOT</span></div>
   <header className={ui.hero}><div><span>THE RIGHT PEOPLE. THE RIGHT ACCESS.</span><h1>Work together.<br/><em>Review independently.</em></h1><p>Bring colleagues into your workspace, give them a clear role and keep responsibility with the right person as your team changes.</p></div><div className={ui.heroNote}><strong>One person prepares.<br/>Another checks.</strong><p>Independent review needs distinct verified accounts. Your roles make that possible.</p></div></header>
   {notice&&<p className={ui.notice} role="status">{notice}</p>}{loading&&<p role="status">Checking your workspace…</p>}
   {enabled===false&&<section className={ui.empty}><h2>Your private workspace is awaiting activation</h2><p>Sign-in, database access and pilot accounts must be configured before you can invite colleagues or store work. There is nothing you need to enter here yet.</p><a href="/workbench">Explore the fictional demonstration ↗</a></section>}
-  {enabled&&!ctx&&!loading&&<section className={ui.card}><h2>Sign in to your workspace</h2><p>Use the verified email your owner invited. Invites appear here after sign-in.</p><form className={ui.formGrid} onSubmit={login}><label>Email<input required type="email" autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)}/></label><div><button disabled={busy}>Send secure sign-in link</button></div></form></section>}
+  {enabled&&!ctx&&!loading&&<section className={ui.card}><h2>Sign in to your workspace</h2><p>Use the verified email your owner invited. Invites appear here after sign-in.</p><EmailSignIn destination="/team/settings"/></section>}
   {enabled&&!ctx&&!loading&&<CompanySignIn/>}
   {ctx&&<><div className={ui.toolbar}><p>Signed in as <strong>{ctx.email}</strong></p><button disabled={busy} onClick={()=>void browserAuth().auth.signOut()}>Sign out</button></div>
    {!!invitations.length&&<section className={ui.card}><h2>Your invitations</h2><div className={ui.controlGrid}>{invitations.map(i=><article key={i.id}><span className={ui.eyebrow}>{i.role} ACCESS</span><h3>{i.organization.name}</h3><p>Expires {date(i.expiresAt)}</p><div className={ui.buttons}><button disabled={busy} onClick={()=>void action("/api/workspace/invitations","POST",{id:i.id,version:i.version,decision:"ACCEPT"},"Invitation accepted. Your workspace is now available.")}>Join workspace</button><button disabled={busy} onClick={()=>void action("/api/workspace/invitations","POST",{id:i.id,version:i.version,decision:"DECLINE"},"Invitation declined.")}>Decline</button></div></article>)}</div></section>}
