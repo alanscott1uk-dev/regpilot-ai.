@@ -24,6 +24,18 @@ Queued work links to the original publication. It does not claim full-text captu
 
 Unit tests cover publisher identity, request limits, pagination, stale/future data, unsafe URLs, outage retention, metadata comparison, and transparent ranking. PostgreSQL integration covers role revocation, cross-tenant ownership, duplicate concurrency, revision mismatch, dismiss/reconsider, and absence of fabricated source snapshots. Browser acceptance uses clearly fictional fixtures on desktop and mobile; live external discovery is verified separately.
 
-Release the tested code to staging, initialise the data-only branch, then update the default-branch scheduler's pinned code commit. Keep its exact-message ignored-build protection when installing the scheduler so the old production application is not promoted. Verify the first publishing job and public `/api/horizon` response before describing the new feed as live. The first successful run does not establish long-term availability or competitor superiority.
+The tested code is deployed to staging, the public data-only branch is populated, and the default-branch scheduler pins the verified code commit. The first successful publication and public endpoint are verified below. This does not establish long-term availability or competitor superiority.
 
 Official API contract: https://github.com/alphagov/search-api/blob/main/docs/using-the-search-api.md
+
+### Observed release evidence
+
+Code commit: `51c90305d05b22acb99a23985d14871e5d177f1b`.
+
+- GitHub CI [43133908358](https://github.com/alanscott1uk-dev/regpilot-ai./actions/runs/43133908358) passed: 181 JavaScript tests, 176 TypeScript/API tests, 36 PostgreSQL integration tests and 2 RLS tests (395 total), plus type checking, production build and runtime smoke checks.
+- Browser acceptance [43133908345](https://github.com/alanscott1uk-dev/regpilot-ai./actions/runs/43133908345) passed with fictional desktop/mobile fixtures, including publication filtering, bounded rendering, deliberate acknowledgment, owned task creation, viewer restrictions and overflow checks.
+- Independent external probe [43133908363](https://github.com/alanscott1uk-dev/regpilot-ai./actions/runs/43133908363) passed: 38/38 selected text sources; 1,008 distinct discovery records, 12 responding publisher feeds, six explicit collection limits and zero unavailable feeds.
+- Default-branch scheduler activation commit: `b344324c205351e4f17f3e8da6bf9c485c679ba7`. Its [first collection and publishing run](https://github.com/alanscott1uk-dev/regpilot-ai./actions/runs/43134215630) completed successfully. The installed schedule is 00:17, 06:17, 12:17 and 18:17 UTC. This is configured recurring operation with one observed successful publication, not an uptime claim.
+- Published report timestamp: `2026-11-12T01:24:07.295Z`. The public data branch and staging `/api/horizon` both returned HTTP 200 with 1,008 records and state `limited`. An unauthenticated private workspace horizon request returned HTTP 401 with `Cache-Control: no-store`.
+- Staging deployment `dpl_4BrE5syLdWrPATsCCG3AGGk1LHzN` reached READY for the tested code. The [public horizon page](https://regpilot-ai-qnx6-git-feature-traceabil-2f0b3f-alanscott1uk-5933.vercel.app/horizon) was verified in a real browser without email authentication; its MHRA filter returned 80 publications.
+- The scheduler-only main deployment was canceled by the existing exact-message build guard. The old production application was not promoted. Authenticated customer use and long-term scheduled uptime remain separate verification boundaries.

@@ -16,11 +16,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
-      REGPILOT_VERIFIED_CODE_SHA: 4f392ab2b09b9aafd126dadf20e3b574fca08203
+      REGPILOT_VERIFIED_CODE_SHA: 51c90305d05b22acb99a23985d14871e5d177f1b
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 4f392ab2b09b9aafd126dadf20e3b574fca08203
+          ref: 51c90305d05b22acb99a23985d14871e5d177f1b
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
@@ -63,11 +63,11 @@ jobs:
     permissions:
       contents: write
     env:
-      REGPILOT_VERIFIED_CODE_SHA: 4f392ab2b09b9aafd126dadf20e3b574fca08203
+      REGPILOT_VERIFIED_CODE_SHA: 51c90305d05b22acb99a23985d14871e5d177f1b
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 4f392ab2b09b9aafd126dadf20e3b574fca08203
+          ref: 51c90305d05b22acb99a23985d14871e5d177f1b
           persist-credentials: false
           sparse-checkout: scripts/publish-horizon.py
           sparse-checkout-cone-mode: false
