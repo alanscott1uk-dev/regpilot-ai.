@@ -9,6 +9,7 @@ import {setTimeout as delay} from "node:timers/promises";
 import {mkdir,writeFile} from "node:fs/promises";
 import assert from "node:assert/strict";
 import {chromium} from "playwright";
+import {horizonJourney} from "./horizon-browser-journey.mjs";
 import {setupJourney} from "./setup-browser-journey.mjs";
 
 const port=await new Promise((resolve,reject)=>{
@@ -95,6 +96,7 @@ try{
  await testJourney("desktop",{width:1365,height:880});
  await testJourney("mobile",{width:390,height:844});
  for(const [name,viewport] of [["desktop",{width:1365,height:880}],["mobile",{width:390,height:844}]]){
+  try{observations.push(await horizonJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"horizon-"+name,passed:false,error:e.message});}
   try{observations.push(await setupJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"setup-"+name,passed:false,error:e.message});}
  }
 }finally{await browser.close();host.kill("SIGTERM");await Promise.race([new Promise(r=>host.once("exit",r)),delay(1500)]);if(host.exitCode===null)host.kill("SIGKILL");}

@@ -34,6 +34,9 @@ jobs:
           restore-keys: source-watch-v1-${{ github.ref }}-
       - name: Retrieve official text and compare against last good captures
         run: node --import tsx scripts/verify-regulatory-sources.mjs
+      - name: Discover newly published and updated official material
+        if: ${{ !cancelled() }}
+        run: node --import tsx scripts/collect-horizon.mjs
       - name: Verify real GitHub API contract with repository-scoped credentials
         if: ${{ !cancelled() }}
         env:
@@ -51,3 +54,28 @@ jobs:
           name: official-uk-source-probe
           path: artifacts/*.json
           retention-days: 30
+
+  publish:
+    needs: probe
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    permissions:
+      contents: write
+    env:
+      REGPILOT_VERIFIED_CODE_SHA: 4f392ab2b09b9aafd126dadf20e3b574fca08203
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 4f392ab2b09b9aafd126dadf20e3b574fca08203
+          persist-credentials: false
+          sparse-checkout: scripts/publish-horizon.py
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: official-uk-source-probe
+          path: artifacts
+      - name: Validate and publish only public metadata to the data branch
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/publish-horizon.py

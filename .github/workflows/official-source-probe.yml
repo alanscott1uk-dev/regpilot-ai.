@@ -28,6 +28,9 @@ jobs:
           restore-keys: source-watch-v1-${{ github.ref }}-
       - name: Retrieve official text and compare against last good captures
         run: node --import tsx scripts/verify-regulatory-sources.mjs
+      - name: Discover newly published and updated official material
+        if: ${{ !cancelled() }}
+        run: node --import tsx scripts/collect-horizon.mjs
       - name: Verify real GitHub API contract with repository-scoped credentials
         if: ${{ !cancelled() }}
         env:

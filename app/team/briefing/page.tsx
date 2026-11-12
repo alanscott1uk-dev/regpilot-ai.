@@ -41,7 +41,7 @@ export default function Briefing(){
   <aside className={shell.sidebar}><a className={shell.logo} href="/team/operations"><span className={shell.logoMark}>R</span><span>RegPilot <b>AI</b><small>COMPLIANCE INTELLIGENCE</small></span></a>
    <div className={shell.sideCaption}>OPERATIONS</div><nav className={shell.sideNav} aria-label="Main navigation">
     <a href="/team/operations">◉ &nbsp; Operations</a><a className={shell.active} href="/team/briefing" aria-current="page">✦ &nbsp; Weekly briefing</a>
-    <a href="/team/coverage">◈ &nbsp; Source monitoring</a><a href="/team/sources">▤ &nbsp; Source history</a>
+    <a href="/horizon">Horizon feed</a><a href="/team/coverage">◈ &nbsp; Source monitoring</a><a href="/team/sources">▤ &nbsp; Source history</a>
     <a href="/team/intelligence">◇ &nbsp; Regulatory intelligence</a><a href="/team/changes">↗ &nbsp; Change response</a>
     <a href="/team/assurance">▣ &nbsp; Independent evidence review</a></nav>
    <div className={shell.sideFoot}><strong>Operational facts, not a compliance grade.</strong><p>Keep the source, responsible person, current evidence and decision visible at every stage.</p></div>
