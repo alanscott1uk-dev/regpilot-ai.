@@ -23,6 +23,10 @@ test('permission denials do not retry; GitHub secondary throttling is distinguis
  const throttled=resilientGet(async()=>new Response(null,{status:403,headers:{'retry-after':'60'}}),origin,{});
  await assert.rejects(()=>throttled(origin),code('RATE_LIMITED'));
 });
+test('service-unavailable Retry-After becomes a durable cooldown rather than a premature retry',async()=>{
+ let calls=0;const get=resilientGet(async()=>{calls++;return new Response(null,{status:503,headers:{'retry-after':'172800'}})},origin,{}, {sleep:async()=>assert.fail('must defer')});
+ await assert.rejects(()=>get(origin),(e:any)=>e.code==='RATE_LIMITED'&&e.retryAfterSeconds===172800);assert.equal(calls,1);
+});
 test('network retries are bounded and credentials never enter error text',async()=>{
  let calls=0;const get=resilientGet(async()=>{calls++;throw Error('Bearer SECRET');},origin,{}, {sleep:async()=>{},random:()=>0});
  await assert.rejects(()=>get(origin),(e:any)=>e.code==='PROVIDER_UNAVAILABLE'&&!e.message.includes('SECRET'));assert.equal(calls,3);

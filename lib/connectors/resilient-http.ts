@@ -29,7 +29,8 @@ export function resilientGet(fetcher:typeof fetch,origin:string,headers:Record<s
    if(instructed!==null&&instructed>7*86400)throw new CollectionError('RETRY_REQUIRES_REVIEW');
    const delay=instructed!==null?instructed*1000:Math.round(250*2**attempt+random()*150);
    // Never shorten Retry-After to fit a request. Persist long waits in the job schedule.
-   if(attempt===2||delay>2000||clock()+delay+1000>=deadline)throw new CollectionError(rateLimited?'RATE_LIMITED':'PROVIDER_UNAVAILABLE',rateLimited?instructed??60:undefined);
+   const cooldown=rateLimited||instructed!==null;
+   if(attempt===2||delay>2000||clock()+delay+1000>=deadline)throw new CollectionError(cooldown?'RATE_LIMITED':'PROVIDER_UNAVAILABLE',cooldown?instructed??60:undefined);
    metrics.retries++;await sleep(delay);
   }
   throw new CollectionError('PROVIDER_UNAVAILABLE');
