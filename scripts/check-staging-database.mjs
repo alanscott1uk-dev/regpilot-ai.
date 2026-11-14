@@ -28,6 +28,8 @@ try {
   await db.providerGate.findFirst({select:{generation:true,failureScopes:true}});
   await db.providerPermit.findFirst({select:{scopeHash:true}});
   await db.evidenceConnector.findFirst({select:{webhookVersion:true,eventRevision:true,collectedEventRevision:true}});
+  await db.publicSourceFetch.findFirst({select:{key:true,payloadHash:true}});
+  await db.regulatorySnapshot.findFirst({select:{sourceFetchedAt:true}});
   const dispatchTriggers=await db.$queryRaw`SELECT t.tgname,t.tgenabled
     FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname='public' AND NOT t.tgisinternal AND

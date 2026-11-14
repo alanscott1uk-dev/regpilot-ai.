@@ -5,7 +5,7 @@ import {executeScheduledTick} from '../cron-tick.mjs';
 import {monitoringEnabled,runMonitoringBatch} from './monitoring-service';
 import {connectorsEnabled,runConnectorBatch} from './connector-service';
 import {runReviewBatch} from './control-service';
-import {pruneWebhookReceipts} from './connector-webhooks';
+import {executeWithMaintenance,runWorkerMaintenance} from './worker-maintenance';
 
 export const workerEnabled=()=>workspaceConfigured()&&process.env.REGPILOT_WORKER_ENABLED==='true'&&process.env.REGPILOT_AUTOMATION_ENABLED==='true';
 const LEASE_MS=180000,STALE_MS=90*60000;
@@ -41,17 +41,16 @@ export async function runPrivateWorker(invocationKey:string,execute?:()=>Promise
  const claim=await claimWorker(invocationKey,slot);
  if(claim.kind==='busy')return {status:409,body:{ok:false,state:'busy'}};
  if(claim.kind==='reused')return {status:claim.run.state==='COMPLETED'?200:claim.run.state==='RUNNING'?409:503,body:{ok:claim.run.state==='COMPLETED',state:claim.run.state.toLowerCase(),reused:true}};
- let result:TickResult;
+ let result:TickResult&{maintenance?:unknown};
  // Stop admitting new provider work early enough to finish bounded reads and writes.
  const admissionDeadline=Date.now()+20000;
  try{
-  if(slot===0)await pruneWebhookReceipts();
-  result=await (execute?execute():executeScheduledTick({
+  result=await executeWithMaintenance(execute||(()=>executeScheduledTick({
    ...(monitoringEnabled()?{sources:()=>runMonitoringBatch(12,3,admissionDeadline)}:{}),
    ...(connectorsEnabled()?{connectors:()=>runConnectorBatch(4,2,admissionDeadline)}:{}),
    // One slot owns recurring review generation. Collection slots share fair queues.
    ...(slot===0?{controlReviews:()=>runReviewBatch(admissionDeadline)}:{})
-  }));
+  })),slot===0?runWorkerMaintenance:undefined);
  }catch{const failed={state:'failed' as const,processed:0,attention:1};result={ok:false,modules:{sources:failed,connectors:failed,controlReviews:failed}};}
  const state=result.ok?'COMPLETED':'FAILED';
  const finished=await db.workerRun.updateMany({where:{id:claim.run.id,state:'RUNNING',leaseUntil:{gt:new Date()}},data:{state,finishedAt:new Date(),summary:result as unknown as Prisma.InputJsonValue}});

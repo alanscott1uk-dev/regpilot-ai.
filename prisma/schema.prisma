@@ -47,6 +47,22 @@ model ProviderGate {
  permits ProviderPermit[]
 }
 
+model PublicSourceFetch {
+ key String @id @db.VarChar(64)
+ sourceId String @db.VarChar(120)
+ payload Json?
+ payloadHash String? @db.VarChar(64)
+ fetchedAt DateTime?
+ expiresAt DateTime?
+ leaseToken String? @db.Uuid
+ leaseUntil DateTime?
+ retryAt DateTime?
+ failures Int @default(0)
+ failureCode String? @db.VarChar(40)
+ updatedAt DateTime @updatedAt
+ @@index([updatedAt])
+}
+
 model ProviderPermit {
  token String @id @db.Uuid
  provider String @db.VarChar(24)
@@ -449,6 +465,7 @@ model RegulatorySnapshot {
   id               String @id @default(uuid()) @db.Uuid
   organizationId   String @db.Uuid
   sourceId         String @db.VarChar(120)
+  sourceFetchedAt  DateTime?
   title            String @db.VarChar(300)
   url              String @db.VarChar(500)
   contentHash      String @db.VarChar(64)

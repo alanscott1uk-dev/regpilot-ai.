@@ -15,7 +15,7 @@ DECLARE
   relation_name text;
 BEGIN
   FOREACH name IN ARRAY ARRAY[
-    'ProviderGate','ProviderPermit','WebhookReceipt','DispatchLane','WorkerRun','User','Organization','Membership','Obligation','Evidence','AuditEvent',
+    'PublicSourceFetch','ProviderGate','ProviderPermit','WebhookReceipt','DispatchLane','WorkerRun','User','Organization','Membership','Obligation','Evidence','AuditEvent',
     'AiDailyUsage','AiReview','RegulatorySnapshot','BusinessProfile','IntelligenceRun','IntelligenceDecision','WatchSchedule','SemanticRequest','AssuranceAssessment','ProgrammeImport','ManagedControl','ControlLink','EvidenceConnector','ConnectorRun','RegisteredSource','LibraryRequirement','LibraryRevision','LibraryApplicability','CoverageRun','CoverageDecision','WorkspaceInvitation','PaidBudget','PaidReservation','ServiceJob','BillingAccount','BillingEvent','AuditRoom','AuditGrant','AuditQuestion','Policy','PolicyRevision','PolicyAssignment','Vendor','VendorReview','AuditRequest','ChangeResponse','ChangeAction','AccessInventory','AccessCampaign','AccessReviewItem','AssuranceAnswer','AssuranceQuestionnaire'
   ] LOOP
     relation_name := format('public.%I',name);

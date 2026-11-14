@@ -1,4 +1,5 @@
 import {claimFairWatch,releaseDispatchLease} from "./fair-dispatch";
+import {SourceFetchDeferred} from "./shared-source-fetch";
 import {timingSafeEqual} from "node:crypto";
 import {Prisma,type WatchSchedule} from "@prisma/client";
 import {db} from "./db";
@@ -134,6 +135,10 @@ export async function executeWatch(job:WatchSchedule,loader?:Loader){
     return await finish(job,recovered.backlog?"RECOVERY_BACKLOG":checked.state,null);
   }catch(error){
     if(error instanceof LeaseLost)return "SUPERSEDED";
+    if(error instanceof SourceFetchDeferred){
+      const deferred=await db.watchSchedule.updateMany({where:{id:job.id,organizationId:job.organizationId,enabled:true,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},data:{leaseToken:null,leaseUntil:null,attempts:Math.max(0,job.attempts-1),lastOutcome:"SOURCE_DEFERRED",failureCode:error.code,nextCheckAt:error.retryAt}});
+      return deferred.count?"SOURCE_DEFERRED":"SUPERSEDED";
+    }
     return await finish(job,"FAILED",error instanceof PermissionLost?"PERMISSION_REVOKED":"CHECK_OR_ANALYSIS_FAILED");
   }finally{await releaseDispatchLease("SOURCE",job);}
 }

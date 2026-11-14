@@ -1,6 +1,7 @@
 import {db} from "./db";
 import type {AuthorizedContext} from "./authorization";
-import {loadOfficialSource,loadPublication} from "./ai-sources";
+import {loadPublication} from "./ai-sources";
+import {loadSharedPublicSource} from "./shared-source-fetch";
 import {resolveWorkspaceSource} from "./publication-catalogue";
 import {sourceTextHash,canonicalSourceText,compareSourceText,publicSnapshot} from "../regulatory/source-fingerprint.mjs";
 import {Prisma} from "@prisma/client";
@@ -8,7 +9,7 @@ export class RegulatoryWatchError extends Error{
  status:number;
  constructor(message:string,status=400){super(message);this.name="RegulatoryWatchError";this.status=status;}
 }
-type Official={id:string;title:string;url:string;updatedAt:string|null;revisionAt:string|null;text:string};
+type Official={id:string;title:string;url:string;updatedAt:string|null;revisionAt:string|null;text:string;sourceFetchedAt?:Date};
 export type Loader=(sourceId:string)=>Promise<Official|null>;
 const roles=["OWNER","ADMIN","EDITOR"];
 const validUuid=(x:unknown):x is string=>typeof x==="string"&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x);
@@ -31,10 +32,12 @@ export async function checkOfficialSource(ctx:AuthorizedContext,sourceId:string,
   return {state:"COOLDOWN",snapshot:publicSnapshot(previous),comparison:{state:"UNCHANGED",changed:false,added:[],removed:[]},
    note:"Last check was less than 15 minutes ago; official source was not fetched again."};
  }
- const official=await (loader?loader(sourceId):loadPublication(source));
+ const shared=loader?null:await loadSharedPublicSource(source,()=>loadPublication(source));
+ const official=loader?await loader(sourceId):shared!.official;
  if(!official||official.id!==sourceId||typeof official.text!=="string")
   throw new RegulatoryWatchError("The selected official publication is unavailable",503);
  const text=canonicalSourceText(official.text),hash=sourceTextHash(text);
+ const sourceFetchedAt=shared?.fetchedAt||('sourceFetchedAt' in official&&official.sourceFetchedAt instanceof Date?official.sourceFetchedAt:new Date());
  const result=await db.$transaction(async tx=>{
   if(guard)await guard(tx);
   const latest=await tx.regulatorySnapshot.findFirst({
@@ -42,10 +45,10 @@ export async function checkOfficialSource(ctx:AuthorizedContext,sourceId:string,
   });
   if(latest&&latest.contentHash===hash){
    const refreshed=await tx.regulatorySnapshot.update({where:{id:latest.id},data:{lastCheckedAt:now,
-    title:official.title,revisionAt:official.revisionAt}});
+    title:official.title,revisionAt:official.revisionAt,sourceFetchedAt}});
    await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,
     action:"regulatory.source_text_unchanged",entityType:"RegulatorySnapshot",entityId:latest.id,
-    details:{sourceId,hash,checkedAt:now.toISOString()}
+    details:{sourceId,hash,checkedAt:now.toISOString(),sourceFetchedAt:sourceFetchedAt.toISOString(),sharedRetrieval:shared?.reused??false}
    }});
    return {state:"UNCHANGED",snapshot:publicSnapshot(refreshed),
     comparison:{state:"UNCHANGED",changed:false,added:[],removed:[]}};
@@ -53,7 +56,7 @@ export async function checkOfficialSource(ctx:AuthorizedContext,sourceId:string,
   const comparison=compareSourceText(latest?.bodyText||"",text);
   const row=await tx.regulatorySnapshot.create({data:{
    organizationId:ctx.organizationId,sourceId,title:official.title,url:official.url,
-   bodyText:text,contentHash:hash,revisionAt:official.revisionAt,
+   bodyText:text,contentHash:hash,revisionAt:official.revisionAt,sourceFetchedAt,
    addedSnippets:comparison.added as Prisma.InputJsonValue,
    removedSnippets:comparison.removed as Prisma.InputJsonValue,
    capturedById:ctx.userId,
@@ -62,7 +65,7 @@ export async function checkOfficialSource(ctx:AuthorizedContext,sourceId:string,
   await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,
    action:comparison.changed?"regulatory.source_text_changed":"regulatory.baseline_created",
    entityType:"RegulatorySnapshot",entityId:row.id,
-   details:{sourceId,hash,previousHash:latest?.contentHash||null,changedText:comparison.changed}
+   details:{sourceId,hash,previousHash:latest?.contentHash||null,changedText:comparison.changed,sourceFetchedAt:sourceFetchedAt.toISOString(),sharedRetrieval:shared?.reused??false}
   }});
   return {state:comparison.state,snapshot:publicSnapshot(row),comparison};
  },{isolationLevel:"Serializable",maxWait:3500,timeout:10000});
