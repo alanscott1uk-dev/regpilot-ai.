@@ -4,7 +4,7 @@ import {monitoringEnabled,runMonitoringBatch} from "../../../../lib/server/monit
 import {connectorsEnabled,runConnectorBatch} from "../../../../lib/server/connector-service";
 import {runReviewBatch} from "../../../../lib/server/control-service";
 import {reply} from "../../../../lib/server/intelligence-http";
-import {runAutomationBatch} from "../../../../lib/server/automation-queue";
+import {runAutomationBatch,finalizeAutomationTick} from "../../../../lib/server/automation-queue";
 
 export const runtime="nodejs";export const dynamic="force-dynamic";export const maxDuration=120;
 export async function GET(request:Request){
@@ -18,7 +18,7 @@ export async function GET(request:Request){
   controlReviews:runReviewBatch
  };
  try{
-  const result=await executeScheduledTick(jobs);
+  const result=await finalizeAutomationTick(await executeScheduledTick(jobs));
   return reply({...result,checkedAt:new Date().toISOString()},result.ok?200:503);
  }catch{
   return reply({error:"Scheduled worker failed",ok:false},503);

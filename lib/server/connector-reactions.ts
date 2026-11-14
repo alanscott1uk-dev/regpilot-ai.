@@ -5,7 +5,8 @@ import {connectorProviderEnabled} from './connector-flags';
 import {followUpVendorSignals} from './vendor-signals';
 import {hashValue} from '../regulatory/intelligence';
 import {observationOutcome,type Observation} from '../connectors/observation';
-export class ReactionInvalid extends Error {constructor(public code:string){super('Automation input requires review');}}
+export class ReactionInvalid extends Error {constructor(public code:'INPUT_INTEGRITY_FAILED'|'EVENT_KIND_UNSUPPORTED'){super('Automation input requires review');}}
+export class ReactionPaused extends Error{}
 async function followUp(tx:Prisma.TransactionClient,job:EvidenceConnector,reason:string){
  const control=await tx.managedControl.findFirst({where:{id:job.controlId,organizationId:job.organizationId,enabled:true},include:{owner:{select:{email:true}}}});
  if(!control)return false;
@@ -19,7 +20,8 @@ async function followUp(tx:Prisma.TransactionClient,job:EvidenceConnector,reason
 /** Database effects only. The queue commits effects and acknowledgement together. */
 export async function applyConnectorReaction(tx:Prisma.TransactionClient,event:AutomationEvent):Promise<'DONE'|'CANCELLED'>{
  const job=await tx.evidenceConnector.findFirst({where:{id:event.connectorId,organizationId:event.organizationId}});
- if(!job||(!job.enabled&&event.kind!=='CONNECTOR_FAILED')||job.version!==event.configVersion||!connectorProviderEnabled(job.provider))return 'CANCELLED';
+ if(!job||(!job.enabled&&event.kind!=='CONNECTOR_FAILED')||job.version!==event.configVersion)return 'CANCELLED';
+ if(!connectorProviderEnabled(job.provider))throw new ReactionPaused();
  const ctx={organizationId:job.organizationId,userId:job.configuredById,role:'ADMIN' as const};
  try{await requireMember(tx,ctx,ADMIN);}catch(error){if(error instanceof IntelligenceError&&error.status===403)return 'CANCELLED';throw error;}
  const control=await tx.managedControl.findFirst({where:{id:job.controlId,organizationId:job.organizationId,enabled:true}});

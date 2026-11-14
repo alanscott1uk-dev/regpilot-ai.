@@ -109,3 +109,20 @@ test('retention preserves pending and dead events; a bounded batch exposes unres
   const batch=await runAutomationBatch(1,1);assert.equal(batch.processed,0);assert.equal(batch.attention,1);assert.equal(batch.limitReached,true);
  }finally{await f.cleanup();}
 });
+test('a disabled provider preserves queued events until reactivation instead of discarding them',async()=>{
+ const f=await fixture();
+ try{
+  await f.collect();const event=await f.event();
+  // Dispatch-only fixture: no provider requests or credential use.
+  await db.evidenceConnector.update({where:{id:f.saved.id},data:{provider:'MICROSOFT365'}});
+  process.env.REGPILOT_MICROSOFT365_ENABLED='false';
+  assert.equal(await claimAutomationEvent({id:event.id,organizationId:f.a.id}),null);
+  assert.equal((await f.event()).state,'PENDING');assert.equal((await f.event()).attempts,0);
+  process.env.REGPILOT_MICROSOFT365_ENABLED='true';
+  const claimed=await claimAutomationEvent({id:event.id,organizationId:f.a.id});assert.ok(claimed);assert.equal(claimed.id,event.id);
+  process.env.REGPILOT_MICROSOFT365_ENABLED='false';
+  assert.equal(await executeAutomationEvent(claimed),'RETRY_SCHEDULED');
+  assert.equal((await f.event()).state,'PENDING');assert.equal((await f.event()).attempts,0);
+  assert.equal(await db.obligation.count({where:{connectorId:f.saved.id}}),0);
+ }finally{await f.cleanup();}
+});

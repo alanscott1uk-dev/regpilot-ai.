@@ -9,6 +9,7 @@ import {hashValue} from '../lib/regulatory/intelligence';
 test('100,000 durable automation events: 16 claimers preserve fairness across 250 workspaces without duplicate delivery',async t=>{
  Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:'true',REGPILOT_CONNECTORS_ENABLED:'true',REGPILOT_CONNECTOR_ENCRYPTION_KEY:'ab'.repeat(32),SUPABASE_URL:'https://example.invalid',SUPABASE_PUBLISHABLE_KEY:'fixture'});
  const marker=randomUUID(),user=await db.user.create({data:{externalId:marker,email:marker+'@example.invalid'}});
+ process.env.REGPILOT_AI_ALLOWED_EMAILS=user.email;
  const rows=Array.from({length:250},()=>({organizationId:randomUUID(),programmeId:randomUUID(),controlId:randomUUID(),connectorId:randomUUID()}));
  const orgs=rows.map(r=>r.organizationId),where={organizationId:{in:orgs}},latencies:number[]=[],seen=new Set<string>();
  try{

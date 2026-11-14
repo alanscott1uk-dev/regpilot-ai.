@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {GET,POST} from '../app/api/workspace/automations/route';
 import {executeScheduledTick} from '../lib/cron-tick.mjs';
+import {finalizeAutomationTick} from '../lib/server/automation-queue';
 const id='123e4567-e89b-42d3-a456-426614174000';
 test('automation health and replay authenticate before database access and never cache responses',async()=>{
  Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:'false'});
@@ -15,4 +16,13 @@ test('automation health and replay authenticate before database access and never
 test('automation dead letters degrade worker health while healthy collection results remain intact',async()=>{
  const result=await executeScheduledTick({sources:async()=>({processed:12}),connectors:async()=>({processed:4}),automations:async()=>({processed:3,attention:1})});
  assert.equal(result.ok,false);assert.equal(result.modules.automations?.state,'attention');assert.equal(result.modules.connectors.processed,4);assert.equal(result.modules.sources.processed,12);
+});
+test('end-of-tick health captures events arriving after the parallel sweep and preserves collection results when health reads fail',async()=>{
+ const initial=await executeScheduledTick({connectors:async()=>({processed:4}),automations:async()=>({processed:0})});
+ const delayed=await finalizeAutomationTick(initial,async()=>({pending:1,dead:0}));
+ assert.equal(delayed.modules.automations?.state,'backlog');
+ const dead=await finalizeAutomationTick(initial,async()=>({pending:0,dead:2}));
+ assert.equal(dead.ok,false);assert.equal(dead.modules.automations?.attention,2);assert.equal(dead.modules.connectors.processed,4);
+ const failed=await finalizeAutomationTick(initial,async()=>{throw Error('private database details');});
+ assert.equal(failed.ok,false);assert.equal(failed.modules.connectors.processed,4);assert.equal(failed.modules.automations?.state,'failed');assert.doesNotMatch(JSON.stringify(failed),/private database/);
 });

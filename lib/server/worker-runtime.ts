@@ -1,4 +1,4 @@
-import {runAutomationBatch} from './automation-queue';
+import {runAutomationBatch,finalizeAutomationTick} from './automation-queue';
 import {Prisma} from '@prisma/client';
 import {db} from './db';
 import {workspaceConfigured} from './ai-auth';
@@ -52,6 +52,7 @@ export async function runPrivateWorker(invocationKey:string,execute?:()=>Promise
    // One slot owns recurring review generation. Collection slots share fair queues.
    ...(slot===0?{controlReviews:()=>runReviewBatch(admissionDeadline)}:{})
   })),slot===0?runWorkerMaintenance:undefined);
+  result=await finalizeAutomationTick(result);
  }catch{const failed={state:'failed' as const,processed:0,attention:1};result={ok:false,modules:{sources:failed,connectors:failed,controlReviews:failed}};}
  const state=result.ok?'COMPLETED':'FAILED';
  const finished=await db.workerRun.updateMany({where:{id:claim.run.id,state:'RUNNING',leaseUntil:{gt:new Date()}},data:{state,finishedAt:new Date(),summary:result as unknown as Prisma.InputJsonValue}});

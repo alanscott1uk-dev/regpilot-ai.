@@ -4,11 +4,12 @@ import {randomUUID} from 'node:crypto';
 import {db} from './db';
 import {hashValue} from '../regulatory/intelligence';
 import {transaction,IntelligenceError} from './intelligence-service';
-import {applyConnectorReaction,ReactionInvalid} from './connector-reactions';
-import {connectorsEnabled} from './connector-flags';
+import {applyConnectorReaction,ReactionInvalid,ReactionPaused} from './connector-reactions';
+import {connectorsEnabled,connectorProviderEnabled} from './connector-flags';
 import {releaseDispatchLease} from './fair-dispatch';
 import {requireMember,ADMIN} from './workspace-member';
 import type {AuthorizedContext} from './authorization';
+import type {executeScheduledTick} from '../cron-tick.mjs';
 const MAX_ATTEMPTS=5;
 export const connectorEventKey=(job:Pick<EvidenceConnector,'organizationId'|'id'|'leaseToken'>)=>hashValue({kind:'connector-reaction:v1',organizationId:job.organizationId,connectorId:job.id,leaseToken:job.leaseToken});
 export async function enqueueConnectorEvent(tx:Prisma.TransactionClient,job:EvidenceConnector,input:{kind:'CONNECTOR_OBSERVED'|'CONNECTOR_FAILED';runId?:string;fingerprint:string;changed?:boolean;reasonCode?:string}){
@@ -19,17 +20,20 @@ export async function enqueueConnectorEvent(tx:Prisma.TransactionClient,job:Evid
  * An optional exact event selector is used by the originating collection only. */
 export async function claimAutomationEvent(exact?:{id:string;organizationId:string}){
  if(!connectorsEnabled())return null;
+ const providers=['GITHUB','MICROSOFT365','GOOGLE_WORKSPACE','GITLAB','CLOUDFLARE','COMPANIES_HOUSE','VERCEL','SUPABASE'].filter(connectorProviderEnabled);
+ if(!providers.length)return null;
+ const providerFilter=Prisma.sql`AND EXISTS (SELECT 1 FROM "EvidenceConnector" c WHERE c.id=j."connectorId" AND c."organizationId"=j."organizationId" AND c.provider IN (${Prisma.join(providers)}))`;
  const token=randomUUID(),filter=exact?Prisma.sql`AND j.id=${exact.id}::uuid AND j."organizationId"=${exact.organizationId}::uuid`:Prisma.empty;
  const rows=await db.$queryRaw<AutomationEvent[]>(Prisma.sql`
  WITH lane AS (
   SELECT l."organizationId" FROM "DispatchLane" l
   WHERE l.kind='AUTOMATION' AND (l."leaseUntil" IS NULL OR l."leaseUntil"<=NOW())
    AND NOT EXISTS (SELECT 1 FROM "AutomationEvent" active WHERE active."organizationId"=l."organizationId" AND active.state='PROCESSING' AND active."leaseUntil">NOW())
-   AND EXISTS (SELECT 1 FROM "AutomationEvent" j WHERE j."organizationId"=l."organizationId" AND j.state IN ('PENDING','PROCESSING') AND j."availableAt"<=NOW() AND (j."leaseUntil" IS NULL OR j."leaseUntil"<=NOW()) ${filter})
+   AND EXISTS (SELECT 1 FROM "AutomationEvent" j WHERE j."organizationId"=l."organizationId" AND j.state IN ('PENDING','PROCESSING') AND j."availableAt"<=NOW() AND (j."leaseUntil" IS NULL OR j."leaseUntil"<=NOW()) ${filter} ${providerFilter})
   ORDER BY l."lastDispatchedAt" ASC NULLS FIRST,l."organizationId" FOR UPDATE OF l SKIP LOCKED LIMIT 1
  ), due AS (
   SELECT j.id FROM "AutomationEvent" j JOIN lane l ON l."organizationId"=j."organizationId"
-  WHERE j.state IN ('PENDING','PROCESSING') AND j."availableAt"<=NOW() AND (j."leaseUntil" IS NULL OR j."leaseUntil"<=NOW()) ${filter}
+  WHERE j.state IN ('PENDING','PROCESSING') AND j."availableAt"<=NOW() AND (j."leaseUntil" IS NULL OR j."leaseUntil"<=NOW()) ${filter} ${providerFilter}
   ORDER BY j."createdAt",j.id FOR UPDATE OF j SKIP LOCKED LIMIT 1
  ), claimed AS (
   UPDATE "AutomationEvent" j SET state='PROCESSING',"leaseToken"=${token}::uuid,"leaseUntil"=NOW()+interval '60 seconds',attempts=j.attempts+1,version=j.version+1,"updatedAt"=NOW()
@@ -44,7 +48,7 @@ class AutomationSuperseded extends Error{}
 type Handler=(tx:Prisma.TransactionClient,event:AutomationEvent)=>Promise<'DONE'|'CANCELLED'>;
 export async function executeAutomationEvent(event:AutomationEvent,handler:Handler=applyConnectorReaction){
  try{
-  const connector=await db.evidenceConnector.findFirst({where:{id:event.connectorId,organizationId:event.organizationId},select:{configuredById:true}});
+  const connector=await db.evidenceConnector.findFirst({where:{id:event.connectorId,organizationId:event.organizationId},select:{configuredById:true,provider:true}});
   if(!connector)return 'SUPERSEDED';
   const ctx:AuthorizedContext={organizationId:event.organizationId,userId:connector.configuredById,role:'ADMIN'};
   return await transaction(ctx,async tx=>{
@@ -54,6 +58,7 @@ export async function executeAutomationEvent(event:AutomationEvent,handler:Handl
    const current=locked[0];
    const state=current.attempts>MAX_ATTEMPTS?'DEAD':await handler(tx,current);
    if(!connectorsEnabled())throw new AutomationSuperseded();
+   if(!connectorProviderEnabled(connector.provider))throw new ReactionPaused();
    const ack=await tx.automationEvent.updateMany({where:{id:current.id,organizationId:current.organizationId,state:'PROCESSING',leaseToken:current.leaseToken,leaseUntil:{gt:new Date()}},data:{state,leaseToken:null,leaseUntil:null,finishedAt:new Date(),lastErrorCode:state==='DEAD'?'WORKER_INTERRUPTED':null,version:{increment:1}}});
    if(!ack.count)throw new AutomationSuperseded();
    await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,entityType:'AutomationEvent',entityId:current.id,action:'automation.'+state.toLowerCase(),details:{kind:current.kind,attempt:current.attempts,connectorId:current.connectorId}}});
@@ -61,6 +66,10 @@ export async function executeAutomationEvent(event:AutomationEvent,handler:Handl
   });
  }catch(error){
   if(error instanceof AutomationSuperseded)return 'SUPERSEDED';
+  if(error instanceof ReactionPaused){
+   const paused=await db.automationEvent.updateMany({where:{id:event.id,organizationId:event.organizationId,state:'PROCESSING',leaseToken:event.leaseToken,leaseUntil:{gt:new Date()}},data:{state:'PENDING',attempts:Math.max(0,event.attempts-1),leaseToken:null,leaseUntil:null,availableAt:new Date(Date.now()+60000),lastErrorCode:'PROVIDER_PAUSED',version:{increment:1}}});
+   return paused.count?'RETRY_SCHEDULED':'SUPERSEDED';
+  }
   const permanent=error instanceof ReactionInvalid,dead=permanent||event.attempts>=MAX_ATTEMPTS;
   const changed=await db.automationEvent.updateMany({where:{id:event.id,organizationId:event.organizationId,state:'PROCESSING',leaseToken:event.leaseToken,leaseUntil:{gt:new Date()}},data:{state:dead?'DEAD':'PENDING',leaseToken:null,leaseUntil:null,availableAt:new Date(Date.now()+Math.min(900000,30000*2**Math.min(5,event.attempts-1))+Math.floor(Math.random()*10000)),finishedAt:dead?new Date():null,lastErrorCode:permanent?error.code:'AUTOMATION_FAILED',version:{increment:1}}});
   return changed.count?(dead?'DEAD':'RETRY_SCHEDULED'):'SUPERSEDED';
@@ -79,6 +88,20 @@ export async function runAutomationBatch(limit=20,parallelism=2,deadline=Date.no
  await Promise.all(Array.from({length:parallelism},worker));
  const [pending,dead]=await Promise.all([db.automationEvent.count({where:{state:{in:['PENDING','PROCESSING']}}}),db.automationEvent.count({where:{state:'DEAD'}})]);
  return {processed:outcomes.length,outcomes,attention:dead,limitReached:pending>0,budgetExhausted:Date.now()>=deadline};
+}
+type Tick=Awaited<ReturnType<typeof executeScheduledTick>>;
+/** Collection may enqueue AFTER the parallel sweep finishes. Re-read at the end
+ * of the tick so new dead letters or pending work cannot disappear from health. */
+export async function finalizeAutomationTick<T extends Tick>(result:T,read=async()=>{
+ const [pending,dead]=await Promise.all([db.automationEvent.count({where:{state:{in:['PENDING','PROCESSING']}}}),db.automationEvent.count({where:{state:'DEAD'}})]);
+ return {pending,dead};
+}):Promise<T>{
+ const part=result.modules.automations;if(!part)return result;
+ try{
+  const {pending,dead}=await read();
+  const state=part.state==='failed'?'failed':part.attention||dead?'attention':pending?'backlog':part.state;
+  return {...result,ok:result.ok&&dead===0,modules:{...result.modules,automations:{...part,state,attention:Math.max(part.attention,dead)}}};
+ }catch{return {...result,ok:false,modules:{...result.modules,automations:{...part,state:'failed',attention:Math.max(part.attention,1)}}};}
 }
 export async function automationHealth(ctx:AuthorizedContext){
  return transaction(ctx,async tx=>{
