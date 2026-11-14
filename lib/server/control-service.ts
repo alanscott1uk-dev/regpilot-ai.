@@ -48,10 +48,13 @@ export async function generateDueReviews(ctx:AuthorizedContext,automated=false){
  return {created,waiting,paused,limitReached:controls.length===25};
  });
 }
-export async function runReviewBatch(){
+export async function runReviewBatch(admissionDeadline=Date.now()+20000){
  if(!workspaceConfigured()||process.env.REGPILOT_AUTOMATION_ENABLED!=="true")throw new IntelligenceError("Recurring automation awaits activation",503);
+ if(!Number.isFinite(admissionDeadline))throw new IntelligenceError("Review worker bounds invalid",400);
+ const deadline=Math.min(admissionDeadline,Date.now()+20000);
+ if(Date.now()>=deadline)return {processed:0,attention:0,budgetExhausted:true};
  const rows=await db.managedControl.findMany({where:{enabled:true,nextReviewAt:{lte:new Date()},tasks:{none:{connectorId:null,status:{not:"COMPLETE"}}}},orderBy:{nextReviewAt:"asc"},distinct:["organizationId"],take:5,select:{organizationId:true,scheduledById:true}});let processed=0,attention=0;
- for(const row of rows){if(!row.scheduledById){attention++;continue;}try{await generateDueReviews({organizationId:row.organizationId,userId:row.scheduledById,role:"ADMIN"},true);processed++;}catch(e){if(e instanceof IntelligenceError&&e.status===403){
+ for(const row of rows){if(Date.now()>=deadline)break;if(!row.scheduledById){attention++;continue;}try{await generateDueReviews({organizationId:row.organizationId,userId:row.scheduledById,role:"ADMIN"},true);processed++;}catch(e){if(e instanceof IntelligenceError&&e.status===403){
     attention++;
     // A revoked scheduler cannot block other organisations on every later batch.
     await transaction({organizationId:row.organizationId,userId:row.scheduledById,role:"ADMIN"},async tx=>{
@@ -63,5 +66,5 @@ export async function runReviewBatch(){
      await tx.auditEvent.create({data:{organizationId:row.organizationId,actorId:row.scheduledById!,action:"control.scheduler_permission_revoked",entityType:"Organization",entityId:row.organizationId,details:{paused:ids.length}}});
     });
    }else throw e;}}
- return {processed,attention};
+ return {processed,attention,budgetExhausted:Date.now()>=deadline};
 }

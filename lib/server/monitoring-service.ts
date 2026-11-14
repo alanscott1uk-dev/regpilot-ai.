@@ -137,13 +137,13 @@ export async function executeWatch(job:WatchSchedule,loader?:Loader){
     return await finish(job,"FAILED",error instanceof PermissionLost?"PERMISSION_REVOKED":"CHECK_OR_ANALYSIS_FAILED");
   }finally{await releaseDispatchLease("SOURCE",job);}
 }
-export async function runMonitoringBatch(limit=2,parallelism=1){
+export async function runMonitoringBatch(limit=2,parallelism=1,admissionDeadline=Date.now()+20000){
   if(!monitoringEnabled())throw new IntelligenceError("Scheduled monitoring is disabled",503);
-  if(!Number.isInteger(limit)||limit<1||limit>12||!Number.isInteger(parallelism)||parallelism<1||parallelism>3)
+  if(!Number.isInteger(limit)||limit<1||limit>12||!Number.isInteger(parallelism)||parallelism<1||parallelism>3||!Number.isFinite(admissionDeadline))
     throw new IntelligenceError("Monitoring worker bounds invalid",400);
   const outcomes:Array<{index:number;outcome:string}>=[];
   // Reserve time for a bounded fetch and transactional completion before route timeout.
-  const deadline=Date.now()+20000;
+  const deadline=Math.min(admissionDeadline,Date.now()+20000);
   let claimed=0;
   async function worker(){
     while(monitoringEnabled()&&Date.now()<deadline&&claimed<limit){
@@ -156,5 +156,5 @@ export async function runMonitoringBatch(limit=2,parallelism=1){
   }
   await Promise.all(Array.from({length:Math.min(limit,parallelism)},()=>worker()));
   outcomes.sort((a,b)=>a.index-b.index);
-  return {processed:outcomes.length,outcomes:outcomes.map(x=>x.outcome),limitReached:outcomes.length===limit};
+  return {processed:outcomes.length,outcomes:outcomes.map(x=>x.outcome),limitReached:outcomes.length===limit,budgetExhausted:Date.now()>=deadline};
 }

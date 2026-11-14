@@ -165,19 +165,19 @@ export async function executeConnector(job:EvidenceConnector,collector:Collector
   });
  }finally{await releaseDispatchLease("CONNECTOR",job);}
 }
-export async function runConnectorBatch(limit=2,parallelism=1){
+export async function runConnectorBatch(limit=2,parallelism=1,admissionDeadline=Date.now()+20000){
  if(!connectorsEnabled())throw new IntelligenceError("Connectors await activation",503);
- if(!Number.isInteger(limit)||limit<1||limit>6||!Number.isInteger(parallelism)||parallelism<1||parallelism>2)
+ if(!Number.isInteger(limit)||limit<1||limit>6||!Number.isInteger(parallelism)||parallelism<1||parallelism>2||!Number.isFinite(admissionDeadline))
   throw new IntelligenceError("Connector worker bounds invalid",400);
  let claimed=0;const collected:Array<{index:number;outcome:string}>=[];
- const deadline=Date.now()+20000;
+ const deadline=Math.min(admissionDeadline,Date.now()+20000);
  async function worker(){while(connectorsEnabled()&&Date.now()<deadline&&claimed<limit){
   const index=claimed++;const job=await claimConnector();if(!job)return;
   collected.push({index,outcome:await executeConnector(job)});
  }}
  await Promise.all(Array.from({length:Math.min(limit,parallelism)},()=>worker()));
  collected.sort((a,b)=>a.index-b.index);
- return {processed:collected.length,outcomes:collected.map(x=>x.outcome),limitReached:collected.length===limit};
+ return {processed:collected.length,outcomes:collected.map(x=>x.outcome),limitReached:collected.length===limit,budgetExhausted:Date.now()>=deadline};
 }
 export async function exportConnectorRun(ctx:AuthorizedContext,id:string){
  return transaction(ctx,async tx=>{await requireMember(tx,ctx);const row=await tx.connectorRun.findFirst({where:{id,organizationId:ctx.organizationId},include:{connector:{select:{provider:true,version:true,enabled:true,lastSuccessAt:true,failureCode:true,intervalHours:true}}}});if(!row)throw new IntelligenceError("Observation not found",404);if(hashValue(row.result)!==row.resultHash)throw new IntelligenceError("Observation integrity check failed",409);

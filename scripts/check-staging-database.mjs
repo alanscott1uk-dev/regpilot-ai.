@@ -23,6 +23,14 @@ try {
   }
   // Exercise actual generated Prisma mappings without returning stored data.
   await db.organization.findFirst({select:{id:true}});
+  await db.dispatchLane.findFirst({select:{organizationId:true,kind:true,leaseUntil:true}});
+  await db.workerRun.findFirst({select:{slot:true}});
+  const dispatchTriggers=await db.$queryRaw`SELECT t.tgname,t.tgenabled
+    FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='public' AND NOT t.tgisinternal AND
+      ((c.relname='WatchSchedule' AND t.tgname='regpilot_source_dispatch_lane') OR
+       (c.relname='EvidenceConnector' AND t.tgname='regpilot_connector_dispatch_lane'))`;
+  if(dispatchTriggers.length!==2||dispatchTriggers.some(t=>!['O','A'].includes(t.tgenabled)))throw new Error('Required dispatch trigger missing or disabled');
   const isolation = await db.$queryRaw`SELECT has_schema_privilege(current_user, 'auth', 'USAGE') AS auth_access,
     has_table_privilege(current_user, 'public.organizations', 'SELECT') AS legacy_access`;
   if (isolation[0].auth_access || isolation[0].legacy_access) throw new Error('Runtime role can read unrelated data');
