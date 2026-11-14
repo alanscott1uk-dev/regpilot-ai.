@@ -119,16 +119,16 @@ export default function Workbench(){
  return <div className={ui.app}>
   <aside className={ui.sidebar}>
    <a href="/workbench" className={ui.logo}><span className={ui.logoMark}>R</span><span>RegPilot <b>AI</b><small>COMPLIANCE OPERATIONS</small></span></a>
-   <div className={ui.sideCaption}>WORKSPACE</div>
+   <div className={ui.sideCaption}>YOUR WORKSPACE</div>
    <nav className={ui.sideNav} aria-label="Main navigation">
-    <a className={ui.active} aria-current="page" href="/workbench">◉ &nbsp;Today&apos;s work</a>
-    <a href="/register">▤ &nbsp;Action register</a>
-    <a href="/documents">▣ &nbsp;Documents &amp; evidence</a>
-    <a href="/evidence">◫ &nbsp;Evidence gaps</a><a href="/controls">◇ &nbsp;Shared control library</a><a href="/assurance">◈ &nbsp;Review centre</a>
-    <a href="/intelligence">✦ &nbsp;Regulatory intelligence</a><a href="/regulatory-sources">◇ &nbsp;Official source catalogue</a>
-    <a href="/departments">⚙ &nbsp;Business setup</a>
-    <a href="/distribution">▥ &nbsp;Distribution</a>
+    <a className={ui.active} aria-current="page" href="/workbench">◉ &nbsp;Demo overview</a>
+    <a href="/team/intelligence">◈ &nbsp;Regulatory inbox</a>
+    <a href="/team/operations">▤ &nbsp;Team operations</a>
+    <a href="/team/evidence">▣ &nbsp;Evidence vault</a>
+    <a href="/team/assurance">◎ &nbsp;Evidence assessment</a>
+    <a href="/ai">✦ &nbsp;AI Studio</a>
    </nav>
+   <details className={ui.demoTools}><summary>Explore demo tools</summary><nav aria-label="Demonstration tools"><a href="/register">Action register</a><a href="/documents">Documents</a><a href="/evidence">Evidence gaps</a><a href="/controls">Shared controls</a><a href="/traceability">Traceability explorer</a><a href="/assurance">Review centre</a><a href="/intelligence">Source comparison</a><a href="/regulatory-sources">Official sources</a><a href="/departments">Business setup</a><a href="/distribution">Distribution</a></nav></details>
    <div className={ui.sideFoot}><strong>Prototype workspace</strong><p>Records are local to this browser. Do not upload confidential business or personal data.</p></div>
   </aside>
   <main className={ui.main}>
@@ -139,8 +139,8 @@ export default function Workbench(){
      <h1>Compliance, <em>without the chaos.</em></h1>
      <p>One clear picture of what matters, what needs evidence and what your team should do next.</p>
      <div className={ui.heroButtons}>
-      <button type="button" className={ui.heroPrimary} onClick={()=>{setShowCreate(x=>!x);setMessage("");}}>{showCreate?"Close action form":"＋ Create an action"} <span>↗</span></button>
-      <a className={ui.heroGhost} href="/intelligence">Review regulatory updates <span>↗</span></a>
+      <a className={ui.heroPrimary} href="/team/operations">Open your team workspace <span>↗</span></a>
+      <button type="button" className={ui.heroGhost} onClick={()=>{setShowCreate(x=>!x);setMessage("");}}>{showCreate?"Close action form":"＋ Try a demo task"} <span>↗</span></button>
      </div>
      <div className={ui.heroTrust}><span>✦ Guided work</span><span>◈ Evidence connected</span><span>◉ Clear ownership</span></div>
     </div>
@@ -159,7 +159,15 @@ export default function Workbench(){
      <div className={ui.pulseFoot}>Calculated from browser records, <strong>not</strong> a compliance score or verification.</div>
     </div>
    </header>
-   <div className={ui.warning} role="note"><strong>Demonstration, not a compliant live system.</strong> No authenticated users, shared database, verified regulatory intelligence or secure evidence repository. Use fictional records only.</div>
+   <div className={ui.warning} role="note"><strong>You are exploring the demo.</strong> These example tasks stay in this browser. The private workspace has separate sign-in and service activation. Use fictional records here.</div>
+   <section className={ui.workflowLaunch} aria-label="Connected compliance workflow">
+    <div className={ui.dashboardSectionTitle}><div><span>FROM CHANGE TO PROOF</span><h2>One connected workflow</h2></div><small>Private workspace · sign-in required</small></div>
+    <div className={ui.workflowCards}>
+     <a href="/team/intelligence"><span>01 / UNDERSTAND</span><h3>What changed?</h3><p>Inspect the source, assess relevance and turn an accepted requirement into a task.</p><strong>Open regulatory inbox ↗</strong></a>
+     <a href="/team/evidence"><span>02 / CONNECT</span><h3>What supports it?</h3><p>Keep evidence with its work and make existing records available for scoped reuse.</p><strong>Open evidence vault ↗</strong></a>
+     <a href="/team/assurance"><span>03 / DEMONSTRATE</span><h3>What does it prove?</h3><p>Examine PDF passages, record an independent decision and keep that decision current.</p><strong>Open evidence assessment ↗</strong></a>
+    </div>
+   </section>
    {message&&<div className={ui.feedback} role="status">{message}<button onClick={()=>setMessage("")} aria-label="Dismiss notice">×</button></div>}
    {showCreate&&<section className={ui.createCard} aria-label="Create action"><div className={ui.sectionTop}><div><h2>Create a work item</h2><p>Use a starting template or define a task from scratch. Examples are not regulatory checklists.</p></div></div>
      <form onSubmit={create} className={ui.formGrid}>
@@ -178,7 +186,7 @@ export default function Workbench(){
      <button type="button" className={ui.quickStep} onClick={()=>{setShowCreate(true);setMessage("Enter a task title, responsible owner and due date in the form above.");}}><span className={ui.quickNum}>01</span><strong>Record a task</strong><small>{items.length?"Work items recorded":"Name the work and its owner"}</small><span className={ui.quickIcon}>{items.length?"✓":"→"}</span></button>
      <a href="/documents" className={ui.quickStep}><span className={ui.quickNum}>02</span><strong>Add supporting evidence</strong><small>{documents.length?"Document records present":"Record or attach a demo file"}</small><span className={ui.quickIcon}>{documents.length?"✓":"→"}</span></a>
      <a href="/controls" className={ui.quickStep}><span className={ui.quickNum}>03</span><strong>Connect a control</strong><small>{controls.length?"Shared control recorded":"Reuse evidence across tasks"}</small><span className={ui.quickIcon}>{controls.length?"✓":"→"}</span></a>
-     <a href="/assurance" className={ui.quickStep}><span className={ui.quickNum}>04</span><strong>Review the gaps</strong><small>Export a review pack (not a certificate)</small><span className={ui.quickIcon}>→</span></a>
+     <a href="/traceability" className={ui.quickStep}><span className={ui.quickNum}>04</span><strong>Trace the evidence</strong><small>Review links, gaps and sources</small><span className={ui.quickIcon}>→</span></a>
     </div>
    </section>
    <div className={ui.dashboardSectionTitle}><div><span>OVERVIEW</span><h2>Today at a glance</h2></div><a href="/evidence">Explore evidence gaps ↗</a></div>
@@ -196,7 +204,7 @@ export default function Workbench(){
     </div>
     <div className={ui.regulatorySignal}>
      <span className={ui.stripIcon}>◈</span>
-     <div><span className={ui.stripOverline}>OFFICIAL SOURCE WATCH</span><strong>{sourcePulse?sourcePulse.awaiting+" of "+sourcePulse.available+" sources need manual triage":sourcePulseError?"Source check unavailable":"Checking official sources…"}</strong><small>{sourcePulse?"Metadata checked "+new Date(sourcePulse.checkedAt).toLocaleDateString("en-GB"):"Limited MHRA / Home Office pilot feed · no background monitoring"}</small></div>
+     <div><span className={ui.stripOverline}>OFFICIAL SOURCE WATCH</span><strong>{sourcePulse?sourcePulse.awaiting+" of "+sourcePulse.available+" sources need manual triage":sourcePulseError?"Source check unavailable":"Checking official sources…"}</strong><small>{sourcePulse?"Metadata checked "+new Date(sourcePulse.checkedAt).toLocaleDateString("en-GB"):"Selected UK guidance references · public metadata check"}</small></div>
      <a href="/intelligence">Open inbox <span>↗</span></a>
     </div>
    </section>
@@ -245,7 +253,7 @@ export default function Workbench(){
     <div className={ui.sectionTop}><div><h2>Activity &amp; oversight</h2><p>Browser-local change notes. These are not a verified or tamper-proof audit trail.</p></div><div className={ui.inlineActions}><button onClick={()=>setShowActivity(v=>!v)} className={ui.smallButton}>{showActivity?"Hide activity":"Show activity"}</button><button onClick={makeBackup} className={ui.smallButton}>Download local backup</button></div></div>
     {showActivity&&<div className={ui.activity}>{events.length?events.slice(0,20).map(x=><div key={x.id}><strong>{x.action}</strong><span>{x.details}</span><time>{new Date(x.timestamp).toLocaleString("en-GB")}</time></div>):<p>No local changes recorded yet.</p>}</div>}
    </section>
-   <footer className={ui.footer}>RegPilot AI · Product demonstration · Secure team accounts, cloud document storage and verified regulatory feeds remain to be built.</footer>
+   <footer className={ui.footer}>RegPilot AI · Browser demonstration · Private workspace features require separate activation and verification. No compliance certification is implied.</footer>
   </main>
  </div>;
 }

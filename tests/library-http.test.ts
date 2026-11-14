@@ -1,0 +1,14 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {GET} from "../app/api/workspace/library/route";
+import {PUT as FACTS} from "../app/api/workspace/library/facts/route";
+import {GET as FIND,POST as REGISTER} from "../app/api/workspace/library/publications/route";
+import {POST as INTAKE} from "../app/api/workspace/library/intake/route";
+import {POST as COVERAGE} from "../app/api/workspace/library/coverage/route";
+import {PATCH as REVIEW,DELETE as REMOVE} from "../app/api/workspace/library/revisions/[id]/route";
+import {GET as DETAIL,PATCH as MAP,DELETE as REDACT} from "../app/api/workspace/library/coverage/[id]/route";
+import {GET as IMPACT,POST as TASKS} from "../app/api/workspace/library/impact/route";
+const id="123e4567-e89b-42d3-a456-426614174000",url="https://example.invalid?organizationId="+id,params={params:Promise.resolve({id})};
+const body=(extra={})=>new Request(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({organizationId:id,...extra})});
+test("library routes are private, uncached and off before activation",async()=>{process.env.REGPILOT_WORKSPACE_ENABLED="false";for(const r of [await GET(new Request(url)),await FACTS(body()),await FIND(new Request(url+"&q=records")),await REGISTER(body()),await INTAKE(body()),await COVERAGE(body()),await REVIEW(body(),params),await REMOVE(body(),params),await DETAIL(new Request(url),params),await MAP(body(),params),await REDACT(body(),params),await IMPACT(new Request(url)),await TASKS(body())]){assert.equal(r.status,503);assert.equal(r.headers.get("cache-control"),"no-store");assert.equal(r.headers.get("x-content-type-options"),"nosniff");}});
+test("library routes authenticate before accessing data and enforce bounded JSON",async()=>{Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:"true",DATABASE_URL:"postgresql://unused:unused@127.0.0.1:1/unused",SUPABASE_URL:"https://example.invalid",SUPABASE_PUBLISHABLE_KEY:"fixture",REGPILOT_AI_ALLOWED_EMAILS:"fixture@example.invalid"});assert.equal((await GET(new Request(url))).status,401);assert.equal((await GET(new Request("https://example.invalid?organizationId=no"))).status,400);assert.equal((await INTAKE(body())).status,401);assert.equal((await INTAKE(body({large:"x".repeat(65536)}))).status,413);assert.equal((await COVERAGE(body({large:"x".repeat(4096)}))).status,413);assert.equal((await INTAKE(new Request(url,{method:"POST",body:"{}"}))).status,415);});

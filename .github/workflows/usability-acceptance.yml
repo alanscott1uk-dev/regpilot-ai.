@@ -1,0 +1,38 @@
+name: Black-box desktop and mobile usability acceptance
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser-acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci --no-audit --no-fund
+      - name: Install pinned test-only browser dependency
+        run: npm install --no-save --package-lock=false playwright@1.55.1
+      - name: Install Chromium for an isolated headless desktop/mobile run
+        run: npx playwright install --with-deps chromium
+      - name: Build application with private features disabled
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: "https://auth-fixture.example.invalid"
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "fictional-browser-acceptance-only"
+          REGPILOT_WORKSPACE_ENABLED: "false"
+          REGPILOT_AI_ENABLED: "false"
+      - name: Run black-box task completion, navigation, focus and overflow journeys
+        run: node scripts/usability-browser-acceptance.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: regpilot-usability-browser-evidence
+          path: artifacts/usability/
+          retention-days: 14

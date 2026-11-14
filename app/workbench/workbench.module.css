@@ -92,3 +92,14 @@
 .quickIcon{position:absolute;right:11px;top:12px;color:#745ac6;font-size:13px;font-weight:850}
 @media(max-width:1000px){.quickGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:540px){.quickStart{padding:15px}.quickHead{align-items:flex-start;flex-direction:column}.quickGrid{grid-template-columns:1fr 1fr}.quickStep{padding:11px}.quickStep strong{font-size:11px}.quickStep small{font-size:10px}.quickCount{font-size:9px}}
+
+/* Keep the horizontal mobile navigation inside the grid track. */
+.sidebar{min-width:0}.logoMark{flex-shrink:0}.topbar{flex-wrap:wrap}
+.sideNav a:focus-visible,.demoTools a:focus-visible,.demoTools summary:focus-visible,.workflowCards a:focus-visible,.heroPrimary:focus-visible,.heroGhost:focus-visible{outline:3px solid #b29aff;outline-offset:3px}
+.demoTools{margin:18px 10px;color:#bdbdd8;font-size:12px}.demoTools summary{cursor:pointer;padding:10px 0}.demoTools nav{display:grid;gap:3px;padding-top:5px}.demoTools a{color:#bdbdd8;padding:8px 0;text-decoration:none}.demoTools a:hover{color:white}
+.workflowLaunch{margin:25px 0}.workflowLaunch small{color:#777b9a;font-size:11px}.workflowCards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:16px}.workflowCards a{display:flex;flex-direction:column;min-width:0;background:#fff;border:1px solid #e5dff4;border-radius:16px;padding:22px;text-decoration:none;color:#292541;box-shadow:0 6px 20px #201b5207}.workflowCards a:hover{border-color:#a68be8;background:#fcfaff}.workflowCards span{font-size:10px;font-weight:850;letter-spacing:1.4px;color:#7962ad}.workflowCards h3{font-size:20px;letter-spacing:-.5px;margin:13px 0 9px}.workflowCards p{font-size:12px;line-height:1.65;color:#72718a;margin:0 0 20px}.workflowCards strong{margin-top:auto;font-size:12px;color:#6950be}
+@media(max-width:1050px){.app{grid-template-columns:minmax(0,1fr)}.sideNav{max-width:100%}.sideNav a{flex-shrink:0}.demoTools{margin:5px 0 0}.demoTools nav{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:650px){.workflowCards{grid-template-columns:minmax(0,1fr)}.workflowCards a{padding:18px}.workflowCards h3{font-size:19px}.workflowCards p{margin-bottom:14px}.demoTools nav{grid-template-columns:repeat(2,minmax(0,1fr))}.pulseMiddle{gap:14px}.pulseLegend{gap:12px}.pulseLegend div{min-width:0}.pulseLegend span{font-size:9px}.heroCopy h1{overflow-wrap:break-word}}
+@media(max-width:360px){.pulseMiddle{flex-wrap:wrap}.heroCopy h1{font-size:30px}}
+@media(max-width:800px){.columns{grid-template-columns:minmax(0,1fr)}.detailCard{position:static}}
+@media(max-width:520px){.main{padding:15px 12px 35px}.evidenceBox{flex-wrap:wrap}.secondary{white-space:normal;max-width:100%;box-sizing:border-box}.pulseTop{flex-wrap:wrap}.heroPulse{min-width:0}.pulseLegend{flex-wrap:wrap}}

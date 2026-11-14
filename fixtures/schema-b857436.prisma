@@ -1,0 +1,218 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MembershipRole {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum ObligationStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETE
+}
+
+enum AiReviewState {
+  PENDING_REVIEW
+  REVIEWED
+  NEEDS_CHANGES
+  REDACTED
+}
+
+enum SourceReviewState {
+ NEEDS_REVIEW
+ REVIEWED
+ NOT_APPLICABLE
+}
+
+enum ScanStatus {
+  CLEAN
+  QUARANTINED
+}
+
+enum ReviewStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id          String       @id @default(uuid()) @db.Uuid
+  externalId  String       @unique
+  email       String       @unique
+  createdAt   DateTime     @default(now())
+  memberships Membership[]
+  auditEvents AuditEvent[]
+  aiReviewsCreated AiReview[] @relation("AiReviewCreator")
+  regulatoryReviews RegulatorySnapshot[] @relation("RegulatorySnapshotReviewer")
+  regulatoryCaptures RegulatorySnapshot[] @relation("RegulatorySnapshotCapturer")
+  aiReviewsChecked AiReview[] @relation("AiReviewReviewer")
+  aiDailyUsage AiDailyUsage[]
+  evidenceUploaded Evidence[] @relation("EvidenceUploader")
+  evidenceReviewed Evidence[] @relation("EvidenceReviewer")
+}
+
+model Organization {
+  id          String       @id @default(uuid()) @db.Uuid
+  name        String
+  createdAt   DateTime     @default(now())
+  memberships Membership[]
+  obligations Obligation[]
+  evidence    Evidence[]
+  auditEvents AuditEvent[]
+  aiReviews AiReview[]
+  regulatorySnapshots RegulatorySnapshot[]
+  aiDailyUsage AiDailyUsage[]
+  evidenceCount Int @default(0)
+  evidenceBytes BigInt @default(0)
+}
+
+model Membership {
+  organizationId String @db.Uuid
+  userId         String @db.Uuid
+  role           MembershipRole @default(VIEWER)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@id([organizationId, userId])
+}
+
+model Obligation {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  title          String
+  category       String
+  ownerName      String
+  dueDate        DateTime         @db.Date
+  status         ObligationStatus @default(OPEN)
+  completionException Boolean @default(false)
+  completionRationale String @default("")
+  completedAt DateTime?
+  notes          String           @default("")
+  sourceUrl      String?
+  sourceCheckedAt DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  evidence       Evidence[]
+  @@index([organizationId, status, dueDate])
+}
+
+model Evidence {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  obligationId   String       @db.Uuid
+  filename       String
+  storageKey     String
+  contentType    String
+  sizeBytes      Int
+  sha256         String
+  scannedAt      DateTime?
+  scanStatus     ScanStatus @default(QUARANTINED)
+  uploadedById   String? @db.Uuid
+  reviewerId     String? @db.Uuid
+  reviewerNotes  String @default("")
+  reviewedAt     DateTime?
+  reviewVersion  Int @default(1)
+  reviewStatus   ReviewStatus @default(DRAFT)
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  obligation     Obligation   @relation(fields: [obligationId], references: [id], onDelete: Restrict)
+  uploadedBy      User? @relation("EvidenceUploader",fields:[uploadedById],references:[id],onDelete:Restrict)
+  reviewer        User? @relation("EvidenceReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+  @@index([organizationId, obligationId])
+}
+
+model AuditEvent {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  actorId        String       @db.Uuid
+  action         String
+  entityType     String
+  entityId       String
+  details        Json
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  actor          User         @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  @@index([organizationId, createdAt])
+}
+
+
+// Daily reservation counter. Enforced by server-side Serializable transaction.
+// This table must be migrated before enabling the AI endpoint.
+model AiDailyUsage {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  userId         String   @db.Uuid
+  day            DateTime @db.Date
+  count          Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+  user           User @relation(fields:[userId],references:[id],onDelete:Restrict)
+  @@unique([organizationId, userId, day])
+  @@index([organizationId, day])
+}
+
+
+// Stores model-generated draft OUTPUT only when the user explicitly opts in.
+// No original PDF bytes, prompt, source document, or patient data belong here.
+model AiReview {
+  id               String        @id @default(uuid()) @db.Uuid
+  organizationId   String        @db.Uuid
+  createdById      String        @db.Uuid
+  requestId        String        @unique @db.Uuid
+  mode             String
+  modelId          String
+  sourceUrl        String?
+  result           Json
+  resultSha256     String        @db.VarChar(64)
+  status           AiReviewState @default(PENDING_REVIEW)
+  reviewerId       String?       @db.Uuid
+  reviewerNotes    String        @default("")
+  reviewedAt       DateTime?
+  version          Int           @default(1)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  organization     Organization  @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+  creator          User          @relation("AiReviewCreator",fields:[createdById],references:[id],onDelete:Restrict)
+  reviewer         User?         @relation("AiReviewReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+  @@index([organizationId,status,createdAt])
+  @@index([organizationId,createdAt])
+}
+
+
+// Stores snapshots of an explicit, allowlisted GOV.UK source at the time the
+// authorised operator checked it. No autonomous monitoring is implied.
+model RegulatorySnapshot {
+  id               String @id @default(uuid()) @db.Uuid
+  organizationId   String @db.Uuid
+  sourceId         String @db.VarChar(120)
+  title            String @db.VarChar(300)
+  url              String @db.VarChar(500)
+  contentHash      String @db.VarChar(64)
+  bodyText         String @db.Text
+  revisionAt       String? @db.VarChar(100)
+  addedSnippets    Json @default("[]")
+  removedSnippets  Json @default("[]")
+  reviewStatus     SourceReviewState @default(NEEDS_REVIEW)
+  reviewNotes      String @default("")
+  reviewerId       String? @db.Uuid
+  capturedById     String @db.Uuid
+  reviewedAt       DateTime?
+  version          Int @default(1)
+  firstCapturedAt  DateTime @default(now())
+  lastCheckedAt    DateTime @default(now())
+  organization     Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+  reviewer         User? @relation("RegulatorySnapshotReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+  capturedBy       User @relation("RegulatorySnapshotCapturer",fields:[capturedById],references:[id],onDelete:Restrict)
+  @@index([organizationId,sourceId,firstCapturedAt])
+}
