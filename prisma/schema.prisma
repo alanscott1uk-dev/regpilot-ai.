@@ -7,6 +7,19 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model WorkerRun {
+ id String @id @default(uuid()) @db.Uuid
+ invocationKey String @unique @db.VarChar(80)
+ state String @default("RUNNING") @db.VarChar(20)
+ startedAt DateTime @default(now())
+ leaseUntil DateTime
+ finishedAt DateTime?
+ codeCommit String? @db.VarChar(40)
+ summary Json?
+ @@index([state, startedAt])
+ @@index([startedAt])
+}
+
 enum MembershipRole {
   OWNER
   ADMIN
