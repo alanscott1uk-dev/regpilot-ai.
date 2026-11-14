@@ -34,6 +34,35 @@ model DispatchLane {
  @@index([kind,lastDispatchedAt,organizationId])
 }
 
+model AutomationEvent {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ connectorId String @db.Uuid
+ eventKey String @unique @db.VarChar(64)
+ kind String @db.VarChar(24)
+ configVersion Int
+ runId String? @db.Uuid
+ fingerprint String @db.VarChar(64)
+ changed Boolean @default(false)
+ reasonCode String? @db.VarChar(40)
+ state String @default("PENDING") @db.VarChar(20)
+ attempts Int @default(0)
+ replayCount Int @default(0)
+ version Int @default(1)
+ availableAt DateTime @default(now())
+ leaseToken String? @db.Uuid
+ leaseUntil DateTime?
+ lastErrorCode String? @db.VarChar(40)
+ finishedAt DateTime?
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ connector EvidenceConnector @relation(fields:[connectorId,organizationId],references:[id,organizationId],onDelete:Cascade)
+ @@index([organizationId,state,availableAt])
+ @@index([organizationId,state,leaseUntil])
+ @@index([state,createdAt])
+}
+
 model ProviderGate {
  provider String @id @db.VarChar(24)
  generation Int @default(0)
@@ -180,6 +209,7 @@ model User {
 
 model Organization {
  dispatchLanes DispatchLane[]
+ automationEvents AutomationEvent[]
  accessInventories AccessInventory[]
  accessCampaigns AccessCampaign[]
  accessItems AccessReviewItem[]
@@ -698,6 +728,7 @@ model ControlLink {
 }
 
 model EvidenceConnector {
+ automationEvents AutomationEvent[]
  signalVendors Vendor[]
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid

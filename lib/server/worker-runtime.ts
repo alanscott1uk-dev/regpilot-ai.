@@ -1,3 +1,4 @@
+import {runAutomationBatch} from './automation-queue';
 import {Prisma} from '@prisma/client';
 import {db} from './db';
 import {workspaceConfigured} from './ai-auth';
@@ -47,7 +48,7 @@ export async function runPrivateWorker(invocationKey:string,execute?:()=>Promise
  try{
   result=await executeWithMaintenance(execute||(()=>executeScheduledTick({
    ...(monitoringEnabled()?{sources:()=>runMonitoringBatch(12,3,admissionDeadline)}:{}),
-   ...(connectorsEnabled()?{connectors:()=>runConnectorBatch(4,2,admissionDeadline)}:{}),
+   ...(connectorsEnabled()?{connectors:()=>runConnectorBatch(4,2,admissionDeadline),automations:()=>runAutomationBatch(20,2,admissionDeadline)}:{}),
    // One slot owns recurring review generation. Collection slots share fair queues.
    ...(slot===0?{controlReviews:()=>runReviewBatch(admissionDeadline)}:{})
   })),slot===0?runWorkerMaintenance:undefined);

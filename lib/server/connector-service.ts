@@ -2,7 +2,7 @@ import {claimFairConnector,claimManualConnectorLane,releaseDispatchLease} from "
 import {acquireProviderPermit,settleProviderPermit} from "./provider-gate";
 import type {ProviderPermit} from "@prisma/client";
 import {collectVercel,collectSupabase,vercelTarget,supabaseTarget} from "../connectors/infrastructure";
-import {followUpVendorSignals} from "./vendor-signals";
+import {enqueueConnectorEvent,processConnectorEvent} from "./automation-queue";
 import {Prisma,type EvidenceConnector} from "@prisma/client";
 import {randomUUID} from "node:crypto";
 import {z} from "zod";
@@ -121,15 +121,6 @@ export async function claimConnector():Promise<EvidenceConnector|null>{
  return claimFairConnector(providers);
 }
 class Superseded extends Error{}
-async function followUp(tx:Prisma.TransactionClient,job:EvidenceConnector,reason:string){
- const control=await tx.managedControl.findFirst({where:{id:job.controlId,organizationId:job.organizationId,enabled:true},include:{owner:{select:{email:true}}}});
- if(!control)return false;
- const owner=await tx.membership.findUnique({where:{organizationId_userId:{organizationId:job.organizationId,userId:control.ownerId}}});
- if(!owner||owner.role==="VIEWER")return false;
- if(await tx.obligation.findFirst({where:{organizationId:job.organizationId,connectorId:job.id,status:{not:"COMPLETE"}}}))return false;
- await tx.obligation.create({data:{organizationId:job.organizationId,title:("Review connected evidence: "+control.title).slice(0,160),ownerName:control.owner.email,assigneeId:control.ownerId,controlId:control.id,connectorId:job.id,category:"Automated evidence follow-up",dueDate:new Date(),notes:reason+" Review the connection history in Operations. This is an operational review target, not a legal deadline or compliance verdict."}});
- return true;
-}
 async function assertJob(tx:Prisma.TransactionClient,job:EvidenceConnector){
  if(!connectorProviderEnabled(job.provider))throw new Superseded();
  const rows=await tx.$queryRaw<Array<{id:string}>>`SELECT id FROM "EvidenceConnector" WHERE id=${job.id}::uuid AND "organizationId"=${job.organizationId}::uuid AND enabled=true AND version=${job.version} AND "leaseToken"=${job.leaseToken}::uuid AND "leaseUntil">NOW() FOR UPDATE`;
@@ -138,7 +129,7 @@ async function assertJob(tx:Prisma.TransactionClient,job:EvidenceConnector){
  const control=await tx.managedControl.findFirst({where:{id:job.controlId,organizationId:job.organizationId,enabled:true},include:{owner:{select:{email:true}}}});if(!control)throw new IntelligenceError("Control is paused",403);
  const owner=await tx.membership.findUnique({where:{organizationId_userId:{organizationId:job.organizationId,userId:control.ownerId}}});if(!owner||owner.role==="VIEWER")throw new IntelligenceError("Control ownership needs review",403);return control;
 }
-export async function executeConnector(job:EvidenceConnector,collector:Collector=collectConfiguredConnector){
+async function collectConnectorJob(job:EvidenceConnector,collector:Collector){
  const ctx:AuthorizedContext={organizationId:job.organizationId,userId:job.configuredById,role:"ADMIN"};
  let permit:ProviderPermit|undefined,providerOutcome='NEUTRAL';
  try{
@@ -156,9 +147,8 @@ export async function executeConnector(job:EvidenceConnector,collector:Collector
   return await transaction(ctx,async tx=>{await assertJob(tx,job);
    const previous=await tx.connectorRun.findFirst({where:{organizationId:job.organizationId,connectorId:job.id},orderBy:[{capturedAt:"desc"},{id:"desc"}]});
    const changes=previous&&previous.configVersion===job.version&&hashValue(previous.result)===previous.resultHash?signalChanges(result,previous.result as unknown as Observation):[];
-   await tx.connectorRun.create({data:{organizationId:job.organizationId,connectorId:job.id,leaseToken:job.leaseToken!,configVersion:job.version,result:j(result),resultHash:hashValue(result),signalHash,outcome}});
-   if(outcome!=="OBSERVED"||changes.length)await followUp(tx,job,changes.length?"Observed signals changed since the last collection. Check the before/after values and remaining gaps.":"The collection contains failing or unknown signals requiring investigation.");
-   await followUpVendorSignals(tx,ctx,job,signalHash);
+   const run=await tx.connectorRun.create({data:{organizationId:job.organizationId,connectorId:job.id,leaseToken:job.leaseToken!,configVersion:job.version,result:j(result),resultHash:hashValue(result),signalHash,outcome}});
+   await enqueueConnectorEvent(tx,job,{kind:'CONNECTOR_OBSERVED',runId:run.id,fingerprint:signalHash,changed:changes.length>0});
    const current=await tx.evidenceConnector.findUniqueOrThrow({where:{id:job.id},select:{eventRevision:true}});
    await tx.evidenceConnector.update({where:{id:job.id},data:{leaseToken:null,leaseUntil:null,attempts:0,lastSuccessAt:new Date(),failureCode:null,collectedEventRevision:job.eventRevision,nextRunAt:new Date(Date.now()+(current.eventRevision>job.eventRevision?60000:job.intervalHours*3600000))}});
    await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:"connector.evidence_collected",entityType:"EvidenceConnector",entityId:job.id,details:{outcome,resultHash:hashValue(result),configVersion:job.version,changedChecks:changes.map(c=>c.id)}}});return outcome;
@@ -169,12 +159,17 @@ export async function executeConnector(job:EvidenceConnector,collector:Collector
   const throttled=code==="RATE_LIMITED",retryAfter=error instanceof CollectionError?error.retryAfterSeconds:undefined;
   const paused=!throttled&&job.attempts>=3||code==="PERMISSION_REVOKED"||code==="CREDENTIAL_REJECTED"||code==="RETRY_REQUIRES_REVIEW";
   return await transaction(ctx,async tx=>{const changed=await tx.evidenceConnector.updateMany({where:{id:job.id,organizationId:job.organizationId,enabled:true,version:job.version,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},data:{leaseToken:null,leaseUntil:null,failureCode:code,enabled:!paused,...(throttled?{attempts:Math.max(0,job.attempts-1)}:{}),nextRunAt:new Date(Date.now()+(throttled?Math.max(60,Math.min(7*86400,retryAfter||60))*1000:(job.attempts===1?5:30)*60000))}});if(!changed.count)return "SUPERSEDED";
-   if(code!=="PERMISSION_REVOKED"&&connectorsEnabled()){
-    try{await requireMember(tx,ctx,ADMIN);await followUp(tx,job,"Evidence collection failed. Earlier observations may be stale; check credentials, permissions and provider availability.");await followUpVendorSignals(tx,ctx,job,code,true);}catch(e){if(!(e instanceof IntelligenceError&&e.status===403))throw e;}
-   }
+   await enqueueConnectorEvent(tx,job,{kind:'CONNECTOR_FAILED',fingerprint:hashValue(code),reasonCode:code});
    await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:"connector.collection_failed",entityType:"EvidenceConnector",entityId:job.id,details:{code,paused}}});return paused?"ATTENTION":"RETRY_SCHEDULED";
   });
  }finally{try{if(permit)await settleProviderPermit(permit,providerOutcome);}finally{await releaseDispatchLease("CONNECTOR",job);}}
+}
+/** Evidence is committed before automation. A failed reaction remains durable for
+ * another worker and must never turn a completed provider read into a failed read. */
+export async function executeConnector(job:EvidenceConnector,collector:Collector=collectConfiguredConnector,options:{deferAutomation?:boolean}={}){
+ const outcome=await collectConnectorJob(job,collector);
+ if(!options.deferAutomation)await processConnectorEvent(job).catch(()=>{});
+ return outcome;
 }
 export async function runConnectorBatch(limit=2,parallelism=1,admissionDeadline=Date.now()+20000){
  if(!connectorsEnabled())throw new IntelligenceError("Connectors await activation",503);

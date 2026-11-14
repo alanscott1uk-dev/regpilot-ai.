@@ -4,8 +4,9 @@ import {monitoringEnabled,runMonitoringBatch} from "../../../../lib/server/monit
 import {connectorsEnabled,runConnectorBatch} from "../../../../lib/server/connector-service";
 import {runReviewBatch} from "../../../../lib/server/control-service";
 import {reply} from "../../../../lib/server/intelligence-http";
+import {runAutomationBatch} from "../../../../lib/server/automation-queue";
 
-export const runtime="nodejs";export const dynamic="force-dynamic";export const maxDuration=60;
+export const runtime="nodejs";export const dynamic="force-dynamic";export const maxDuration=120;
 export async function GET(request:Request){
  // Vercel delivers CRON_SECRET as a bearer token. No user session or public API key is accepted.
  if(!validCronSecret(request.headers.get("authorization"),process.env.CRON_SECRET))return reply({error:"Unauthorised"},401);
@@ -13,7 +14,7 @@ export async function GET(request:Request){
   return reply({error:"Scheduled production automation awaits verified activation"},503);
  const jobs={
   ...(monitoringEnabled()?{sources:()=>runMonitoringBatch(12,3)}:{}),
-  ...(connectorsEnabled()?{connectors:()=>runConnectorBatch(4,2)}:{}),
+  ...(connectorsEnabled()?{connectors:()=>runConnectorBatch(4,2),automations:()=>runAutomationBatch()}:{}),
   controlReviews:runReviewBatch
  };
  try{

@@ -37,7 +37,7 @@ export async function claimFairConnector(providers:string[]):Promise<EvidenceCon
  if(!providers.length)return null;
  return ((await claim('CONNECTOR',providers))[0] as EvidenceConnector|undefined)??null;
 }
-export async function releaseDispatchLease(kind:LaneKind,job:{organizationId:string;leaseToken:string|null}){
+export async function releaseDispatchLease(kind:LaneKind|'AUTOMATION',job:{organizationId:string;leaseToken:string|null}){
  if(!job.leaseToken)return;
  // A delayed completion must never release a newer worker's tenant slot.
  await db.dispatchLane.updateMany({where:{organizationId:job.organizationId,kind,leaseToken:job.leaseToken},data:{leaseToken:null,leaseUntil:null}});

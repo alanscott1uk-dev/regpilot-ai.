@@ -1,7 +1,7 @@
 import {verifyConnectorNow} from "../../../../../../lib/server/connector-service";
 import {context,readBody,reply,fail,validId} from "../../../../../../lib/server/operations-http";
 import {IntelligenceError} from "../../../../../../lib/server/intelligence-service";
-export const runtime="nodejs";export const dynamic="force-dynamic";export const maxDuration=60;
+export const runtime="nodejs";export const dynamic="force-dynamic";export const maxDuration=120;
 export async function POST(request:Request,{params}:{params:Promise<{id:string}>}){
  try{
   const body=await readBody(request);

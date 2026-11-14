@@ -28,14 +28,16 @@ try {
   await db.providerGate.findFirst({select:{generation:true,failureScopes:true}});
   await db.providerPermit.findFirst({select:{scopeHash:true}});
   await db.evidenceConnector.findFirst({select:{webhookVersion:true,eventRevision:true,collectedEventRevision:true}});
+  await db.automationEvent.findFirst({select:{id:true,eventKey:true,state:true}});
   await db.publicSourceFetch.findFirst({select:{key:true,payloadHash:true}});
   await db.regulatorySnapshot.findFirst({select:{sourceFetchedAt:true}});
   const dispatchTriggers=await db.$queryRaw`SELECT t.tgname,t.tgenabled
     FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname='public' AND NOT t.tgisinternal AND
       ((c.relname='WatchSchedule' AND t.tgname='regpilot_source_dispatch_lane') OR
-       (c.relname='EvidenceConnector' AND t.tgname='regpilot_connector_dispatch_lane'))`;
-  if(dispatchTriggers.length!==2||dispatchTriggers.some(t=>!['O','A'].includes(t.tgenabled)))throw new Error('Required dispatch trigger missing or disabled');
+       (c.relname='EvidenceConnector' AND t.tgname='regpilot_connector_dispatch_lane') OR
+       (c.relname='AutomationEvent' AND t.tgname='regpilot_automation_dispatch_lane'))`;
+  if(dispatchTriggers.length!==3||dispatchTriggers.some(t=>!['O','A'].includes(t.tgenabled)))throw new Error('Required dispatch trigger missing or disabled');
   const isolation = await db.$queryRaw`SELECT has_schema_privilege(current_user, 'auth', 'USAGE') AS auth_access,
     has_table_privilege(current_user, 'public.organizations', 'SELECT') AS legacy_access`;
   if (isolation[0].auth_access || isolation[0].legacy_access) throw new Error('Runtime role can read unrelated data');
