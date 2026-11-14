@@ -5,6 +5,7 @@ import {loadSharedPublicSource} from "./shared-source-fetch";
 import {resolveWorkspaceSource} from "./publication-catalogue";
 import {sourceTextHash,canonicalSourceText,compareSourceText,publicSnapshot} from "../regulatory/source-fingerprint.mjs";
 import {Prisma} from "@prisma/client";
+import {transaction} from "./intelligence-service";
 export class RegulatoryWatchError extends Error{
  status:number;
  constructor(message:string,status=400){super(message);this.name="RegulatoryWatchError";this.status=status;}
@@ -38,7 +39,9 @@ export async function checkOfficialSource(ctx:AuthorizedContext,sourceId:string,
   throw new RegulatoryWatchError("The selected official publication is unavailable",503);
  const text=canonicalSourceText(official.text),hash=sourceTextHash(text);
  const sourceFetchedAt=shared?.fetchedAt||('sourceFetchedAt' in official&&official.sourceFetchedAt instanceof Date?official.sourceFetchedAt:new Date());
- const result=await db.$transaction(async tx=>{
+ // Keep public I/O outside retries. Recheck the lease/member guard inside every
+ // serializable attempt; concurrent capture must not duplicate snapshots or audits.
+ const result=await transaction(ctx,async tx=>{
   if(guard)await guard(tx);
   const latest=await tx.regulatorySnapshot.findFirst({
    where:{organizationId:ctx.organizationId,sourceId},orderBy:{firstCapturedAt:"desc"}
@@ -68,7 +71,7 @@ export async function checkOfficialSource(ctx:AuthorizedContext,sourceId:string,
    details:{sourceId,hash,previousHash:latest?.contentHash||null,changedText:comparison.changed,sourceFetchedAt:sourceFetchedAt.toISOString(),sharedRetrieval:shared?.reused??false}
   }});
   return {state:comparison.state,snapshot:publicSnapshot(row),comparison};
- },{isolationLevel:"Serializable",maxWait:3500,timeout:10000});
+ });
  return {...result,note:result.state==="CONTENT_CHANGED"?
   "Publication text changed. An expert must determine whether any legal requirement changed.":
   "Text baseline saved or rechecked. This is not a legal compliance verdict."};

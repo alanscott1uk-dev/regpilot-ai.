@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {fork,type ChildProcess} from 'node:child_process';
 import {performance} from 'node:perf_hooks';
+import {Prisma} from '@prisma/client';
 import {db} from '../lib/server/db';
 import {loadSharedPublicSource,publicSourceKey,SourceFetchDeferred,prunePublicSourceFetches} from '../lib/server/shared-source-fetch';
 import {REGULATORY_SOURCES,officialSourceUrl} from '../lib/regulatory-sources.mjs';
@@ -126,6 +127,30 @@ test('shared upstream deferral preserves tenant retry budget and never fabricate
   assert.equal(await db.dispatchLane.count({where:{organizationId:org.id,leaseToken:{not:null}}}),0);
  }finally{
   await db.watchSchedule.deleteMany({where:{organizationId:org.id}});await db.auditEvent.deleteMany({where:{organizationId:org.id}});
+  await db.membership.deleteMany({where:{organizationId:org.id}});await db.organization.delete({where:{id:org.id}});await db.user.delete({where:{id:user.id}});
+ }
+});
+
+test('snapshot transaction retries recheck authorization without repeating public I/O or swallowing access failures',async()=>{
+ const marker=randomUUID(),user=await db.user.create({data:{externalId:marker,email:marker+'@example.invalid'}}),org=await db.organization.create({data:{name:'Fictional capture retry '+marker}});
+ const ctx:AuthorizedContext={organizationId:org.id,userId:user.id,role:'OWNER'};
+ let loads=0,guards=0;
+ const loader=async()=>{loads++;return publication();};
+ try{
+  await db.membership.create({data:{organizationId:org.id,userId:user.id,role:'OWNER'}});
+  const captured=await checkOfficialSource(ctx,source.id,loader,async()=>{
+   guards++;if(guards===1)throw new Prisma.PrismaClientKnownRequestError('Fictional serialization conflict',{code:'P2034',clientVersion:Prisma.prismaVersion.client});
+  });
+  assert.equal(guards,2);assert.equal(loads,1);assert.equal(captured.state,'BASELINE');
+  assert.equal(await db.regulatorySnapshot.count({where:{organizationId:org.id}}),1);
+  assert.equal(await db.auditEvent.count({where:{organizationId:org.id,action:'regulatory.baseline_created'}}),1);
+  await db.regulatorySnapshot.updateMany({where:{organizationId:org.id},data:{lastCheckedAt:new Date(0)}});
+  const denied=Error('Fictional permission revoked');let denials=0;
+  await assert.rejects(()=>checkOfficialSource(ctx,source.id,loader,async()=>{denials++;throw denied;}),e=>e===denied);
+  assert.equal(denials,1);assert.equal(loads,2);
+  assert.equal(await db.auditEvent.count({where:{organizationId:org.id,action:'regulatory.source_text_unchanged'}}),0);
+ }finally{
+  await db.auditEvent.deleteMany({where:{organizationId:org.id}});await db.regulatorySnapshot.deleteMany({where:{organizationId:org.id}});
   await db.membership.deleteMany({where:{organizationId:org.id}});await db.organization.delete({where:{id:org.id}});await db.user.delete({where:{id:user.id}});
  }
 });
