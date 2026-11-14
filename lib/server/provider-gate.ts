@@ -9,7 +9,7 @@ const OUTAGES=new Set(['PROVIDER_TIMEOUT','PROVIDER_UNAVAILABLE']);
 export type ProviderAdmission={allowed:true;permit:ProviderPermit}|{allowed:false;reason:'PROVIDER_BUSY'|'PROVIDER_CIRCUIT_OPEN';retryAt:Date};
 async function lock(tx:Prisma.TransactionClient,provider:string){
  if(!PROVIDERS.includes(provider))throw Error('Unsupported provider gate');
- await tx.$executeRaw`SELECT pg_advisory_xact_lock(710241115,${PROVIDERS.indexOf(provider)})`;
+ await tx.$executeRaw`SELECT pg_advisory_xact_lock(710241115,${PROVIDERS.indexOf(provider)}::integer)`;
  return tx.providerGate.upsert({where:{provider},create:{provider},update:{}});
 }
 export async function acquireProviderPermit(provider:string,organizationId:string):Promise<ProviderAdmission>{

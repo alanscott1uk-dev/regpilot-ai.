@@ -29,7 +29,7 @@ export function webhookEvent(provider:WebhookProvider,headers:Headers,body:Uint8
  if(!payload||typeof payload!=='object'||Array.isArray(payload))throw new WebhookError(400);
  if(provider==='GITHUB'){
   const event=headers.get('x-github-event')||'';
-  if(payload.repository?.full_name!==target.repository)throw new WebhookError(403,'Webhook target mismatch');
+  if(typeof payload.repository?.full_name!=='string'||payload.repository.full_name.toLowerCase()!==target.repository.toLowerCase())throw new WebhookError(403,'Webhook target mismatch');
   if(event==='ping')return null;
   if(event==='push')return payload.ref==='refs/heads/'+target.branch?'push':null;
   if(event==='pull_request')return payload.pull_request?.base?.ref===target.branch?'pull_request':null;

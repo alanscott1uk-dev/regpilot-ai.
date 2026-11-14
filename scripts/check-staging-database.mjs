@@ -25,6 +25,9 @@ try {
   await db.organization.findFirst({select:{id:true}});
   await db.dispatchLane.findFirst({select:{organizationId:true,kind:true,leaseUntil:true}});
   await db.workerRun.findFirst({select:{slot:true}});
+  await db.providerGate.findFirst({select:{generation:true,failureScopes:true}});
+  await db.providerPermit.findFirst({select:{scopeHash:true}});
+  await db.evidenceConnector.findFirst({select:{webhookVersion:true,eventRevision:true,collectedEventRevision:true}});
   const dispatchTriggers=await db.$queryRaw`SELECT t.tgname,t.tgenabled
     FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname='public' AND NOT t.tgisinternal AND
