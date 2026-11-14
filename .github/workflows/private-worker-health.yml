@@ -1,0 +1,21 @@
+name: RegPilot private worker watchdog
+on:
+  schedule:
+    - cron: '23,53 * * * *'
+  workflow_dispatch:
+permissions: {}
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check durable worker heartbeat independently
+        run: |
+          python - <<'PY'
+          import json, urllib.request
+          url='https://regpilot-ai-qnx6-git-feature-traceabil-2f0b3f-alanscott1uk-5933.vercel.app/api/worker/health'
+          with urllib.request.urlopen(url,timeout=25) as response:
+              data=json.loads(response.read(8192))
+          assert data.get('ok') is True and data.get('state') in ['completed','running'], 'Worker heartbeat is not healthy'
+          print('Worker heartbeat:',data['state'])
+          PY
