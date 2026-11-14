@@ -1,4 +1,5 @@
-import {randomUUID,timingSafeEqual} from "node:crypto";
+import {claimFairWatch,releaseDispatchLease} from "./fair-dispatch";
+import {timingSafeEqual} from "node:crypto";
 import {Prisma,type WatchSchedule} from "@prisma/client";
 import {db} from "./db";
 import type {AuthorizedContext} from "./authorization";
@@ -36,16 +37,7 @@ export async function listWatches(ctx:AuthorizedContext){
 }
 // Atomic cross-worker claim. An expired lease is recoverable; tokens fence stale workers.
 export async function claimWatch():Promise<WatchSchedule|null>{
-  const token=randomUUID();
-  const rows=await db.$queryRaw<WatchSchedule[]>`
-    WITH due AS (
-      SELECT id FROM "WatchSchedule" WHERE enabled=true AND "nextCheckAt"<=NOW()
-        AND ("leaseUntil" IS NULL OR "leaseUntil"<=NOW())
-      ORDER BY "nextCheckAt",id FOR UPDATE SKIP LOCKED LIMIT 1
-    ) UPDATE "WatchSchedule" w SET "leaseToken"=${token}::uuid,
-      "leaseUntil"=NOW()+interval '90 seconds',"lastAttemptAt"=NOW(),attempts=w.attempts+1,"updatedAt"=NOW()
-      FROM due WHERE w.id=due.id RETURNING w.*`;
-  return rows[0]||null;
+  return claimFairWatch();
 }
 class LeaseLost extends Error {}
 class PermissionLost extends Error {}
@@ -143,7 +135,7 @@ export async function executeWatch(job:WatchSchedule,loader?:Loader){
   }catch(error){
     if(error instanceof LeaseLost)return "SUPERSEDED";
     return await finish(job,"FAILED",error instanceof PermissionLost?"PERMISSION_REVOKED":"CHECK_OR_ANALYSIS_FAILED");
-  }
+  }finally{await releaseDispatchLease("SOURCE",job);}
 }
 export async function runMonitoringBatch(limit=2,parallelism=1){
   if(!monitoringEnabled())throw new IntelligenceError("Scheduled monitoring is disabled",503);

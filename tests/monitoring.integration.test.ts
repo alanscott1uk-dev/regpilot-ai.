@@ -33,6 +33,7 @@ test("monitoring leases, recovery, bounded retries, tenant isolation and revoked
     assert.equal(await claimWatch(),null);
     await due(saved.id);const old=(await claimWatch())!;
     await db.watchSchedule.update({where:{id:saved.id},data:{leaseUntil:new Date(Date.now()-1000)}});
+    await db.dispatchLane.updateMany({where:{organizationId:ids[0],kind:"SOURCE"},data:{leaseUntil:new Date(0)}});
     const recovered=(await claimWatch())!;assert.notEqual(old.leaseToken,recovered.leaseToken);
     assert.equal(await executeWatch(old,loader),"SUPERSEDED");assert.equal(await executeWatch(recovered,loader),"COOLDOWN");
     assert.equal(fetches,1);assert.equal(await db.intelligenceRun.count({where:{organizationId:ids[0]}}),1);

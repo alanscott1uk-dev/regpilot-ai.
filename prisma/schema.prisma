@@ -20,6 +20,18 @@ model WorkerRun {
  @@index([startedAt])
 }
 
+model DispatchLane {
+ organizationId String @db.Uuid
+ kind String @db.VarChar(20)
+ lastDispatchedAt DateTime?
+ leaseToken String? @db.Uuid
+ leaseUntil DateTime?
+ dispatchCount Int @default(0)
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ @@id([organizationId,kind])
+ @@index([kind,lastDispatchedAt,organizationId])
+}
+
 enum MembershipRole {
   OWNER
   ADMIN
@@ -125,6 +137,7 @@ model User {
 }
 
 model Organization {
+ dispatchLanes DispatchLane[]
  accessInventories AccessInventory[]
  accessCampaigns AccessCampaign[]
  accessItems AccessReviewItem[]
@@ -508,6 +521,8 @@ model WatchSchedule {
   configuredBy User @relation(fields:[configuredById],references:[id],onDelete:Restrict)
   @@unique([organizationId,sourceId])
   @@index([enabled,nextCheckAt])
+  @@index([organizationId,enabled,nextCheckAt])
+  @@index([organizationId,enabled,leaseUntil])
 }
 
 // One provider attempt per source/profile/engine. Interrupted attempts are not replayed.
@@ -668,6 +683,8 @@ model EvidenceConnector {
  @@unique([id,organizationId])
  @@unique([organizationId,repository,branch])
  @@index([enabled,nextRunAt])
+ @@index([organizationId,enabled,nextRunAt])
+ @@index([organizationId,enabled,leaseUntil])
 }
 
 model ConnectorRun {

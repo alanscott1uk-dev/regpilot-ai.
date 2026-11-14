@@ -1,3 +1,4 @@
+import {claimFairConnector,claimManualConnectorLane,releaseDispatchLease} from "./fair-dispatch";
 import {collectVercel,collectSupabase,vercelTarget,supabaseTarget} from "../connectors/infrastructure";
 import {followUpVendorSignals} from "./vendor-signals";
 import {Prisma,type EvidenceConnector} from "@prisma/client";
@@ -99,6 +100,7 @@ export async function verifyConnectorNow(ctx:AuthorizedContext,id:string,version
   if(!record.enabled||!connectorProviderEnabled(record.provider)||!record.encryptedSecret)throw new IntelligenceError("Active provider and credential required",409);
   if(record.failureCode==="RATE_LIMITED"&&record.nextRunAt>now)throw new IntelligenceError("The provider requested a cooldown. Collection can resume after the scheduled retry time.",429);
   if(record.lastSuccessAt&&now.getTime()-record.lastSuccessAt.getTime()<300000)throw new IntelligenceError("Wait five minutes before another successful verification",429);
+  if(!await claimManualConnectorLane(tx,ctx.organizationId,token))throw new IntelligenceError("Another connection in this workspace is being checked. Retry after it finishes.",409);
   const claim=await tx.evidenceConnector.updateMany({where:{
    id,organizationId:ctx.organizationId,version,enabled:true,encryptedSecret:{not:null},
    OR:[{leaseUntil:null},{leaseUntil:{lte:now}}]
@@ -112,7 +114,9 @@ export async function verifyConnectorNow(ctx:AuthorizedContext,id:string,version
   note:"Read-only observation only. Inspect the saved signals, collection limits, and required human review."};
 }
 export async function claimConnector():Promise<EvidenceConnector|null>{
- if(!connectorsEnabled())return null;const token=randomUUID(),microsoft=microsoft365Enabled(),google=googleWorkspaceEnabled(),gitlab=gitlabEnabled(),cloudflare=cloudflareEnabled(),registry=companiesHouseEnabled(),vercel=vercelEnabled(),supabase=supabaseEnabled();const rows=await db.$queryRaw<EvidenceConnector[]>`WITH due AS (SELECT id FROM "EvidenceConnector" WHERE enabled=true AND (provider='GITHUB' OR (provider='MICROSOFT365' AND ${microsoft}) OR (provider='GOOGLE_WORKSPACE' AND ${google}) OR (provider='GITLAB' AND ${gitlab}) OR (provider='CLOUDFLARE' AND ${cloudflare}) OR (provider='COMPANIES_HOUSE' AND ${registry}) OR (provider='VERCEL' AND ${vercel}) OR (provider='SUPABASE' AND ${supabase})) AND "encryptedSecret" IS NOT NULL AND "nextRunAt"<=NOW() AND ("leaseUntil" IS NULL OR "leaseUntil"<=NOW()) ORDER BY "nextRunAt",id FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE "EvidenceConnector" c SET "leaseToken"=${token}::uuid,"leaseUntil"=NOW()+interval '90 seconds',attempts=c.attempts+1,"updatedAt"=NOW() FROM due WHERE c.id=due.id RETURNING c.*`;return rows[0]||null;
+ if(!connectorsEnabled())return null;
+ const providers=['GITHUB','MICROSOFT365','GOOGLE_WORKSPACE','GITLAB','CLOUDFLARE','COMPANIES_HOUSE','VERCEL','SUPABASE'].filter(connectorProviderEnabled);
+ return claimFairConnector(providers);
 }
 class Superseded extends Error{}
 async function followUp(tx:Prisma.TransactionClient,job:EvidenceConnector,reason:string){
@@ -153,13 +157,13 @@ export async function executeConnector(job:EvidenceConnector,collector:Collector
   const code=error instanceof CollectionError?error.code:error instanceof IntelligenceError&&error.status===403?"PERMISSION_REVOKED":"COLLECTION_FAILED";
   const throttled=code==="RATE_LIMITED",retryAfter=error instanceof CollectionError?error.retryAfterSeconds:undefined;
   const paused=!throttled&&job.attempts>=3||code==="PERMISSION_REVOKED"||code==="CREDENTIAL_REJECTED"||code==="RETRY_REQUIRES_REVIEW";
-  return transaction(ctx,async tx=>{const changed=await tx.evidenceConnector.updateMany({where:{id:job.id,organizationId:job.organizationId,enabled:true,version:job.version,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},data:{leaseToken:null,leaseUntil:null,failureCode:code,enabled:!paused,...(throttled?{attempts:Math.max(0,job.attempts-1)}:{}),nextRunAt:new Date(Date.now()+(throttled?Math.max(60,Math.min(7*86400,retryAfter||60))*1000:(job.attempts===1?5:30)*60000))}});if(!changed.count)return "SUPERSEDED";
+  return await transaction(ctx,async tx=>{const changed=await tx.evidenceConnector.updateMany({where:{id:job.id,organizationId:job.organizationId,enabled:true,version:job.version,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},data:{leaseToken:null,leaseUntil:null,failureCode:code,enabled:!paused,...(throttled?{attempts:Math.max(0,job.attempts-1)}:{}),nextRunAt:new Date(Date.now()+(throttled?Math.max(60,Math.min(7*86400,retryAfter||60))*1000:(job.attempts===1?5:30)*60000))}});if(!changed.count)return "SUPERSEDED";
    if(code!=="PERMISSION_REVOKED"&&connectorsEnabled()){
     try{await requireMember(tx,ctx,ADMIN);await followUp(tx,job,"Evidence collection failed. Earlier observations may be stale; check credentials, permissions and provider availability.");await followUpVendorSignals(tx,ctx,job,code,true);}catch(e){if(!(e instanceof IntelligenceError&&e.status===403))throw e;}
    }
    await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:"connector.collection_failed",entityType:"EvidenceConnector",entityId:job.id,details:{code,paused}}});return paused?"ATTENTION":"RETRY_SCHEDULED";
   });
- }
+ }finally{await releaseDispatchLease("CONNECTOR",job);}
 }
 export async function runConnectorBatch(limit=2,parallelism=1){
  if(!connectorsEnabled())throw new IntelligenceError("Connectors await activation",503);
