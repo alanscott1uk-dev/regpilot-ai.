@@ -26,15 +26,16 @@ async function complete(jobs:WatchSchedule[]){
  await Promise.all(jobs.map(j=>releaseDispatchLease('SOURCE',j)));
 }
 
-test('5,000 queued jobs: concurrent dispatch has no duplicate claims and serves every tenant each round',async t=>{
- const f=await fixture(50),latency:number[]=[],seen=new Set<string>();
+test('50,000 queued jobs: concurrent dispatch has no duplicate claims and serves every tenant each round',async t=>{
+ const f=await fixture(250),latency:number[]=[],seen=new Set<string>();
  try{
-  await db.watchSchedule.createMany({data:f.ids.flatMap((organizationId,i)=>Array.from({length:100},(_,n)=>({organizationId,configuredById:f.user.id,sourceId:'synthetic-'+n,enabled:true,nextCheckAt:new Date(1000*i)})))});
-  assert.equal(await db.dispatchLane.count({where:{organizationId:{in:f.ids},kind:'SOURCE'}}),50,'insert triggers provision all lanes');
-  for(let round=0;round<5;round++){
+  const records=f.ids.flatMap((organizationId,i)=>Array.from({length:200},(_,n)=>({organizationId,configuredById:f.user.id,sourceId:'synthetic-'+n,enabled:true,nextCheckAt:new Date(1000*i)})));
+  for(let i=0;i<records.length;i+=1000)await db.watchSchedule.createMany({data:records.slice(i,i+1000)});
+  assert.equal(await db.dispatchLane.count({where:{organizationId:{in:f.ids},kind:'SOURCE'}}),250,'insert triggers provision all lanes');
+  for(let round=0;round<10;round++){
    const served=new Set<string>();
-   while(served.size<50){
-    const claims=await Promise.all(Array.from({length:Math.min(8,50-served.size)},async()=>{
+   while(served.size<250){
+    const claims=await Promise.all(Array.from({length:Math.min(16,250-served.size)},async()=>{
      const start=performance.now(),job=await claimFairWatch();latency.push(performance.now()-start);assert.ok(job);return job;
     }));
     for(const job of claims){
@@ -46,10 +47,10 @@ test('5,000 queued jobs: concurrent dispatch has no duplicate claims and serves 
     await complete(claims);
    }
   }
-  assert.equal(seen.size,250);
-  assert.equal(await db.watchSchedule.count({where:{organizationId:{in:f.ids},nextCheckAt:{lte:new Date()}}}),4750,'unclaimed backlog is preserved');
+  assert.equal(seen.size,2500);
+  assert.equal(await db.watchSchedule.count({where:{organizationId:{in:f.ids},nextCheckAt:{lte:new Date()}}}),47500,'unclaimed backlog is preserved');
   latency.sort((a,b)=>a-b);
-  const metrics={queuedJobs:5000,tenants:50,concurrency:8,claims:250,p50Ms:Math.round(latency[Math.floor(latency.length*.5)]),p95Ms:Math.round(latency[Math.floor(latency.length*.95)]),maxMs:Math.round(latency.at(-1)!)};
+  const metrics={queuedJobs:50000,tenants:250,concurrency:16,claims:2500,p50Ms:Math.round(latency[Math.floor(latency.length*.5)]),p95Ms:Math.round(latency[Math.floor(latency.length*.95)]),maxMs:Math.round(latency.at(-1)!)};
   t.diagnostic('dispatch benchmark '+JSON.stringify(metrics));
   assert.ok(metrics.p95Ms<2000,'CI regression budget: p95 claim latency under 2s');
  }finally{await f.cleanup();}

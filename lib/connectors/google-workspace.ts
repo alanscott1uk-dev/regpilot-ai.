@@ -1,3 +1,4 @@
+import {requestOAuthToken} from './oauth-request';
 import {resilientGet} from './resilient-http';
 import {z} from "zod";
 import {CollectionError,type ConnectorCheck} from "./github";
@@ -15,8 +16,7 @@ export async function collectGoogleWorkspace(target:GoogleTarget,credential:stri
  const t=googleTarget.parse(target);let secret:z.infer<typeof googleCredentials>;
  try{secret=googleCredentials.parse(JSON.parse(credential));}catch{throw new CollectionError("CREDENTIAL_UNAVAILABLE");}
  const started=Date.now(),signal=AbortSignal.timeout(25000);
- const auth=await fetcher("https://oauth2.googleapis.com/token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({client_id:t.clientId,client_secret:secret.clientSecret,refresh_token:secret.refreshToken,grant_type:"refresh_token"}).toString(),cache:"no-store",redirect:"error",signal});
- if(!auth.ok){await auth.body?.cancel();throw new CollectionError([400,401].includes(auth.status)?"CREDENTIAL_REJECTED":"AUTH_UNAVAILABLE");}
+ const auth=await requestOAuthToken("https://oauth2.googleapis.com/token",{client_id:t.clientId,client_secret:secret.clientSecret,refresh_token:secret.refreshToken,grant_type:"refresh_token"},fetcher,signal);
  const token=await json(auth,20000);
  if(typeof token.access_token!=="string"||token.access_token.length<10||token.access_token.length>16000||/[\r\n]/.test(token.access_token)||String(token.token_type).toLowerCase()!=="bearer")throw new CollectionError("INVALID_AUTH_RESPONSE");
  const read=resilientGet(fetcher,'https://admin.googleapis.com',{Authorization:'Bearer '+token.access_token,Accept:'application/json'},{timeoutMs:Math.max(1,25000-(Date.now()-started)),maxRequests:24});

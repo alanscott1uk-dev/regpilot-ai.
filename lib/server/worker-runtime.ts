@@ -5,6 +5,7 @@ import {executeScheduledTick} from '../cron-tick.mjs';
 import {monitoringEnabled,runMonitoringBatch} from './monitoring-service';
 import {connectorsEnabled,runConnectorBatch} from './connector-service';
 import {runReviewBatch} from './control-service';
+import {pruneWebhookReceipts} from './connector-webhooks';
 
 export const workerEnabled=()=>workspaceConfigured()&&process.env.REGPILOT_WORKER_ENABLED==='true'&&process.env.REGPILOT_AUTOMATION_ENABLED==='true';
 const LEASE_MS=180000,STALE_MS=90*60000;
@@ -44,6 +45,7 @@ export async function runPrivateWorker(invocationKey:string,execute?:()=>Promise
  // Stop admitting new provider work early enough to finish bounded reads and writes.
  const admissionDeadline=Date.now()+20000;
  try{
+  if(slot===0)await pruneWebhookReceipts();
   result=await (execute?execute():executeScheduledTick({
    ...(monitoringEnabled()?{sources:()=>runMonitoringBatch(12,3,admissionDeadline)}:{}),
    ...(connectorsEnabled()?{connectors:()=>runConnectorBatch(4,2,admissionDeadline)}:{}),

@@ -1,4 +1,5 @@
 import {db} from "./db";
+import {providerGateHealth} from "./provider-gate";
 import {requireMember} from "./workspace-member";
 import type {AuthorizedContext} from "./authorization";
 import {hashValue} from "../regulatory/intelligence";
@@ -26,5 +27,5 @@ export async function getConnectorHealth(ctx:AuthorizedContext){
    checksFailed:checks.filter(c=>c&&typeof c==="object"&&!Array.isArray(c)&&c.status==="FAIL").length,
    checksUnknown:checks.filter(c=>c&&typeof c==="object"&&!Array.isArray(c)&&c.status==="UNKNOWN").length};
  });
- return {...connectorHealth(rows),listLimitReached:records.length>20};
+ return {...connectorHealth(rows),listLimitReached:records.length>20,providerCircuits:await providerGateHealth([...new Set(records.map(r=>r.provider))])};
 }

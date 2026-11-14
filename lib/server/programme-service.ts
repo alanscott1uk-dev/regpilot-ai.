@@ -86,7 +86,7 @@ export async function redactProgramme(ctx:AuthorizedContext,id:string,version:nu
  return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const changed=await tx.programmeImport.updateMany({where:{id,organizationId:ctx.organizationId,version,status:{not:"REDACTED"}},data:{status:"REDACTED",result:Prisma.DbNull,resultHash:null,evidenceManifest:[],reviewNotes:"",version:{increment:1}}});if(!changed.count)throw new IntelligenceError("Import changed",409);
  const controls=await tx.managedControl.findMany({where:{organizationId:ctx.organizationId,importId:id},select:{id:true}}),ids=controls.map(c=>c.id);
  await tx.managedControl.updateMany({where:{organizationId:ctx.organizationId,id:{in:ids}},data:{enabled:false,description:"Retained content removed",testProcedure:"Retained content removed",title:"Removed programme control",version:{increment:1}}});
- await tx.evidenceConnector.updateMany({where:{organizationId:ctx.organizationId,controlId:{in:ids}},data:{enabled:false,encryptedSecret:null,leaseToken:null,leaseUntil:null,version:{increment:1}}});
+ await tx.evidenceConnector.updateMany({where:{organizationId:ctx.organizationId,controlId:{in:ids}},data:{enabled:false,encryptedSecret:null,encryptedWebhookSecret:null,webhookVersion:{increment:1},leaseToken:null,leaseUntil:null,version:{increment:1}}});
  await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"programme.content_removed",entityType:"ProgrammeImport",entityId:id,details:{affectedControls:ids.length}}});return {id};
  });
 }

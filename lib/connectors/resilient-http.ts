@@ -22,7 +22,7 @@ export function resilientGet(fetcher:typeof fetch,origin:string,headers:Record<s
    try{response=await fetcher(url,{method:'GET',headers,redirect:'error',cache:'no-store',signal:AbortSignal.timeout(Math.max(1,deadline-clock()))});}catch{}
    if(response?.url&&response.url!==url){await response.body?.cancel();throw new CollectionError('TARGET_MISMATCH');}
    const rateLimited=response?.status===429||response?.status===403&&(response.headers.has('retry-after')||response.headers.get('x-ratelimit-remaining')==='0');
-   const transient=!response||[502,503,504].includes(response.status)||rateLimited;
+   const transient=!response||[500,502,503,504].includes(response.status)||rateLimited;
    if(!transient)return response!;
    const instructed=response?retryAfterSeconds(response.headers,clock()):null;
    await response?.body?.cancel();

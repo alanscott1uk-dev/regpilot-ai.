@@ -1,4 +1,6 @@
 import {claimFairConnector,claimManualConnectorLane,releaseDispatchLease} from "./fair-dispatch";
+import {acquireProviderPermit,settleProviderPermit} from "./provider-gate";
+import type {ProviderPermit} from "@prisma/client";
 import {collectVercel,collectSupabase,vercelTarget,supabaseTarget} from "../connectors/infrastructure";
 import {followUpVendorSignals} from "./vendor-signals";
 import {Prisma,type EvidenceConnector} from "@prisma/client";
@@ -75,13 +77,13 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
   if(!v.token&&!old?.encryptedSecret)throw new IntelligenceError("A restricted provider credential is required");
   if(old&&!v.token&&(old.repository!==repository||old.branch!==v.branch))throw new IntelligenceError("Supply a newly scoped credential when changing target");
   if(!old&&await tx.evidenceConnector.count({where:{organizationId:ctx.organizationId}})>=20)throw new IntelligenceError("Connector limit reached",429);
-  const id=old?.id||randomUUID();const data={provider:v.provider,controlId:v.controlId,repository,branch:v.branch,configuredById:ctx.userId,enabled:v.enabled,intervalHours:v.intervalHours,encryptedSecret:v.token?encryptConnectorSecret(v.token,ctx.organizationId,id):old!.encryptedSecret,nextRunAt:new Date(),leaseToken:null,leaseUntil:null,attempts:0,failureCode:null};
+  const id=old?.id||randomUUID();const data={provider:v.provider,controlId:v.controlId,repository,branch:v.branch,configuredById:ctx.userId,enabled:v.enabled,intervalHours:v.intervalHours,encryptedSecret:v.token?encryptConnectorSecret(v.token,ctx.organizationId,id):old!.encryptedSecret,encryptedWebhookSecret:old&&old.repository===repository&&old.branch===v.branch?old.encryptedWebhookSecret:null,webhookVersion:old?(old.repository===repository&&old.branch===v.branch?old.webhookVersion:old.webhookVersion+1):0,nextRunAt:new Date(),leaseToken:null,leaseUntil:null,attempts:0,failureCode:null};
   if(!old&&await tx.evidenceConnector.findUnique({where:{organizationId_repository_branch:{organizationId:ctx.organizationId,repository:data.repository,branch:data.branch}}}))throw new IntelligenceError("This target already has a connector",409);
   const saved=old?await tx.evidenceConnector.update({where:{id},data:{...data,version:{increment:1}}}):await tx.evidenceConnector.create({data:{id,organizationId:ctx.organizationId,...data}});
   await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"connector.configured",entityType:"EvidenceConnector",entityId:id,details:{version:saved.version,controlId:v.controlId,enabled:v.enabled,credentialRotated:!!v.token}}});return {id,version:saved.version};
  });
 }
-export async function disconnectConnector(ctx:AuthorizedContext,id:string,version:number){return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const changed=await tx.evidenceConnector.updateMany({where:{id,organizationId:ctx.organizationId,version},data:{enabled:false,encryptedSecret:null,leaseToken:null,leaseUntil:null,version:{increment:1}}});if(!changed.count)throw new IntelligenceError("Connector changed",409);await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"connector.disconnected",entityType:"EvidenceConnector",entityId:id,details:{}}});return {id};});}
+export async function disconnectConnector(ctx:AuthorizedContext,id:string,version:number){return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const changed=await tx.evidenceConnector.updateMany({where:{id,organizationId:ctx.organizationId,version},data:{enabled:false,encryptedSecret:null,encryptedWebhookSecret:null,webhookVersion:{increment:1},leaseToken:null,leaseUntil:null,version:{increment:1}}});if(!changed.count)throw new IntelligenceError("Connector changed",409);await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"connector.disconnected",entityType:"EvidenceConnector",entityId:id,details:{}}});return {id};});}
 export async function requestConnectorRun(ctx:AuthorizedContext,id:string,version:number){return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const row=await tx.evidenceConnector.findFirst({where:{id,organizationId:ctx.organizationId,version,enabled:true}});if(!row)throw new IntelligenceError("Active connector not found or changed",409);if(row.failureCode==="RATE_LIMITED"&&row.nextRunAt>new Date())throw new IntelligenceError("The provider requested a cooldown. Collection can resume after the scheduled retry time.",429);if(row.leaseUntil&&row.leaseUntil>new Date())throw new IntelligenceError("A collection is already running",409);if(row.lastSuccessAt&&Date.now()-row.lastSuccessAt.getTime()<300000)throw new IntelligenceError("Wait five minutes between successful collections",429);await tx.evidenceConnector.update({where:{id},data:{nextRunAt:new Date()}});return {id};});}
 /**
  * Read-only, operator-triggered LIVE provider verification.
@@ -138,10 +140,18 @@ async function assertJob(tx:Prisma.TransactionClient,job:EvidenceConnector){
 }
 export async function executeConnector(job:EvidenceConnector,collector:Collector=collectConfiguredConnector){
  const ctx:AuthorizedContext={organizationId:job.organizationId,userId:job.configuredById,role:"ADMIN"};
+ let permit:ProviderPermit|undefined,providerOutcome='NEUTRAL';
  try{
   await transaction(ctx,tx=>assertJob(tx,job));if(job.attempts>3)throw new CollectionError("INTERRUPTED_REPEATEDLY");
   if(!job.encryptedSecret)throw new CollectionError("CREDENTIAL_UNAVAILABLE");
-  const result=await collector({provider:job.provider,repository:job.repository,branch:job.branch},decryptConnectorSecret(job.encryptedSecret,job.organizationId,job.id));
+  const admission=await acquireProviderPermit(job.provider,job.organizationId);
+  if(!admission.allowed){
+   const deferred=await db.evidenceConnector.updateMany({where:{id:job.id,organizationId:job.organizationId,version:job.version,enabled:true,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},data:{leaseToken:null,leaseUntil:null,attempts:Math.max(0,job.attempts-1),failureCode:admission.reason,nextRunAt:admission.retryAt}});
+   return deferred.count?'PROVIDER_DEFERRED':'SUPERSEDED';
+  }
+  permit=admission.permit;
+  const secret=decryptConnectorSecret(job.encryptedSecret,job.organizationId,job.id);
+  const result=await collector({provider:job.provider,repository:job.repository,branch:job.branch},secret).then(result=>{providerOutcome='SUCCESS';return result;},error=>{providerOutcome=error instanceof CollectionError?error.code:'NEUTRAL';throw error;});
   const outcome=observationOutcome(result),signalHash=hashValue({engine:result.engine,checks:result.checks});
   return await transaction(ctx,async tx=>{await assertJob(tx,job);
    const previous=await tx.connectorRun.findFirst({where:{organizationId:job.organizationId,connectorId:job.id},orderBy:[{capturedAt:"desc"},{id:"desc"}]});
@@ -149,7 +159,8 @@ export async function executeConnector(job:EvidenceConnector,collector:Collector
    await tx.connectorRun.create({data:{organizationId:job.organizationId,connectorId:job.id,leaseToken:job.leaseToken!,configVersion:job.version,result:j(result),resultHash:hashValue(result),signalHash,outcome}});
    if(outcome!=="OBSERVED"||changes.length)await followUp(tx,job,changes.length?"Observed signals changed since the last collection. Check the before/after values and remaining gaps.":"The collection contains failing or unknown signals requiring investigation.");
    await followUpVendorSignals(tx,ctx,job,signalHash);
-   await tx.evidenceConnector.update({where:{id:job.id},data:{leaseToken:null,leaseUntil:null,attempts:0,lastSuccessAt:new Date(),failureCode:null,nextRunAt:new Date(Date.now()+job.intervalHours*3600000)}});
+   const current=await tx.evidenceConnector.findUniqueOrThrow({where:{id:job.id},select:{eventRevision:true}});
+   await tx.evidenceConnector.update({where:{id:job.id},data:{leaseToken:null,leaseUntil:null,attempts:0,lastSuccessAt:new Date(),failureCode:null,collectedEventRevision:job.eventRevision,nextRunAt:new Date(Date.now()+(current.eventRevision>job.eventRevision?60000:job.intervalHours*3600000))}});
    await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:"connector.evidence_collected",entityType:"EvidenceConnector",entityId:job.id,details:{outcome,resultHash:hashValue(result),configVersion:job.version,changedChecks:changes.map(c=>c.id)}}});return outcome;
   });
  }catch(error){
@@ -163,7 +174,7 @@ export async function executeConnector(job:EvidenceConnector,collector:Collector
    }
    await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:"connector.collection_failed",entityType:"EvidenceConnector",entityId:job.id,details:{code,paused}}});return paused?"ATTENTION":"RETRY_SCHEDULED";
   });
- }finally{await releaseDispatchLease("CONNECTOR",job);}
+ }finally{try{if(permit)await settleProviderPermit(permit,providerOutcome);}finally{await releaseDispatchLease("CONNECTOR",job);}}
 }
 export async function runConnectorBatch(limit=2,parallelism=1,admissionDeadline=Date.now()+20000){
  if(!connectorsEnabled())throw new IntelligenceError("Connectors await activation",503);

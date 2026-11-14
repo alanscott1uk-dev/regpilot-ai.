@@ -34,6 +34,30 @@ model DispatchLane {
  @@index([kind,lastDispatchedAt,organizationId])
 }
 
+model ProviderGate {
+ provider String @id @db.VarChar(24)
+ generation Int @default(0)
+ failures Int @default(0)
+ failureScopes Json @default("[]")
+ lastFailureAt DateTime?
+ trips Int @default(0)
+ openUntil DateTime?
+ probeToken String? @db.Uuid
+ probeUntil DateTime?
+ permits ProviderPermit[]
+}
+
+model ProviderPermit {
+ token String @id @db.Uuid
+ provider String @db.VarChar(24)
+ generation Int
+ scopeHash String @db.VarChar(64)
+ probe Boolean @default(false)
+ expiresAt DateTime
+ gate ProviderGate @relation(fields:[provider],references:[provider],onDelete:Cascade)
+ @@index([provider,expiresAt])
+}
+
 enum MembershipRole {
   OWNER
   ADMIN
@@ -666,6 +690,11 @@ model EvidenceConnector {
  repository String @db.VarChar(220)
  branch String @db.VarChar(120)
  encryptedSecret String? @db.Text
+ encryptedWebhookSecret String? @db.Text
+ webhookVersion Int @default(0)
+ eventRevision Int @default(0)
+ collectedEventRevision Int @default(0)
+ webhookReceipts WebhookReceipt[]
  enabled Boolean @default(false)
  version Int @default(1)
  intervalHours Int @default(24)
@@ -687,6 +716,22 @@ model EvidenceConnector {
  @@index([enabled,nextRunAt])
  @@index([organizationId,enabled,nextRunAt])
  @@index([organizationId,enabled,leaseUntil])
+}
+
+model WebhookReceipt {
+ id String @id @default(uuid()) @db.Uuid
+ connectorId String @db.Uuid
+ webhookVersion Int
+ deliveryId String @db.VarChar(128)
+ payloadHash String @db.VarChar(64)
+ event String @db.VarChar(60)
+ revision Int
+ receivedAt DateTime @default(now())
+ connector EvidenceConnector @relation(fields:[connectorId],references:[id],onDelete:Cascade)
+ @@unique([connectorId,webhookVersion,deliveryId])
+ @@unique([connectorId,webhookVersion,payloadHash])
+ @@index([connectorId,receivedAt])
+ @@index([receivedAt])
 }
 
 model ConnectorRun {
