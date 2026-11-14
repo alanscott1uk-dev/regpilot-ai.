@@ -1,0 +1,46 @@
+name: RegPilot private automation worker
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/private-worker.yml']
+  schedule:
+    - cron: '8,38 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: regpilot-private-worker-staging
+  cancel-in-progress: false
+jobs:
+  invoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 26c68523ed2eeab058f2976df41fd0ccaca8f4b4
+          persist-credentials: false
+          sparse-checkout: scripts/invoke-private-worker.py
+          sparse-checkout-cone-mode: false
+      - name: Invoke authenticated bounded worker
+        run: python scripts/invoke-private-worker.py
+  verify-health:
+    needs: invoke
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Independently read durable completion health
+        run: |
+          python - <<'PY'
+          import json, urllib.request
+          url='https://regpilot-ai-qnx6-git-feature-traceabil-2f0b3f-alanscott1uk-5933.vercel.app/api/worker/health'
+          with urllib.request.urlopen(url,timeout=25) as response:
+              data=json.loads(response.read(8192))
+          assert data.get('ok') is True and data.get('state') in ['completed','running'], 'Worker heartbeat is not healthy'
+          print('Worker heartbeat:',data['state'])
+          PY
