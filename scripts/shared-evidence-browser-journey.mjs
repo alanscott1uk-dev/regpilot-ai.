@@ -26,6 +26,7 @@ export async function sharedEvidenceJourney(browser,base,viewport,name){
   await form.getByRole('checkbox',{name:/I checked the relevance/}).check();await form.getByRole('button',{name:'Reuse evidence for this control'}).click();
   await page.getByText('Evidence used by 2 controls',{exact:true}).click();assert.equal(writes.length,1);assert.equal(writes[0].organizationId,org);assert.equal(writes[0].controlId,secondary);assert.equal(writes[0].controlVersion,1);assert.equal(writes[0].token,undefined);
   await page.getByText('access-owner@example.invalid · Active control',{exact:true}).waitFor();
+  await mkdir('artifacts/usability',{recursive:true});await page.screenshot({path:'artifacts/usability/shared-evidence-linked-'+name+'.png',fullPage:true});
   await page.getByRole('button',{name:'Remove evidence link',exact:true}).click();await page.getByRole('button',{name:'Keep link',exact:true}).click();assert.equal(writes.length,1);
   await page.getByRole('button',{name:'Remove evidence link',exact:true}).click();await page.getByRole('button',{name:'Confirm removal',exact:true}).click();
   await page.getByText('Evidence used by 1 control',{exact:true}).waitFor();assert.equal(writes.length,2);assert.equal(writes[1].action,'UNLINK');assert.equal(writes[1].linkId,link);

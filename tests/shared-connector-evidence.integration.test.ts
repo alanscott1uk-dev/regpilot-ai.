@@ -39,7 +39,7 @@ test('one collection supports separate controls, evidence revocation and indepen
   const choices=(controlId:string)=>transaction(x.o,tx=>changeObservationChoices(tx,x.a.id,controlId));
   const primaryProof=await choices(primary.id),secondProof=await choices(second.id);assert.equal(primaryProof[0].id,first.id);assert.equal(secondProof[0].id,first.id);assert.equal(secondProof[0].scopeLinkId,concurrent[0].id);assert.equal(secondProof[0].scopeMappedById,x.o.userId);assert.equal(secondProof[0].scopeRationale,rationale);assert.equal(primaryProof[0].scopeLinkId,undefined);assert.deepEqual(await choices(fourth.id),[]);
   const workspace=await operationsWorkspace(x.o);assert.equal(workspace.connectors[0].controlLinks.length,2);assert.doesNotMatch(JSON.stringify(workspace),/github_pat_|encryptedSecret|leaseToken/);
-  await assert.rejects(()=>db.connectorControlLink.create({data:{organizationId:x.b.id,connectorId:saved.id,controlId:second.id,mappedById:x.out.userId,rationale}}),(e:any)=>e.code==='P2003');
+  await assert.rejects(()=>db.connectorControlLink.create({data:{organizationId:x.b.id,connectorId:saved.id,controlId:fourth.id,mappedById:x.out.userId,rationale}}),(e:any)=>e.code==='P2003');
   await changeConnectorControl(x.o,saved.id,{action:'UNLINK',version:1,linkId:concurrent[0].id,confirm:true});
   assert.deepEqual(await choices(second.id),[]);await assert.rejects(()=>transaction(x.o,tx=>assertChangeObservations(tx,x.a.id,second.id,secondProof)),rejects(409));
   await transaction(x.o,tx=>assertChangeObservations(tx,x.a.id,primary.id,primaryProof));
