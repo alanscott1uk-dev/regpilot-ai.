@@ -1,4 +1,5 @@
 "use client";
+import WorkspaceNav from "../../components/workspace-nav";
 import {useCallback,useEffect,useMemo,useRef,useState} from "react";
 import type {Analysis} from "../../../lib/regulatory/intelligence";
 import {browserAuth} from "../../../lib/client/supabase-auth";
@@ -80,12 +81,7 @@ export default function IntelligenceWorkspace(){
   }
   const reviewBlocked=current?.run.stale||!current?.run.integrityValid||current?.run.createdById===userId;
   return <div className={shell.app}>
-    <aside className={shell.sidebar}>
-      <a href="/workbench" className={shell.logo}><span className={shell.logoMark}>R</span><span>RegPilot <b>AI</b><small>YOUR COMPLIANCE WORKSPACE</small></span></a>
-      <div className={shell.sideCaption}>PRIVATE WORKSPACE</div>
-      <nav className={shell.sideNav}><a href="/team/library">◇ &nbsp;Obligation library</a><a href="/team/operations">◉ &nbsp;Operations</a><a className={shell.active} href="/team/intelligence" aria-current="page">◈ &nbsp; Regulatory inbox</a><a href="/team/sources">↗ &nbsp; Official sources</a><a href="/team">▤ &nbsp; Team tasks</a><a href="/team/assurance">◎ &nbsp;Evidence assessment</a><a href="/team/evidence">▣ &nbsp; Evidence vault</a><a href="/ai">✦ &nbsp; AI Studio</a></nav>
-      <div className={shell.sideFoot}><strong>Every recommendation has a source.</strong><p>Review the passage, confirm its relevance, then choose the next action.</p></div>
-    </aside>
+    <WorkspaceNav/>
     <main className={shell.main}>
       <div className={shell.topbar}><span className={shell.crumb}>Workspace / Regulatory inbox</span><span className={shell.demo}>PRIVATE PILOT</span></div>
       <header className={ui.hero}><div><span className={ui.eyebrow}>REGULATORY INTELLIGENCE</span><h1>Understand the change.<br/><em>Own the next step.</em></h1><p>Source-backed recommendations, a clear reason for each match, and a practical route from review to evidence.</p></div><div className={ui.orbit} aria-hidden="true">◈</div></header>

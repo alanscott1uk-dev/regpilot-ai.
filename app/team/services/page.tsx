@@ -1,4 +1,5 @@
 "use client";
+import WorkspaceNav from "../../components/workspace-nav";
 import {useCallback,useEffect,useRef,useState} from "react";
 import {browserAuth} from "../../../lib/client/supabase-auth";
 import type {servicesWorkspace} from "../../../lib/server/paid-service";
@@ -20,7 +21,7 @@ export default function Services(){
  useEffect(()=>{epoch.current++;setData(null);setConsents({});if(org)void load(org);return()=>{epoch.current++;};},[org,load,refreshTick]);
  async function mutate(path:string,method:string,body:Record<string,unknown>,message:string){if(busy)return;setBusy(true);setNotice("");const selected=org,generation=epoch.current;try{await request(path,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify({...body,organizationId:selected})});if(selected!==active.current||generation!==epoch.current)return;setNotice(message);setConsents({});await load(selected);}catch(e){if(selected===active.current&&generation===epoch.current)setNotice(e instanceof Error?e.message:"Could not save");}finally{setBusy(false);}}
  const catalogue=data?.catalogue||SERVICE_DESCRIPTIONS.map(s=>({...s,active:false}));
- return <div className={shell.app}><aside className={shell.sidebar}><a className={shell.logo} href="/team/operations"><span className={shell.logoMark}>R</span><span>RegPilot <b>AI</b><small>SERVICE CONTROL</small></span></a><nav className={shell.sideNav}><a href="/team/operations">Operations</a><a href="/team/evidence">Evidence vault</a><a href="/team/settings">Team & access</a><a className={shell.active} href="/team/services" aria-current="page">Services & spending</a></nav></aside><main className={shell.main}>
+ return <div className={shell.app}><WorkspaceNav/><main className={shell.main}>
  <div className={shell.topbar}><span className={shell.crumb}>Workspace / Services & spending</span><span className={shell.demo}>CONTROLLED ACTIVATION</span></div>
  <header className={ui.hero}><div><span>ADVANCED SERVICES. CLEAR CONTROL.</span><h1>More capability.<br/><em>You control the switch.</em></h1><p>Prepare document reading, reminders and billing in one place. Every external operation needs an enabled service and an approved request.</p></div><div className={ui.heroNote}><strong>Prepare first.<br/>Activate deliberately.</strong><p>Saving a draft or budget never activates a provider or starts a subscription.</p></div></header>
  {notice&&<p className={ui.notice} role="status">{notice}</p>}

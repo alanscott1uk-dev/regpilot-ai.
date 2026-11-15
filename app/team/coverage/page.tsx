@@ -1,4 +1,5 @@
 "use client";
+import WorkspaceNav from "../../components/workspace-nav";
 import {useCallback,useEffect,useMemo,useState} from "react";
 import {browserAuth} from "../../../lib/client/supabase-auth";
 import {coverageDashboard,exportCoverageCsv} from "../../../lib/regulatory/coverage-dashboard.mjs";
@@ -66,20 +67,7 @@ export default function Coverage(){
  const summary=dashboard?.summary;
  const currentOrg=orgs.find(x=>x.id===orgId);
  return <div className={shell.app}>
-  <aside className={shell.sidebar}>
-   <a className={shell.logo} href="/team/operations"><span className={shell.logoMark}>R</span><span>RegPilot <b>AI</b><small>UK REGULATORY INTELLIGENCE</small></span></a>
-   <div className={shell.sideCaption}>PRIVATE WORKSPACE</div>
-   <nav className={shell.sideNav} aria-label="Main navigation">
-    <a href="/team/operations">◉ &nbsp; Operations</a>
-    <a className={shell.active} aria-current="page" href="/team/coverage">◈ &nbsp; Monitoring health</a>
-    <a href="/team/sources">▤ &nbsp; Publications &amp; version history</a><a href="/team/briefing">✦ &nbsp; Weekly briefing</a>
-    <a href="/team/intelligence">✦ &nbsp; Impact assessment</a>
-    <a href="/team/changes">◇ &nbsp; Change response</a>
-    <a href="/team/evidence">▣ &nbsp; Evidence vault</a>
-    <a href="/team/audits">◎ &nbsp; Audit preparation</a>
-   </nav>
-   <div className={shell.sideFoot}><strong>Know the limits of your coverage.</strong><p>A verified publication fetch establishes neither applicability nor compliance. Failed sources are never counted as checked.</p></div>
-  </aside>
+  <WorkspaceNav/>
   <main className={shell.main}>
    <div className={shell.topbar}><span className={shell.crumb}>Regulatory intelligence / Source health</span><span className={shell.demo}>PRIVATE PILOT</span></div>
    <header className={css.hero}><span className={css.overline}>REGPILOT / CONTINUOUS COVERAGE</span><h1>See what's covered.<br/><em>Know what still needs attention.</em></h1><p>One operational view of publication freshness, failed checks, unreviewed changes and monitoring gaps. Nothing here assumes an organisation is legally compliant.</p></header>

@@ -1,4 +1,5 @@
 "use client";
+import WorkspaceNav from "../../components/workspace-nav";
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {browserAuth} from '../../../lib/client/supabase-auth';
 import {officialSourceUrl} from '../../../lib/regulatory-sources.mjs';
@@ -90,7 +91,7 @@ export default function Setup(){
  const checked=data?.coverage.filter(c=>c.snapshotId).length||0;
  const reviewed=data?.coverage.filter(c=>c.reviewStatus==='REVIEWED').length||0;
  return <div className={shell.app}>
-  <aside className={shell.sidebar}><a href="/team/operations" className={shell.logo}><span className={shell.logoMark}>R</span><span>RegPilot <b>AI</b><small>YOUR COMPLIANCE, CONNECTED</small></span></a><div className={shell.sideCaption}>PRIVATE WORKSPACE</div><nav className={shell.sideNav}><a href="/team/setup" className={shell.active} aria-current="page">Workspace setup</a><a href="/team/operations">Operations</a><a href="/team/intelligence">Regulatory inbox</a><a href="/team/coverage">Monitoring health</a><a href="/team/evidence">Evidence vault</a><a href="/team/settings">Team &amp; access</a><a href="/team/services">Services &amp; spending</a></nav></aside>
+  <WorkspaceNav/>
   <main className={shell.main}><div className={shell.topbar}><span className={shell.crumb}>Workspace / Setup</span><span className={shell.demo}>PRIVATE PILOT</span></div>
    <header className={ui.hero}><span className={ui.eyebrow}>FROM SETUP TO DAILY WORK</span><h1>Make your workspace work.</h1><p>Describe your business, choose the publications to watch, then connect the people and evidence behind your programme.</p></header>
    {notice&&<p role="status" className={ui.notice}>{notice}</p>}{loading&&<p role="status">Loading workspace setup…</p>}

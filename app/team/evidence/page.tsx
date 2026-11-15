@@ -1,4 +1,5 @@
 "use client";
+import WorkspaceNav from "../../components/workspace-nav";
 import {useCallback,useEffect,useMemo,useRef,useState} from "react";
 import {browserAuth} from "../../../lib/client/supabase-auth";
 import shell from "../../workbench/workbench.module.css";
@@ -108,12 +109,7 @@ export default function TeamEvidence(){
   }catch(e){setNotice(e instanceof Error?e.message:"Decision failed")}finally{setBusy(false)}
  }
  return <div className={shell.app}>
-  <aside className={shell.sidebar}>
-   <a href="/workbench" className={shell.logo}><span className={shell.logoMark}>R</span><span>RegPilot <b>AI</b><small>PRIVATE EVIDENCE REVIEW</small></span></a>
-   <div className={shell.sideCaption}>WORKSPACE</div>
-   <nav className={shell.sideNav}><a href="/team/library">◇ &nbsp;Obligation library</a><a href="/team/operations">◉ &nbsp;Operations</a><a href="/workbench">◉ &nbsp;Today's demo</a><a href="/team/assurance">◎ &nbsp;Evidence assessment</a><a href="/team/intelligence">◈ &nbsp;Regulatory inbox</a><a href="/team">▤ &nbsp;Private team tasks</a><a className={shell.active} aria-current="page" href="/team/evidence">▣ &nbsp;Evidence vault</a><a href="/ai">✦ &nbsp;AI Studio</a><a href="/traceability">◈ &nbsp;Traceability</a><a href="/team/people">People &amp; policies</a><a href="/team/vendors">Vendor assurance</a><a href="/team/audits">Auditor workspace</a></nav>
-   <div className={shell.sideFoot}><strong>Controlled access</strong><p>Upload, scan, verify and request independent review. Files are stored in a private bucket only when the security services are configured.</p></div>
-  </aside>
+  <WorkspaceNav/>
   <main className={shell.main}>
    <div className={shell.topbar}><span className={shell.crumb}>Private workspace / Evidence vault</span><span className={shell.demo}>STAGING PILOT · NO CUSTOMER DATA</span></div>
    <header className={ui.hero}><div><span>REGPILOT / EVIDENCE VAULT</span><h1>Evidence you can<br/><em>actually verify.</em></h1><p>Private PDF and Word storage, antivirus scanning, SHA-256 file integrity and a second-person approval process.</p></div><div className={ui.heroGlyph}>◈</div></header>

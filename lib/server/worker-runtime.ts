@@ -1,4 +1,5 @@
 import {runAutomationBatch,finalizeAutomationTick} from './automation-queue';
+import {finalizeCollectionTick,collectionAttention} from './collection-health';
 import {Prisma} from '@prisma/client';
 import {db} from './db';
 import {workspaceConfigured} from './ai-auth';
@@ -53,6 +54,7 @@ export async function runPrivateWorker(invocationKey:string,execute?:()=>Promise
    ...(slot===0?{controlReviews:()=>runReviewBatch(admissionDeadline)}:{})
   })),slot===0?runWorkerMaintenance:undefined);
   result=await finalizeAutomationTick(result);
+  if(!execute)result=await finalizeCollectionTick(result);
  }catch{const failed={state:'failed' as const,processed:0,attention:1};result={ok:false,modules:{sources:failed,connectors:failed,controlReviews:failed}};}
  const state=result.ok?'COMPLETED':'FAILED';
  const finished=await db.workerRun.updateMany({where:{id:claim.run.id,state:'RUNNING',leaseUntil:{gt:new Date()}},data:{state,finishedAt:new Date(),summary:result as unknown as Prisma.InputJsonValue}});
@@ -63,14 +65,16 @@ export async function runPrivateWorker(invocationKey:string,execute?:()=>Promise
 export async function workerHealth(){
  if(!workerEnabled())return {state:'disabled',ok:false};
  const capacity=workerSlotCount();
- const [runs,success]=await Promise.all([
+ const [runs,success,attention]=await Promise.all([
   Promise.all(Array.from({length:capacity},(_,slot)=>db.workerRun.findFirst({where:{slot},orderBy:{startedAt:'desc'},select:{slot:true,state:true,startedAt:true,finishedAt:true,leaseUntil:true}}))),
-  db.workerRun.findFirst({where:{state:'COMPLETED'},orderBy:{finishedAt:'desc'},select:{finishedAt:true}})
+  db.workerRun.findFirst({where:{state:'COMPLETED'},orderBy:{finishedAt:'desc'},select:{finishedAt:true}}),
+  collectionAttention()
  ]);
  const now=Date.now();
  const slots=runs.map((run,slot)=>({slot,state:!run||now-run.startedAt.getTime()>STALE_MS?'stale':run.state==='RUNNING'?(run.leaseUntil.getTime()>now?'running':'interrupted'):run.state.toLowerCase()}));
  const unhealthy=slots.find(s=>!['completed','running'].includes(s.state));
- const state=unhealthy?.state||(slots.some(s=>s.state==='running')?'running':'completed');
+ const needsAttention=(monitoringEnabled()&&attention.sources>0)||(connectorsEnabled()&&attention.connectors>0);
+ const state=unhealthy?.state||(needsAttention?'attention':slots.some(s=>s.state==='running')?'running':'completed');
  const latest=runs.filter(r=>r!==null).sort((a,b)=>b.startedAt.getTime()-a.startedAt.getTime())[0];
- return {ok:!unhealthy,state,capacity,slots,cadenceMinutes:30,staleAfterMinutes:90,lastStartedAt:latest?.startedAt.toISOString()||null,lastFinishedAt:latest?.finishedAt?.toISOString()||null,lastSuccessfulAt:success?.finishedAt?.toISOString()||null};
+ return {ok:!unhealthy&&!needsAttention,state,capacity,slots,attention,cadenceMinutes:30,staleAfterMinutes:90,lastStartedAt:latest?.startedAt.toISOString()||null,lastFinishedAt:latest?.finishedAt?.toISOString()||null,lastSuccessfulAt:success?.finishedAt?.toISOString()||null};
 }

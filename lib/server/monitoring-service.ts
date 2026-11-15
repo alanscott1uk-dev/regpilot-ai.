@@ -69,7 +69,7 @@ async function finish(job:WatchSchedule,outcome:string,failureCode:string|null){
  */
 async function queueChangedSourceReview(ctx:AuthorizedContext,job:WatchSchedule,snapshot:{id:string;contentHash:string;title:string;url:string},guard:(tx:Prisma.TransactionClient)=>Promise<void>){
  const key="source-review:"+snapshot.id;
- return db.$transaction(async tx=>{
+ return transaction(ctx,async tx=>{
   await guard(tx);
   const current=await tx.regulatorySnapshot.findFirst({where:{id:snapshot.id,organizationId:ctx.organizationId,sourceId:job.sourceId,reviewStatus:"NEEDS_REVIEW"}});
   if(!current||current.contentHash!==snapshot.contentHash)return {created:false};
@@ -91,7 +91,7 @@ async function queueChangedSourceReview(ctx:AuthorizedContext,job:WatchSchedule,
    action:"monitoring.source_review_task_created",entityType:"Obligation",entityId:item.id,
    details:{sourceId:job.sourceId,snapshotId:current.id,contentHash:current.contentHash,scheduledById:job.configuredById}}});
   return {created:true};
- },{isolationLevel:"Serializable",maxWait:3500,timeout:10000});
+ });
 }
 /** Reconcile persisted changed snapshots before fetching again. A worker can stop
  * after capture commits but before task creation; a cooldown/unchanged result must
@@ -113,12 +113,15 @@ export async function reconcileSourceReviews(ctx:AuthorizedContext,job:WatchSche
  return {created,backlog:pending.length>10};
 }
 export async function executeWatch(job:WatchSchedule,loader?:Loader){
+  let stage:'LEASE'|'RECOVERY'|'FETCH'|'ANALYSIS'|'FINISH'='LEASE';
   try{
     await db.$transaction(tx=>assertLease(tx,job));
     if(job.attempts>3)return await finish(job,"FAILED","INTERRUPTED_REPEATEDLY");
     const ctx:AuthorizedContext={organizationId:job.organizationId,userId:job.configuredById,role:"ADMIN"};
     const guard=(tx:Prisma.TransactionClient)=>assertLease(tx,job);
+    stage='RECOVERY';
     const recovered=await reconcileSourceReviews(ctx,job,guard);
+    stage='FETCH';
     const checked=await checkOfficialSource(ctx,job.sourceId,loader,guard);
     // The monitored publication may have changed; create an owned investigation only
     // for a *new content version*, never for the baseline, metadata or an outage.
@@ -129,8 +132,10 @@ export async function executeWatch(job:WatchSchedule,loader?:Loader){
       await queueChangedSourceReview(ctx,job,{id,contentHash,title,url},guard);
     }
     // Checkpoint is already persisted. A retry reuses the snapshot and unique analysis.
+    stage='ANALYSIS';
     if(await db.businessProfile.findUnique({where:{organizationId:job.organizationId}}))await createIntelligenceRun(ctx,checked.snapshot.id,guard);
     // Human review remains required; no paid AI, accepted legal decisions or outbound notifications.
+    stage='FINISH';
     await db.$transaction(tx=>assertLease(tx,job));
     return await finish(job,recovered.backlog?"RECOVERY_BACKLOG":checked.state,null);
   }catch(error){
@@ -139,7 +144,15 @@ export async function executeWatch(job:WatchSchedule,loader?:Loader){
       const deferred=await db.watchSchedule.updateMany({where:{id:job.id,organizationId:job.organizationId,enabled:true,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},data:{leaseToken:null,leaseUntil:null,attempts:Math.max(0,job.attempts-1),lastOutcome:"SOURCE_DEFERRED",failureCode:error.code,nextCheckAt:error.retryAt}});
       return deferred.count?"SOURCE_DEFERRED":"SUPERSEDED";
     }
-    return await finish(job,"FAILED",error instanceof PermissionLost?"PERMISSION_REVOKED":"CHECK_OR_ANALYSIS_FAILED");
+    if(stage==='ANALYSIS'&&error instanceof IntelligenceError&&error.status===429){
+      const changed=await db.watchSchedule.updateMany({where:{id:job.id,organizationId:job.organizationId,enabled:true,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},data:{leaseToken:null,leaseUntil:null,attempts:Math.max(0,job.attempts-1),lastOutcome:'ANALYSIS_DEFERRED',failureCode:'ANALYSIS_DEFERRED',nextCheckAt:new Date(Date.now()+3600000)}});
+      return changed.count?'ANALYSIS_DEFERRED':'SUPERSEDED';
+    }
+    const databaseCode=error instanceof Prisma.PrismaClientKnownRequestError&&/^P\d{4}$/.test(error.code)?error.code:null;
+    const code=error instanceof PermissionLost?'PERMISSION_REVOKED':databaseCode?stage+'_'+databaseCode:stage+'_FAILED';
+    // Fixed stage/code only: never log tenant identities, credentials or raw errors.
+    console.warn('monitoring.check_failed',{stage,code});
+    return await finish(job,"FAILED",code);
   }finally{await releaseDispatchLease("SOURCE",job);}
 }
 export async function runMonitoringBatch(limit=2,parallelism=1,admissionDeadline=Date.now()+20000){

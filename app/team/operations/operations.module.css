@@ -27,3 +27,5 @@
 .setupSteps strong{display:block;font-size:12px;margin-bottom:6px}
 .setupSteps span{display:block;font-size:11px;line-height:1.5;color:#766988}
 @media(max-width:700px){.focusCard{padding:17px}.focusHeader{align-items:flex-start;flex-direction:column}.focusSummary{display:flex;align-items:center;text-align:left;gap:12px;padding:8px 14px}.focusSummary strong{font-size:24px}.focusRow{grid-template-columns:25px minmax(0,1fr);gap:9px}.focusGo{grid-column:2}.setupSteps{grid-template-columns:1fr}}
+
+.pageHeading{margin:28px 0 20px}.pageHeading h1{font-size:clamp(27px,3vw,38px);line-height:1.15;letter-spacing:-1px;color:#271e3d;margin:0 0 10px}.pageHeading p{font-size:15px;line-height:1.6;color:#655b73;margin:0}

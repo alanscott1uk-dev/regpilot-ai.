@@ -42,7 +42,15 @@ async function testJourney(name,viewport){
   const nav=await page.goto(base+"/",{waitUntil:"domcontentloaded"});
   assert.equal(new URL(page.url()).pathname,"/team/operations","main entry must open authenticated workspace");
   assert.equal(nav?.status(),200);
-  assert.ok(await page.getByRole("heading",{name:/A clearer day/i}).isVisible(),"signed-out secure workspace has a heading");
+  assert.ok(await page.getByRole("heading",{name:/Welcome to RegPilot/i}).isVisible(),"signed-out secure workspace has a heading");
+  await page.getByRole("form",{name:"Email sign-in"}).waitFor();
+  assert.equal(await page.getByRole("navigation",{name:"Main workspace",exact:true}).getByRole("link").count(),5);
+  assert.equal(await page.getByText("Sign in to your team workspace first.",{exact:true}).count(),0,"normal signed-out state must not display an error");
+  const workspaceOverflow=await page.evaluate(()=>Math.max(0,document.documentElement.scrollWidth-innerWidth));
+  assert.ok(workspaceOverflow<=3,"workspace home must fit mobile");
+  await page.getByRole("link",{name:"Connections",exact:true}).click();
+  await page.getByRole("form",{name:"Email sign-in"}).waitFor();
+  assert.equal(await page.getByRole("link",{name:"Connections",exact:true}).getAttribute("aria-current"),"page");
   await page.goto(base+"/workbench",{waitUntil:"domcontentloaded"});
   await page.getByRole("heading",{name:/Compliance, without the chaos/i}).waitFor();
   await page.getByRole("button",{name:/Try a demo task/}).click();
@@ -82,7 +90,7 @@ async function testJourney(name,viewport){
   await page.goto(base+"/recognition",{waitUntil:"domcontentloaded"});
   assert.ok(await page.getByText(/No current independently verified award/).first().isVisible(),"no invented certification is shown");
   await page.goto(base+"/team/operations",{waitUntil:"domcontentloaded"});
-  assert.ok(await page.getByRole("heading",{name:/A clearer day/i}).isVisible(),"secure workspace heading must remain visible on return to mobile");
+  assert.ok(await page.getByRole("heading",{name:/Welcome to RegPilot/i}).isVisible(),"secure workspace heading must remain visible on return to mobile");
   assert.deepEqual(errors,[],"no client runtime exceptions");
   await page.goto(base+"/workbench",{waitUntil:"domcontentloaded"});
   await mkdir("artifacts/usability",{recursive:true});

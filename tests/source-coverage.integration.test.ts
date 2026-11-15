@@ -17,6 +17,10 @@ test("source coverage spans old baselines independently of history pagination an
   const rows=await sourceCoverage(x.o),row=rows.find(r=>r.sourceId===base.sourceId)!;assert.equal(rows.length,REGULATORY_SOURCES.length);assert.equal(row.snapshotId,old.id);assert.equal(row.reviewStatus,"REVIEWED");assert.equal(row.monitoring,"Awaiting activation");
   assert.equal((await sourceCoverage(x.out)).find(r=>r.sourceId===base.sourceId)!.snapshotId,null);
   await assert.rejects(()=>sourceCoverage({...x.out,organizationId:x.a.id}),rejects(403));
+  Object.assign(process.env,{REGPILOT_MONITORING_ENABLED:"true",REGPILOT_AUTOMATION_ENABLED:"true",REGPILOT_WORKER_ENABLED:"true",REGPILOT_CRON_ENABLED:"false"});
+  const running=(await sourceCoverage(x.o)).find(r=>r.sourceId===base.sourceId)!;
+  assert.equal(running.schedule?.active,true,"GitHub worker activation must not depend on legacy cron");
+  assert.equal(typeof running.schedule?.version,"number","repair actions must use the current schedule version");
   process.env.REGPILOT_MONITORING_ENABLED="true";await db.watchSchedule.updateMany({where:{organizationId:x.a.id},data:{failureCode:"CHECK_OR_ANALYSIS_FAILED"}});assert.equal((await sourceCoverage(x.o)).find(r=>r.sourceId===base.sourceId)!.monitoring,"Collection needs attention");
  }finally{await db.watchSchedule.deleteMany({where:{organizationId:x.a.id}});await x.cleanup();}
 });

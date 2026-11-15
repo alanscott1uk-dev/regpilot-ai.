@@ -1,4 +1,5 @@
 "use client";
+import WorkspaceNav from "../../components/workspace-nav";
 import {useCallback,useEffect,useRef,useState} from "react";
 import {browserAuth} from "../../../lib/client/supabase-auth";
 import {createRequestScope} from "../../../lib/client/request-scope.mjs";
@@ -82,13 +83,7 @@ export default function RecognitionWorkspace(){
  }
  const role=orgs.find(o=>o.id===selected)?.role,admin=role==="ADMIN"||role==="OWNER";
  const tracks=data?.tracks||RECOGNITION_TRACKS.map(t=>({...t,publicStatus:"NOT_VERIFIED",task:null}));
- return <div className={shell.app}><aside className={shell.sidebar}><a className={shell.logo} href="/team/operations"><span className={shell.logoMark}>R</span><span>RegPilot <b>AI</b><small>EXTERNAL ASSURANCE</small></span></a>
-  <div className={shell.sideCaption}>PRIVATE WORKSPACE</div><nav className={shell.sideNav} aria-label="Navigation">
-   <a href="/team/operations">Operations</a><a className={shell.active} aria-current="page" href="/team/recognition">Recognition readiness</a>
-   <a href="/team/coverage">Source coverage</a><a href="/team/evidence">Evidence vault</a><a href="/team/audits">Auditor workspace</a>
-   <a href="/team/briefing">Weekly intelligence</a><a href="/recognition">Public assurance status</a>
-  </nav><div className={shell.sideFoot}><strong>Evidence before claims.</strong><p>Internal tasks do not represent regulator approval, ISO certification or GxP validation.</p></div>
- </aside><main className={shell.main}>
+ return <div className={shell.app}><WorkspaceNav/><main className={shell.main}>
   <div className={shell.topbar}><span className={shell.crumb}>Trust &amp; assurance / Recognition readiness</span><span className={shell.demo}>INDEPENDENT ASSURANCE ROADMAP</span></div>
   <header className={styles.hero}><span>REGULATORY ENGAGEMENT + THIRD-PARTY CERTIFICATION</span><h1>Build the evidence.<br/><em>Earn the recognition.</em></h1><p>Track the documents and independent sign-offs needed for regulatory engagement and external assessment. Prepare a private, hash-verified evidence pack without claiming an award.</p></header>
   {message&&<p role="status" className={styles.notice}>{message}</p>}

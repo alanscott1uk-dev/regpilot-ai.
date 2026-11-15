@@ -1,4 +1,5 @@
 "use client";
+import WorkspaceNav from "../../components/workspace-nav";
 import {TERRITORIES,SOURCE_ACTIVITIES,matchingSources,sourceNextStep,type SourceCoverage} from "../../../lib/regulatory/source-coverage";
 import {officialSourceUrl} from "../../../lib/regulatory-sources.mjs";
 import {recommendSourcePortfolio} from "../../../lib/regulatory/portfolio-recommendations.mjs";
@@ -94,6 +95,16 @@ export default function OfficialSourceHistory(){
   }catch(e){setMessage(e instanceof Error?e.message:"Could not check official publication")}
   finally{setBusy(false)}
  }
+ async function retryMonitoring(){
+  const schedule=selectedCoverage?.schedule;if(!orgId||busy||!schedule||typeof schedule.version!=="number")return;
+  const submitted=orgId,source=selected;setBusy(true);setMessage("");
+  try{
+   await request("/api/workspace/intelligence/monitoring",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({organizationId:submitted,sourceId:source,enabled:true,intervalHours:schedule.intervalHours,version:schedule.version})});
+   if(activeOrg.current!==submitted||activeSelection.current!==source)return;
+   setMessage("Retry scheduled. The next worker run will check this source; success is confirmed only after it completes.");await loadHistory(submitted);
+  }catch(e){if(activeOrg.current===submitted&&activeSelection.current===source)setMessage(e instanceof Error?e.message:"Could not schedule a retry");}
+  finally{setBusy(false);}
+ }
  async function review(){
   if(!latest)return;setBusy(true);setMessage("");
   try{
@@ -131,12 +142,7 @@ export default function OfficialSourceHistory(){
   finally{setBusy(false)}
  }
  return <div className={shell.app}>
-  <aside className={shell.sidebar}>
-   <a href="/workbench" className={shell.logo}><span className={shell.logoMark}>R</span><span>RegPilot <b>AI</b><small>REGULATORY SOURCE HISTORY</small></span></a>
-   <div className={shell.sideCaption}>WORKSPACE</div>
-   <nav className={shell.sideNav}><a href="/team/library">◇ &nbsp;Obligation library</a><a href="/team">▤ &nbsp;Team tasks</a><a href="/team/intelligence">◈ &nbsp;Regulatory inbox</a><a href="/horizon">Horizon feed</a><a href="/team/coverage">▤ &nbsp;Monitoring health</a><a href="/team/briefing">✦ &nbsp;Weekly briefing</a><a href="/team/changes">Change response</a><a href="/team/evidence">▣ &nbsp;Evidence vault</a><a href="/intelligence">✦ &nbsp;Prototype intelligence</a><a className={shell.active} href="/team/sources" aria-current="page">◈ &nbsp;Source history</a><a href="/ai">◇ &nbsp;AI Studio</a></nav>
-   <div className={shell.sideFoot}><strong>Publication checks</strong><p>Compares text from your selected official publications. It does not autonomously monitor all UK regulations or determine legal effects.</p></div>
-  </aside>
+  <WorkspaceNav/>
   <main className={shell.main}>
    <div className={shell.topbar}><span className={shell.crumb}>Private workspace / Official source history</span><span className={shell.demo}>MANUAL CHECK · STAGING PILOT</span></div>
    <header className={ui.hero}><div><span>REGPILOT / REGULATORY CHANGE INTELLIGENCE</span><h1>Know what changed.<br/><em>Verify what it means.</em></h1><p>Capture the text of an official publication, compare future versions and give every potential change a named reviewer.</p></div><div className={ui.heroGlyph}>✦</div></header>
@@ -173,6 +179,7 @@ export default function OfficialSourceHistory(){
        <span>{src.agency} · {src.topic}</span><strong>{src.title}</strong><small>{src.jurisdictions?.join(", ")||"Territory scope needs review"}</small><small>{sourceNextStep(coverage.find(x=>x.sourceId===src.id))}</small></button>)}
      </div>
      <div className={ui.detail}><div className={ui.heading}><span>02 / TEXT-BASED VERSION CHECK</span><h2>{activeSource?.title}</h2><p>{activeSource?.kind||"Publication reference"} · {activeSource?.jurisdictions?.join(", ")||"Confirm territory and exceptions in the original"}</p><p>{activeSource?.scopeNote||"Selected publication only; linked publications and attachments are separate references."}</p><p><strong>{sourceNextStep(selectedCoverage)}</strong> · {selectedCoverage?.monitoring||"Monitoring status unavailable"}</p><p><a href="/team/intelligence">Assess business applicability ↗</a> · <a href="/team/library">Review requirements and control relationships ↗</a></p></div>
+      {selectedCoverage?.schedule?.failureCode&&<section className={ui.status} aria-label="Monitoring issue"><h3>{selectedCoverage.schedule.enabled?"This source needs attention":"Monitoring stopped for this source"}</h3><p>{selectedCoverage.schedule.failureCode==="PERMISSION_REVOKED"?"An administrator needs to restore access before monitoring can continue.":selectedCoverage.schedule.failureCode==="ANALYSIS_DEFERRED"?"The daily analysis allowance was reached. The source is queued for a later run.":"The last check did not complete. Previous evidence remains available. Open the official source to check it directly, or schedule another attempt."}</p><details><summary>Technical details</summary><p>Reason: {selectedCoverage.schedule.failureCode} · Attempts: {selectedCoverage.schedule.attempts}</p></details>{canReview&&typeof selectedCoverage.schedule.version==="number"&&<button type="button" disabled={busy} onClick={()=>void retryMonitoring()}>Retry monitoring</button>}</section>}
       <div className={ui.line}><a href={activeSource?officialSourceUrl(activeSource):"/team/sources"} target="_blank" rel="noopener noreferrer">Open official source ↗</a>
        {canCheck&&<button type="button" disabled={busy} onClick={()=>void check()}>{busy?"Checking…":latest?"Compare latest text":"Create first baseline"}</button>}
       </div>

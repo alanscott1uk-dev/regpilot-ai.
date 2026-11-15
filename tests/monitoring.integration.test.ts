@@ -30,6 +30,22 @@ test("monitoring leases, recovery, bounded retries, tenant isolation and revoked
     assert.equal(await db.intelligenceRun.count({where:{organizationId:ids[0]}}),1);
     assert.equal(await db.obligation.count({where:{organizationId:ids[0]}}),0,"monitoring cannot accept recommendations");
     assert.equal(await db.aiDailyUsage.count({where:{organizationId:ids[0]}}),0,"monitoring never reserves paid AI");
+    // Daily analysis capacity is a deferred stage, never a reason to disable a source.
+    const baselineRun=await db.intelligenceRun.findFirstOrThrow({where:{organizationId:ids[0]}});
+    const {id:runId,createdAt:runCreated,...runData}=baselineRun;
+    await db.intelligenceRun.createMany({data:Array.from({length:29},(_,i)=>({...runData,engineVersion:"quota-fixture-"+i,result:runData.result as any,profile:runData.profile as any}))});
+    await db.regulatorySnapshot.updateMany({where:{organizationId:ids[0]},data:{lastCheckedAt:new Date(0)}});
+    await due(saved.id);const limited=(await claimWatch())!;
+    const extra={...official,text:official.text+" A new publication version requires another independently reviewed analysis."};
+    assert.equal(await executeWatch(limited,async()=>extra),"ANALYSIS_DEFERRED");
+    const queued=await db.watchSchedule.findUniqueOrThrow({where:{id:saved.id}});
+    assert.equal(queued.enabled,true);assert.equal(queued.attempts,0);assert.equal(queued.failureCode,"ANALYSIS_DEFERRED");
+    await db.intelligenceRun.deleteMany({where:{organizationId:ids[0],engineVersion:{startsWith:"quota-fixture-"}}});
+    // Remove only this isolated scenario's changed snapshot and investigation.
+    await db.obligation.deleteMany({where:{organizationId:ids[0]}});
+    await db.auditEvent.deleteMany({where:{organizationId:ids[0],action:{in:["regulatory.source_text_changed","monitoring.source_review_task_created"]}}});
+    await db.regulatorySnapshot.deleteMany({where:{organizationId:ids[0],contentHash:{not:(await db.regulatorySnapshot.findUniqueOrThrow({where:{id:baselineRun.snapshotId}})).contentHash}}});
+    await db.regulatorySnapshot.update({where:{id:baselineRun.snapshotId},data:{lastCheckedAt:new Date()}});
     assert.equal(await claimWatch(),null);
     await due(saved.id);const old=(await claimWatch())!;
     await db.watchSchedule.update({where:{id:saved.id},data:{leaseUntil:new Date(Date.now()-1000)}});
@@ -49,7 +65,7 @@ test("monitoring leases, recovery, bounded retries, tenant isolation and revoked
       assert.equal(result,n===3?"ATTENTION":"FAILED");
     }
     const failed=await db.watchSchedule.findUniqueOrThrow({where:{id:saved.id}});
-    assert.equal(failed.enabled,false);assert.equal(failed.attempts,3);assert.equal(failed.failureCode,"CHECK_OR_ANALYSIS_FAILED");assert.deepEqual(failed.lastSuccessAt,lastSuccess);
+    assert.equal(failed.enabled,false);assert.equal(failed.attempts,3);assert.equal(failed.failureCode,"FETCH_FAILED");assert.deepEqual(failed.lastSuccessAt,lastSuccess);
     assert.equal((await listWatches(ctx))[0].state,"attention");
     const events=await db.auditEvent.findMany({where:{organizationId:ids[0],action:"monitoring.check_failed"}});assert.equal(events.length,3);assert.doesNotMatch(JSON.stringify(events),/secret raw/);
     await configureWatch(ctx,{...config,version:3});const revoked=(await claimWatch())!;

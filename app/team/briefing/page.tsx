@@ -1,4 +1,5 @@
 "use client";
+import WorkspaceNav from "../../components/workspace-nav";
 import {useCallback,useEffect,useState} from "react";
 import {browserAuth} from "../../../lib/client/supabase-auth";
 import {exportBriefCsv} from "../../../lib/operational-brief.mjs";
@@ -38,14 +39,7 @@ export default function Briefing(){
  },[orgId,request]);
  const summary=report?.summary;
  return <div className={shell.app}>
-  <aside className={shell.sidebar}><a className={shell.logo} href="/team/operations"><span className={shell.logoMark}>R</span><span>RegPilot <b>AI</b><small>COMPLIANCE INTELLIGENCE</small></span></a>
-   <div className={shell.sideCaption}>OPERATIONS</div><nav className={shell.sideNav} aria-label="Main navigation">
-    <a href="/team/operations">◉ &nbsp; Operations</a><a className={shell.active} href="/team/briefing" aria-current="page">✦ &nbsp; Weekly briefing</a>
-    <a href="/horizon">Horizon feed</a><a href="/team/coverage">◈ &nbsp; Source monitoring</a><a href="/team/sources">▤ &nbsp; Source history</a>
-    <a href="/team/intelligence">◇ &nbsp; Regulatory intelligence</a><a href="/team/changes">↗ &nbsp; Change response</a>
-    <a href="/team/assurance">▣ &nbsp; Independent evidence review</a></nav>
-   <div className={shell.sideFoot}><strong>Operational facts, not a compliance grade.</strong><p>Keep the source, responsible person, current evidence and decision visible at every stage.</p></div>
-  </aside>
+  <WorkspaceNav/>
   <main className={shell.main}>
    <div className={shell.topbar}><span className={shell.crumb}>RegPilot / Weekly briefing</span><span className={shell.demo}>PRIVATE WORKSPACE</span></div>
    <header className={ui.hero}><span>UK REGULATORY &amp; BUSINESS ASSURANCE</span><h1>What's changed.<br/><em>What needs doing.</em></h1><p>One seven-day briefing across recorded official-source text changes, pending human decisions, failed collection, connected evidence and upcoming team work.</p></header>

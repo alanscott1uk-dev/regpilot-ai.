@@ -1,4 +1,5 @@
 "use client";
+import WorkspaceNav from "../components/workspace-nav";
 import {useCallback,useEffect,useState} from "react";
 import EmailSignIn from "../components/email-sign-in";
 import {browserAuth} from "../../lib/client/supabase-auth";
@@ -85,12 +86,7 @@ export default function Team(){
  const canWrite=!!current&&current.role!=="VIEWER";
  const visible=items.filter(x=>(filter==="all"||x.status===filter)&&[x.title,x.ownerName,x.category].join(" ").toLowerCase().includes(search.toLowerCase()));
  return <div className={shell.app}>
-  <aside className={shell.sidebar}>
-   <a className={shell.logo} href="/workbench"><span className={shell.logoMark}>R</span><span>RegPilot <b>AI</b><small>PRIVATE TEAM PILOT</small></span></a>
-   <div className={shell.sideCaption}>WORKSPACE</div>
-   <nav className={shell.sideNav}><a href="/team/operations">◉ &nbsp;Operations</a><a href="/workbench">◉ &nbsp;Today's demo</a><a href="/ai">✦ &nbsp;AI Studio</a><a href="/traceability">◈ &nbsp;Traceability</a><a className={shell.active} href="/team" aria-current="page">▣ &nbsp;Secure team tasks</a><a href="/team/assurance">◎ &nbsp;Evidence assessment</a><a href="/team/intelligence">◈ &nbsp;Regulatory inbox</a><a href="/team/changes">Change response</a><a href="/team/evidence">◈ &nbsp;Evidence vault</a><a href="/team/sources">✦ &nbsp;Source history</a><a href="/assurance">◇ &nbsp;Review centre</a><a href="/team/settings">Team &amp; access</a><a href="/team/people">People &amp; policies</a><a href="/team/vendors">Vendor assurance</a><a href="/team/audit-requests">My audit requests</a><a href="/team/audits">Auditor workspace</a></nav>
-   <div className={shell.sideFoot}><strong>Private pilot only</strong><p>Work items are stored in a tenant-scoped database when this feature is enabled. Real sensitive records remain prohibited until security testing is complete.</p></div>
-  </aside>
+  <WorkspaceNav/>
   <main className={shell.main}>
    <div className={shell.topbar}><span className={shell.crumb}>Workspace / Team tasks</span><span className={shell.demo}>PRIVATE PILOT</span></div>
    <header className={ui.hero}><div><span className={ui.overline}>REGPILOT / TEAM OPERATIONS</span><h1>One team.<br/><em>Clear ownership.</em></h1><p>Authenticated work items, assigned responsibility, due dates and auditable changes. AI suggestions enter this queue only when a user deliberately accepts them.</p></div><span className={ui.heroMark}>R</span></header>
