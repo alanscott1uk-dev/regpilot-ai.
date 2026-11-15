@@ -16,14 +16,15 @@ const groups=[
  {label:"Settings & tools",links:[["Workspace setup","/team/setup"],["Team & access","/team/settings"],["Services & spending","/team/services"],["AI Studio","/ai"],["Explore demo","/workbench"]]}
 ];
 export default function WorkspaceNav(){
- const path=usePathname(),[view,setView]=useState("");
+ const path=usePathname(),[view,setView]=useState(""),[desktop,setDesktop]=useState(false);
+ useEffect(()=>{const media=window.matchMedia("(min-width:1051px)"),update=()=>setDesktop(media.matches);update();media.addEventListener("change",update);return()=>media.removeEventListener("change",update);},[]);
  useEffect(()=>{setView(new URLSearchParams(window.location.search).get("view")||"");},[path]);
  const current=path==="/team/operations"&&view?path+"?view="+view:path;
  const link=(label:string,href:string)=><a key={href} href={href} aria-current={current===href?"page":undefined}>{label}</a>;
  return <aside className={styles.sidebar}>
   <a className={styles.brand} href="/team/operations"><span aria-hidden="true">R</span><strong>RegPilot <small>Private workspace</small></strong></a>
   <nav className={styles.primary} aria-label="Main workspace">{primary.map(item=>link(item.label,item.href))}</nav>
-  <details className={styles.more} key={current} open={!primary.some(item=>item.href===current)}>
+  <details className={styles.more} key={current} open={desktop&&!primary.some(item=>item.href===current)}>
    <summary>More tools & settings</summary>
    {groups.map(group=><nav key={group.label} aria-label={group.label}><h2>{group.label}</h2>{group.links.map(([label,href])=>link(label,href))}</nav>)}
   </details>
