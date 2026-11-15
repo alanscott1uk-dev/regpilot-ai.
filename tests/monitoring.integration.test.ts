@@ -1,3 +1,4 @@
+import {Prisma} from "@prisma/client";
 import {checkOfficialSource} from "../lib/server/regulatory-watch";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -59,6 +60,11 @@ test("monitoring leases, recovery, bounded retries, tenant isolation and revoked
     assert.equal(await db.regulatorySnapshot.count({where:{organizationId:ids[0]}}),1,"paused in-flight work cannot write a snapshot");
     await configureWatch(ctx,{...config,version:2});
     const lastSuccess=(await db.watchSchedule.findUniqueOrThrow({where:{id:saved.id}})).lastSuccessAt;
+    await due(saved.id);const capacityJob=(await claimWatch())!;
+    assert.equal(await executeWatch(capacityJob,async()=>{throw new Prisma.PrismaClientKnownRequestError("private pool details",{code:"P2028",clientVersion:"fixture"});}),"WORKER_DEFERRED");
+    const deferred=await db.watchSchedule.findUniqueOrThrow({where:{id:saved.id}});
+    assert.equal(deferred.enabled,true);assert.equal(deferred.attempts,0);assert.equal(deferred.failureCode,"DATABASE_BUSY");
+    assert.deepEqual(deferred.lastSuccessAt,lastSuccess,"database pressure must not invent a successful collection");
     for(let n=1;n<=3;n++){
       await due(saved.id);const job=(await claimWatch())!;
       const result=await executeWatch(job,async()=>{throw new Error("secret raw provider error must not be stored");});

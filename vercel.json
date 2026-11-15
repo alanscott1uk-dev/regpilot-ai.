@@ -12,5 +12,8 @@
       "schedule": "0 6 * * *"
     }
   ],
-  "ignoreCommand": "git log -1 --format=%s | grep -Ex 'Activate pinned RegPilot public source watch|Activate RegPilot private automation worker'"
+  "ignoreCommand": "git log -1 --format=%s | grep -Ex 'Activate pinned RegPilot public source watch|Activate RegPilot private automation worker'",
+  "regions": [
+    "lhr1"
+  ]
 }

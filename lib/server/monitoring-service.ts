@@ -42,6 +42,21 @@ export async function claimWatch():Promise<WatchSchedule|null>{
 }
 class LeaseLost extends Error {}
 class PermissionLost extends Error {}
+/** Admission is a single read, not an interactive transaction competing with
+ * collection and maintenance for a reserved connection. Write transactions still
+ * lock and recheck the lease and membership through assertLease below. */
+async function checkLease(job:WatchSchedule){
+  if(!monitoringEnabled())throw new LeaseLost();
+  const rows=await db.$queryRaw<Array<{role:string|null;email:string|null}>>`
+    SELECT m.role::text AS role,u.email FROM "WatchSchedule" w
+    LEFT JOIN "Membership" m ON m."organizationId"=w."organizationId" AND m."userId"=w."configuredById"
+    LEFT JOIN "User" u ON u.id=m."userId"
+    WHERE w.id=${job.id}::uuid AND w."organizationId"=${job.organizationId}::uuid
+     AND w."configuredById"=${job.configuredById}::uuid AND w.enabled=true
+     AND w."leaseToken"=${job.leaseToken}::uuid AND w."leaseUntil">NOW()`;
+  if(!rows.length)throw new LeaseLost();
+  if(!rows[0].role||!['OWNER','ADMIN'].includes(rows[0].role)||!rows[0].email||!allowedEmail(rows[0].email,process.env.REGPILOT_AI_ALLOWED_EMAILS))throw new PermissionLost();
+}
 async function assertLease(tx:Prisma.TransactionClient,job:WatchSchedule){
   if(!monitoringEnabled())throw new LeaseLost();
   const rows=await tx.$queryRaw<Array<{id:string}>>`SELECT id FROM "WatchSchedule" WHERE id=${job.id}::uuid AND "organizationId"=${job.organizationId}::uuid AND enabled=true AND "leaseToken"=${job.leaseToken}::uuid AND "leaseUntil">NOW() FOR UPDATE`;
@@ -115,7 +130,7 @@ export async function reconcileSourceReviews(ctx:AuthorizedContext,job:WatchSche
 export async function executeWatch(job:WatchSchedule,loader?:Loader){
   let stage:'LEASE'|'RECOVERY'|'FETCH'|'ANALYSIS'|'FINISH'='LEASE';
   try{
-    await db.$transaction(tx=>assertLease(tx,job));
+    await checkLease(job);
     if(job.attempts>3)return await finish(job,"FAILED","INTERRUPTED_REPEATEDLY");
     const ctx:AuthorizedContext={organizationId:job.organizationId,userId:job.configuredById,role:"ADMIN"};
     const guard=(tx:Prisma.TransactionClient)=>assertLease(tx,job);
@@ -136,7 +151,7 @@ export async function executeWatch(job:WatchSchedule,loader?:Loader){
     if(await db.businessProfile.findUnique({where:{organizationId:job.organizationId}}))await createIntelligenceRun(ctx,checked.snapshot.id,guard);
     // Human review remains required; no paid AI, accepted legal decisions or outbound notifications.
     stage='FINISH';
-    await db.$transaction(tx=>assertLease(tx,job));
+    await checkLease(job);
     return await finish(job,recovered.backlog?"RECOVERY_BACKLOG":checked.state,null);
   }catch(error){
     if(error instanceof LeaseLost)return "SUPERSEDED";
@@ -149,6 +164,13 @@ export async function executeWatch(job:WatchSchedule,loader?:Loader){
       return changed.count?'ANALYSIS_DEFERRED':'SUPERSEDED';
     }
     const databaseCode=error instanceof Prisma.PrismaClientKnownRequestError&&/^P\d{4}$/.test(error.code)?error.code:null;
+    if(databaseCode==='P2028'||databaseCode==='P2024'){
+      // Capacity/transaction timeouts are infrastructure incidents, not evidence
+      // that the publication failed. Keep the schedule eligible for a later tick.
+      const changed=await db.watchSchedule.updateMany({where:{id:job.id,organizationId:job.organizationId,enabled:true,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},data:{leaseToken:null,leaseUntil:null,attempts:Math.max(0,job.attempts-1),lastOutcome:'WORKER_DEFERRED',failureCode:'DATABASE_BUSY',nextCheckAt:new Date(Date.now()+60000)}});
+      console.warn('monitoring.database_deferred',{stage,code:databaseCode});
+      return changed.count?'WORKER_DEFERRED':'SUPERSEDED';
+    }
     const code=error instanceof PermissionLost?'PERMISSION_REVOKED':databaseCode?stage+'_'+databaseCode:stage+'_FAILED';
     // Fixed stage/code only: never log tenant identities, credentials or raw errors.
     console.warn('monitoring.check_failed',{stage,code});
