@@ -1,2 +1,2 @@
-export type ConnectorHealthItem={id:string;provider:string;target:string;lastSuccessAt:string|null;status:string;reason:string;checksFailed:number;checksUnknown:number;observedVersion:number|null;version:number|null;intervalHours:number;href:string};
+export type ConnectorHealthItem={id:string;provider:string;target:string;lastSuccessAt:string|null;status:string;reason:string;checksFailed:number;checksUnknown:number;observedVersion:number|null;version:number|null;intervalHours:number;href:string;controls:{id:string;title:string}[]};
 export declare function connectorHealth(rows:readonly any[],now?:number):{items:ConnectorHealthItem[];total:number;observed:number;needsAttention:number;counts:Record<string,number>;notice:string};

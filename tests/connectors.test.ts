@@ -22,3 +22,43 @@ test("connector recovery separates temporary failures from credential, permissio
  assert.match(connectorRecovery("CREDENTIAL_REJECTED").message,/credential/);
  assert.match(connectorRecovery("RATE_LIMITED").message,/scheduled retry/);
 });
+
+import {reconcileObservation,signalChanges,observationCurrent,observationOutcome,type Observation} from '../lib/connectors/observation';
+const observation:Observation={engine:'fixture-v1',sourceUrl:'https://example.invalid/settings',capturedAt:'2026-11-15T00:00:00Z',checks:[{id:'access',label:'Access',status:'PASS',observed:'Restricted',nextStep:'Review scope'},{id:'review',label:'Review',status:'PASS',observed:'Required',nextStep:'Review scope'}],limitations:['Point-in-time configuration only']};
+test('disappearing signals stay unknown across repeated partial reads and recover only when returned',()=>{
+ const partial={...observation,checks:observation.checks.slice(0,1)};
+ const reconciled=reconcileObservation(partial,observation);
+ assert.equal(observationOutcome(reconciled),'INCOMPLETE');
+ assert.equal(reconciled.checks[1].status,'UNKNOWN');assert.match(reconciled.checks[1].observed,/Not returned/);
+ assert.deepEqual(reconcileObservation(partial,reconciled),reconciled);
+ assert.equal(signalChanges(reconciled,observation)[0].id,'review');
+ assert.equal(signalChanges(partial,observation)[0].after,'UNKNOWN');
+ assert.equal(observationOutcome(reconcileObservation(observation,reconciled)),'OBSERVED');
+ assert.equal(signalChanges(observation,reconciled)[0].after,'PASS');
+});
+test('new signals and engine changes require review without comparing incompatible engines',()=>{
+ assert.equal(signalChanges(observation,{...observation,checks:observation.checks.slice(0,1)})[0].before,'NOT_OBSERVED');
+ const upgraded={...observation,engine:'fixture-v2',checks:observation.checks.slice(0,1)};
+ assert.equal(signalChanges(upgraded,observation)[0].id,'collector-engine');
+ assert.equal(reconcileObservation(upgraded,observation).checks.length,1);
+ assert.deepEqual(signalChanges(observation,null),[]);
+});
+test('malformed or ambiguous collector observations cannot become evidence',()=>{
+ for(const bad of [{...observation,checks:[observation.checks[0],observation.checks[0]]},{...observation,checks:[{...observation.checks[0],status:'MAYBE'}]},{...observation,sourceUrl:'http://example.invalid'}, {...observation,checks:Array.from({length:201},(_,i)=>({...observation.checks[0],id:String(i)}))}])assert.throws(()=>reconcileObservation(bad as Observation,null));
+});
+test('connected evidence expires at the exact interval and rejects future or invalid captures',()=>{
+ const now=Date.parse('2026-11-15T12:00:00Z'),connector={version:1,enabled:true,failureCode:null,intervalHours:24};
+ for(const age of [-1,86400000,86400001,NaN])assert.equal(observationCurrent({configVersion:1,capturedAt:new Date(now-age)},connector,true,now),false);
+ assert.equal(observationCurrent({configVersion:1,capturedAt:new Date(now-86399999)},connector,true,now),true);
+ assert.equal(observationCurrent({configVersion:1,capturedAt:new Date(now)}, {...connector,intervalHours:168},true,now),true);
+});
+
+import {verifiedObservation} from '../lib/server/connector-observation';
+import {hashValue} from '../lib/regulatory/intelligence';
+test('stored evidence requires a valid shape, unique checks and matching outcome and signal hash',()=>{
+ const run={result:observation,resultHash:hashValue(observation),signalHash:hashValue({engine:observation.engine,checks:observation.checks}),outcome:'OBSERVED'};
+ assert.deepEqual(verifiedObservation(run),observation);
+ for(const patch of [{outcome:'FOLLOW_UP'},{signalHash:'0'.repeat(64)},{resultHash:'0'.repeat(64)}])assert.equal(verifiedObservation({...run,...patch}),null);
+ const duplicate={...observation,checks:[observation.checks[0],observation.checks[0]]};
+ assert.equal(verifiedObservation({...run,result:duplicate,resultHash:hashValue(duplicate),signalHash:hashValue({engine:duplicate.engine,checks:duplicate.checks})}),null);
+});

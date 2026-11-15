@@ -39,7 +39,7 @@ test("bounded pagination returns explicit incomplete coverage without reading ar
  const pages=Array.from({length:11},(_,i)=>({value:[record("user"+i)],"@odata.nextLink":endpoint+"?$skiptoken="+(i+1)})),f=fixture({pages}),r=await collectMicrosoft365(target,secret,f.fetcher);assert.equal(r.coverage.pages,10);assert.equal(r.coverage.complete,false);assert.equal(r.checks.find(c=>c.id==="member-mfa-registration")?.status,"UNKNOWN");assert.equal(f.calls.length,14);
 });
 test("change comparison excludes capture timestamps and distinguishes status/value changes",async()=>{
- const f=fixture(),r=await collectMicrosoft365(target,secret,f.fetcher),later={...r,capturedAt:"2099-01-01",checks:r.checks.map(c=>({...c}))};assert.deepEqual(signalChanges(later,r),[]);later.checks[1].status="FAIL";later.checks[1].observed="One returned member needs enrolment";assert.equal(signalChanges(later,r).length,1);assert.equal(signalChanges(later,r)[0].before,"PASS");assert.deepEqual(signalChanges({...later,engine:"another-version"},r),[]);assert.deepEqual(signalChanges(later,null),[]);
+ const f=fixture(),r=await collectMicrosoft365(target,secret,f.fetcher),later={...r,capturedAt:"2099-01-01",checks:r.checks.map(c=>({...c}))};assert.deepEqual(signalChanges(later,r),[]);later.checks[1].status="FAIL";later.checks[1].observed="One returned member needs enrolment";assert.equal(signalChanges(later,r).length,1);assert.equal(signalChanges(later,r)[0].before,"PASS");assert.equal(signalChanges({...later,engine:"another-version"},r)[0].id,"collector-engine");assert.deepEqual(signalChanges(later,null),[]);
 });
 
 test("aggregate-byte and record limits prevent unbounded collection or complete-coverage claims",async()=>{

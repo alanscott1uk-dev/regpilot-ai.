@@ -8,6 +8,8 @@ import {saveConnector,claimConnector,executeConnector} from '../lib/server/conne
 import {changeConnectorControl} from '../lib/server/connector-control-service';
 import {changeObservationChoices,assertChangeObservations} from '../lib/server/change-observations';
 import {operationsWorkspace} from '../lib/server/operations-service';
+import {getConnectorHealth} from '../lib/server/connector-health-service';
+import {exportConnectorRun} from '../lib/server/connector-service';
 import type {Observation} from '../lib/connectors/observation';
 
 test('one collection supports separate controls, evidence revocation and independently owned follow-up work',async()=>{
@@ -20,10 +22,10 @@ test('one collection supports separate controls, evidence revocation and indepen
   const [primary,second,third,fourth]=await Promise.all([create(x.ed.userId,'Connection ownership'),create(x.re.userId,'Access control'),create(x.ad.userId,'Change management'),create(x.ed.userId,'Additional monitoring')]);
   const config={provider:'GITHUB',repository:'fictional/shared',branch:'main',controlId:primary.id,version:0,token:'github_pat_'+'x'.repeat(32),enabled:true,intervalHours:24};
   const saved=await saveConnector(x.o,config);let reads=0;
-  async function collect(status:'PASS'|'FAIL'){
+  async function collect(status:'PASS'|'FAIL',omitReview=false){
    await db.evidenceConnector.update({where:{id:saved.id},data:{nextRunAt:new Date(0)}});
    const job=await claimConnector();assert.ok(job);assert.equal(job.id,saved.id);
-   const result:Observation={engine:'shared-fixture-1',sourceUrl:'https://github.com/fictional/shared',capturedAt:new Date().toISOString(),checks:[{id:'review',label:'Review setting',status,observed:status,nextStep:'Inspect relevance to this control'}],limitations:['Fictional configuration only; not a compliance verdict.']};
+   const result:Observation={engine:'shared-fixture-1',sourceUrl:'https://github.com/fictional/shared',capturedAt:new Date().toISOString(),checks:omitReview?[]:[{id:'review',label:'Review setting',status,observed:status,nextStep:'Inspect relevance to this control'}],limitations:['Fictional configuration only; not a compliance verdict.']};
    await executeConnector(job,async()=>{reads++;return result;});return db.connectorRun.findFirstOrThrow({where:{connectorId:saved.id},orderBy:[{capturedAt:'desc'},{id:'desc'}]});
   }
   const first=await collect('PASS');
@@ -47,6 +49,23 @@ test('one collection supports separate controls, evidence revocation and indepen
   await assert.rejects(()=>transaction(x.o,tx=>assertChangeObservations(tx,x.a.id,second.id,secondProof)),rejects(409));
   await transaction(x.o,async tx=>assertChangeObservations(tx,x.a.id,second.id,await changeObservationChoices(tx,x.a.id,second.id)));
   assert.equal(reads,1,'linking, unlinking and relinking must not fetch the provider or duplicate credentials');
+  const healthy=await getConnectorHealth(x.o);assert.equal(healthy.observed,1);assert.equal(healthy.items[0].controls.length,3);
+  assert.equal((await getConnectorHealth(x.out)).total,0,'affected control titles never cross tenant boundaries');
+  const partial=await collect('PASS',true);assert.equal(partial.outcome,'INCOMPLETE');
+  const partialHealth=await getConnectorHealth(x.o);assert.equal(partialHealth.observed,0);assert.equal(partialHealth.items[0].checksUnknown,1);
+  assert.equal(await db.obligation.count({where:{connectorId:saved.id,status:{not:'COMPLETE'}}}),3,'lost coverage notifies each current control owner');
+  const repeated=await collect('PASS',true);assert.equal(repeated.outcome,'INCOMPLETE');
+  assert.equal(await db.obligation.count({where:{connectorId:saved.id,status:{not:'COMPLETE'}}}),3,'continued missing coverage does not duplicate owner work');
+  const restored=await collect('PASS');assert.equal(restored.outcome,'OBSERVED');assert.equal((await getConnectorHealth(x.o)).observed,1);
+  const futureCapture=new Date(Date.now()+3600000);await db.connectorRun.update({where:{id:restored.id},data:{capturedAt:futureCapture}});
+  assert.equal((await getConnectorHealth(x.o)).items[0].status,'untrusted');
+  assert.equal((await exportConnectorRun(x.o,restored.id)).currentAtExport,false);
+  await db.connectorRun.update({where:{id:restored.id},data:{capturedAt:restored.capturedAt}});
+  await db.connectorRun.update({where:{id:restored.id},data:{signalHash:'0'.repeat(64)}});
+  assert.equal((await getConnectorHealth(x.o)).items[0].status,'untrusted','a correct result hash cannot hide a corrupted signal hash');
+  assert.equal((await exportConnectorRun(x.o,restored.id)).currentAtExport,false);
+  assert.deepEqual(await choices(primary.id),[]);
+  await db.connectorRun.update({where:{id:restored.id},data:{signalHash:restored.signalHash}});
   await collect('FAIL');let tasks=await db.obligation.findMany({where:{connectorId:saved.id,status:{not:'COMPLETE'}}});assert.equal(tasks.length,3);assert.deepEqual(new Set(tasks.map(t=>t.assigneeId)),new Set([x.ed.userId,x.re.userId,x.ad.userId]));
   await collect('FAIL');assert.equal(await db.obligation.count({where:{connectorId:saved.id,status:{not:'COMPLETE'}}}),3,'repeated failures do not duplicate open work');
   const before=reads;await changeConnectorControl(x.o,saved.id,link(fourth));assert.equal(reads,before);assert.equal(await db.obligation.count({where:{connectorId:saved.id,controlId:fourth.id,status:{not:'COMPLETE'}}}),1,'an already unhealthy source immediately alerts a newly linked owner');

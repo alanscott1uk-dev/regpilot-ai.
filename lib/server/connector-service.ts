@@ -1,3 +1,4 @@
+import {verifiedObservation} from './connector-observation';
 import {connectorRecovery} from "../connectors/recovery";
 import {claimFairConnector,claimManualConnectorLane,releaseDispatchLease} from "./fair-dispatch";
 import {acquireProviderPermit,settleProviderPermit} from "./provider-gate";
@@ -21,7 +22,7 @@ import {encryptConnectorSecret,decryptConnectorSecret} from "./connector-secret"
 import {collectGithub,githubTarget,CollectionError} from "../connectors/github";
 import {collectGoogleWorkspace,googleTarget,googleCredentials} from "../connectors/google-workspace";
 import {collectMicrosoft365,microsoftTarget} from "../connectors/microsoft365";
-import {observationOutcome,observationCurrent,signalChanges,type Observation} from "../connectors/observation";
+import {observationOutcome,observationCurrent,signalChanges,reconcileObservation,type Observation} from "../connectors/observation";
 import {hashValue} from "../regulatory/intelligence";
 const j=(v:unknown)=>v as Prisma.InputJsonValue;
 
@@ -168,16 +169,18 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector){
   }
   permit=admission.permit;
   const secret=decryptConnectorSecret(job.encryptedSecret,job.organizationId,job.id);
-  const result=await collector({provider:job.provider,repository:job.repository,branch:job.branch},secret).then(result=>{providerOutcome='SUCCESS';return result;},error=>{providerOutcome=error instanceof CollectionError?error.code:'NEUTRAL';throw error;});
-  const outcome=observationOutcome(result),signalHash=hashValue({engine:result.engine,checks:result.checks});
+  const result=await collector({provider:job.provider,repository:job.repository,branch:job.branch},secret).then(result=>reconcileObservation(result,null)).then(result=>{providerOutcome='SUCCESS';return result;},error=>{providerOutcome=error instanceof CollectionError?error.code:'NEUTRAL';throw error;});
   return await transaction(ctx,async tx=>{await assertJob(tx,job);
    const previous=await tx.connectorRun.findFirst({where:{organizationId:job.organizationId,connectorId:job.id},orderBy:[{capturedAt:"desc"},{id:"desc"}]});
-   const changes=previous&&previous.configVersion===job.version&&hashValue(previous.result)===previous.resultHash?signalChanges(result,previous.result as unknown as Observation):[];
-   const run=await tx.connectorRun.create({data:{organizationId:job.organizationId,connectorId:job.id,leaseToken:job.leaseToken!,configVersion:job.version,result:j(result),resultHash:hashValue(result),signalHash,outcome}});
+   const trustedPrevious=previous?.configVersion===job.version?verifiedObservation(previous):null;
+   const reconciled=reconcileObservation(result,trustedPrevious);
+   const outcome=observationOutcome(reconciled),signalHash=hashValue({engine:reconciled.engine,checks:reconciled.checks});
+   const changes=previous&&previous.configVersion===job.version&&hashValue(previous.result)===previous.resultHash?signalChanges(reconciled,previous.result as unknown as Observation):[];
+   const run=await tx.connectorRun.create({data:{organizationId:job.organizationId,connectorId:job.id,leaseToken:job.leaseToken!,configVersion:job.version,result:j(reconciled),resultHash:hashValue(reconciled),signalHash,outcome}});
    await enqueueConnectorEvent(tx,job,{kind:'CONNECTOR_OBSERVED',runId:run.id,fingerprint:signalHash,changed:changes.length>0});
    const current=await tx.evidenceConnector.findUniqueOrThrow({where:{id:job.id},select:{eventRevision:true}});
    await tx.evidenceConnector.update({where:{id:job.id},data:{leaseToken:null,leaseUntil:null,attempts:0,lastSuccessAt:new Date(),failureCode:null,collectedEventRevision:job.eventRevision,nextRunAt:new Date(Date.now()+(current.eventRevision>job.eventRevision?60000:job.intervalHours*3600000))}});
-   await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:"connector.evidence_collected",entityType:"EvidenceConnector",entityId:job.id,details:{outcome,resultHash:hashValue(result),configVersion:job.version,changedChecks:changes.map(c=>c.id)}}});return outcome;
+   await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:"connector.evidence_collected",entityType:"EvidenceConnector",entityId:job.id,details:{outcome,resultHash:hashValue(reconciled),configVersion:job.version,changedChecks:changes.map(c=>c.id)}}});return outcome;
   });
  }catch(error){
   if(error instanceof Superseded||!connectorProviderEnabled(job.provider))return "SUPERSEDED";
@@ -214,7 +217,7 @@ export async function runConnectorBatch(limit=2,parallelism=1,admissionDeadline=
 export async function exportConnectorRun(ctx:AuthorizedContext,id:string){
  return transaction(ctx,async tx=>{await requireMember(tx,ctx);const row=await tx.connectorRun.findFirst({where:{id,organizationId:ctx.organizationId},include:{connector:{select:{provider:true,version:true,enabled:true,lastSuccessAt:true,failureCode:true,intervalHours:true}}}});if(!row)throw new IntelligenceError("Observation not found",404);if(hashValue(row.result)!==row.resultHash)throw new IntelligenceError("Observation integrity check failed",409);
   const latest=await tx.connectorRun.findFirst({where:{organizationId:ctx.organizationId,connectorId:row.connectorId},orderBy:[{capturedAt:"desc"},{id:"desc"}],select:{id:true}});
-  const current=connectorProviderEnabled(row.connector.provider)&&observationCurrent(row,row.connector,latest?.id===row.id);
+  const current=!!verifiedObservation(row)&&connectorProviderEnabled(row.connector.provider)&&observationCurrent(row,row.connector,latest?.id===row.id);
   return {format:"regpilot-connector-observation-v1",id:row.id,capturedAt:row.capturedAt,result:row.result,resultHash:row.resultHash,currentAtExport:!!current,limitation:"Integrity hash is not a digital signature. A point-in-time observation does not establish compliance."};
  });
 }

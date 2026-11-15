@@ -98,6 +98,7 @@ export default function Coverage(){
        <div className={css.sourceTop}><span>{c.provider}</span><span className={css.state} data-state={c.status==="observed"?"current":c.status==="failed"?"failed":"stale"}>{c.status.replaceAll("-"," ")}</span></div>
        <h3>{c.target}</h3><p>{c.reason}</p>
        <small>{c.checksFailed} failing observations · {c.checksUnknown} unknown · last retrieved {format(c.lastSuccessAt)}</small>
+       {c.controls?.length>0&&<p>Used by {c.controls.length} active control{c.controls.length===1?'':'s'}: {c.controls.map(control=>control.title).join(', ')}. {c.status!=='observed'&&'Review these controls before relying on this connection.'}</p>}
        <a href={c.href}>Inspect connection and actual signals →</a>
       </article>)}</div>}
      <p className={css.disclaimer}>{connections.notice}</p></>}

@@ -39,3 +39,13 @@ test("empty inventory never indicates verified integration",()=>{
  const result=connectorHealth([],now);
  assert.equal(result.total,0);assert.equal(result.observed,0);assert.equal(result.needsAttention,0);
 });
+
+test("health uses the evidence approval deadline, rejects future records and preserves affected control scope",()=>{
+ for(const interval of [24,168]){
+  assert.equal(connectorHealth([row({intervalHours:interval,lastSuccessAt:hours(interval),lastCapturedAt:hours(interval)})],now).items[0].status,"stale");
+  assert.equal(connectorHealth([row({intervalHours:interval,lastSuccessAt:hours(interval-0.001),lastCapturedAt:hours(interval-0.001)})],now).observed,1);
+ }
+ for(const patch of [{lastSuccessAt:hours(-1)},{lastCapturedAt:hours(-1)},{integrityValid:undefined},{intervalHours:0}])assert.equal(connectorHealth([row(patch)],now).items[0].status,"untrusted");
+ const controls=[{id:"control-a",title:"Access review"},{id:"control-b",title:"Change management"}];
+ assert.deepEqual(connectorHealth([row({controls,failureCode:"UNAVAILABLE"})],now).items[0].controls,controls);
+});

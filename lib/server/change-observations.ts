@@ -1,3 +1,4 @@
+import {verifiedObservation} from './connector-observation';
 import {connectorControlScope} from './connector-scope';
 import type {Prisma} from '@prisma/client';
 import {connectedEvidenceSchema,type ConnectedEvidence} from '../connected-evidence';
@@ -12,7 +13,7 @@ export async function changeObservationChoices(tx:Tx,organizationId:string,contr
  const connectors=await tx.evidenceConnector.findMany({where:{organizationId,...connectorControlScope(controlId),enabled:true,control:{enabled:true}},take:20,
   select:{controlId:true,controlLinks:{where:{controlId,organizationId},select:{id:true,mappedById:true,rationale:true},take:1},id:true,configuredById:true,provider:true,repository:true,branch:true,version:true,enabled:true,failureCode:true,intervalHours:true,runs:{orderBy:[{capturedAt:'desc'},{id:'desc'}],take:1}}});
  return connectors.flatMap(c=>{
-  const r=c.runs[0];if(!r||!connectorProviderEnabled(c.provider)||r.outcome!=='OBSERVED'||!observationCurrent(r,c,true)||r.capturedAt>new Date()||hashValue(r.result)!==r.resultHash)return [];
+  const r=c.runs[0];if(!r||!connectorProviderEnabled(c.provider)||r.outcome!=='OBSERVED'||!observationCurrent(r,c,true)||r.capturedAt>new Date()||!verifiedObservation(r))return [];
   if(!r.result||typeof r.result!=='object'||Array.isArray(r.result))return [];
   const value=r.result as unknown as Observation;
   const parsed=connectedEvidenceSchema.safeParse({id:r.id,...(c.controlId!==controlId?{scopeLinkId:c.controlLinks[0]?.id,scopeMappedById:c.controlLinks[0]?.mappedById,scopeRationale:c.controlLinks[0]?.rationale}:{}),connectorId:c.id,configuredById:c.configuredById,provider:c.provider,label:connectorLabel(c),configVersion:r.configVersion,resultHash:r.resultHash,signalHash:r.signalHash,capturedAt:r.capturedAt.toISOString(),sourceUrl:value.sourceUrl,engine:value.engine,checks:value.checks,limitations:value.limitations});

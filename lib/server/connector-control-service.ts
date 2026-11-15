@@ -1,10 +1,10 @@
+import {verifiedObservation} from './connector-observation';
 import {z} from 'zod';
 import type {AuthorizedContext} from './authorization';
 import {transaction,IntelligenceError} from './intelligence-service';
 import {requireMember,ADMIN,WRITER} from './workspace-member';
 import {connectorsEnabled,connectorProviderEnabled} from './connector-flags';
 import {followUpConnectorControls} from './connector-reactions';
-import {hashValue} from '../regulatory/intelligence';
 import {observationCurrent} from '../connectors/observation';
 export const connectorControlSchema=z.discriminatedUnion('action',[
  z.object({action:z.literal('LINK'),version:z.number().int().positive(),controlId:z.uuid(),controlVersion:z.number().int().positive(),rationale:z.string().trim().min(30).max(1200),confirm:z.literal(true)}),
@@ -36,7 +36,7 @@ export async function changeConnectorControl(ctx:AuthorizedContext,id:string,inp
   const link=await tx.connectorControlLink.create({data:{organizationId:ctx.organizationId,connectorId:id,controlId:control.id,mappedById:ctx.userId,rationale:d.rationale}});
   const run=await tx.connectorRun.findFirst({where:{connectorId:id,organizationId:ctx.organizationId},orderBy:[{capturedAt:'desc'},{id:'desc'}]});
   // Attaching a new control to an already unhealthy source must not wait for another provider request.
-  if(!run||!connectorProviderEnabled(connector.provider)||!observationCurrent(run,connector,true)||hashValue(run.result)!==run.resultHash||run.outcome!=='OBSERVED')
+  if(!run||!connectorProviderEnabled(connector.provider)||!observationCurrent(run,connector,true)||!verifiedObservation(run)||run.outcome!=='OBSERVED')
    await followUpConnectorControls(tx,connector,'The newly linked connection has no current passing collection. Review its history and the scope relevant to this control.',[control.id]);
   await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,entityType:'EvidenceConnector',entityId:id,action:'connector.control_linked',details:{linkId:link.id,controlId:control.id,controlVersion:control.version,rationale:d.rationale}}});
   return {id:link.id,reused:false};

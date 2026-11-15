@@ -1,3 +1,4 @@
+import {verifiedObservation} from './connector-observation';
 import {connectorControlIds} from './connector-scope';
 import {Prisma,type EvidenceConnector,type AutomationEvent} from '@prisma/client';
 import {IntelligenceError} from './intelligence-service';
@@ -5,7 +6,7 @@ import {requireMember,ADMIN,WRITER} from './workspace-member';
 import {connectorProviderEnabled} from './connector-flags';
 import {followUpVendorSignals} from './vendor-signals';
 import {hashValue} from '../regulatory/intelligence';
-import {observationOutcome,type Observation} from '../connectors/observation';
+import {observationOutcome} from '../connectors/observation';
 export class ReactionInvalid extends Error {constructor(public code:'INPUT_INTEGRITY_FAILED'|'EVENT_KIND_UNSUPPORTED'){super('Automation input requires review');}}
 export class ReactionPaused extends Error{}
 export async function followUpConnectorControls(tx:Prisma.TransactionClient,job:EvidenceConnector,reason:string,onlyControlIds?:string[]){
@@ -32,7 +33,7 @@ export async function applyConnectorReaction(tx:Prisma.TransactionClient,event:A
  if(event.kind==='CONNECTOR_OBSERVED'){
   const run=event.runId?await tx.connectorRun.findFirst({where:{id:event.runId,organizationId:job.organizationId,connectorId:job.id,configVersion:event.configVersion}}):null;
   if(!run||hashValue(run.result)!==run.resultHash||run.signalHash!==event.fingerprint)throw new ReactionInvalid('INPUT_INTEGRITY_FAILED');
-  const observation=run.result as unknown as Observation;
+  const observation=verifiedObservation(run);
   if(!observation||!Array.isArray(observation.checks)||hashValue({engine:observation.engine,checks:observation.checks})!==run.signalHash)throw new ReactionInvalid('INPUT_INTEGRITY_FAILED');
   if(observationOutcome(observation)!==run.outcome)throw new ReactionInvalid('INPUT_INTEGRITY_FAILED');
   if(run.outcome!=='OBSERVED'||event.changed)await followUpConnectorControls(tx,job,event.changed?'Observed signals changed since the last collection. Check the before/after values and remaining gaps.':'The collection contains failing or unknown signals requiring investigation.');
