@@ -1,3 +1,4 @@
+import {PATCH as CONNECTION_ACTION} from "../app/api/workspace/connectors/[id]/route";
 import {GET as SETUP,POST as SAVE_SETUP} from "../app/api/workspace/setup/route";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -33,4 +34,12 @@ test("production cron and manual verification fail closed before any live provid
  const body=()=>new Request("https://example.invalid/verify",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({organizationId:id,version:1})});
  assert.equal((await VERIFY(body(),{params:Promise.resolve({id})})).status,503);
  assert.equal((await PORTFOLIO(new Request("https://example.invalid/monitoring/portfolio",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({organizationId:id,sourceIds:["uk-data-protection"],intervalHours:24,enabled:true})}))).status,503);
+});
+
+test("connection recovery authenticates before looking up a saved credential",async()=>{
+ const request=()=>new Request("https://example.invalid",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({organizationId:id,version:1,action:"RETRY"})});
+ process.env.REGPILOT_WORKSPACE_ENABLED="false";
+ assert.equal((await CONNECTION_ACTION(request(),{params:Promise.resolve({id})})).status,503);
+ process.env.REGPILOT_WORKSPACE_ENABLED="true";
+ assert.equal((await CONNECTION_ACTION(request(),{params:Promise.resolve({id})})).status,401);
 });

@@ -5,7 +5,7 @@ import {randomUUID} from "node:crypto";
 import {db} from "../lib/server/db";
 import {prepareProgramme,acceptProgramme,redactProgramme} from "../lib/server/programme-service";
 import {configureControl,mapControl,generateDueReviews,runReviewBatch} from "../lib/server/control-service";
-import {saveConnector,disconnectConnector,claimConnector,executeConnector,exportConnectorRun,requestConnectorRun} from "../lib/server/connector-service";
+import {saveConnector,disconnectConnector,claimConnector,executeConnector,exportConnectorRun,requestConnectorRun,retryConnector} from "../lib/server/connector-service";
 import {operationsWorkspace} from "../lib/server/operations-service";
 import {createEvidence,reviewEvidence} from "../lib/server/evidence-service";
 import type {EvidenceObjectStore} from "../lib/server/evidence-storage";
@@ -63,6 +63,32 @@ test("programme operations: scoped imports, independent acceptance, recurrence, 
   // Failure preserves last good observation but makes it stale; retries pause after three attempts.
   for(let attempt=0;attempt<3;attempt++){await db.evidenceConnector.update({where:{id:connector.id},data:{nextRunAt:new Date(0)}});const failJob=(await claimConnector())!;assert.equal(await executeConnector(failJob,async()=>{throw new CollectionError("ACCESS_OR_RATE_LIMIT");}),attempt===2?"ATTENTION":"RETRY_SCHEDULED");}
   connector=await db.evidenceConnector.findUniqueOrThrow({where:{id:connector.id}});assert.equal(connector.enabled,false);assert.ok(connector.lastSuccessAt);runs=await db.connectorRun.findMany({where:{connectorId:connector.id},orderBy:{capturedAt:"desc"}});assert.equal((await exportConnectorRun(reviewer,runs[0].id)).currentAtExport,false);
+  // Recovery retains the incident and secret, rechecks access, and grants only one extra attempt.
+  await assert.rejects(()=>retryConnector(uploader,connector.id,connector.version),(e:any)=>e.status===403);
+  await assert.rejects(()=>retryConnector(outside,connector.id,connector.version),(e:any)=>e.status===409);
+  await assert.rejects(()=>retryConnector(reviewer,connector.id,connector.version),(e:any)=>e.status===409,"ambiguous access failures require review");
+  await db.evidenceConnector.update({where:{id:connector.id},data:{failureCode:"PROVIDER_UNAVAILABLE"}});
+  await assert.rejects(()=>retryConnector(reviewer,connector.id,connector.version),(e:any)=>e.status===429,"cooldown is retained");
+  await db.evidenceConnector.update({where:{id:connector.id},data:{nextRunAt:new Date(0)}});
+  await db.managedControl.update({where:{id:controlId},data:{enabled:false}});
+  await assert.rejects(()=>retryConnector(reviewer,connector.id,connector.version),(e:any)=>e.status===409);
+  await db.managedControl.update({where:{id:controlId},data:{enabled:true}});
+  const recoveryPair=await Promise.allSettled([retryConnector(reviewer,connector.id,connector.version),retryConnector(reviewer,connector.id,connector.version)]);
+  assert.equal(recoveryPair.filter(r=>r.status==="fulfilled").length,1,"duplicate clicks cannot grant multiple retries");
+  let recovered=await db.evidenceConnector.findUniqueOrThrow({where:{id:connector.id}});
+  assert.equal(recovered.enabled,true);assert.equal(recovered.attempts,2);assert.equal(recovered.failureCode,"PROVIDER_UNAVAILABLE");
+  assert.equal(recovered.encryptedSecret,connector.encryptedSecret);assert.equal(recovered.lastSuccessAt?.getTime(),connector.lastSuccessAt?.getTime());
+  assert.equal((await exportConnectorRun(reviewer,runs[0].id)).currentAtExport,false);
+  const recoveryJob=(await claimConnector())!;
+  assert.equal(await executeConnector(recoveryJob,async()=>{throw new CollectionError("PROVIDER_UNAVAILABLE");}),"ATTENTION");
+  recovered=await db.evidenceConnector.findUniqueOrThrow({where:{id:connector.id}});assert.equal(recovered.enabled,false);assert.equal(recovered.attempts,3);
+  await db.evidenceConnector.update({where:{id:connector.id},data:{nextRunAt:new Date(0)}});
+  const resumed=await retryConnector(reviewer,connector.id,recovered.version);
+  assert.equal(await executeConnector(recoveryJob,async()=>{throw Error("stale job must not collect");}),"SUPERSEDED");
+  const recoveredJob=(await claimConnector())!;assert.equal(await executeConnector(recoveredJob,async()=>observation()),"OBSERVED");
+  connector=await db.evidenceConnector.findUniqueOrThrow({where:{id:connector.id}});
+  assert.equal(connector.version,resumed.version);assert.equal(connector.failureCode,null);assert.equal(connector.attempts,0);
+  assert.equal(await db.auditEvent.count({where:{organizationId:ids[0],entityId:connector.id,action:"connector.recovery_requested"}}),2);
   await saveConnector(reviewer,{...config,id:connector.id,version:connector.version});const rotating=(await claimConnector())!;const count=await db.connectorRun.count({where:{connectorId:connector.id}});
   assert.equal(await executeConnector(rotating,async()=>{await saveConnector(reviewer,{...config,id:connector.id,version:rotating.version,token:token+"rotated"});return observation();}),"SUPERSEDED");assert.equal(await db.connectorRun.count({where:{connectorId:connector.id}}),count);
   const revoking=(await claimConnector())!;assert.equal(await executeConnector(revoking,async()=>{await db.membership.update({where:{organizationId_userId:{organizationId:ids[0],userId:reviewer.userId}},data:{role:"VIEWER"}});return observation();}),"ATTENTION");assert.equal(await db.connectorRun.count({where:{connectorId:connector.id}}),count);

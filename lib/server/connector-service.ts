@@ -1,3 +1,4 @@
+import {connectorRecovery} from "../connectors/recovery";
 import {claimFairConnector,claimManualConnectorLane,releaseDispatchLease} from "./fair-dispatch";
 import {acquireProviderPermit,settleProviderPermit} from "./provider-gate";
 import type {ProviderPermit} from "@prisma/client";
@@ -85,6 +86,30 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
 }
 export async function disconnectConnector(ctx:AuthorizedContext,id:string,version:number){return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const changed=await tx.evidenceConnector.updateMany({where:{id,organizationId:ctx.organizationId,version},data:{enabled:false,encryptedSecret:null,encryptedWebhookSecret:null,webhookVersion:{increment:1},leaseToken:null,leaseUntil:null,version:{increment:1}}});if(!changed.count)throw new IntelligenceError("Connector changed",409);await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"connector.disconnected",entityType:"EvidenceConnector",entityId:id,details:{}}});return {id};});}
 export async function requestConnectorRun(ctx:AuthorizedContext,id:string,version:number){return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const row=await tx.evidenceConnector.findFirst({where:{id,organizationId:ctx.organizationId,version,enabled:true}});if(!row)throw new IntelligenceError("Active connector not found or changed",409);if(row.failureCode==="RATE_LIMITED"&&row.nextRunAt>new Date())throw new IntelligenceError("The provider requested a cooldown. Collection can resume after the scheduled retry time.",429);if(row.leaseUntil&&row.leaseUntil>new Date())throw new IntelligenceError("A collection is already running",409);if(row.lastSuccessAt&&Date.now()-row.lastSuccessAt.getTime()<300000)throw new IntelligenceError("Wait five minutes between successful collections",429);await tx.evidenceConnector.update({where:{id},data:{nextRunAt:new Date()}});return {id};});}
+/** Re-arm one failed paused connector without rotating secrets or erasing its incident. */
+export async function retryConnector(ctx:AuthorizedContext,id:string,version:number){
+ if(!connectorsEnabled())throw new IntelligenceError("Evidence collectors await activation",503);
+ if(!z.uuid().safeParse(id).success||!Number.isInteger(version)||version<1)throw new IntelligenceError("Invalid connector selection");
+ return transaction(ctx,async tx=>{
+  await requireMember(tx,ctx,ADMIN);
+  const row=await tx.evidenceConnector.findFirst({where:{id,organizationId:ctx.organizationId,version}});
+  if(!row)throw new IntelligenceError("Connection not found or settings changed",409);
+  if(row.enabled||!row.failureCode)throw new IntelligenceError("Only a paused failed connection can be recovered",409);
+  if(!connectorProviderEnabled(row.provider)||!row.encryptedSecret)throw new IntelligenceError("An enabled provider and stored credential are required",409);
+  const recovery=connectorRecovery(row.failureCode);
+  if(!recovery.retryable)throw new IntelligenceError(recovery.message,409);
+  const now=new Date();
+  if(row.leaseUntil&&row.leaseUntil>now)throw new IntelligenceError("A collection is already running",409);
+  if(row.nextRunAt>now)throw new IntelligenceError("Wait until the scheduled retry time before another recovery attempt",429);
+  const control=await tx.managedControl.findFirst({where:{id:row.controlId,organizationId:ctx.organizationId,enabled:true}});
+  if(!control)throw new IntelligenceError("Enable the responsible control before recovering this connection",409);
+  await requireMember(tx,{organizationId:ctx.organizationId,userId:control.ownerId,role:"EDITOR"},["OWNER","ADMIN","EDITOR"]);
+  const changed=await tx.evidenceConnector.updateMany({where:{id,organizationId:ctx.organizationId,version,enabled:false,failureCode:row.failureCode,OR:[{leaseUntil:null},{leaseUntil:{lte:now}}]},data:{enabled:true,configuredById:ctx.userId,attempts:2,nextRunAt:now,leaseToken:null,leaseUntil:null,version:{increment:1}}});
+  if(changed.count!==1)throw new IntelligenceError("Connection changed; refresh before retrying",409);
+  await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"connector.recovery_requested",entityType:"EvidenceConnector",entityId:id,details:{previousFailureCode:row.failureCode,previousVersion:version,version:version+1,maxAdditionalAttempts:1}}});
+  return {id,version:version+1};
+ });
+}
 /**
  * Read-only, operator-triggered LIVE provider verification.
  * Claims only the exact organisation-scoped connection, never an unrelated queued job.

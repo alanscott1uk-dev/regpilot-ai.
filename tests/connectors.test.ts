@@ -1,3 +1,4 @@
+import {connectorRecovery} from "../lib/connectors/recovery";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {collectGithub,connectorOutcome,githubTarget} from "../lib/connectors/github";
@@ -12,3 +13,12 @@ for(const status of [401,403,429,500])test("provider "+status+" fails without st
 test("provider JSON, size and target mismatch are checked",async()=>{for(const response of [new Response("not-json"),new Response("x".repeat(65537)),Response.json({full_name:"other/repository"})])await assert.rejects(()=>collectGithub(target,token,(async()=>response) as typeof fetch));});
 test("connector targets cannot select arbitrary hosts or traversal paths",()=>{for(const repository of ["https://evil.invalid/x","../repo","owner/..","owner/repo?x=y","owner/repo/extra"])assert.equal(githubTarget.safeParse({...target,repository}).success,false);for(const branch of ["../main","x?token=y","x#y"])assert.equal(githubTarget.safeParse({...target,branch}).success,false);});
 test("encrypted credentials are authenticated, randomised and bound to organisation and row",()=>{process.env.REGPILOT_CONNECTOR_ENCRYPTION_KEY="ab".repeat(32);const a=encryptConnectorSecret(token,"org-a","connector-a"),b=encryptConnectorSecret(token,"org-a","connector-a");assert.notEqual(a,b);assert.doesNotMatch(a,/fixture-not-a-real-token/);assert.equal(decryptConnectorSecret(a,"org-a","connector-a"),token);assert.throws(()=>decryptConnectorSecret(a,"org-b","connector-a"));assert.throws(()=>decryptConnectorSecret(a,"org-a","connector-b"));const parts=a.split(".");parts[3]=Buffer.from("tampered").toString("base64");assert.throws(()=>decryptConnectorSecret(parts.join("."),"org-a","connector-a"));process.env.REGPILOT_CONNECTOR_ENCRYPTION_KEY="invalid";assert.throws(()=>encryptConnectorSecret(token,"org-a","connector-a"));});
+
+test("connector recovery separates temporary failures from credential, permission and unknown failures",()=>{
+ for(const code of ["PROVIDER_TIMEOUT","PROVIDER_UNAVAILABLE","COLLECTION_FAILED","INTERRUPTED_REPEATEDLY"])
+  assert.equal(connectorRecovery(code).retryable,true);
+ for(const code of [null,"CREDENTIAL_REJECTED","PERMISSION_REVOKED","RATE_LIMITED","TARGET_MISMATCH","ACCESS_OR_RATE_LIMIT","UNRECOGNISED_CODE"])
+  assert.equal(connectorRecovery(code).retryable,false);
+ assert.match(connectorRecovery("CREDENTIAL_REJECTED").message,/credential/);
+ assert.match(connectorRecovery("RATE_LIMITED").message,/scheduled retry/);
+});
