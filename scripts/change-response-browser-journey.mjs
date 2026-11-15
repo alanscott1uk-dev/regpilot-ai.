@@ -12,7 +12,7 @@ export async function changeResponseJourney(browser,base,viewport,name){
  await context.route('https://auth-fixture.example.invalid/**',r=>r.fulfill({json:{user:session.user}}));
  await context.route('**/api/ai/analyse',r=>r.fulfill({json:{workspaceEnabled:true}}));
  await context.route('**/api/ai/context',r=>r.fulfill({json:{email:session.user.email,userId:asReviewer?reviewer:user,organisations:[{id:other,name:'Other fictional workspace',role:'EDITOR'},{id:org,name:'Requested fictional workspace',role:asReviewer?'ADMIN':'EDITOR'}]}}));
- await context.route('**/api/workspace/changes**',async r=>{
+ await context.route(/\/api\/workspace\/changes(?:\/|\?)/,async r=>{
   const req=r.request(),url=new URL(req.url());
   if(req.method()==='PATCH'){const b=req.postDataJSON();writes.push(b);if(b.action==='SUBMIT'){submission={notes:b.notes,files:[],observations:[observation],mappings:[],submittedAt:now};status='SUBMITTED';}else if(b.action==='ACCEPT')status='ACCEPTED';version++;return r.fulfill({json:{id:action}});}
   if(url.pathname==='/api/workspace/changes')return r.fulfill({json:{responses:url.searchParams.get('organizationId')===org?[{id:response,title:'Fictional training response',status:'ACTIVE',createdAt:now,_count:{actions:1}}]:[],sources:[],evidence:[],admin:asReviewer,enabled:true}});
@@ -38,5 +38,5 @@ export async function changeResponseJourney(browser,base,viewport,name){
   const overflow=await page.evaluate(()=>Math.max(0,document.documentElement.scrollWidth-innerWidth));assert.ok(overflow<=3,'change response overflow '+overflow);
   await mkdir('artifacts/usability',{recursive:true});await page.screenshot({path:'artifacts/usability/change-response-'+name+'.png',fullPage:true});
   assert.deepEqual(errors,[]);return {scenario:'change-response-'+name,passed:true,steps:12,overflowPx:overflow,testType:'fictional UI fixture; live authorization separately tested'};
- }finally{await context.close();}
+ }catch(e){await mkdir('artifacts/usability',{recursive:true});await page.screenshot({path:'artifacts/usability/change-response-'+name+'-failure.png',fullPage:true}).catch(()=>{});throw new Error(e.message+'\nClient errors: '+JSON.stringify(errors)+'\nVisible page: '+(await page.locator('body').innerText()).slice(-6000));}finally{await context.close();}
 }
