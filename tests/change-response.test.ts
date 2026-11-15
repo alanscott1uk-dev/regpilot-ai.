@@ -15,6 +15,9 @@ test("shared-control benchmark: 100 requirements across four collections produce
 test("response decisions require explicit acknowledgement, bounded rationale, dates and unique evidence",()=>{
  const id=randomUUID(),base={action:"SUBMIT",version:1,notes:"A fictional resolution with sufficient detail to explain the changed control, its evidence and limits.",evidenceIds:[id],confirm:true};assert.ok(changeActionSchema.safeParse(base).success);
  for(const invalid of [{...base,confirm:false},{...base,evidenceIds:[id,id]},{...base,evidenceIds:[]},{...base,notes:"Done"},{...base,version:0}])assert.equal(changeActionSchema.safeParse(invalid).success,false);
+ assert.ok(changeActionSchema.safeParse({...base,evidenceIds:[],observationIds:[id]}).success);
+ assert.ok(changeActionSchema.safeParse({...base,observationIds:[id]}).success);
+ for(const observationIds of [[id,id],Array.from({length:11},()=>randomUUID())])assert.equal(changeActionSchema.safeParse({...base,observationIds}).success,false);
  assert.equal(closeChangeSchema.safeParse({version:1,contextHash:"a".repeat(64),notes:base.notes,dependenciesReviewed:false,confirm:true}).success,false);
  assert.equal(createChangeSchema.safeParse({snapshotId:id,previewHash:"a".repeat(64),dueDate:"2026-02-30",confirm:true}).success,false);
 });

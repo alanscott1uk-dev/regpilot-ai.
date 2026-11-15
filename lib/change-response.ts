@@ -12,7 +12,7 @@ export const changePlanSchema=z.object({
 export type ChangePlan=z.infer<typeof changePlanSchema>;
 export const createChangeSchema=z.object({snapshotId:z.uuid(),previewHash:z.string().regex(/^[a-f0-9]{64}$/),dueDate:z.iso.date(),confirm:z.literal(true)});
 export const changeActionSchema=z.discriminatedUnion("action",[
- z.object({action:z.literal("SUBMIT"),version:z.number().int().positive(),notes:z.string().trim().min(60).max(1600),evidenceIds:z.array(z.uuid()).min(1).max(10).refine(v=>new Set(v).size===v.length),confirm:z.literal(true)}),
+ z.object({action:z.literal("SUBMIT"),version:z.number().int().positive(),notes:z.string().trim().min(60).max(1600),evidenceIds:z.array(z.uuid()).max(10).refine(v=>new Set(v).size===v.length),observationIds:z.array(z.uuid()).max(10).refine(v=>new Set(v).size===v.length).default([]),confirm:z.literal(true)}).refine(v=>v.evidenceIds.length+v.observationIds.length>0,'Select approved files or connected evidence'),
  z.object({action:z.enum(["ACCEPT","RETURN"]),version:z.number().int().positive(),notes:z.string().trim().min(60).max(1600),confirm:z.literal(true)})
 ]);
 export const closeChangeSchema=z.object({version:z.number().int().positive(),contextHash:z.string().regex(/^[a-f0-9]{64}$/),notes:z.string().trim().min(60).max(1600),dependenciesReviewed:z.literal(true),confirm:z.literal(true)});

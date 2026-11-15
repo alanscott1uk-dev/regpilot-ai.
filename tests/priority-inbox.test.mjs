@@ -1,6 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {priorityInbox, firstRunSteps} from "../lib/priority-inbox.mjs";
+import {priorityInbox, firstRunSteps,taskDestination} from "../lib/priority-inbox.mjs";
+
+test("change actions open the exact response and action ahead of generic evidence routing",()=>{
+ const task={id:"task",originKey:"response",changeAction:{id:"action",responseId:"response"}};
+ assert.equal(taskDestination(task,"org"),"/team/changes?organizationId=org&responseId=response&actionId=action");
+ const q=priorityInbox({organizationId:"org",tasks:[{...task,title:"Resolve source update",status:"OPEN"}]});
+ assert.equal(q.items[0].href,taskDestination(task,"org"));
+ assert.equal(q.items[0].kind,"Change response");
+ assert.equal(taskDestination({...task,changeAction:null},"org"),"/team/assurance?organizationId=org&taskId=task");
+ assert.equal(taskDestination({id:"task"},"org"),"/team?taskId=task");
+ assert.ok(taskDestination({...task,changeAction:{id:"a&b",responseId:"r?x"}},"o&x").includes("organizationId=o%26x&responseId=r%3Fx&actionId=a%26b"));
+});
 
 const fixture = () => ({
  organizationId:"01234567-89ab-4cde-8f01-123456789abc",generatedAt:"2026-11-09T11:00:00Z",
