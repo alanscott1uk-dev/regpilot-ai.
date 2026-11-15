@@ -140,7 +140,7 @@ export default function Workbench(){
      <p>One clear picture of what matters, what needs evidence and what your team should do next.</p>
      <div className={ui.heroButtons}>
       <a className={ui.heroPrimary} href="/team/operations">Open your team workspace <span>↗</span></a>
-      <button type="button" className={ui.heroGhost} onClick={()=>{setShowCreate(x=>!x);setMessage("");}}>{showCreate?"Close action form":"＋ Try a demo task"} <span>↗</span></button>
+      <button type="button" disabled={!ready} className={ui.heroGhost} onClick={()=>{setShowCreate(x=>!x);setMessage("");}}>{showCreate?"Close action form":"＋ Try a demo task"} <span>↗</span></button>
      </div>
      <div className={ui.heroTrust}><span>✦ Guided work</span><span>◈ Evidence connected</span><span>◉ Clear ownership</span></div>
     </div>
