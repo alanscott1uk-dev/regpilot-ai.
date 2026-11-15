@@ -5,6 +5,7 @@ import {observationCurrent,observationOutcome,connectorLabel,type Observation} f
 import {connectorProviderEnabled} from './connector-flags';
 import {IntelligenceError} from './intelligence-service';
 type Tx=Prisma.TransactionClient;
+const evidenceMeaning=(p:ConnectedEvidence)=>hashValue({sourceUrl:p.sourceUrl,engine:p.engine,checks:p.checks,limitations:p.limitations});
 /** Only observations attached to this action's control can be offered as evidence. */
 export async function changeObservationChoices(tx:Tx,organizationId:string,controlId:string){
  const connectors=await tx.evidenceConnector.findMany({where:{organizationId,controlId,enabled:true,control:{enabled:true}},take:20,
@@ -32,7 +33,7 @@ export async function assertChangeObservations(tx:Tx,organizationId:string,contr
   const original=originals.find(r=>r.id===proof.id),current=latest.find(r=>r.connectorId===proof.connectorId);
   // An unchanged fresh collection maintains validity; a changed signal, revoked
   // connection, failed read or credential/configuration rotation requires review.
-  if(!original||original.connectorId!==proof.connectorId||hashValue(original.result)!==proof.resultHash||original.resultHash!==proof.resultHash||original.signalHash!==proof.signalHash||original.configVersion!==proof.configVersion||!current||current.configVersion!==proof.configVersion||current.signalHash!==proof.signalHash)
+  if(!original||original.connectorId!==proof.connectorId||hashValue(original.result)!==proof.resultHash||original.resultHash!==proof.resultHash||original.signalHash!==proof.signalHash||original.configVersion!==proof.configVersion||!current||current.configVersion!==proof.configVersion||current.signalHash!==proof.signalHash||evidenceMeaning(current)!==evidenceMeaning(proof))
    throw new IntelligenceError('Connected evidence changed or is no longer current. Refresh the connection and submit the current observation for review.',409);
  }
 }
