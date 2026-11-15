@@ -9,6 +9,22 @@ import {collectCloudflare} from '../lib/connectors/cloudflare';
 import {collectCompaniesHouse} from '../lib/connectors/companies-house';
 import {collectVercel,collectSupabase} from '../lib/connectors/infrastructure';
 import {requestOAuthToken} from '../lib/connectors/oauth-request';
+import {providerLimits} from '../lib/connectors/capacity';
+
+test('provider capacity defaults remain bounded and each provider can be configured independently',()=>{
+ assert.deepEqual(providerLimits('GITHUB',undefined),{maxConcurrent:4,perWorkspace:2});
+ const config=JSON.stringify({GITHUB:{maxConcurrent:8,perWorkspace:2},MICROSOFT365:{maxConcurrent:2,perWorkspace:1}});
+ assert.deepEqual(providerLimits('GITHUB',config),{maxConcurrent:8,perWorkspace:2});
+ assert.deepEqual(providerLimits('MICROSOFT365',config),{maxConcurrent:2,perWorkspace:1});
+ assert.deepEqual(providerLimits('SUPABASE',config),{maxConcurrent:4,perWorkspace:2});
+});
+test('invalid provider limits fail closed rather than silently allowing unbounded calls',()=>{
+ for(const raw of ['', 'null', '[]', 'true', '{', '{"UNKNOWN":{"maxConcurrent":4,"perWorkspace":1}}', '{"__proto__":{}}', ' '.repeat(4097),
+  ...[0,17,1.5,'8',null].map(max=>JSON.stringify({GITHUB:{maxConcurrent:max,perWorkspace:1}})),
+  ...[0,5,'2',null].map(per=>JSON.stringify({GITHUB:{maxConcurrent:4,perWorkspace:per}})),
+  JSON.stringify({GITHUB:{maxConcurrent:4,perWorkspace:2,unexpected:true}})])assert.throws(()=>providerLimits('GITHUB',raw));
+ assert.throws(()=>providerLimits('UNKNOWN','{}'));
+});
 const token='synthetic-credential-never-sent-to-network';
 const adapters:Array<{name:string;oauth?:boolean;run:(fetcher:typeof fetch)=>Promise<unknown>}>= [
  {name:'GitHub',run:f=>collectGithub({repository:'synthetic/project',branch:'main'},'github_pat_'+'a'.repeat(30),f)},

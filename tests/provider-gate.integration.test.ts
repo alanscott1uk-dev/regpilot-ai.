@@ -8,6 +8,44 @@ const providers=['GITHUB','MICROSOFT365','GOOGLE_WORKSPACE','GITLAB','CLOUDFLARE
 async function admitted(provider:string,scope=randomUUID()){
  const result=await acquireProviderPermit(provider,scope);assert.ok(result.allowed);return result.permit;
 }
+test('configured capacity isolates busy workspaces, drains safely on reduction and keeps a single recovery probe',async()=>{
+ const before=process.env.REGPILOT_PROVIDER_LIMITS;
+ await db.providerGate.deleteMany();
+ const configure=(maxConcurrent:number,perWorkspace:number)=>{process.env.REGPILOT_PROVIDER_LIMITS=JSON.stringify({GITHUB:{maxConcurrent,perWorkspace}});};
+ try{
+  configure(6,2);
+  const busy=randomUUID();
+  const attempts=await Promise.all(Array.from({length:12},()=>acquireProviderPermit('GITHUB',busy)));
+  const first=attempts.flatMap(r=>r.allowed?[r.permit]:[]);
+  assert.equal(first.length,2,'one customer cannot consume the whole provider allowance');
+  const others=await Promise.all(Array.from({length:12},()=>acquireProviderPermit('GITHUB',randomUUID())));
+  const rest=others.flatMap(r=>r.allowed?[r.permit]:[]);assert.equal(rest.length,4);
+  assert.equal(await db.providerPermit.count({where:{provider:'GITHUB'}}),6);
+  const health=(await providerGateHealth(['GITHUB','SUPABASE']));
+  assert.equal(health[0].maxConcurrent,6);assert.equal(health[0].perWorkspace,2);assert.equal(health[1].maxConcurrent,4);
+  configure(2,1);
+  assert.equal((await acquireProviderPermit('GITHUB',randomUUID())).allowed,false);
+  await Promise.all([...first,...rest].slice(0,5).map(p=>settleProviderPermit(p,'SUCCESS')));
+  const replacement=await admitted('GITHUB');
+  assert.equal((await acquireProviderPermit('GITHUB',randomUUID())).allowed,false);
+  await settleProviderPermit(rest[3],'SUCCESS');await settleProviderPermit(replacement,'SUCCESS');
+  configure(8,2);
+  for(let i=0;i<3;i++)await settleProviderPermit(await admitted('GITHUB'),'PROVIDER_UNAVAILABLE');
+  await db.providerGate.update({where:{provider:'GITHUB'},data:{openUntil:new Date(0)}});
+  const probes=await Promise.all(Array.from({length:16},()=>acquireProviderPermit('GITHUB',randomUUID())));
+  const allowed=probes.flatMap(r=>r.allowed?[r.permit]:[]);assert.equal(allowed.length,1,'larger capacity never multiplies outage probes');
+  await settleProviderPermit(allowed[0],'SUCCESS');
+  const scaled=await Promise.all(Array.from({length:16},()=>acquireProviderPermit('GITHUB',randomUUID())));
+  const live=scaled.flatMap(r=>r.allowed?[r.permit]:[]);assert.equal(live.length,8);
+  await Promise.all(live.map(p=>settleProviderPermit(p,'SUCCESS')));
+  assert.equal(await db.providerPermit.count(),0);
+  process.env.REGPILOT_PROVIDER_LIMITS='{"GITHUB":{"maxConcurrent":100,"perWorkspace":1}}';
+  await assert.rejects(()=>acquireProviderPermit('GITHUB',randomUUID()));assert.equal(await db.providerPermit.count(),0);
+ }finally{
+  if(before===undefined)delete process.env.REGPILOT_PROVIDER_LIMITS;else process.env.REGPILOT_PROVIDER_LIMITS=before;
+  await db.providerGate.deleteMany();
+ }
+});
 test('distributed provider limits hold across 1,280 concurrent admission attempts without blocking unrelated providers',async t=>{
  await db.providerGate.deleteMany();const started=performance.now();let allowed=0,deferred=0;
  try{

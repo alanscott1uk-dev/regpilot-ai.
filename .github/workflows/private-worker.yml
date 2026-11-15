@@ -21,11 +21,13 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: 26c68523ed2eeab058f2976df41fd0ccaca8f4b4
+          ref: ${{ github.sha }}
           persist-credentials: false
           sparse-checkout: scripts/invoke-private-worker.py
           sparse-checkout-cone-mode: false
       - name: Invoke authenticated bounded worker
+        env:
+          REGPILOT_WORKER_SLOTS: ${{ vars.REGPILOT_WORKER_SLOTS || '1' }}
         run: python scripts/invoke-private-worker.py
   verify-health:
     needs: invoke

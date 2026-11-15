@@ -1,18 +1,19 @@
 import type {Prisma,ProviderPermit} from '@prisma/client';
 import {randomUUID,createHash} from 'node:crypto';
 import {db} from './db';
+import {PROVIDERS,providerLimits} from '../connectors/capacity';
 
-const PROVIDERS=['GITHUB','MICROSOFT365','GOOGLE_WORKSPACE','GITLAB','CLOUDFLARE','COMPANIES_HOUSE','VERCEL','SUPABASE'];
-const CAPACITY=4,LEASE_MS=90000,FAILURE_WINDOW_MS=60000;
+const LEASE_MS=90000,FAILURE_WINDOW_MS=60000;
 // Credential errors and tenant-specific quotas must never trip a shared circuit.
 const OUTAGES=new Set(['PROVIDER_TIMEOUT','PROVIDER_UNAVAILABLE']);
 export type ProviderAdmission={allowed:true;permit:ProviderPermit}|{allowed:false;reason:'PROVIDER_BUSY'|'PROVIDER_CIRCUIT_OPEN';retryAt:Date};
 async function lock(tx:Prisma.TransactionClient,provider:string){
- if(!PROVIDERS.includes(provider))throw Error('Unsupported provider gate');
- await tx.$executeRaw`SELECT pg_advisory_xact_lock(710241115,${PROVIDERS.indexOf(provider)}::integer)`;
+ if(!(PROVIDERS as readonly string[]).includes(provider))throw Error('Unsupported provider gate');
+ await tx.$executeRaw`SELECT pg_advisory_xact_lock(710241115,${(PROVIDERS as readonly string[]).indexOf(provider)}::integer)`;
  return tx.providerGate.upsert({where:{provider},create:{provider},update:{}});
 }
 export async function acquireProviderPermit(provider:string,organizationId:string):Promise<ProviderAdmission>{
+ const limits=providerLimits(provider);
  const scopeHash=createHash('sha256').update(organizationId).digest('hex');
  return db.$transaction(async tx=>{
   const gate=await lock(tx,provider),now=new Date();
@@ -21,7 +22,9 @@ export async function acquireProviderPermit(provider:string,organizationId:strin
   if(gate.probeUntil&&gate.probeUntil>now)return {allowed:false,reason:'PROVIDER_CIRCUIT_OPEN',retryAt:gate.probeUntil};
   const probe=!!gate.openUntil;
   const active=await tx.providerPermit.count({where:{provider,expiresAt:{gt:now}}});
-  if(active>=(probe?1:CAPACITY))return {allowed:false,reason:'PROVIDER_BUSY',retryAt:new Date(now.getTime()+5000)};
+  // A larger paid/provider allowance must not let one workspace occupy every slot.
+  const scoped=await tx.providerPermit.count({where:{provider,scopeHash,expiresAt:{gt:now}}});
+  if(active>=(probe?1:limits.maxConcurrent)||scoped>=limits.perWorkspace)return {allowed:false,reason:'PROVIDER_BUSY',retryAt:new Date(now.getTime()+5000)};
   const token=randomUUID(),expiresAt=new Date(now.getTime()+LEASE_MS);
   // New probe generations fence late results from an expired probe.
   const generation=probe?gate.generation+1:gate.generation;
@@ -60,5 +63,5 @@ export async function settleProviderPermit(permit:ProviderPermit,outcome:'SUCCES
 export async function providerGateHealth(providers:string[]){
  const rows=await db.providerGate.findMany({where:{provider:{in:providers}}});
  const now=new Date();
- return providers.map(provider=>{const row=rows.find(r=>r.provider===provider);return {provider,state:row?.probeUntil&&row.probeUntil>now?'probing':row?.openUntil?(row.openUntil>now?'open':'awaiting_probe'):'closed',retryAt:row?.openUntil?.toISOString()??null};});
+ return providers.map(provider=>{const row=rows.find(r=>r.provider===provider);return {provider,...providerLimits(provider),state:row?.probeUntil&&row.probeUntil>now?'probing':row?.openUntil?(row.openUntil>now?'open':'awaiting_probe'):'closed',retryAt:row?.openUntil?.toISOString()??null};});
 }
