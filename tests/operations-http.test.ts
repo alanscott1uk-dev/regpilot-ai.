@@ -1,3 +1,4 @@
+import {PATCH as LINK_CONTROL} from "../app/api/workspace/connectors/[id]/controls/route";
 import {PATCH as CONNECTION_ACTION} from "../app/api/workspace/connectors/[id]/route";
 import {GET as SETUP,POST as SAVE_SETUP} from "../app/api/workspace/setup/route";
 import test from "node:test";
@@ -42,4 +43,10 @@ test("connection recovery authenticates before looking up a saved credential",as
  assert.equal((await CONNECTION_ACTION(request(),{params:Promise.resolve({id})})).status,503);
  process.env.REGPILOT_WORKSPACE_ENABLED="true";
  assert.equal((await CONNECTION_ACTION(request(),{params:Promise.resolve({id})})).status,401);
+});
+
+test("shared evidence links authenticate before selecting tenant controls",async()=>{
+ const req=()=>new Request("https://example.invalid",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({organizationId:id,version:1,action:"LINK",controlId:id,controlVersion:1,rationale:"Fictional evidence connection rationale",confirm:true})});
+ process.env.REGPILOT_WORKSPACE_ENABLED="false";assert.equal((await LINK_CONTROL(req(),{params:Promise.resolve({id})})).status,503);
+ process.env.REGPILOT_WORKSPACE_ENABLED="true";assert.equal((await LINK_CONTROL(req(),{params:Promise.resolve({id})})).status,401);
 });

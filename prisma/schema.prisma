@@ -142,6 +142,7 @@ enum ReviewStatus {
 }
 
 model User {
+ connectorControlLinks ConnectorControlLink[]
  accessInventories AccessInventory[]
  accessCampaignsCreated AccessCampaign[] @relation("AccessCreator")
  accessCampaignsClosed AccessCampaign[] @relation("AccessCloser")
@@ -208,6 +209,7 @@ model User {
 }
 
 model Organization {
+ connectorControlLinks ConnectorControlLink[]
  dispatchLanes DispatchLane[]
  automationEvents AutomationEvent[]
  accessInventories AccessInventory[]
@@ -679,6 +681,7 @@ model ProgrammeImport {
 }
 
 model ManagedControl {
+ connectedEvidenceLinks ConnectorControlLink[]
  changeActions ChangeAction[]
  auditRequests AuditRequest[]
  id String @id @default(uuid()) @db.Uuid
@@ -728,6 +731,7 @@ model ControlLink {
 }
 
 model EvidenceConnector {
+ controlLinks ConnectorControlLink[]
  automationEvents AutomationEvent[]
  signalVendors Vendor[]
  id String @id @default(uuid()) @db.Uuid
@@ -1293,4 +1297,21 @@ model AssuranceQuestionnaire {
  reviewer User? @relation("QuestionnaireReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
  @@unique([id,organizationId])
  @@index([organizationId,status,createdAt])
+}
+
+// Explicit evidence reuse; each control keeps its own owner and review decisions.
+model ConnectorControlLink {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ connectorId String @db.Uuid
+ controlId String @db.Uuid
+ mappedById String @db.Uuid
+ rationale String @db.VarChar(1200)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ connector EvidenceConnector @relation(fields:[connectorId,organizationId],references:[id,organizationId],onDelete:Cascade)
+ control ManagedControl @relation(fields:[controlId,organizationId],references:[id,organizationId],onDelete:Cascade)
+ mappedBy User @relation(fields:[mappedById],references:[id],onDelete:Restrict)
+ @@unique([connectorId,controlId])
+ @@index([organizationId,controlId])
 }

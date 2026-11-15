@@ -28,6 +28,7 @@ try {
   await db.providerGate.findFirst({select:{generation:true,failureScopes:true}});
   await db.providerPermit.findFirst({select:{scopeHash:true}});
   await db.evidenceConnector.findFirst({select:{webhookVersion:true,eventRevision:true,collectedEventRevision:true}});
+  await db.connectorControlLink.findFirst({select:{id:true,connectorId:true,controlId:true}});
   await db.automationEvent.findFirst({select:{id:true,eventKey:true,state:true}});
   await db.publicSourceFetch.findFirst({select:{key:true,payloadHash:true}});
   await db.regulatorySnapshot.findFirst({select:{sourceFetchedAt:true}});
