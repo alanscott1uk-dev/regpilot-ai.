@@ -84,11 +84,18 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends clamav-daemon
-          mkdir -p "$RUNNER_TEMP/journey-scanner"
-          cd "$RUNNER_TEMP/journey-scanner"
-          echo 'RegPilot.Journey.Fixture:0:*:52454750494c4f545f5343414e5f46495854555245' > fixture.ndb
-          printf 'TCPSocket 3310\nTCPAddr 127.0.0.1\nDatabaseDirectory %s\nLogFile %s\n' "$PWD" "$PWD/scan.log" > clamd.conf
-          /usr/sbin/clamd --config-file="$PWD/clamd.conf"
+          # Use the distribution's scanner directories, which are readable by its service account.
+          sudo install -d -m 0755 /var/lib/clamav/journey
+          echo 'RegPilot.Journey.Fixture:0:*:52454750494c4f545f5343414e5f46495854555245' | sudo tee /var/lib/clamav/journey/fixture.ndb >/dev/null
+          printf 'TCPSocket 3310\nTCPAddr 127.0.0.1\nDatabaseDirectory /var/lib/clamav/journey\nUser clamav\n' | sudo tee /etc/clamav/journey.conf >/dev/null
+          sudo /usr/sbin/clamd --config-file=/etc/clamav/journey.conf
+          node --input-type=module <<'JS'
+          import {scanWithClamd} from './lib/evidence/file-guard.mjs';
+          import assert from 'node:assert/strict';
+          const scanner={host:'127.0.0.1',port:3310};
+          assert.equal((await scanWithClamd(Buffer.from('clean fictional record'),scanner)).status,'CLEAN');
+          await assert.rejects(()=>scanWithClamd(Buffer.from('REGPILOT_SCAN_FIXTURE'),scanner),e=>e.status===422);
+          JS
       - run: npm ci --no-audit --no-fund
       - run: npm install --no-save --package-lock=false playwright@1.55.1 && npx playwright install --with-deps chromium
       - name: Build and run against the isolated application database
