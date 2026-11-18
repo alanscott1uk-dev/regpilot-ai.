@@ -47,6 +47,7 @@ jobs:
       NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
       REGPILOT_WORKSPACE_ENABLED: "true"
       REGPILOT_EVIDENCE_ENABLED: "true"
+      REGPILOT_ASSURANCE_ENABLED: "true"
       REGPILOT_AI_ALLOWED_EMAILS: editor@example.test,reviewer@example.test
       REGPILOT_EVIDENCE_BUCKET: journey-files
       REGPILOT_CLAMD_HOST: 127.0.0.1
@@ -67,7 +68,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/journey"
           cd "$RUNNER_TEMP/journey"
           supabase init --yes
-          sed -i '/^additional_redirect_urls =/c\additional_redirect_urls = ["http://127.0.0.1:3000/team/work"]' supabase/config.toml
+          sed -i '/^additional_redirect_urls =/c\additional_redirect_urls = ["http://127.0.0.1:3000/team/work", "http://127.0.0.1:3000/team/setup"]' supabase/config.toml
           supabase start -x realtime,imgproxy,postgres-meta,studio,edge-runtime,logflare,vector,supavisor > "$RUNNER_TEMP/journey-start.log" 2>&1 || { docker ps -a --format '{{.Names}} {{.Status}}'; exit 1; }
           supabase status -o json > "$RUNNER_TEMP/journey-config.json"
           node --input-type=module <<'JS'
@@ -105,8 +106,8 @@ jobs:
         run: |
           npx prisma db push --skip-generate
           npm run build
-      - name: Run real email sign-in, private evidence and completion journey
-        timeout-minutes: 6
+      - name: Run real new-customer setup, source decision, evidence, completion and report journey
+        timeout-minutes: 8
         run: |
           node_modules/.bin/next start -H 127.0.0.1 -p 3000 > "$RUNNER_TEMP/journey-next.log" 2>&1 &
           app_pid=$!

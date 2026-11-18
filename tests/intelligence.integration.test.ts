@@ -15,7 +15,8 @@ test("intelligence workflow: isolation, review gates, exactly-once tasks, stale 
   const maker=ctx(0,0,"OWNER"),reviewer=ctx(1,0,"ADMIN"),outside=ctx(2,1,"OWNER"),viewer=ctx(0,0,"VIEWER");
   const text="Businesses must retain supplier assessment records and keep them current. Staff should receive documented training before handling controlled drugs. You must not allow unauthorised access to secure areas.";
   const profile={activities:["controlled-drugs"],jurisdictions:["Scotland"]};
-  const orgIds=orgs.map(o=>o.id);
+  const orgIds=orgs.map(o=>o.id),oldAllowed=process.env.REGPILOT_AI_ALLOWED_EMAILS;
+  process.env.REGPILOT_AI_ALLOWED_EMAILS=users.map(u=>u.email).join(",");
   try{
     await db.membership.createMany({data:[maker,reviewer,outside].map(c=>({userId:c.userId,organizationId:c.organizationId,role:c.role}))});
     await assert.rejects(()=>saveBusinessProfile(viewer,profile,0),(e:any)=>e.status===403);
@@ -30,18 +31,24 @@ test("intelligence workflow: isolation, review gates, exactly-once tasks, stale 
     const workspace=await getIntelligenceWorkspace(reviewer);
     assert.equal(workspace.runs[0].integrityValid,true,"JSONB must not break the canonical hash");
     const result=workspace.runs[0].result as unknown as Analysis;
-    const accept={candidateKey:result.candidates[0].key,decision:"ACCEPTED",rationale:"Reviewed fictional applicability, conditions and evidence needed for this task.",title:"Check supplier records",ownerName:"Fictional QA lead",dueDate:"2027-01-31"};
+    const accept={candidateKey:result.candidates[0].key,decision:"ACCEPTED",rationale:"Reviewed fictional applicability, conditions and evidence needed for this task.",title:"Check supplier records",ownerName:"Fictional QA lead",assigneeId:maker.userId,dueDate:"2027-01-31"};
     await assert.rejects(()=>decideCandidate(outside,generated.id,accept),(e:any)=>e.status===404);
     await assert.rejects(()=>decideCandidate(maker,generated.id,accept),(e:any)=>e.status===403);
     await assert.rejects(()=>decideCandidate(reviewer,generated.id,accept),(e:any)=>e.status===409&&/source review/.test(e.message));
     await db.regulatorySnapshot.update({where:{id:snapshot.id},data:{reviewStatus:"REVIEWED",reviewerId:reviewer.userId,reviewedAt:new Date()}});
     await assert.rejects(()=>decideCandidate(reviewer,generated.id,{...accept,dueDate:"2027-02-31"}),(e:any)=>e.status===400);
+    await assert.rejects(()=>decideCandidate(reviewer,generated.id,{...accept,assigneeId:outside.userId}),(e:any)=>e.status===409&&/team member/.test(e.message));
+    await db.membership.update({where:{organizationId_userId:{organizationId:maker.organizationId,userId:maker.userId}},data:{role:'VIEWER'}});
+    await assert.rejects(()=>decideCandidate(reviewer,generated.id,accept),(e:any)=>e.status===409&&/team member/.test(e.message));
+    await db.membership.update({where:{organizationId_userId:{organizationId:maker.organizationId,userId:maker.userId}},data:{role:'OWNER'}});
     const outcomes=await Promise.allSettled([decideCandidate(reviewer,generated.id,accept),decideCandidate(reviewer,generated.id,accept)]);
     assert.equal(outcomes.filter(r=>r.status==="fulfilled").length,1);
     assert.equal(await db.obligation.count({where:{organizationId:maker.organizationId,originKey:accept.candidateKey}}),1);
     const accepted=(await getIntelligenceWorkspace(reviewer)).runs[0].decisions[0];
     assert.equal(accepted.obligation?.evidence.state,"missing-evidence");
     assert.equal(accepted.obligation?.status,"OPEN");
+    const owned=await db.obligation.findUniqueOrThrow({where:{id:accepted.obligation!.id}});
+    assert.equal(owned.assigneeId,maker.userId);assert.equal(owned.ownerName,users[0].email,'the saved member identity overrides arbitrary owner text');
     const next={...accept,candidateKey:result.candidates[1].key};
     await db.regulatorySnapshot.update({where:{id:snapshot.id},data:{lastCheckedAt:new Date(Date.now()-8*86400000)}});
     await assert.rejects(()=>decideCandidate(reviewer,generated.id,next),(e:any)=>e.status===409&&/seven days/.test(e.message));
@@ -68,6 +75,7 @@ test("intelligence workflow: isolation, review gates, exactly-once tasks, stale 
     const events=await db.auditEvent.findMany({where:{organizationId:maker.organizationId,action:"intelligence.candidate_accepted"}});
     assert.equal(events.length,1,"task, decision and audit must commit atomically");
   }finally{
+    if(oldAllowed===undefined)delete process.env.REGPILOT_AI_ALLOWED_EMAILS;else process.env.REGPILOT_AI_ALLOWED_EMAILS=oldAllowed;
     await db.intelligenceDecision.deleteMany({where:{organizationId:{in:orgIds}}});
     await db.intelligenceRun.deleteMany({where:{organizationId:{in:orgIds}}});
     await db.businessProfile.deleteMany({where:{organizationId:{in:orgIds}}});

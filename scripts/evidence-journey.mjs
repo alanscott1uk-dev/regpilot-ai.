@@ -7,6 +7,7 @@ import {chromium} from 'playwright';
 import {PrismaClient} from '@prisma/client';
 import {createClient} from '@supabase/supabase-js';
 import {fixturePdf} from '../tests/helpers/pdf-fixture.mjs';
+import {createCustomerWorkspace,sourceToReportJourney} from './customer-journey.mjs';
 
 const app='http://127.0.0.1:3000', api='http://127.0.0.1:54321', mail='http://127.0.0.1:54324';
 assert.equal(process.env.NEXT_PUBLIC_SUPABASE_URL,api);
@@ -100,9 +101,13 @@ async function openContext(viewport){
 }
 try{
  await checkpoint('local setup');
- const org=await db.organization.create({data:{name:'Fictional quality team'}});
+ const reviewerEmail='reviewer@example.test';
+ const reviewerIdentity=await supabase.auth.admin.createUser({email:reviewerEmail,email_confirm:true});
+ if(reviewerIdentity.error)throw Error('Local Auth account setup failed: '+reviewerIdentity.error.status);
+ browser=await chromium.launch();
+ const review=await signIn(await openContext({width:1440,height:1000}),app+'/team/setup',reviewerEmail);
+ const {org,reviewer}=await createCustomerWorkspace({page:review,db,app,email:reviewerEmail,checkpoint,passed,artifactDir});
  const editor=await account('editor@example.test','EDITOR',org.id);
- const reviewer=await account('reviewer@example.test','ADMIN',org.id);
  const {error}=await supabase.storage.createBucket('journey-files',{public:false});
  if(error)throw Error('Could not create the private local test bucket');
  const common={organizationId:org.id,category:'Quality',ownerName:editor.email,assigneeId:editor.id};
@@ -111,7 +116,6 @@ try{
  const task=await db.obligation.create({data:{...common,title,dueDate:new Date('2028-12-01')}});
  const params=new URLSearchParams({organizationId:org.id,taskId:task.id});
  const vault=app+'/team/evidence?'+params;
- browser=await chromium.launch();
  await checkpoint('email-link sign-in and exact-task selection');
  const upload=await signIn(await openContext({width:390,height:844}),vault,editor.email);
  await upload.getByRole('link',{name:'Return to task'}).waitFor();
@@ -158,7 +162,7 @@ try{
  passed('Mobile uploader returned to the exact task; pending evidence prevented completion.');
 
  await checkpoint('independent reviewer sign-in and original download');
- const review=await signIn(await openContext({width:1440,height:1000}),app+'/team/work',reviewer.email);
+ await review.goto(app+'/team/work?'+new URLSearchParams({organizationId:org.id}));
  await review.getByRole('button',{name:/Evidence to review/}).click();
  await review.getByRole('article').filter({hasText:title}).getByRole('link',{name:'Review files'}).click();
  await review.getByText('training-record.pdf',{exact:true}).waitFor();
@@ -376,6 +380,8 @@ try{
  await review.goto(new URL(followLocation,app).href);
  await review.getByRole('dialog').getByRole('heading',{name:assigned.title,exact:true}).waitFor();
  passed('A fresh review verified private bytes, persisted a new basis and cleared the change alert after reload; the original completion and open follow-up remained intact on desktop and mobile.');
+
+ report.customerJourney=await sourceToReportJourney({upload,review,db,app,org,editor,reviewer,submitEvidence,checkpoint,passed,bounded,artifactDir});
 
  await checkpoint('unavailable organisation isolation');
  await review.goto(app+'/team/evidence?'+new URLSearchParams({organizationId:randomUUID(),taskId:task.id}));

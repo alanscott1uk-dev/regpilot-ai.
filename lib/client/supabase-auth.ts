@@ -1,6 +1,6 @@
 "use client";
 import {createClient} from "@supabase/supabase-js";
-import {callbackInfo,cleanAuthUrl,authProblem,signInDestination,resolveSignInReturn,taskReturnPath,WORK_RETURN_KEY} from '../auth-flow.mjs';
+import {callbackInfo,cleanAuthUrl,authProblem,signInDestination,resolveSignInReturn,taskReturnPath,workspaceReturnPath,WORK_RETURN_KEY} from '../auth-flow.mjs';
 let client:ReturnType<typeof createClient>|null=null;
 let incoming:ReturnType<typeof callbackInfo>=null;
 let incomingPath='/team';
@@ -30,7 +30,8 @@ export function completeSignInReturn():Promise<ReturnResult>|null{
     try {
      const raw = localStorage.getItem(WORK_RETURN_KEY);
      localStorage.removeItem(WORK_RETURN_KEY);
-     return raw && taskReturnPath(JSON.parse(raw),email);
+     if(!raw)return null;
+     const saved=JSON.parse(raw);return taskReturnPath(saved,email)||workspaceReturnPath(saved,email);
     } catch { return null; }
    });
   }catch(error){return {ok:false,message:authProblem(error).message,destination};}

@@ -9,7 +9,7 @@ test("change actions open the exact response and action ahead of generic evidenc
  assert.equal(q.items[0].href,taskDestination(task,"org"));
  assert.equal(q.items[0].kind,"Change response");
  assert.equal(taskDestination({...task,changeAction:null},"org"),"/team/assurance?organizationId=org&taskId=task");
- assert.equal(taskDestination({id:"task"},"org"),"/team?taskId=task");
+ assert.equal(taskDestination({id:"task"},"org"),"/team/work?organizationId=org&taskId=task");
  assert.ok(taskDestination({...task,changeAction:{id:"a&b",responseId:"r?x"}},"o&x").includes("organizationId=o%26x&responseId=r%3Fx&actionId=a%26b"));
 });
 
@@ -30,7 +30,7 @@ const fixture = () => ({
 test("one source revision beats an overdue task and does not duplicate its task",()=>{
  const q=priorityInbox(fixture(),"2026-11-09");
  assert.equal(q.items[0].kind,"Source changed");
- assert.equal(q.items[0].href,"/team/intelligence");
+ assert.equal(q.items[0].href,"/team/intelligence?organizationId="+fixture().organizationId);
  assert.equal(q.items.filter(x=>x.id==="task:one").length,0);
  assert.equal(q.items[1].kind,"Overdue task");
  assert.equal(q.shownTaskLimit,true);
@@ -60,4 +60,15 @@ test("incomplete or invalid dates cannot manufacture an overdue deadline",()=>{
  const q=priorityInbox(f,"2026-11-09"),t=q.items.find(x=>x.id==="task:unknown");
  assert.equal(t.kind,"Team task");
  assert.match(t.detail,/date not recorded/);
+});
+
+test("every daily action preserves the selected organisation across workflow handoffs",()=>{
+ const f=fixture(),q=priorityInbox(f,"2026-11-09");
+ for(const item of q.items){
+  const url=new URL(item.href,"https://regpilot.example");
+  assert.equal(url.searchParams.get("organizationId"),f.organizationId,item.kind+" must keep its organisation");
+  assert.equal(url.searchParams.getAll("organizationId").length,1);
+ }
+ const ordinary=q.items.find(item=>item.id==="task:two");
+ assert.equal(new URL(ordinary.href,"https://regpilot.example").pathname,"/team/work");
 });

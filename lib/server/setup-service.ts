@@ -12,6 +12,7 @@ import {getConnectorHealth} from './connector-health-service';
 import {evidenceConfigured} from './evidence-storage';
 import {connectorProviderEnabled} from './connector-flags';
 import {recommendSourcePortfolio} from '../regulatory/portfolio-recommendations.mjs';
+import {monitoringRuntimeActive} from './monitoring-runtime-status';
 import type {AuthorizedContext} from './authorization';
 
 export const setupInput=z.object({
@@ -36,7 +37,7 @@ export async function getSetupWorkspace(ctx:AuthorizedContext){
  },{isolationLevel:'RepeatableRead',timeout:12000});
  const [catalogue,coverage,connections]=await Promise.all([workspaceCatalogue(ctx),sourceCoverage(ctx),getConnectorHealth(ctx)]);
  return {...summary,catalogue,coverage,connections,recommendations:recommendSourcePortfolio(catalogue,summary.profile),
-  features:{monitoring:process.env.REGPILOT_MONITORING_ENABLED==='true'&&process.env.REGPILOT_AUTOMATION_ENABLED==='true'&&process.env.REGPILOT_CRON_ENABLED==='true',evidence:!!evidenceConfigured(),
+  features:{monitoring:monitoringRuntimeActive(),evidence:!!evidenceConfigured(),
    providers:['GITHUB','MICROSOFT365','GOOGLE_WORKSPACE','GITLAB','CLOUDFLARE','COMPANIES_HOUSE','VERCEL','SUPABASE'].map(id=>({id,configured:connectorProviderEnabled(id)}))},generatedAt:new Date().toISOString()};
 }
 // Profile and schedules are one reviewed, version-checked transaction. No provider calls or activation.

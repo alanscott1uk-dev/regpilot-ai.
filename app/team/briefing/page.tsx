@@ -1,76 +1,82 @@
 "use client";
 import WorkspaceNav from "../../components/workspace-nav";
-import {useCallback,useEffect,useState} from "react";
-import {browserAuth} from "../../../lib/client/supabase-auth";
+import {useEffect,useState} from "react";
+import {useWorkspaceContext,workspaceHref} from "../../../lib/client/workspace-context";
+import EmailSignIn from "../../components/email-sign-in";
 import {exportBriefCsv} from "../../../lib/operational-brief.mjs";
-import type {ComplianceBrief} from "../../../lib/operational-brief.mjs";
+import type {fetchOperationalBrief} from "../../../lib/server/briefing-service";
 import shell from "../../workbench/workbench.module.css";
 import ui from "./briefing.module.css";
-type Org={id:string;name:string;role:string};
-type Brief=ComplianceBrief&{limits:{snapshotHistoryLimited:boolean;scheduledSourcesLimited:boolean;connectorsLimited:boolean;tasksLimited:boolean};notice:string};
-function save(text:string){const link=URL.createObjectURL(new Blob([text],{type:"text/csv;charset=utf-8"}));const a=document.createElement("a");a.href=link;a.download="regpilot-weekly-compliance-operations.csv";a.click();setTimeout(()=>URL.revokeObjectURL(link),700);}
+type Brief=Awaited<ReturnType<typeof fetchOperationalBrief>>;
+function save(text:string,name:string,type:string){const link=URL.createObjectURL(new Blob([text],{type}));const a=document.createElement("a");a.href=link;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(link),700);}
 const when=(s:string|null)=>s&&!Number.isNaN(Date.parse(s))?new Date(s).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"Not recorded";
 export default function Briefing(){
- const [orgs,setOrgs]=useState<Org[]>([]),[orgId,setOrgId]=useState(""),[report,setReport]=useState<Brief|null>(null);
- const [loading,setLoading]=useState(true),[error,setError]=useState("");
- const request=useCallback(async(url:string,signal?:AbortSignal)=>{
-  const token=(await browserAuth().auth.getSession()).data.session?.access_token;
-  if(!token)throw new Error("Sign in to your private workspace to view your organisation's briefing.");
-  const result=await fetch(url,{headers:{authorization:"Bearer "+token},signal,cache:"no-store"});
-  const data=await result.json();if(!result.ok)throw new Error(data.error||"Request unavailable");return data;
- },[]);
+ const workspace=useWorkspaceContext();
+ const {organisations:orgs,organizationId:orgId,request,chooseOrganization,capture}=workspace;
+ const [storedReport,setReport]=useState<Brief|null>(null),[reportRevision,setReportRevision]=useState(-1);
+ const [loading,setLoading]=useState(false),[error,setError]=useState(''),[refresh,setRefresh]=useState(0);
+ const report=reportRevision===workspace.revision?storedReport:null;
+ const href=(path:string)=>workspaceHref(path,orgId);
  useEffect(()=>{
-  let alive=true,unsubscribe=()=>{};
-  async function init(){try{
-   const body=await request("/api/ai/context");if(!alive)return;
-   const list:Array<Org>=Array.isArray(body.organisations)?body.organisations:[];
-   setOrgs(list);setOrgId(id=>list.some(x=>x.id===id)?id:list[0]?.id||"");setError("");
-  }catch(e){if(alive){setOrgId("");setReport(null);setOrgs([]);setError(e instanceof Error?e.message:"Sign in needed");}}
-  finally{if(alive)setLoading(false);}}
-  try{const r=browserAuth().auth.onAuthStateChange(event=>{if(event==="SIGNED_OUT"){setOrgId("");setReport(null);setOrgs([]);}setTimeout(()=>{if(alive)void init()},0);});unsubscribe=()=>r.data.subscription.unsubscribe();void init();}
-  catch{setLoading(false);setError("Private workspace authentication has not been configured.");}
-  return()=>{alive=false;unsubscribe();}
- },[request]);
- useEffect(()=>{
-  setReport(null);if(!orgId)return;
-  let alive=true;const abort=new AbortController();setLoading(true);
-  request("/api/workspace/briefing?organizationId="+encodeURIComponent(orgId),abort.signal).then(result=>{if(alive){setReport(result);setError("");}}).catch(e=>{if(alive)setError(e.message)}).finally(()=>{if(alive)setLoading(false)});
-  return()=>{alive=false;abort.abort()};
- },[orgId,request]);
+  setReport(null);setError('');if(!orgId){setLoading(false);return;}
+  const current=capture(),abort=new AbortController();setLoading(true);
+  request('/api/workspace/briefing?organizationId='+encodeURIComponent(orgId),{signal:abort.signal}).then(result=>{
+   if(current()){if(result.organizationId!==orgId)throw new Error('The returned report does not match this organisation.');setReport(result);setReportRevision(workspace.revision);}
+  }).catch(e=>{if(current()&&!abort.signal.aborted)setError(e.message);}).finally(()=>{if(current())setLoading(false);});
+  return()=>abort.abort();
+ },[orgId,workspace.revision,request,capture,refresh]);
+ const organization=orgs.find(o=>o.id===orgId);
+ function download(format:'json'|'csv'){
+  if(!report||report.organizationId!==orgId)return;
+  const name='regpilot-report-'+report.windowEnd.slice(0,10);
+  if(format==='csv')save(exportBriefCsv(report),name+'.csv','text/csv;charset=utf-8');
+  else save(JSON.stringify({...report,organizationName:organization?.name||''},null,2),name+'.json','application/json');
+ }
  const summary=report?.summary;
- return <div className={shell.app}>
+ return <div className={shell.app+" "+ui.printLayout}>
   <WorkspaceNav/>
   <main className={shell.main}>
-   <div className={shell.topbar}><span className={shell.crumb}>RegPilot / Weekly briefing</span><span className={shell.demo}>PRIVATE WORKSPACE</span></div>
-   <header className={ui.hero}><span>UK REGULATORY &amp; BUSINESS ASSURANCE</span><h1>What's changed.<br/><em>What needs doing.</em></h1><p>One seven-day briefing across recorded official-source text changes, pending human decisions, failed collection, connected evidence and upcoming team work.</p></header>
-   {error&&<p className={ui.notice} role="alert">{error} <a href="/team">Open team sign-in</a></p>}
-   {loading&&<p className={ui.notice} role="status">Checking your organisation's recorded work…</p>}
-   {!!orgs.length&&<div className={ui.actions}><label>Organisation<select value={orgId} onChange={e=>{setReport(null);setOrgId(e.target.value);}}>{orgs.map(o=><option value={o.id} key={o.id}>{o.name}</option>)}</select></label>
-    <button disabled={!report} onClick={()=>report&&save(exportBriefCsv(report))}>Download briefing CSV</button>
-    <a href="/team/coverage">Inspect monitoring health</a>
+   <div className={shell.topbar}><span className={shell.crumb}>Workspace / Reports</span><span className={shell.demo}>PRIVATE WORKSPACE</span></div>
+   <header className={ui.hero}><span>YOUR RECORDED WORK, IN ONE REPORT</span><h1>Compliance operations report</h1><p>{organization?.name||'Your organisation'} · Publication changes, open decisions and work completed with reviewed evidence.</p>{report&&<p>Reporting window: {when(report.windowStart)} to {when(report.windowEnd)}.</p>}</header>
+   {(error||workspace.error)&&<p className={ui.notice} role="alert">{error||workspace.error}</p>}
+   {(loading||workspace.loading)&&<p className={ui.notice} role="status">Checking your organisation's recorded work…</p>}
+   {!workspace.loading&&!workspace.signedIn&&<section className={ui.section}><h2>Sign in to your reports</h2><EmailSignIn destination="/team/briefing"/></section>}
+   {workspace.signedIn&&!orgs.length&&!workspace.loading&&<section className={ui.section}><h2>Start with your organisation</h2><p>Set up your company to keep its sources, tasks and report together.</p><a href={href('/team/setup')}>Create your organisation →</a></section>}
+   {!!orgs.length&&<div className={ui.actions}><label>Organisation<select aria-label="Organisation" value={orgId} onChange={e=>{setReport(null);chooseOrganization(e.target.value);}}>{!orgId&&<option value="" disabled>Choose an organisation</option>}{orgs.map(o=><option value={o.id} key={o.id}>{o.name}</option>)}</select></label>
+    <button disabled={!report} onClick={()=>download('json')}>Download report JSON</button>
+    <button disabled={!report} onClick={()=>download('csv')}>Download briefing CSV</button>
+    <button disabled={!report} onClick={()=>window.print()}>Print report</button>
+    <button disabled={!orgId||loading} onClick={()=>setRefresh(x=>x+1)}>Refresh report</button>
+    {orgId&&<a href={href('/team/operations')}>Back to Today →</a>}
    </div>}
    {report&&<><div className={ui.stats}>
     <a href="#changes"><span>Publication text changes</span><strong>{summary?.changedPublications}</strong><small>Detected in last seven days</small></a>
     <a href="#reviews"><span>Human source reviews</span><strong>{summary?.awaitingReview}</strong><small>Latest versions awaiting decision</small></a>
     <a href="#monitor"><span>Source checks need action</span><strong>{summary?.sourceCheckIssues}</strong><small>Failures, missed or unverified</small></a>
     <a href="#connections"><span>Connector attention</span><strong>{summary?.connectorIssues}</strong><small>Failed or unverified integrations</small></a>
+    <a href="#completed"><span>Recorded completions</span><strong>{summary?.completedWork||0}</strong><small>Saved decisions in this period</small></a>
     <a href="#tasks"><span>Upcoming team work</span><strong>{summary?.dueWork}</strong><small>{summary?.overdueWork} overdue in sampled queue</small></a>
    </div>
    <div className={ui.caveat}>{report.limitations[0]} {report.limitations[1]} Reporting window: {when(report.windowStart)} to {when(report.windowEnd)}. {Object.values(report.limits).some(Boolean)?"At least one history or task sample reached its display limit; open the original workspace for more.":""}</div>
-   <section id="changes" className={ui.section}><div className={ui.heading}><h2>01 · Official publication changes</h2><a href="/team/sources">View source history</a></div>
+   <section id="changes" className={ui.section}><div className={ui.heading}><h2>01 · Official publication changes</h2><a href={href('/team/sources')}>View source history</a></div>
     {report.changes.length===0?<p className={ui.empty}>No recorded text-change events in this seven-day window. This does not prove that UK regulations remained unchanged.</p>:report.changes.map(x=><article key={x.id} className={ui.item}><div><span className={ui.meta}>DETECTED {when(x.detectedAt)} · {x.status.replaceAll("_"," ")}</span><h3>{x.title}</h3><p>Publication text changed. Human applicability and effective-date assessment is still required.</p></div><a href={x.href}>Review change</a></article>)}
    </section>
-   <section id="reviews" className={ui.section}><div className={ui.heading}><h2>02 · Independent source decisions</h2><a href="/team/intelligence">Open intelligence inbox</a></div>
+   <section id="reviews" className={ui.section}><div className={ui.heading}><h2>02 · Independent source decisions</h2><a href={href('/team/intelligence')}>Open intelligence inbox</a></div>
     {report.pending.length===0?<p className={ui.empty}>No latest source versions currently awaiting review among the recorded snapshots.</p>:report.pending.map(x=><article key={x.id} className={ui.item}><div><span className={ui.meta}>REVIEW REQUIRED · CHECKED {when(x.checkedAt)}</span><h3>{x.title}</h3></div><a href={x.href}>Review publication</a></article>)}
    </section>
-   <section id="monitor" className={ui.section}><div className={ui.heading}><h2>03 · Monitoring problems</h2><a href="/team/coverage">Source health</a></div>
+   <section id="monitor" className={ui.section}><div className={ui.heading}><h2>03 · Monitoring problems</h2><a href={href('/team/coverage')}>Source health</a></div>
     {report.collections.length===0?<p className={ui.empty}>No flagged scheduled-source failures in the recorded and sampled watches.</p>:report.collections.map(x=><article key={x.sourceId} className={ui.item}><div><span className={ui.meta}>{x.status.toUpperCase()}</span><h3>{x.title}</h3><p>Last successful collection: {when(x.lastSuccessAt)}</p></div><a href={x.href}>Inspect source</a></article>)}
    </section>
-   <section id="connections" className={ui.section}><div className={ui.heading}><h2>04 · Connected evidence</h2><a href="/team/operations?view=connections">Manage connections</a></div>
+   <section id="connections" className={ui.section}><div className={ui.heading}><h2>04 · Connected evidence</h2><a href={href('/team/operations?view=connections')}>Manage connections</a></div>
     {report.connectors.length===0?<p className={ui.empty}>No failed or unverified active evidence connections among the sampled records.</p>:report.connectors.map(x=><article key={x.id} className={ui.item}><div><span className={ui.meta}>{x.provider} · {x.status.toUpperCase()}</span><h3>{x.target}</h3><p>Last successful collection: {when(x.lastSuccessAt)}</p></div><a href={x.href}>Open connection</a></article>)}
    </section>
-   <section id="tasks" className={ui.section}><div className={ui.heading}><h2>05 · Work due within seven days</h2><a href="/team">Open team queue</a></div>
+   <section id="tasks" className={ui.section}><div className={ui.heading}><h2>05 · Work due within seven days</h2><a href={href('/team/work')}>Open task workspace</a></div>
     {report.tasks.length===0?<p className={ui.empty}>No recorded work items due within the next seven days among the sampled tasks.</p>:report.tasks.map(x=><article key={x.id} className={ui.item}><div><span className={ui.meta}>{x.overdue?"OVERDUE":"DUE"} · {when(x.dueDate)} · {x.owner}</span><h3>{x.title}</h3></div><a href={x.href}>Open task</a></article>)}
+   </section>
+   <section id="completed" className={ui.section} aria-label="Recorded work completions"><div className={ui.heading}><h2>06 · Completed work and its evidence</h2><a href={href('/team/work/reviews')}>Review completed work</a></div>
+    <p className={ui.empty}>{report.completionScope}</p>
+    {report.completionRecordsUnavailable>0&&<p className={ui.notice} role="alert">{report.completionRecordsUnavailable} saved completion records could not be verified and are omitted from this report. <a href={href('/team/work/reviews')}>Inspect completed-work records before relying on this report.</a></p>}
+    {report.completedWork.length===0?<p className={ui.empty}>No verified completion records in this reporting window. Open tasks and evidence approval are shown separately.</p>:report.completedWork.map(record=><article key={record.eventId} className={ui.item}><div><span className={ui.meta}>RECORDED {when(record.completedAt)} · {record.owner}</span><h3>{record.title}</h3><p>{record.evidenceCount} reviewed {record.evidenceCount===1?'file':'files'} in the saved decision. Record {record.eventId}.</p><details><summary>Source and evidence in this decision</summary><p className={ui.fingerprint}>Proof SHA-256: {record.proofHash}</p><p>The JSON download contains the full frozen decision, source context and evidence fingerprints. Open the task to inspect original files or request a fresh review.</p></details></div><a href={record.href}>Open completion record</a></article>)}
    </section>
    <p className={ui.foot}>{report.notice} Last generated {when(report.generatedAt)}. This report does not send emails or trigger regulatory decisions.</p>
    </>}

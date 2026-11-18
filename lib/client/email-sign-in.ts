@@ -1,6 +1,6 @@
 "use client";
 import {browserAuth} from './supabase-auth';
-import {authProblem,cooldownSeconds,signInDestination,taskReturnIntent,WORK_RETURN_KEY} from '../auth-flow.mjs';
+import {authProblem,cooldownSeconds,signInDestination,taskReturnIntent,workspaceReturnIntent,WORK_RETURN_KEY} from '../auth-flow.mjs';
 const key='regpilot.sign-in.cooldown.v1';
 let until=0,pending=false;
 export function signInWait(){
@@ -18,7 +18,7 @@ export async function requestSignIn(email:string,path:string){
  // Reserve the resend interval before the network call, including across page reloads.
  pause(60);
  try{
-  const intent = path === '/team/work' ? taskReturnIntent(location.pathname, location.search, email) : null;
+  const intent = (path === '/team/work' ? taskReturnIntent(location.pathname, location.search, email) : null) || workspaceReturnIntent(location.pathname,location.search,email);
   try {
    if (intent) localStorage.setItem(WORK_RETURN_KEY, JSON.stringify(intent));
    else localStorage.removeItem(WORK_RETURN_KEY);

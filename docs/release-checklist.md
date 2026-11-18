@@ -1,5 +1,7 @@
 # Development release verification
 
+**Active product standard:** [Product completion](product-completion.md). The dated sections below retain earlier implementation and activation requirements; current completion evidence is recorded against the exact development commit in [draft PR #10](https://github.com/alanscott1uk-dev/regpilot-ai./pull/10). Feature counts and passing fixtures alone do not establish release readiness.
+
 The current development branch contains authenticated workspace, regulatory monitoring, PDF assessment, programme import and connector integration code. Feature flags and environment readiness determine availability. Passing offline checks does not make these services operational.
 
 ## Required automated checks

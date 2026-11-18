@@ -15,6 +15,7 @@ import {sharedEvidenceJourney} from "./shared-evidence-browser-journey.mjs";
 import {changeResponseJourney} from "./change-response-browser-journey.mjs";
 import {setupJourney} from "./setup-browser-journey.mjs";
 import {assuranceRenewalJourney} from "./assurance-renewal-browser-journey.mjs";
+import {todayJourney} from "./today-browser-journey.mjs";
 
 const port=await new Promise((resolve,reject)=>{
  const server=createServer().once("error",reject).listen(0,"127.0.0.1",()=>{
@@ -83,7 +84,7 @@ async function testJourney(name,viewport){
   assert.ok(overflow<=3,"horizontal page overflow "+overflow+"px at "+viewport.width);
   await page.goto(base+"/team/sources",{waitUntil:"domcontentloaded"});
   assert.ok(await page.getByRole("heading",{name:/Know what changed/i}).isVisible());
-  for(const [route,heading] of [["/team/setup",/Make your workspace work/i],["/team/coverage",/See what's covered/i],["/team/briefing",/What's changed/i],["/team/recognition",/Build the evidence/i],["/recognition",/Claims you can check/i]]){
+  for(const [route,heading] of [["/team/setup",/Make your workspace work/i],["/team/coverage",/See what's covered/i],["/team/briefing",/Compliance operations report/i],["/team/recognition",/Build the evidence/i],["/recognition",/Claims you can check/i]]){
    const view=await page.goto(base+route,{waitUntil:"domcontentloaded"});
    assert.equal(view?.status(),200,"secure module should render");
    assert.ok(await page.getByRole("heading",{name:heading}).isVisible(),"module heading is visible");
@@ -108,6 +109,7 @@ try{
  await testJourney("desktop",{width:1365,height:880});
  await testJourney("mobile",{width:390,height:844});
  for(const [name,viewport] of [["desktop",{width:1365,height:880}],["mobile",{width:390,height:844}]]){
+  try{observations.push(await todayJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"today-"+name,passed:false,error:e.message});}
   try{observations.push(await horizonJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"horizon-"+name,passed:false,error:e.message});}
   try{observations.push(await infrastructureJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"infrastructure-"+name,passed:false,error:e.message});}
   try{observations.push(await sharedEvidenceJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"shared-evidence-"+name,passed:false,error:e.message});}

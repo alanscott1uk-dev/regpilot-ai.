@@ -3,6 +3,8 @@ import {db} from "./db";
 import type {AuthorizedContext} from "./authorization";
 import {analysePublication,ENGINE_VERSION,evidenceReadiness,hashValue,parseProfile,type Analysis} from "../regulatory/intelligence";
 import {sourceTextHash} from "../regulatory/source-fingerprint.mjs";
+import {allowedEmail} from '../ai/security.mjs';
+import {requireMember,ADMIN,WRITER} from './workspace-member';
 
 export class IntelligenceError extends Error {
   constructor(message:string,public status=400){super(message);this.name="IntelligenceError";}
@@ -67,13 +69,14 @@ export async function createIntelligenceRun(ctx:AuthorizedContext,snapshotId:str
   });
 }
 export async function getIntelligenceWorkspace(ctx:AuthorizedContext) {
-  const [profile,runs,snapshots]=await Promise.all([
+  const [profile,runs,snapshots,members]=await Promise.all([
     db.businessProfile.findUnique({where:{organizationId:ctx.organizationId}}),
     db.intelligenceRun.findMany({where:{organizationId:ctx.organizationId},orderBy:{createdAt:"desc"},take:20,
       include:{snapshot:{select:{id:true,sourceId:true,title:true,url:true,contentHash:true,reviewStatus:true,lastCheckedAt:true,firstCapturedAt:true}},decisions:{include:{obligation:{select:{id:true,title:true,status:true,evidence:{where:{organizationId:ctx.organizationId},select:{scanStatus:true,reviewStatus:true,uploadedById:true,reviewerId:true,reviewedAt:true}}}}}}}}),
-    db.regulatorySnapshot.findMany({where:{organizationId:ctx.organizationId},orderBy:{firstCapturedAt:"desc"},distinct:["sourceId"],take:30,select:{id:true,sourceId:true,title:true,lastCheckedAt:true,reviewStatus:true}})
+    db.regulatorySnapshot.findMany({where:{organizationId:ctx.organizationId},orderBy:{firstCapturedAt:"desc"},distinct:["sourceId"],take:30,select:{id:true,sourceId:true,title:true,lastCheckedAt:true,reviewStatus:true}}),
+    db.membership.findMany({where:{organizationId:ctx.organizationId,role:{in:['OWNER','ADMIN','EDITOR']}},orderBy:{userId:'asc'},take:201,select:{role:true,user:{select:{id:true,email:true}}}})
   ]);
-  return {profile,sources:snapshots.map(s=>({...s,stale:Date.now()-s.lastCheckedAt.getTime()>7*86400000})),
+  return {profile,members:members.slice(0,200).filter(m=>allowedEmail(m.user.email,process.env.REGPILOT_AI_ALLOWED_EMAILS)),membersLimited:members.length>200,sources:snapshots.map(s=>({...s,stale:Date.now()-s.lastCheckedAt.getTime()>7*86400000})),
     runs:runs.map(run=>({
       ...run,result:hashValue(run.result)===run.resultHash ? run.result : null,
       integrityValid:hashValue(run.result)===run.resultHash,
@@ -93,19 +96,21 @@ export async function getSourceImpact(ctx:AuthorizedContext){
     return [{taskId:d.obligation.id,title:d.obligation.title,status:d.obligation.status,evidenceFiles:d.obligation._count.evidence,sourceTitle:current.title,sourceUrl:current.url,previousHash:d.run.snapshot.contentHash,currentHash:current.contentHash}];
   }),limitReached:affected.length>100};
 }
-export async function decideCandidate(ctx:AuthorizedContext,runId:string,input:{candidateKey:string;decision:string;rationale:string;ownerName?:string;dueDate?:string;title?:string}) {
+export async function decideCandidate(ctx:AuthorizedContext,runId:string,input:{candidateKey:string;decision:string;rationale:string;ownerName?:string;assigneeId?:string;dueDate?:string;title?:string}) {
   requireRole(ctx,true);uuid(runId);
   if(!/^[a-f0-9]{64}$/.test(input.candidateKey)||!["ACCEPTED","DISMISSED"].includes(input.decision))throw new IntelligenceError("Choose a valid recommendation and decision");
   if(typeof input.rationale!=="string"||input.rationale.trim().length<20||input.rationale.length>800)throw new IntelligenceError("Explain your decision in 20 to 800 characters");
   const rationale=input.rationale.trim();
   let dueDate:Date|undefined;
   if(input.decision==="ACCEPTED") {
-    if(!input.title?.trim()||input.title.length>160||!input.ownerName?.trim()||input.ownerName.length>80)throw new IntelligenceError("Enter a task title and owner");
+    if(!input.title?.trim()||input.title.length>160||(!input.assigneeId&&(!input.ownerName?.trim()||input.ownerName.length>80)))throw new IntelligenceError("Enter a task title and choose an owner");
+    if(input.assigneeId)uuid(input.assigneeId);
     if(!/^\d{4}-\d{2}-\d{2}$/.test(input.dueDate||""))throw new IntelligenceError("Choose a target date for the task");
     dueDate=new Date(input.dueDate+"T00:00:00.000Z");
     if(Number.isNaN(dueDate.getTime())||dueDate.toISOString().slice(0,10)!==input.dueDate)throw new IntelligenceError("Invalid target date");
   }
   return transaction(ctx,async tx=>{
+    await requireMember(tx,ctx,ADMIN);
     const run=await tx.intelligenceRun.findFirst({where:{id:runId,organizationId:ctx.organizationId},include:{snapshot:true}});
     if(!run)throw new IntelligenceError("Analysis not found",404);
     if(run.createdById===ctx.userId)throw new IntelligenceError("A different administrator must review this analysis",403);
@@ -122,16 +127,21 @@ export async function decideCandidate(ctx:AuthorizedContext,runId:string,input:{
     if(profile?.version!==run.profileVersion||latest?.id!==run.snapshotId)throw new IntelligenceError("Source or business profile changed. Generate a fresh analysis.",409);
     let obligationId:string|null=null;
     if(input.decision==="ACCEPTED") {
+      let ownerName=input.ownerName?.trim()||'';
+      if(input.assigneeId){
+        try{ownerName=(await requireMember(tx,{...ctx,userId:input.assigneeId},WRITER)).email;}
+        catch(error){if(error instanceof IntelligenceError)throw new IntelligenceError('Choose a current approved team member as the task owner.',409);throw error;}
+      }
       if(run.snapshot.reviewStatus!=="REVIEWED")throw new IntelligenceError("Complete independent source review before creating tasks",409);
       if(Date.now()-run.snapshot.lastCheckedAt.getTime()>7*86400000)throw new IntelligenceError("Recheck this source before creating tasks; its last check is over seven days old",409);
       const duplicate=await tx.obligation.findUnique({where:{organizationId_originKey:{organizationId:ctx.organizationId,originKey:candidate.key}}});
       if(duplicate)throw new IntelligenceError("This source passage already has a task. Review the existing team task instead.",409);
-      const task=await tx.obligation.create({data:{organizationId:ctx.organizationId,title:input.title!.trim(),ownerName:input.ownerName!.trim(),dueDate:dueDate!,category:"Regulatory follow-up",sourceUrl:run.snapshot.url,sourceCheckedAt:run.snapshot.lastCheckedAt,originKey:candidate.key,
+      const task=await tx.obligation.create({data:{organizationId:ctx.organizationId,title:input.title!.trim(),ownerName,assigneeId:input.assigneeId||null,dueDate:dueDate!,category:"Regulatory follow-up",sourceUrl:run.snapshot.url,sourceCheckedAt:run.snapshot.lastCheckedAt,originKey:candidate.key,
         notes:("Human-reviewed follow-up, not a legal compliance verdict. "+rationale).slice(0,500)}});
       obligationId=task.id;
     }
     const decision=await tx.intelligenceDecision.create({data:{organizationId:ctx.organizationId,runId,candidateKey:input.candidateKey,decision:input.decision,rationale,reviewerId:ctx.userId,obligationId}});
-    await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"intelligence.candidate_"+input.decision.toLowerCase(),entityType:"IntelligenceDecision",entityId:decision.id,details:{runId,candidateKey:candidate.key,resultHash:run.resultHash,snapshotId:run.snapshotId,sourceHash:run.snapshot.contentHash,profileVersion:run.profileVersion,obligationId}}});
+    await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"intelligence.candidate_"+input.decision.toLowerCase(),entityType:"IntelligenceDecision",entityId:decision.id,details:{runId,candidateKey:candidate.key,resultHash:run.resultHash,snapshotId:run.snapshotId,sourceHash:run.snapshot.contentHash,profileVersion:run.profileVersion,obligationId,assigneeId:input.decision==='ACCEPTED'?input.assigneeId||null:null}}});
     return decision;
   });
 }

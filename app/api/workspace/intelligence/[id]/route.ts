@@ -3,7 +3,7 @@ import {authorisedWorkspaceContext,workspaceConfigured} from "../../../../../lib
 import {decideCandidate,IntelligenceError} from "../../../../../lib/server/intelligence-service";
 import {failure,readBody,reply} from "../../../../../lib/server/intelligence-http";
 export const runtime="nodejs";export const dynamic="force-dynamic";
-const decision=z.object({organizationId:z.string().uuid(),candidateKey:z.string().regex(/^[a-f0-9]{64}$/),decision:z.enum(["ACCEPTED","DISMISSED"]),rationale:z.string().min(20).max(800),ownerName:z.string().max(80).optional(),title:z.string().max(160).optional(),dueDate:z.string().max(10).optional()});
+const decision=z.object({organizationId:z.string().uuid(),candidateKey:z.string().regex(/^[a-f0-9]{64}$/),decision:z.enum(["ACCEPTED","DISMISSED"]),rationale:z.string().min(20).max(800),ownerName:z.string().max(80).optional(),assigneeId:z.string().uuid().optional(),title:z.string().max(160).optional(),dueDate:z.string().max(10).optional()});
 export async function POST(request:Request,{params}:{params:Promise<{id:string}>}){
   if(!workspaceConfigured())return reply({error:"Private workspace not configured"},503);
   try{

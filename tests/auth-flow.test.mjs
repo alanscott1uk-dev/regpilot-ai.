@@ -75,3 +75,20 @@ test('a verified work callback resumes only a recent task link for the requestin
  assert.equal(taskReturnPath({...intent,path:'//example.invalid'},'a@example.invalid',200),null);
  assert.equal(taskReturnIntent('/team/work','?taskId=missing','a@example.invalid'),null);
 });
+
+
+test('connected workspace sign-in restores only verified bounded internal context',async()=>{
+ const {workspaceReturnIntent,workspaceReturnPath}=await import('../lib/auth-flow.mjs');
+ const org='123e4567-e89b-42d3-a456-426614174000';
+ const intent=workspaceReturnIntent('/team/intelligence','?organizationId='+org+'&sourceId=uk-data-protection&next=https://evil.invalid&access_token=secret','A@example.invalid',100);
+ assert.equal(workspaceReturnPath(intent,'a@example.invalid',200),'/team/intelligence?organizationId='+org+'&sourceId=uk-data-protection');
+ assert.equal(workspaceReturnPath(intent,'other@example.invalid',200),null);
+ assert.equal(workspaceReturnPath(intent,'a@example.invalid',3600101),null);
+ assert.equal(workspaceReturnPath({...intent,path:'//evil.invalid'},'a@example.invalid',200),null);
+ assert.equal(workspaceReturnIntent('/team/setup','?organizationId=invalid','a@example.invalid'),null);
+ assert.equal(workspaceReturnIntent('/team/setup','?organizationId='+org+'&taskId=invalid','a@example.invalid'),null);
+ assert.equal(workspaceReturnIntent('/workbench','?organizationId='+org,'a@example.invalid'),null);
+ const f=fixture(),resumed=await resolveSignInReturn(info,'/team/briefing',f.auth,()=>false,()=>'/team/briefing?organizationId='+org);
+ assert.equal(resumed.destination,'/team/briefing?organizationId='+org);
+ for(const path of ['/team/intelligence','/team/sources','/team/briefing','/team/evidence','/team/assurance','/team/work/reviews'])assert.equal(signInDestination(path),path);
+});
