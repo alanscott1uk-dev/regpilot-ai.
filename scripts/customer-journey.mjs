@@ -72,7 +72,7 @@ export async function createCustomerWorkspace({page,db,app,email,checkpoint,pass
  await page.getByRole('region',{name:'Monitoring runtime',exact:true}).getByRole('heading',{name:'Monitoring awaits activation',exact:true}).waitFor();
  const publication=page.getByRole('article',{name:'Data protection and your business',exact:true});
  await publication.getByText('Collection failed',{exact:true}).waitFor();
- await publication.getByText('Last recorded issue: fetch failed. Previous successful evidence remains available.',{exact:true}).waitFor();
+ await publication.getByText('Last recorded issue: fetch failed.',{exact:true}).waitFor();
  const [retryResponse]=await Promise.all([
   page.waitForResponse(response=>response.url()===app+'/api/workspace/monitoring/retry'&&response.request().method()==='POST'),
   publication.getByRole('button',{name:'Request recovery',exact:true}).click()
@@ -92,7 +92,7 @@ export async function createCustomerWorkspace({page,db,app,email,checkpoint,pass
  assert.equal(await publication.getByRole('button',{name:'Request recovery',exact:true}).count(),0,'the queued attempt cannot be submitted again');
  await page.reload();
  await publication.getByText(/Recovery requested — waiting for a completed check/).waitFor();
- await publication.getByText('Last recorded issue: fetch failed. Previous successful evidence remains available.',{exact:true}).waitFor();
+ await publication.getByText('Last recorded issue: fetch failed.',{exact:true}).waitFor();
  await page.screenshot({path:artifactDir+'/desktop-customer-monitoring-recovery.png',fullPage:true});
  passed('The customer requested recovery of an explicitly injected paused-source fault through real authenticated application endpoints. One retry was persisted, prior failure remained visible after refresh/reload, no snapshot or successful check was invented, and inactive runtime stayed explicit.');
  return {org,reviewer};

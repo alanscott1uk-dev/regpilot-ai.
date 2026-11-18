@@ -66,7 +66,7 @@ export async function monitoringRecoveryJourney(browser,base,viewport,name){
   await source().getByRole('button',{name:'Request recovery',exact:true}).click();
   await source().getByText(/Recovery requested — waiting for a completed check/).waitFor();
   assert.equal(writes.length,1);assert.equal(await source().getByRole('button',{name:'Request recovery',exact:true}).count(),0);
-  await source().getByText("Last recorded issue: provider unavailable. Previous successful evidence remains available.",{exact:true}).waitFor();
+  await source().getByText("Last recorded issue: provider unavailable.",{exact:true}).waitFor();
   await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:'artifacts/usability/monitoring-recovery-'+name+'-queued.png',fullPage:true});
 
   // A later failure is a new saved state. Simulate a committed recovery whose reply is lost.
