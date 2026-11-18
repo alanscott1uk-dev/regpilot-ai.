@@ -117,6 +117,10 @@ export async function sourceToReportJourney({upload,review,db,app,org,editor,rev
  const task=await db.obligation.findUniqueOrThrow({where:{id:accepted.obligationId}});
  assert.equal(task.organizationId,org.id);assert.equal(task.assigneeId,editor.id);assert.equal(task.ownerName,editor.email);
  assert.equal(task.originKey,accepted.candidateKey);assert.equal(accepted.reviewerId,reviewer.id);
+ // The POST is persisted before the client has reconciled its follow-up GET.
+ // Wait for the saved decision UI before switching to another candidate.
+ await review.getByRole('status').filter({hasText:'Review saved and one linked task created in your team queue.'}).waitFor();
+ await review.getByRole('link',{name:'Open task',exact:true}).waitFor();
  await checkpoint('independent dismissal without an owner or task');
  const beforeDismiss=await db.obligation.count({where:{organizationId:org.id}});
  await review.getByRole('combobox',{name:/^Show/}).selectOption('pending');
