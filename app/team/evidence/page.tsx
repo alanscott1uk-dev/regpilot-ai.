@@ -2,6 +2,7 @@
 import WorkspaceNav from "../../components/workspace-nav";
 import {useCallback,useEffect,useMemo,useRef,useState} from "react";
 import {browserAuth} from "../../../lib/client/supabase-auth";
+import {workUuid} from "../../../lib/work-hub.mjs";
 import shell from "../../workbench/workbench.module.css";
 import ui from "./evidence.module.css";
 import {DocumentReader} from "./document-reader";
@@ -18,6 +19,7 @@ export default function TeamEvidence(){
  const [reviewNotes,setReviewNotes]=useState<Record<string,string>>({});
  const [busy,setBusy]=useState(false),[notice,setNotice]=useState("");
  const [enabled,setEnabled]=useState<boolean|null>(null);
+ const taskRequest=useRef(0);
  const active=useRef({orgId,taskId,userId:user?.id});active.current={orgId,taskId,userId:user?.id};
  const token=async()=> (await browserAuth().auth.getSession()).data.session?.access_token||"";
  const request=useCallback(async(path:string,opts:RequestInit={})=>{
@@ -37,29 +39,43 @@ export default function TeamEvidence(){
    const seq=++sequence;
    try{
     const session=await token();
-    if(!session){if(alive&&seq===sequence){setUser(null);setRows([]);setOrgs([]);setOrgId("");setTasks([]);setTaskId("");}return}
+    if(!session){if(alive&&seq===sequence){taskRequest.current++;setUser(null);setRows([]);setOrgs([]);setOrgId("");setTasks([]);setTaskId("");}return}
     const r=await fetch("/api/ai/context",{headers:{authorization:"Bearer "+session},cache:"no-store"});
     if(!r.ok)throw new Error("Secure team workspace is not activated");
     const d=await r.json();
     if(!alive||seq!==sequence)return;
-    if(active.current.userId!==d.userId){setRows([]);setTasks([]);setTaskId("");}
+    if(active.current.userId!==d.userId){taskRequest.current++;setRows([]);setTasks([]);setTaskId("");}
     setUser({id:d.userId||"",email:d.email});
     const list:Array<Org>=d.organisations||[];
     setOrgs(list);setOrgId(prev=>list.find(x=>x.id===prev)?prev:list.find(x=>x.id===new URLSearchParams(window.location.search).get("organizationId"))?.id||list[0]?.id||"");
-   }catch(e){if(alive&&seq===sequence){setUser(null);setOrgs([]);setOrgId("");setRows([]);setTasks([]);setTaskId("");setNotice(e instanceof Error?e.message:"Please sign in from the team workspace");}}
+   }catch(e){if(alive&&seq===sequence){taskRequest.current++;setUser(null);setOrgs([]);setOrgId("");setRows([]);setTasks([]);setTaskId("");setNotice(e instanceof Error?e.message:"Please sign in from the team workspace");}}
   }
-  try{const {data}=browserAuth().auth.onAuthStateChange(event=>{if(event==="SIGNED_OUT"){sequence++;setUser(null);setRows([]);setOrgs([]);setOrgId("");setTasks([]);setTaskId("");active.current={orgId:"",taskId:"",userId:undefined};}else setTimeout(()=>{if(alive)void load()},0);});void load();return()=>{alive=false;sequence++;data.subscription.unsubscribe()}}catch{setEnabled(false);return()=>{alive=false}};
+  try{const {data}=browserAuth().auth.onAuthStateChange(event=>{if(event==="SIGNED_OUT"){sequence++;taskRequest.current++;setUser(null);setRows([]);setOrgs([]);setOrgId("");setTasks([]);setTaskId("");active.current={orgId:"",taskId:"",userId:undefined};}else setTimeout(()=>{if(alive)void load()},0);});void load();return()=>{alive=false;sequence++;taskRequest.current++;data.subscription.unsubscribe()}}catch{setEnabled(false);return()=>{alive=false;taskRequest.current++}};
  },[]);
  const loadTasks=useCallback(async(id:string)=>{
   if(!id)return;
+  const generation=++taskRequest.current,actor=active.current.userId;
+  const current=()=>generation===taskRequest.current&&active.current.orgId===id&&active.current.userId===actor;
   try{
    const r=await request("/api/workspace/obligations?organizationId="+encodeURIComponent(id));
    const d=await r.json();const list:Task[]=Array.isArray(d.items)?d.items:[];
-   if(active.current.orgId!==id)return;
-   setTasks(list);
-   const preferred=new URLSearchParams(window.location.search).get("taskId");
-   setTaskId(prev=>list.find(t=>t.id===prev)?prev:list.find(t=>t.id===preferred)?.id||list[0]?.id||"");
-  }catch(e){setNotice(e instanceof Error?e.message:"Could not load tasks")}
+   const params=new URLSearchParams(window.location.search);
+   const requestedOrg=params.get('organizationId');
+   const preferred=!requestedOrg||requestedOrg===id?params.get('taskId'):null;
+   if(preferred){
+    if(!workUuid(preferred))throw new Error('The linked task identifier is invalid. Open the work hub to choose a task.');
+    if(!list.some(t=>t.id===preferred)){
+     // Exact, tenant-scoped lookup prevents a deep link outside the legacy first 100
+     // records from silently selecting an unrelated task for an evidence upload.
+     const response=await request('/api/workspace/work?'+new URLSearchParams({organizationId:id,taskId:preferred}));
+     const exact=await response.json();
+     if(exact.organizationId!==id||exact.task?.id!==preferred)throw new Error('The linked task is unavailable. Open the work hub to choose a task.');
+     list.unshift({id:exact.task.id,title:exact.task.title,ownerName:exact.task.ownerName,status:exact.task.status});
+    }
+   }
+   if(!current())return;
+   setTasks(list);setTaskId(prev=>preferred||list.find(t=>t.id===prev)?.id||list[0]?.id||'');
+  }catch(e){if(current()){setTasks([]);setTaskId('');setRows([]);setNotice(e instanceof Error?e.message:'Could not load the requested task');}}
  },[request]);
  const loadEvidence=useCallback(async(org:string,task:string)=>{
   if(!org||!task){setRows([]);return}
@@ -68,7 +84,7 @@ export default function TeamEvidence(){
    const d=await r.json();if(active.current.orgId!==org||active.current.taskId!==task)return;setRows(Array.isArray(d.evidence)?d.evidence:[]);
   }catch(e){if(active.current.orgId===org&&active.current.taskId===task){setRows([]);setNotice(e instanceof Error?e.message:"Could not retrieve evidence")}}
  },[request]);
- useEffect(()=>{setTasks([]);setRows([]);if(orgId&&user&&enabled)void loadTasks(orgId)},[orgId,user?.id,enabled,loadTasks]);
+ useEffect(()=>{setTasks([]);setTaskId('');setRows([]);setFile(null);setReviewNotes({});if(orgId&&user&&enabled)void loadTasks(orgId);return()=>{taskRequest.current++;};},[orgId,user?.id,enabled,loadTasks]);
  useEffect(()=>{setRows([]);if(orgId&&taskId&&enabled)void loadEvidence(orgId,taskId)},[orgId,taskId,enabled,loadEvidence]);
  const org=orgs.find(x=>x.id===orgId);
  const canUpload=org&&org.role!=="VIEWER";
@@ -118,8 +134,8 @@ export default function TeamEvidence(){
    {enabled===false&&<section className={ui.setup}><strong>Evidence vault disabled in this environment.</strong><p>Activation requires a verified private Supabase Storage bucket, server-side credentials, an operational ClamAV scanner and database migration. Nothing is publicly uploaded while disabled.</p></section>}
    {!user&&<section className={ui.setup}>Sign in at the <a href="/team">private team workspace</a> to access authorised evidence records.</section>}
    {user&&orgs.length>0&&<>
-    <section className={ui.bar}><div><label>Organisation<select value={orgId} onChange={e=>setOrgId(e.target.value)}>{orgs.map(o=><option key={o.id} value={o.id}>{o.name} · {o.role}</option>)}</select></label></div>
-     <div><label>Task<select value={taskId} onChange={e=>setTaskId(e.target.value)}>{tasks.map(t=><option key={t.id} value={t.id}>{t.title}</option>)}</select></label></div></section>
+    <section className={ui.bar}><div><label>Organisation<select value={orgId} disabled={busy} onChange={e=>{taskRequest.current++;active.current={...active.current,orgId:e.target.value,taskId:''};setTaskId('');setTasks([]);setRows([]);setFile(null);setOrgId(e.target.value);}}>{orgs.map(o=><option key={o.id} value={o.id}>{o.name} · {o.role}</option>)}</select></label></div>
+     <div><label>Task<select value={taskId} disabled={busy||!tasks.length} onChange={e=>{setFile(null);setReviewNotes({});setTaskId(e.target.value);}}>{!tasks.length&&<option value="">No task selected</option>}{tasks.map(t=><option key={t.id} value={t.id}>{t.title}</option>)}</select></label></div></section>
     <section className={ui.stats}><div><span>Stored files</span><strong>{summary.total}</strong></div><div><span>Awaiting review</span><strong>{summary.pending}</strong></div><div><span>Independently reviewed</span><strong>{summary.approved}</strong></div></section>
     {canUpload&&taskId&&<section className={ui.card}><div className={ui.head}><span>01 / ADD EVIDENCE</span><h2>Attach a policy or evidence document</h2><p>Files are only stored after the configured antivirus scanner returns an explicit clean result.</p></div>
      <form onSubmit={upload} className={ui.upload}><input type="file" accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" required onChange={e=>setFile(e.target.files?.[0]||null)}/><button disabled={busy||!file||!enabled} type="submit">Scan and store privately</button></form>
