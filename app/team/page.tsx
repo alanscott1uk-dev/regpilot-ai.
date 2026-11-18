@@ -1,8 +1,9 @@
 "use client";
 import WorkspaceNav from "../components/workspace-nav";
-import {useCallback,useEffect,useState} from "react";
+import {useCallback,useEffect,useRef,useState} from "react";
 import EmailSignIn from "../components/email-sign-in";
 import {browserAuth} from "../../lib/client/supabase-auth";
+import {workUuid} from "../../lib/work-hub.mjs";
 import shell from "../workbench/workbench.module.css";
 import ui from "./team.module.css";
 type Org={id:string;name:string;role:"OWNER"|"ADMIN"|"EDITOR"|"VIEWER"};
@@ -10,7 +11,7 @@ type Task={originKey:string|null;id:string;title:string;ownerName:string;categor
 const fmt=(s:string)=>s?new Date(s).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}):"—";
 const today=()=>{const d=new Date();return [d.getFullYear(),String(d.getMonth()+1).padStart(2,"0"),String(d.getDate()).padStart(2,"0")].join("-");};
 export default function Team(){
- const [ready,setReady]=useState(false),[user,setUser]=useState<{email:string}|null>(null);
+ const [ready,setReady]=useState(false),[user,setUser]=useState<{id:string;email:string}|null>(null);
  const [organisations,setOrganisations]=useState<Org[]>([]),[orgId,setOrgId]=useState("");
  const [company,setCompany]=useState("Demo pilot business");
  const [items,setItems]=useState<Task[]>([]),[busy,setBusy]=useState(false),[message,setMessage]=useState("");
@@ -18,42 +19,68 @@ export default function Team(){
  const [completionNotes,setCompletionNotes]=useState<Record<string,string>>({});
  const [focusedTaskId,setFocusedTaskId]=useState("");
  const [draft,setDraft]=useState({title:"",ownerName:"",category:"Internal",dueDate:today(),notes:""});
- useEffect(()=>{const requested=new URLSearchParams(window.location.search).get("taskId")||"";if(/^[0-9a-f-]{36}$/i.test(requested))setFocusedTaskId(requested);},[]);
+ const sessionRequest=useRef(0),taskRequest=useRef(0),active=useRef({orgId:"",userId:""});
+ active.current={orgId,userId:user?.id||""};
  useEffect(()=>{if(!focusedTaskId||!items.some(task=>task.id===focusedTaskId))return;setSearch("");setFilter("all");const timer=window.setTimeout(()=>document.getElementById("team-task-"+focusedTaskId)?.scrollIntoView({block:"center",behavior:"smooth"}),90);return()=>window.clearTimeout(timer);},[focusedTaskId,items]);
  async function sessionToken(){return (await browserAuth().auth.getSession()).data.session?.access_token||""}
  const loadSession=useCallback(async()=>{
+  const sequence=++sessionRequest.current;
   try{
    const token=(await browserAuth().auth.getSession()).data.session?.access_token;
-   if(!token){setUser(null);setOrganisations([]);setOrgId("");return;}
+   if(sequence!==sessionRequest.current)return;
+   if(!token){taskRequest.current++;active.current={orgId:"",userId:""};setUser(null);setOrganisations([]);setOrgId("");setItems([]);setFocusedTaskId("");return;}
    const r=await fetch("/api/ai/context",{headers:{authorization:"Bearer "+token},cache:"no-store"});
    const result=await r.json();
+   if(sequence!==sessionRequest.current)return;
    if(!r.ok)throw new Error(result.error||"Workspace unavailable");
    const list:Org[]=Array.isArray(result.organisations)?result.organisations:[];
-   setUser({email:result.email});
+   const requested=new URLSearchParams(window.location.search).get("organizationId"),desired=requested?.toLowerCase();
+   if(active.current.userId!==result.userId){taskRequest.current++;setItems([]);setFocusedTaskId("");setCompletionNotes({});setShowCreate(false);}
+   setUser({id:result.userId,email:result.email});
    setOrganisations(list);
-   setOrgId(id=>list.some(o=>o.id===id)?id:list[0]?.id||"");
-  }catch(e){setUser(null);setMessage(e instanceof Error?e.message:"Cannot load secure session")}
-  finally{setReady(true)}
+   if(requested!==null&&(!workUuid(requested)||!list.some(o=>o.id===desired))){
+    taskRequest.current++;active.current={orgId:"",userId:result.userId};setOrgId("");setItems([]);setFocusedTaskId("");setMessage("The linked organisation is unavailable for this account. Choose an organisation to continue.");return;
+   }
+   const selected=desired||(list.some(o=>o.id===active.current.orgId)?active.current.orgId:list[0]?.id||"");
+   active.current={orgId:selected,userId:result.userId};setOrgId(selected);
+  }catch(e){if(sequence===sessionRequest.current){taskRequest.current++;active.current={orgId:"",userId:""};setUser(null);setOrgId("");setOrganisations([]);setItems([]);setFocusedTaskId("");setMessage(e instanceof Error?e.message:"Cannot load secure session")}}
+  finally{if(sequence===sessionRequest.current)setReady(true)}
  },[]);
  useEffect(()=>{
   let alive=true;try{
-   const {data}=browserAuth().auth.onAuthStateChange(()=>{
+   const {data}=browserAuth().auth.onAuthStateChange(event=>{
+    if(event==="SIGNED_OUT"){sessionRequest.current++;taskRequest.current++;active.current={orgId:"",userId:""};setUser(null);setOrganisations([]);setOrgId("");setItems([]);setFocusedTaskId("");setCompletionNotes({});setShowCreate(false);setMessage("");setReady(true);return;}
     // Run Supabase API calls outside the synchronous auth callback to avoid session lock contention.
     setTimeout(()=>{if(alive)void loadSession()},0);
    });
    void loadSession();
-   return()=>{alive=false;data.subscription.unsubscribe()};
+   return()=>{alive=false;sessionRequest.current++;taskRequest.current++;active.current={orgId:"",userId:""};data.subscription.unsubscribe()};
   }catch(e){setMessage("Supabase public login settings are missing");setReady(true);}
  },[loadSession]);
  const loadTasks=useCallback(async(id:string)=>{
-  if(!id)return;try{
+  if(!id||active.current.orgId!==id||!active.current.userId)return;
+  const sequence=++taskRequest.current,actor=active.current.userId;
+  const isCurrent=()=>sequence===taskRequest.current&&active.current.orgId===id&&active.current.userId===actor;
+  try{
    const token=await sessionToken();if(!token)throw new Error("Sign in first");
    const r=await fetch("/api/workspace/obligations?organizationId="+encodeURIComponent(id),{headers:{authorization:"Bearer "+token},cache:"no-store"});
    const data=await r.json();if(!r.ok)throw new Error(data.error||"Cannot retrieve work queue");
-   setItems(Array.isArray(data.items)?data.items:[]);
-  }catch(e){setMessage(e instanceof Error?e.message:"Could not load tasks")}
+   if(!isCurrent())return;
+   const params=new URLSearchParams(window.location.search),requestedOrg=params.get("organizationId");
+   const requested=!requestedOrg||requestedOrg.toLowerCase()===id?params.get("taskId"):null;
+   if(requested&&!workUuid(requested))throw new Error("The linked task is invalid. Open the work hub to choose a task.");
+   const preferred=requested?.toLowerCase()||"",next:Task[]=Array.isArray(data.items)?data.items:[];
+   if(preferred&&!next.some(task=>task.id===preferred)){
+    const response=await fetch("/api/workspace/work?"+new URLSearchParams({organizationId:id,taskId:preferred}),{headers:{authorization:"Bearer "+token},cache:"no-store"});
+    const exact=await response.json();
+    if(!isCurrent())return;
+    if(!response.ok||exact.organizationId!==id||exact.task?.id!==preferred)throw new Error("The linked task is unavailable in this organisation. Open the work hub to choose a task.");
+    next.unshift(exact.task);
+   }
+   if(isCurrent()){setItems(next);setFocusedTaskId(preferred);}
+  }catch(e){if(isCurrent()){setItems([]);setFocusedTaskId("");setMessage(e instanceof Error?e.message:"Could not load tasks")}}
  },[]);
- useEffect(()=>{setItems([]);if(orgId&&user)void loadTasks(orgId)},[orgId,user?.email,loadTasks]);
+ useEffect(()=>{setItems([]);setFocusedTaskId("");setCompletionNotes({});if(orgId&&user)void loadTasks(orgId);return()=>{taskRequest.current++;}},[orgId,user?.id,loadTasks]);
  async function bootstrap(e:React.FormEvent){
   e.preventDefault();setBusy(true);try{
    const token=await sessionToken();if(!token)throw new Error("Sign in first");
@@ -98,8 +125,8 @@ export default function Team(){
    </section>
    {user&&organisations.length===0&&<section className={ui.card}><h2>Start an approved pilot workspace</h2><p>Only invited, email-verified pilot accounts can create a company.</p><form onSubmit={bootstrap} className={ui.newForm}><label>Company name<input value={company} minLength={3} maxLength={100} onChange={e=>setCompany(e.target.value)}/></label><button disabled={busy}>Create pilot workspace</button></form></section>}
    {user&&organisations.length>0&&<>
-    <section className={ui.bar}><label>Organisation<select value={orgId} onChange={e=>setOrgId(e.target.value)}>{organisations.map(o=><option value={o.id} key={o.id}>{o.name} · {o.role}</option>)}</select></label>
-     <div className={ui.barActions}><button onClick={()=>void loadTasks(orgId)} disabled={busy}>↻ Refresh</button>{canWrite&&<button className={ui.primary} onClick={()=>setShowCreate(x=>!x)}>{showCreate?"Close form":"＋ New task"}</button>}</div>
+    <section className={ui.bar}><label>Organisation<select aria-label="Organisation" value={orgId} disabled={busy} onChange={e=>{const id=e.target.value;taskRequest.current++;active.current={...active.current,orgId:id};setItems([]);setFocusedTaskId("");setCompletionNotes({});setShowCreate(false);setSearch("");setFilter("all");setMessage("");setOrgId(id);const url=new URL(window.location.href);url.searchParams.set("organizationId",id);url.searchParams.delete("taskId");window.history.replaceState(window.history.state,"",url.pathname+url.search);window.dispatchEvent(new Event("regpilot-workspace-navigation"));}}>{!orgId&&<option value="" disabled>Choose an organisation</option>}{organisations.map(o=><option value={o.id} key={o.id}>{o.name} · {o.role}</option>)}</select></label>
+     <div className={ui.barActions}><button onClick={()=>{setMessage("");void loadTasks(orgId)}} disabled={busy||!orgId}>↻ Refresh</button>{canWrite&&<button className={ui.primary} onClick={()=>setShowCreate(x=>!x)}>{showCreate?"Close form":"＋ New task"}</button>}</div>
     </section>
     {showCreate&&canWrite&&<section className={ui.card}><h2>Create a team task</h2><p>Keep task details factual. Do not enter sensitive information in the pilot.</p><form onSubmit={create} className={ui.newForm}>
      <label>Task title<input required maxLength={160} value={draft.title} onChange={e=>setDraft(x=>({...x,title:e.target.value}))}/></label>
@@ -109,11 +136,11 @@ export default function Team(){
      <label className={ui.full}>Working notes<textarea maxLength={500} rows={3} value={draft.notes} onChange={e=>setDraft(x=>({...x,notes:e.target.value}))}/></label>
      <button disabled={busy} className={ui.primary}>Save team task</button>
     </form></section>}
-    <section className={ui.card}><div className={ui.heading}><div><span className={ui.overline}>SHARED WORK QUEUE</span><h2>{items.length} recorded tasks</h2><p>Changes are associated with authenticated users and organisation membership.</p></div><span className={ui.count}>{items.filter(x=>x.status!=="COMPLETE").length} open</span></div>
+    {orgId&&<section className={ui.card}><div className={ui.heading}><div><span className={ui.overline}>SHARED WORK QUEUE</span><h2>{items.length} recorded tasks</h2><p>Changes are associated with authenticated users and organisation membership.</p></div><span className={ui.count}>{items.filter(x=>x.status!=="COMPLETE").length} open</span></div>
      <div className={ui.filters}><input aria-label="Search tasks" placeholder="Search work or owners…" value={search} onChange={e=>setSearch(e.target.value)}/><select aria-label="Filter work status" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All statuses</option><option value="OPEN">Open</option><option value="IN_PROGRESS">In progress</option><option value="COMPLETE">Recorded complete</option></select></div>
-     <div className={ui.tasks}>{visible.length===0?<p className={ui.empty}>No matching tasks. {ready?"Record a task to begin.":"Loading…"}</p>:visible.map(task=><article className={ui.task} key={task.id} id={"team-task-"+task.id} style={focusedTaskId===task.id?{outline:"3px solid #9270ca",scrollMarginTop:28}:undefined}><div><span className={ui.overline}>{task.category} · Due {fmt(task.dueDate)}</span><h3>{task.title}</h3><p>{task.ownerName} · {task.notes||"No additional notes"}</p>{task.completionException&&<p className={ui.completionFlag}>Completion exception recorded: {task.completionRationale}</p>}{task.sourceUrl&&<a href={task.sourceUrl} target="_blank" rel="noopener noreferrer">View recorded source ↗</a>} <a href={"/team/evidence?taskId="+encodeURIComponent(task.id)}>Attach or review evidence ↗</a> {task.originKey&&<a href={"/team/assurance?taskId="+encodeURIComponent(task.id)+"&organizationId="+encodeURIComponent(orgId)}>Assess requirement coverage ↗</a>}</div><div>{!task.originKey&&<label>Exception rationale (if no reviewed evidence)<textarea rows={2} maxLength={500} value={completionNotes[task.id]||""} onChange={e=>setCompletionNotes(n=>({...n,[task.id]:e.target.value}))} placeholder="Needed only when closing without approved evidence"/></label>}{task.originKey&&<p>Completion requires a current independent evidence assessment.</p>}<label>Work status<select disabled={!canWrite||busy} value={task.status} onChange={e=>void changeStatus(task,e.target.value as Task["status"])}><option value="OPEN">Open</option><option value="IN_PROGRESS">In progress</option><option value="COMPLETE">Recorded complete</option></select></label></div></article>)}</div>
-     <p className={ui.foot}>Only the most recent 100 tasks are returned. Completion indicates work status, not verified compliance or evidence approval.</p>
-    </section>
+     <div className={ui.tasks}>{visible.length===0?<p className={ui.empty}>No matching tasks. {ready?"Record a task to begin.":"Loading…"}</p>:visible.map(task=><article className={ui.task} key={task.id} id={"team-task-"+task.id} style={focusedTaskId===task.id?{outline:"3px solid #9270ca",scrollMarginTop:28}:undefined}><div><span className={ui.overline}>{task.category} · Due {fmt(task.dueDate)}</span><h3>{task.title}</h3><p>{task.ownerName} · {task.notes||"No additional notes"}</p>{task.completionException&&<p className={ui.completionFlag}>Completion exception recorded: {task.completionRationale}</p>}{task.sourceUrl&&<a href={task.sourceUrl} target="_blank" rel="noopener noreferrer">View recorded source ↗</a>} <a href={"/team/evidence?"+new URLSearchParams({organizationId:orgId,taskId:task.id})}>Attach or review evidence ↗</a> {task.originKey&&<a href={"/team/assurance?taskId="+encodeURIComponent(task.id)+"&organizationId="+encodeURIComponent(orgId)}>Assess requirement coverage ↗</a>}</div><div>{!task.originKey&&<label>Exception rationale (if no reviewed evidence)<textarea rows={2} maxLength={500} value={completionNotes[task.id]||""} onChange={e=>setCompletionNotes(n=>({...n,[task.id]:e.target.value}))} placeholder="Needed only when closing without approved evidence"/></label>}{task.originKey&&<p>Completion requires a current independent evidence assessment.</p>}<label>Work status<select disabled={!canWrite||busy} value={task.status} onChange={e=>void changeStatus(task,e.target.value as Task["status"])}><option value="OPEN">Open</option><option value="IN_PROGRESS">In progress</option><option value="COMPLETE">Recorded complete</option></select></label></div></article>)}</div>
+     <p className={ui.foot}>The queue shows up to 100 tasks ordered by deadline, plus any task opened by a direct link. Completion indicates work status, not verified compliance or evidence approval.</p>
+    </section>}
    </>}
    <footer className={shell.footer}>Private pilot · Evidence storage and AI require service activation. Manage invitations and roles in Team & access. Production acceptance remains outstanding.</footer>
   </main>

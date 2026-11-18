@@ -2,3 +2,72 @@
 @media(max-width:1200px){.views{grid-template-columns:repeat(3,minmax(0,1fr))}.board{grid-template-columns:1fr}.board .taskOpen{flex-basis:auto}}
 @media(max-width:600px){.heading{align-items:flex-start;flex-direction:column;gap:16px}.toolbar{align-items:flex-start;flex-direction:column;gap:8px}.toolbar label,.toolbar select{width:100%}.views{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.views button{padding:12px;gap:8px}.workspace{padding:14px}.searchbar form{flex-basis:100%}.searchbar{gap:8px}.task{flex-wrap:wrap;gap:10px}.taskOpen{flex-basis:78%!important}.task>.badge{margin-left:auto}.fields{grid-template-columns:1fr}.planner{padding:18px}.dialog{padding:20px}.pagination{flex-wrap:wrap}.pagination span{font-size:10px}.pagination button{padding:9px;font-size:11px}.topline{font-size:10px}.resultHeading{align-items:flex-start;flex-direction:column}}
 @media(prefers-reduced-motion:reduce){.dialog,.workspace{scroll-behavior:auto}}
+
+.dialog .completion{background:#faf8fc;border:1px solid #e4dbea;border-radius:14px;padding:20px;margin-top:24px;overflow-wrap:anywhere}
+.completionHeading{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;margin-bottom:20px}
+.completionHeading h3{margin:7px 0 0;font-size:18px;letter-spacing:-.02em}
+.completionHeading .secondary{font-size:11px;padding:9px 12px;white-space:normal}
+.completionState{display:flex;align-items:flex-start;gap:12px;padding:16px;background:#fff7e9;border:1px solid #ead8b6;border-radius:10px}
+.completionState>span{display:grid;place-items:center;flex-shrink:0;width:26px;height:26px;border-radius:50%;background:#f4e4c5;color:#875b19;font-size:18px;line-height:1}
+.completionState h4{margin:2px 0 5px;font-size:14px;color:#67502c}
+.completionState p{margin:0;font-size:12px;color:#776444;line-height:1.6}
+.completionState[data-ready=true],.completionState[data-completed=true]{background:#edf6f0;border-color:#c8dfd0}
+.completionState[data-ready=true]>span,.completionState[data-completed=true]>span{background:#d6eadc;color:#356148}
+.completionState[data-ready=true] h4,.completionState[data-completed=true] h4{color:#345c43}
+.completionState[data-ready=true] p,.completionState[data-completed=true] p{color:#53705c}
+.completionBlockers{list-style:none;margin:14px 0;padding:0;display:grid;gap:10px}
+.completionBlockers li{padding:13px 14px;background:#fff;border:1px solid #e9e2ee;border-radius:9px}
+.completionBlockers p{margin:0 0 6px;font-size:12px}
+.completionBlockers a{display:inline-block;line-height:1.6}
+.completion .error{margin-bottom:0;padding:14px}
+.completion .error p{color:inherit;margin-top:0}
+.completion .error button{margin-left:0;white-space:normal}
+.completionAssessment{padding:12px 0;margin-bottom:0;font-size:12px!important}
+.completionFiles{min-width:0;margin:20px 0 16px;padding:0;border:0}
+.completionFiles legend{font-size:12px;font-weight:750;margin-bottom:10px;padding:0;color:#493853}
+.completionFiles label{display:flex;align-items:flex-start;gap:12px;padding:13px 12px;background:#fff;border:1px solid #e4dbe9;cursor:pointer}
+.completionFiles label+label{border-top:0}
+.completionFiles label:first-of-type{border-radius:9px 9px 0 0}
+.completionFiles label:last-of-type{border-radius:0 0 9px 9px}
+.completionFiles label:only-of-type{border-radius:9px}
+.completionFiles label:has(input:checked){background:#f3edf8;border-color:#d6c5e5}
+.completionFiles label:has(input:disabled){cursor:default}
+.completionFiles label>span{min-width:0;display:flex;flex-direction:column;gap:5px}
+.completionFiles strong{font-size:12px;line-height:1.5;color:#45334f}
+.completionFiles small{font-size:10px;color:#7a6a85;line-height:1.6}
+.completionFiles input,.completionConfirm input{flex-shrink:0;width:18px;height:18px;margin:1px 0 0;accent-color:#6a4594}
+.completionNotes{display:flex;flex-direction:column;gap:8px;margin:20px 0 16px}
+.completionNotes label{font-size:12px;font-weight:750;color:#493853}
+.completionNotes textarea{box-sizing:border-box;width:100%;min-width:0;resize:vertical;border:1px solid #d9cde2;border-radius:8px;padding:12px;background:#fff;color:#44364e;font:inherit;font-size:12px;line-height:1.65}
+.completionNotes small{font-size:10px;color:#7a6a85;line-height:1.6}
+.completionConfirm{display:flex;align-items:flex-start;gap:12px;padding:14px 0;margin-bottom:8px;font-size:12px;line-height:1.7;color:#51415d;cursor:pointer}
+.completionConfirm input{margin-top:2px}
+.completion>p:last-child{margin-bottom:0}
+.completionFiles input:focus-visible,.completionNotes textarea:focus-visible,.completionConfirm input:focus-visible,.completionRecord summary:focus-visible{outline:3px solid #9d73c7;outline-offset:3px}
+.completionRecord{padding-top:18px;font-size:13px}
+.completionRecord>strong{color:#3e5546}
+.completionRecord>p{font-size:12px;margin:6px 0 12px}
+.completionRecord details{margin:14px 0;border:1px solid #dfd5e7;border-radius:9px;background:#fff;padding:14px}
+.completionRecord summary{cursor:pointer;color:#5c4076;font-size:12px;font-weight:700;line-height:1.6}
+.completionRecord details>p{font-size:12px}
+.completionRecord ul{padding:0;margin:12px 0;list-style:none}
+.completionRecord li{display:flex;flex-direction:column;gap:6px;padding:12px 0;border-top:1px solid #ece5f1}
+.completionRecord li strong{font-size:12px}
+.completionRecord li span{font-size:10px;color:#7a6a85;line-height:1.6}
+.completionRecord code{font-size:10px;color:#6d6077;line-height:1.7;overflow-wrap:anywhere;white-space:normal}
+.completionRecord dl{font-size:10px;line-height:1.7;margin-bottom:0;color:#7a6a85}
+.completionRecord dt{font-weight:750;margin-top:10px;color:#52415e}
+.completionRecord dd{margin:3px 0 0;overflow-wrap:anywhere}
+.completionProvenance{display:flex;flex-direction:column;gap:6px;margin:12px 0}
+.completionProvenance p{font-size:12px;margin:0}
+.completionProvenance>span{font-size:10px;color:#7a6a85;line-height:1.6}
+@media(max-width:600px){
+ .dialog .completion{padding:16px}
+ .completionHeading{align-items:flex-start;gap:12px}
+ .completionHeading .secondary{min-height:40px}
+ .completionState{padding:13px;gap:10px}
+ .completion form>button,.completionRecord>button{width:100%;min-height:44px;white-space:normal;line-height:1.5}
+ .completionFiles label{padding:12px 10px}
+ .completionFiles input,.completionConfirm input{width:20px;height:20px}
+ .completionNotes textarea{font-size:14px}
+}

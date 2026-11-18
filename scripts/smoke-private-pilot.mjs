@@ -63,7 +63,7 @@ try{
  await waitForServer();
  const routes=[
   "/team/coverage","/team/briefing","/team/recognition","/recognition","/team/access-reviews","/team/answers","/team/questionnaires","/team/trust","/trust","/team/audit-requests","/team/changes","/team/people","/team/vendors","/team/audits","/auditor","/team/services","/team/settings","/team/operations","/team/library","/workbench","/register","/documents","/evidence","/controls",
-  "/assurance","/intelligence","/traceability","/team","/team/evidence","/team/sources","/team/intelligence","/team/assurance","/ai"
+  "/assurance","/intelligence","/traceability","/team","/team/work","/team/evidence","/team/sources","/team/intelligence","/team/assurance","/ai"
  ];
  for(const path of routes){
   const res=await response(path);
@@ -103,6 +103,12 @@ try{
  for(const path of ["/api/workspace/access-reviews","/api/workspace/answers","/api/workspace/questionnaires","/api/workspace/changes","/api/workspace/audit-requests","/api/workspace/policies","/api/workspace/policy-inbox","/api/workspace/vendors"]){assert.equal((await response(path+"?organizationId=123e4567-e89b-42d3-a456-426614174000")).status,503,"policy and supplier access fails closed");}
  const noTeam=await response("/api/workspace/obligations?organizationId=123e4567-e89b-42d3-a456-426614174000");
  assert.equal(noTeam.status,503,"private team API must fail closed");
+ for(const path of ["/api/workspace/work","/api/workspace/work/123e4567-e89b-42d3-a456-426614174001/completion"]){
+  const read=await response(path+"?organizationId=123e4567-e89b-42d3-a456-426614174000");
+  assert.equal(read.status,503,path+" private reads must fail closed");
+  const write=await response(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({organizationId:"123e4567-e89b-42d3-a456-426614174000"})});
+  assert.equal(write.status,503,path+" private writes must fail closed");
+ }
  const rootResponse=await response("/");
  assert.ok([301,302,303,307,308].includes(rootResponse.status),"root should redirect to secure operations");
  assert.equal(new URL(rootResponse.headers.get("location")||"",root).pathname,"/team/operations","landing route must prefer authenticated operations, not local demo");

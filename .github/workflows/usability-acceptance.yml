@@ -100,10 +100,14 @@ jobs:
       - name: Check real UUIDs through the evidence HTTP boundary
         run: node --import tsx --test tests/evidence-http.test.ts
       - run: npm install --no-save --package-lock=false playwright@1.55.1 && npx playwright install --with-deps chromium
-      - name: Build and run against the isolated application database
+      - name: Build against the isolated application database
+        timeout-minutes: 7
         run: |
           npx prisma db push --skip-generate
           npm run build
+      - name: Run real email sign-in, private evidence and completion journey
+        timeout-minutes: 6
+        run: |
           node_modules/.bin/next start -H 127.0.0.1 -p 3000 > "$RUNNER_TEMP/journey-next.log" 2>&1 &
           app_pid=$!
           trap 'kill "$app_pid" || true' EXIT

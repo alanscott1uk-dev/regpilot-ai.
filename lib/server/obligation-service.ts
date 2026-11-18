@@ -1,7 +1,7 @@
 import { can } from "../permissions.mjs";
 import { db } from "./db";
 import {requireMember,WRITER} from "./workspace-member";
-import {transaction} from "./intelligence-service";
+import {transaction,IntelligenceError} from "./intelligence-service";
 import type { AuthorizedContext } from "./authorization";
 import type { ObligationStatus } from "@prisma/client";
 import {completionAssessment} from "./assurance-service";
@@ -61,8 +61,11 @@ export async function changeObligationStatus(ctx: AuthorizedContext, id: string,
   }
   return transaction(ctx,async tx => {
     await requireMember(tx,ctx,WRITER);
-    const existing = await tx.obligation.findFirst({ where: { id, organizationId: ctx.organizationId } });
+    const existing = await tx.obligation.findFirst({ where: { id, organizationId: ctx.organizationId },include:{changeAction:{select:{id:true}},auditRequest:{select:{id:true}},accessItem:{select:{id:true}}} });
     if (!existing) return null;
+    // Specialist submissions and decisions must stay in sync with their task. A general status
+    // change must neither bypass independent acceptance nor reopen a still-accepted decision.
+    if(existing.changeAction||existing.auditRequest||existing.accessItem)throw new IntelligenceError("Use the linked change response, audit request or access review workflow to change this task's status.",409);
     const membership=await tx.membership.findUnique({where:{organizationId_userId:{organizationId:ctx.organizationId,userId:ctx.userId}}});
     if(!membership||!can(membership.role,"obligation:write"))throw new Error("Forbidden");
     if(status==="COMPLETE"&&existing.originKey){

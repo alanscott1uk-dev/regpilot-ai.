@@ -15,7 +15,8 @@ assert.equal(database.host,'127.0.0.1:54322');
 assert.equal(database.pathname,'/regpilot_journey');
 assert.equal(process.env.REGPILOT_EVIDENCE_BUCKET,'journey-files');
 const db=new PrismaClient();
-const supabase=createClient(api,process.env.SUPABASE_SECRET_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
+const localFetch=(input,options={})=>fetch(input,{...options,signal:options.signal?AbortSignal.any([options.signal,AbortSignal.timeout(15_000)]):AbortSignal.timeout(15_000)});
+const supabase=createClient(api,process.env.SUPABASE_SECRET_KEY,{auth:{persistSession:false,autoRefreshToken:false},global:{fetch:localFetch}});
 const errors=[];
 const artifactDir='artifacts/usability/private-evidence';
 const report={passed:false,stage:'local setup',checks:[],responses:[]};
@@ -50,10 +51,10 @@ async function signIn(page,url,email){
 }
 async function emailLink(email){
  for(let i=0;i<40;i++){
-  const inbox=await (await fetch(mail+'/api/v1/messages')).json();
+  const inbox=await (await localFetch(mail+'/api/v1/messages')).json();
   const item=inbox.messages?.find(m=>m.To.some(address=>address.Address===email));
   if(item){
-   const message=await (await fetch(mail+'/api/v1/message/'+item.ID)).json();
+   const message=await (await localFetch(mail+'/api/v1/message/'+item.ID)).json();
    for(const [,href] of message.HTML.matchAll(/href="([^"]+)"/gi)){
     const url=new URL(href.replaceAll('&amp;','&'));
     if(url.origin===api && url.pathname==='/auth/v1/verify')return url.href;
@@ -66,6 +67,7 @@ async function emailLink(email){
 }
 async function openContext(viewport){
  const context=await browser.newContext({viewport});
+ context.setDefaultTimeout(30_000);
  context.on('page',page=>{
   page.on('pageerror',e=>errors.push(e.message));
   page.on('response',response=>{
@@ -124,7 +126,13 @@ try{
  await upload.getByRole('link',{name:'Return to task'}).click();
  await detail.getByText('training-record.pdf',{exact:true}).waitFor();
  await detail.getByText(/Pending review/i).first().waitFor();
- passed('Mobile uploader passed email verification, exact-task selection, private upload and return to task.');
+ const pendingCompletion=detail.getByRole('region',{name:'Task completion',exact:true});
+ await pendingCompletion.getByRole('heading',{name:'Before you can finish',exact:true}).waitFor();
+ await pendingCompletion.getByText(/Supporting files are awaiting independent administrator review/).waitFor();
+ assert.equal(await pendingCompletion.getByRole('button',{name:'Complete with verified evidence',exact:true}).count(),0);
+ await mkdir(artifactDir,{recursive:true});
+ await upload.screenshot({path:artifactDir+'/mobile-pending-review.png',fullPage:true});
+ passed('Mobile uploader returned to the exact task; pending evidence prevented completion.');
 
  report.stage='independent reviewer sign-in and original download';
  const review=await signIn(await openContext({width:1440,height:1000}),app+'/team/work',reviewer.email);
@@ -148,12 +156,77 @@ try{
  assert.equal(record.reviewVersion,2);
  assert.equal(record.scanStatus,'CLEAN');
  assert.equal(record.sha256,createHash('sha256').update(file).digest('hex'));
+ const privateUrl=supabase.storage.from('journey-files').getPublicUrl(record.storageKey).data.publicUrl;
+ const publicRead=await localFetch(privateUrl);
+ assert.ok([400,401,403,404].includes(publicRead.status),'private evidence must not be publicly retrievable');
+ const anonymousDownload=await localFetch(app+'/api/workspace/evidence/'+record.id+'?'+new URLSearchParams({organizationId:org.id}));
+ assert.equal(anonymousDownload.status,401,'the original requires verified workspace identity');
  const audit=await db.auditEvent.findMany({where:{entityType:'Evidence',entityId:record.id}});
  assert.ok(audit.some(e=>e.action==='evidence.scanned_upload' && e.actorId===editor.id && e.details.scanEngine==='clamd'));
  assert.ok(audit.some(e=>e.action==='evidence.independent_review' && e.actorId===reviewer.id));
  assert.equal((await db.obligation.findUniqueOrThrow({where:{id:task.id}})).status,'OPEN');
+ assert.equal(await db.auditEvent.count({where:{entityType:'Obligation',entityId:task.id,action:'work.completed'}}),0);
  await review.getByRole('link',{name:'Return to task'}).click();
  await review.getByRole('dialog').getByText(/approved · added/i).waitFor();
+ passed('The independent approval preserved the open task; public and unauthenticated file downloads remained blocked.');
+
+ report.stage='explicit task completion with verified private bytes';
+ const completion=review.getByRole('dialog').getByRole('region',{name:'Task completion',exact:true});
+ await completion.getByRole('heading',{name:'Ready to complete',exact:true}).waitFor();
+ const completeButton=completion.getByRole('button',{name:'Complete with verified evidence',exact:true});
+ assert.equal(await completeButton.isDisabled(),true,'completion needs an explicit outcome and confirmation');
+ const outcome='Completed the fictional cold-chain training check against the independently reviewed training record.';
+ await completion.getByLabel('What was completed?',{exact:true}).fill(outcome);
+ assert.equal(await completeButton.isDisabled(),true,'outcome text alone must not complete work');
+ await completion.getByLabel('I have checked the selected evidence and confirm this work is complete.',{exact:true}).check();
+ const completionEndpoint=app+'/api/workspace/work/'+task.id+'/completion';
+ const [completedResponse]=await Promise.all([
+  review.waitForResponse(response=>response.url()===completionEndpoint&&response.request().method()==='POST'),
+  completeButton.click()
+ ]);
+ const completed=await completedResponse.json();
+ assert.equal(completedResponse.status(),200,`Completion returned ${completedResponse.status()}: ${completed.error||'unexpected result'}`);
+ assert.equal(completed.taskId,task.id);
+ assert.equal(completed.status,'COMPLETE');
+ assert.equal(completed.reused,false);
+ assert.equal(completed.evidenceCount,1);
+ await completion.getByRole('heading',{name:'Task completed',exact:true}).waitFor();
+ const finished=await db.obligation.findUniqueOrThrow({where:{id:task.id}});
+ assert.equal(finished.status,'COMPLETE');
+ assert.equal(finished.completedAt.toISOString(),completed.completedAt);
+ assert.equal(finished.completionException,false);
+ const completionEvents=await db.auditEvent.findMany({where:{organizationId:org.id,entityType:'Obligation',entityId:task.id,action:'work.completed'}});
+ assert.equal(completionEvents.length,1);
+ const saved=completionEvents[0];
+ assert.equal(saved.id,completed.eventId);
+ assert.equal(saved.actorId,reviewer.id);
+ assert.equal(saved.details.proofHash,completed.proofHash);
+ assert.match(completed.proofHash,/^[a-f0-9]{64}$/);
+ const receipt=saved.details.receipt;
+ assert.equal(receipt.organizationId,org.id);
+ assert.equal(receipt.task.id,task.id);
+ assert.equal(receipt.task.statusBefore,'OPEN');
+ assert.equal(receipt.completedById,reviewer.id);
+ assert.equal(receipt.notes,outcome);
+ assert.equal(receipt.evidence.length,1);
+ assert.deepEqual(receipt.evidence[0],{
+  id:record.id,filename:record.filename,sha256:record.sha256,reviewVersion:2,
+  reviewedAt:record.reviewedAt.toISOString(),reviewerId:reviewer.id,uploadedById:editor.id
+ });
+ assert.equal(JSON.stringify(receipt).includes(record.storageKey),false,'completion exports must not disclose private storage keys');
+ const receiptReady=review.waitForEvent('download');
+ await completion.getByRole('button',{name:'Download completion record',exact:true}).click();
+ const receiptDownload=await receiptReady;
+ const downloaded=JSON.parse(await readFile(await receiptDownload.path(),'utf8'));
+ assert.deepEqual(downloaded.receipt,receipt,'the exported receipt must match the persisted completion decision');
+ assert.equal(downloaded.record.eventId,saved.id);
+ assert.equal(downloaded.record.proofHash,saved.details.proofHash);
+ await writeFile(artifactDir+'/completion-record.json',JSON.stringify(downloaded,null,2)+'\n');
+ await review.reload();
+ await review.getByRole('dialog').getByRole('region',{name:'Task completion',exact:true}).getByRole('heading',{name:'Task completed',exact:true}).waitFor();
+ await review.screenshot({path:artifactDir+'/desktop-completed-task.png',fullPage:true});
+ passed('Explicit completion verified stored bytes, saved one attributed completion decision, exported its exact receipt and survived reload.');
+
  await review.getByRole('button',{name:'Close task details'}).click();
  await review.getByRole('button',{name:/Evidence to review/}).click();
  await review.getByRole('button',{name:/Evidence to review\s*0$/}).waitFor();
@@ -162,7 +235,7 @@ try{
  await review.getByText(/belongs to an unavailable organisation/).waitFor();
  assert.equal(await review.getByLabel('Evidence document').count(),0);
  assert.deepEqual(errors,[]);
- passed('Independent reviewer verified original bytes, recorded approval, cleared the review queue and preserved the open task. Unavailable workspace offered no upload.');
+ passed('The review queue cleared and an unavailable workspace offered no upload.');
  report.passed=true;
  report.stage='complete';
 }catch(error){
