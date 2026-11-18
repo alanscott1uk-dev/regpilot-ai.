@@ -20,6 +20,10 @@ test('callback metadata excludes credentials and handles expired links in query 
  assert.doesNotMatch(JSON.stringify(callbackInfo('?code=fixture-secret')),/fixture-secret/);
  assert.equal(cleanAuthUrl('https://pilot.invalid/register?code=secret&sb_flow_id=id&view=all#controls'),'/register?view=all#controls');
  assert.equal(cleanAuthUrl('https://pilot.invalid/ai#error=denied&error_description=secret&access_token=token&refresh_token=token'),'/ai');
+ assert.equal(cleanAuthUrl('https://pilot.invalid/team?view=all#access_token=secret&refresh_token=another&state=ordinary'),'/team?view=all#state=ordinary');
+ assert.equal(cleanAuthUrl('https://pilot.invalid/team?code=secret#section-one'),'/team#section-one');
+ assert.equal(cleanAuthUrl('https://pilot.invalid/team#section-one'),'/team#section-one');
+ assert.equal(cleanAuthUrl('https://pilot.invalid/team#access_token=secret&refresh_token=another'),'/team');
 });
 test('provider errors have actionable fixed messages and bounded retry windows',()=>{
  assert.equal(authProblem({code:'over_email_send_rate_limit'}).seconds,3600);
