@@ -1,7 +1,7 @@
 // Runs on an isolated runner. The browser uses real email-link sign-in and the app's normal routes.
 import assert from 'node:assert/strict';
 import {createHash,randomUUID} from 'node:crypto';
-import {readFile} from 'node:fs/promises';
+import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {setTimeout as delay} from 'node:timers/promises';
 import {chromium} from 'playwright';
 import {PrismaClient} from '@prisma/client';
@@ -17,7 +17,20 @@ assert.equal(process.env.REGPILOT_EVIDENCE_BUCKET,'journey-files');
 const db=new PrismaClient();
 const supabase=createClient(api,process.env.SUPABASE_SECRET_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
 const errors=[];
+const artifactDir='artifacts/usability/private-evidence';
+const report={passed:false,stage:'local setup',checks:[],responses:[]};
 let browser;
+function passed(message){report.checks.push(message);console.log(message);}
+async function submitEvidence(page,filename,bytes,expectedStatus){
+ await page.getByLabel('Evidence document').setInputFiles({name:filename,mimeType:'application/pdf',buffer:bytes});
+ const [response]=await Promise.all([
+  page.waitForResponse(r=>r.url()===app+'/api/workspace/evidence'&&r.request().method()==='POST'),
+  page.getByRole('button',{name:'Scan and store privately'}).click()
+ ]);
+ const body=await response.json();
+ assert.equal(response.status(),expectedStatus,`Evidence upload returned ${response.status()}: ${body.error||'unexpected success'}`);
+ return body;
+}
 async function account(email,role,organizationId){
  const {data,error}=await supabase.auth.admin.createUser({email,email_confirm:true});
  if(error)throw Error('Local Auth account setup failed: '+error.status);
@@ -53,7 +66,14 @@ async function emailLink(email){
 }
 async function openContext(viewport){
  const context=await browser.newContext({viewport});
- context.on('page',page=>page.on('pageerror',e=>errors.push(e.message)));
+ context.on('page',page=>{
+  page.on('pageerror',e=>errors.push(e.message));
+  page.on('response',response=>{
+   const url=new URL(response.url());
+   if(url.origin===app&&url.pathname.startsWith('/api/'))
+    report.responses.push({method:response.request().method(),path:url.pathname,status:response.status()});
+  });
+ });
  return context.newPage();
 }
 try{
@@ -69,21 +89,33 @@ try{
  const params=new URLSearchParams({organizationId:org.id,taskId:task.id});
  const vault=app+'/team/evidence?'+params;
  browser=await chromium.launch();
+ report.stage='email-link sign-in and exact-task selection';
  const upload=await signIn(await openContext({width:390,height:844}),vault,editor.email);
  await upload.getByRole('link',{name:'Return to task'}).waitFor();
  assert.equal(await upload.getByLabel('Task',{exact:true}).inputValue(),task.id);
  assert.equal(new URL(upload.url()).pathname,'/team/evidence');
  assert.equal(new URL(upload.url()).searchParams.has('code'),false);
- console.log('Email-link callback restored the requested task beyond the first 100 results.');
+ await upload.getByText('No scanned evidence has been recorded for this task.',{exact:true}).waitFor();
+ passed('Email-link callback restored the requested task beyond the first 100 results and loaded its evidence.');
+ report.stage='marked PDF rejection';
  const marked=fixturePdf([['REGPILOT_SCAN_FIXTURE']]);
- await upload.getByLabel('Evidence document').setInputFiles({name:'scanner-fixture.pdf',mimeType:'application/pdf',buffer:marked});
- await upload.getByRole('button',{name:'Scan and store privately'}).click();
+ const rejected=await submitEvidence(upload,'scanner-fixture.pdf',marked,422);
+ assert.equal(rejected.error,'Virus scan could not verify a clean result');
  await upload.getByText('Virus scan could not verify a clean result').waitFor();
  assert.equal(await db.evidence.count({where:{organizationId:org.id}}),0);
- console.log('ClamAV rejected the marked PDF through the upload form.');
+ const quota=await db.organization.findUniqueOrThrow({where:{id:org.id}});
+ assert.equal(quota.evidenceCount,0);
+ assert.equal(quota.evidenceBytes,0n);
+ const rejectedObjects=await supabase.storage.from('journey-files').list(org.id);
+ assert.equal(rejectedObjects.error,null);
+ assert.deepEqual(rejectedObjects.data,[],'rejected PDF must never enter private storage');
+ assert.equal(await db.auditEvent.count({where:{organizationId:org.id,action:'evidence.scanned_upload'}}),0);
+ passed('ClamAV rejected the marked PDF through the upload form without a stored file, quota reservation or success audit.');
+ report.stage='clean PDF upload and mobile task return';
  const file=fixturePdf([['Fictional cold-chain training record for independent review.']]);
- await upload.getByLabel('Evidence document').setInputFiles({name:'training-record.pdf',mimeType:'application/pdf',buffer:file});
- await upload.getByRole('button',{name:'Scan and store privately'}).click();
+ const stored=await submitEvidence(upload,'training-record.pdf',file,201);
+ assert.equal(stored.evidence.obligationId,task.id);
+ assert.equal(stored.evidence.reviewStatus,'PENDING_REVIEW');
  await upload.getByText('training-record.pdf',{exact:true}).waitFor();
  await upload.getByText(/A different owner or administrator must review evidence you uploaded/).waitFor();
  assert.equal(await upload.getByLabel('Independent review rationale').count(),0);
@@ -92,18 +124,20 @@ try{
  await upload.getByRole('link',{name:'Return to task'}).click();
  await detail.getByText('training-record.pdf',{exact:true}).waitFor();
  await detail.getByText(/Pending review/i).first().waitFor();
- console.log('Mobile uploader passed email verification, exact-task selection, private upload and return to task.');
+ passed('Mobile uploader passed email verification, exact-task selection, private upload and return to task.');
 
+ report.stage='independent reviewer sign-in and original download';
  const review=await signIn(await openContext({width:1440,height:1000}),app+'/team/work',reviewer.email);
  await review.getByRole('button',{name:/Evidence to review/}).click();
  await review.getByRole('article').filter({hasText:title}).getByRole('link',{name:'Review files'}).click();
  await review.getByText('training-record.pdf',{exact:true}).waitFor();
- console.log('Second account opened the submitted file from its independent review queue.');
+ passed('Second account opened the submitted file from its independent review queue.');
  const downloadReady=review.waitForEvent('download');
  await review.getByRole('button',{name:'Download verified original'}).click();
  const download=await downloadReady;
  assert.deepEqual(await readFile(await download.path()),file);
  const notes='Checked the dated fictional training record against the task scope.';
+ report.stage='independent review persistence and task state';
  await review.getByLabel('Independent review rationale').fill(notes);
  await review.getByRole('button',{name:'Approve evidence'}).click();
  await review.getByText('APPROVED',{exact:true}).waitFor();
@@ -123,12 +157,28 @@ try{
  await review.getByRole('button',{name:'Close task details'}).click();
  await review.getByRole('button',{name:/Evidence to review/}).click();
  await review.getByRole('button',{name:/Evidence to review\s*0$/}).waitFor();
+ report.stage='unavailable organisation isolation';
  await review.goto(app+'/team/evidence?'+new URLSearchParams({organizationId:randomUUID(),taskId:task.id}));
  await review.getByText(/belongs to an unavailable organisation/).waitFor();
  assert.equal(await review.getByLabel('Evidence document').count(),0);
  assert.deepEqual(errors,[]);
- console.log('Independent reviewer verified original bytes, recorded approval, cleared the review queue and preserved the open task. Unavailable workspace offered no upload.');
+ passed('Independent reviewer verified original bytes, recorded approval, cleared the review queue and preserved the open task. Unavailable workspace offered no upload.');
+ report.passed=true;
+ report.stage='complete';
+}catch(error){
+ report.failure={name:error.name,message:error.message};
+ await mkdir(artifactDir,{recursive:true});
+ // Record only our fictional application pages. Auth URLs, tokens, request headers,
+ // mailbox contents and local service credentials are deliberately excluded.
+ for(const [index,page] of (browser?.contexts().flatMap(context=>context.pages())||[]).entries()){
+  const url=new URL(page.url());
+  if(url.origin===app&&!url.searchParams.has('code'))
+   await page.screenshot({path:`${artifactDir}/failure-page-${index+1}.png`,fullPage:true}).catch(()=>{});
+ }
+ throw error;
 }finally{
+ await mkdir(artifactDir,{recursive:true});
+ await writeFile(artifactDir+'/results.json',JSON.stringify({...report,pageErrors:errors},null,2)+'\n');
  await browser?.close();
  await db.$disconnect();
 }
