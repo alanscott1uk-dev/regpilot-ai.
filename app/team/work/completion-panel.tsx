@@ -99,6 +99,7 @@ export function CompletionPanel({organizationId,taskId,currentStatus,busy,reques
     <div><h4>{completed?'Task completed':readiness.ready?'Ready to complete':'Before you can finish'}</h4><p>{completed?readiness.completed?'The completed outcome and supporting evidence are recorded below.':'This task is marked complete. Review its activity below for the recorded context.':readiness.ready?'Choose the reviewed evidence supporting this work. The original files are checked again when you complete it.':'Follow the steps below, then refresh this check.'}</p></div>
    </div>
    {readiness.blockers.length>0&&<ul className={styles.completionBlockers}>{readiness.blockers.map((block,index)=><li key={block.code+':'+index}><p>{block.message}</p>{block.href&&<a href={block.href}>{block.label} →</a>}</li>)}</ul>}
+   {completed&&<p><a aria-label="Review this completed task" href={'/team/work/reviews?'+new URLSearchParams({organizationId,taskId})}>Review this completed task <span aria-hidden="true">→</span></a></p>}
    {readiness.completed&&<div className={styles.completionRecord}>
     <strong>Completion record saved</strong><p>{formattedDate(readiness.completed.completedAt)} UTC · {readiness.completed.evidenceCount} verified evidence file{readiness.completed.evidenceCount===1?'':'s'}</p>
     {readiness.receipt&&<>

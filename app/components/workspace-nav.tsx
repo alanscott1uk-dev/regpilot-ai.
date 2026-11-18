@@ -22,7 +22,7 @@ export default function WorkspaceNav(){
   update();window.addEventListener('regpilot-workspace-navigation',update);window.addEventListener('popstate',update);
   return()=>{window.removeEventListener('regpilot-workspace-navigation',update);window.removeEventListener('popstate',update);};
  },[path]);
- const current=path==="/team/operations"&&view?path+"?view="+view:path;
+ const current=path.startsWith('/team/work/')?'/team/work':path==="/team/operations"&&view?path+"?view="+view:path;
  const scoped=(href:string)=>organizationId&&href!=='/workbench'?href+(href.includes('?')?'&':'?')+'organizationId='+encodeURIComponent(organizationId):href;
  const link=(label:string,href:string)=><a key={href} href={scoped(href)} aria-current={current===href?"page":undefined}>{label}</a>;
  return <aside className={styles.sidebar}>

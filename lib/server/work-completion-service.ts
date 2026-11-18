@@ -22,15 +22,17 @@ const taskSelect={id:true,title:true,category:true,ownerName:true,assigneeId:tru
 } satisfies Prisma.ObligationSelect;
 const evidenceSelect={id:true,obligationId:true,filename:true,storageKey:true,contentType:true,sizeBytes:true,sha256:true,scanStatus:true,scannedAt:true,reviewVersion:true,reviewStatus:true,reviewedAt:true,reviewerId:true,uploadedById:true} satisfies Prisma.EvidenceSelect;
 const sourceSelect={id:true,sourceId:true,title:true,url:true,contentHash:true,version:true,lastCheckedAt:true,reviewedAt:true,reviewStatus:true,reviewerId:true,capturedById:true} satisfies Prisma.RegulatorySnapshotSelect;
-type Task=Prisma.ObligationGetPayload<{select:typeof taskSelect}>;
-type EvidenceRow=Prisma.EvidenceGetPayload<{select:typeof evidenceSelect}>;
+export type CompletionTask=Prisma.ObligationGetPayload<{select:typeof taskSelect}>;
+type Task=CompletionTask;
+export type CompletionEvidence=Prisma.EvidenceGetPayload<{select:typeof evidenceSelect}>;
+type EvidenceRow=CompletionEvidence;
 type SourceRow=Prisma.RegulatorySnapshotGetPayload<{select:typeof sourceSelect}>;
 type Blocker={code:string;message:string;href:string;label:string};
 type Participant={id:string;role:string;approved:boolean};
 
 const id=z.string().uuid(),sha=z.string().regex(/^[a-f0-9]{64}$/),iso=z.string().datetime();
 // A strict projection also prevents unexpected audit JSON fields entering a reader/export response.
-const receiptSchema=z.object({
+export const completionReceiptSchema=z.object({
  format:z.literal('regpilot-work-completion'),version:z.literal(1),organizationId:id,
  task:z.object({id,title:z.string(),category:z.string(),ownerName:z.string(),assigneeId:id.nullable(),dueDate:z.string(),statusBefore:z.enum(['OPEN','IN_PROGRESS']),updatedAtBefore:iso}),
  completedAt:iso,completedById:id,notes:z.string().min(20).max(500),
@@ -40,7 +42,7 @@ const receiptSchema=z.object({
  evidence:z.array(z.object({id,filename:z.string(),sha256:sha,reviewVersion:z.number().int().positive(),reviewedAt:iso,reviewerId:id,uploadedById:id})).min(1).max(COMPLETION_EVIDENCE_LIMIT),
  scope:z.string()
 });
-export type CompletionReceipt=z.infer<typeof receiptSchema>;
+export type CompletionReceipt=z.infer<typeof completionReceiptSchema>;
 export type CompletionResult={taskId:string;status:'COMPLETE';completedAt:string;eventId:string;proofHash:string;evidenceCount:number;reused:boolean};
 export type CompletionReadiness={
  organizationId:string;
@@ -51,18 +53,20 @@ export type CompletionReadiness={
  completed:{eventId:string;completedAt:string;proofHash:string;evidenceCount:number}|null;
  receipt:CompletionReceipt|null;scope:string;
 };
-type Context={task:Task;actorRole:string;blockers:Blocker[];evidence:EvidenceRow[];assessment:AssuranceAssessment|null;source:SourceRow|null;participants:Participant[];token:string};
-type Saved={eventId:string;requestHash:string;actorId:string;receipt:CompletionReceipt;proofHash:string};
+export type CompletionContext={task:Task;actorRole:string;blockers:Blocker[];evidence:EvidenceRow[];assessment:AssuranceAssessment|null;source:SourceRow|null;participants:Participant[];token:string};
+type Context=CompletionContext;
+export type SavedCompletion={eventId:string;requestHash:string;actorId:string;receipt:CompletionReceipt;proofHash:string};
+type Saved=SavedCompletion;
 const wire=<T>(value:T):T=>JSON.parse(JSON.stringify(value));
 const link=(ctx:AuthorizedContext,path:string,taskId?:string)=>path+'?organizationId='+encodeURIComponent(ctx.organizationId)+(taskId?'&taskId='+encodeURIComponent(taskId):'');
 
-async function taskRecord(tx:Prisma.TransactionClient,ctx:AuthorizedContext,taskId:string) {
+export async function completionTaskRecord(tx:Prisma.TransactionClient,ctx:AuthorizedContext,taskId:string) {
  const task=await tx.obligation.findFirst({where:{id:taskId,organizationId:ctx.organizationId},select:taskSelect});
  if(!task)throw new IntelligenceError('Task not found',404);
  return task;
 }
 /** Locks both membership and pilot identity so a revocation cannot slip between the final check and commit. */
-async function participants(tx:Prisma.TransactionClient,ctx:AuthorizedContext,ids:(string|null)[]) {
+export async function completionParticipants(tx:Prisma.TransactionClient,ctx:AuthorizedContext,ids:(string|null)[]) {
  const unique=[...new Set(ids.filter((value):value is string=>!!value))].sort();
  if(!unique.length)return [];
  const rows=await tx.$queryRaw<Array<{id:string;role:string;email:string}>>(Prisma.sql`
@@ -86,11 +90,24 @@ function assessmentForReceipt(assessment:AssuranceAssessment|null):CompletionRec
  return assessment?{id:assessment.id,version:assessment.version,inputHash:assessment.inputHash,resultHash:assessment.resultHash!,reviewedAt:assessment.reviewedAt!.toISOString(),reviewerId:assessment.reviewerId!,validUntil:assessment.validUntil!.toISOString()}:null;
 }
 
-async function context(tx:Prisma.TransactionClient,ctx:AuthorizedContext,task:Task,actorRole:string):Promise<Context> {
+/** Shared safe proof projection. Currentness/independence must be checked by completionContext first. */
+export function completionProofSnapshot(current:CompletionContext,files:CompletionEvidence[]) {
+ const control=current.task.managedControl;
+ return {source:sourceForReceipt(current.source),control:control?{id:control.id,title:control.title,version:control.version,enabled:control.enabled}:null,
+  assessment:assessmentForReceipt(current.assessment),evidence:files.map(file=>({id:file.id,filename:file.filename,sha256:file.sha256,reviewVersion:file.reviewVersion,reviewedAt:file.reviewedAt!.toISOString(),reviewerId:file.reviewerId!,uploadedById:file.uploadedById!}))};
+}
+export async function verifyCompletionFiles(ctx:AuthorizedContext,files:CompletionEvidence[],storage?:EvidenceObjectStore) {
+ for(const file of files){
+  const downloaded=await downloadEvidence(ctx,file.id,storage);
+  if(downloaded.sha256!==file.sha256||downloaded.bytes.byteLength!==file.sizeBytes)throw new IntelligenceError('Supporting evidence changed during verification. Refresh the completion check.',409);
+ }
+}
+
+export async function completionContext(tx:Prisma.TransactionClient,ctx:AuthorizedContext,task:Task,actorRole:string,reviewCompleted=false):Promise<Context> {
  const blockers:Blocker[]=[],evidenceHref=link(ctx,'/team/evidence',task.id),assessmentHref=link(ctx,'/team/assurance',task.id);
  const block=(code:string,message:string,href:string,label:string)=>blockers.push({code,message,href,label});
  if(!WRITER.includes(actorRole))block('ROLE_REQUIRED','An editor or administrator must confirm the completed outcome.',link(ctx,'/team/work',task.id),'Back to task');
- if(task.status==='COMPLETE')block('ALREADY_COMPLETE','This task is already complete. Its saved receipt records the basis at that time.',link(ctx,'/team/work',task.id),'View completed task');
+ if(task.status==='COMPLETE'&&!reviewCompleted)block('ALREADY_COMPLETE','This task is already complete. Its saved receipt records the basis at that time.',link(ctx,'/team/work',task.id),'View completed task');
  if(task.changeAction){
   const canView=ADMIN.includes(actorRole)||task.assigneeId===ctx.userId;
   block('SPECIALIST_WORKFLOW','Complete and review this action in its change response so its independent decision is preserved.',link(ctx,'/team/changes')+(canView?'&responseId='+encodeURIComponent(task.changeAction.responseId):''),'Open change response');
@@ -119,7 +136,7 @@ async function context(tx:Prisma.TransactionClient,ctx:AuthorizedContext,task:Ta
   files=await tx.evidence.findMany({where:{organizationId:ctx.organizationId,obligationId:task.id},orderBy:{id:'asc'},take:MAX_ORG_EVIDENCE_FILES+1,select:evidenceSelect});
   if(files.length>MAX_ORG_EVIDENCE_FILES)block('EVIDENCE_LIMIT','This task exceeds the evidence review limit. Ask an administrator to reconcile its evidence records.',evidenceHref,'Review task evidence');
  }
- const people=await participants(tx,ctx,[...files.flatMap(file=>[file.uploadedById,file.reviewerId]),assessment?.createdById||null,assessment?.reviewerId||null,source?.reviewerId||null,source?.capturedById||null]);
+ const people=await completionParticipants(tx,ctx,[...files.flatMap(file=>[file.uploadedById,file.reviewerId]),assessment?.createdById||null,assessment?.reviewerId||null,source?.reviewerId||null,source?.capturedById||null]);
  const eligible=files.filter(file=>independentFile(file,people));
  if(task.originKey&&assessment){
   if(eligible.length!==files.length||!files.length)block('EVIDENCE_REVIEW_REQUIRED','Every assessment file must remain clean, independently approved and supported by current authorised uploader and reviewer memberships.',evidenceHref,'Review task evidence');
@@ -129,21 +146,26 @@ async function context(tx:Prisma.TransactionClient,ctx:AuthorizedContext,task:Ta
   const pending=files.some(file=>file.scanStatus==='CLEAN'&&file.reviewStatus==='PENDING_REVIEW');
   const reviewed=files.some(file=>file.reviewStatus==='APPROVED');
   block(pending?'EVIDENCE_REVIEW_REQUIRED':reviewed?'EVIDENCE_REVIEWER_CHANGED':'EVIDENCE_REQUIRED',pending?'Supporting files are awaiting independent administrator review. Completion does not approve those files.':reviewed?'Approved evidence needs a clean scan and distinct, currently authorised uploader and administrator reviewer. Request a fresh review or upload.':'Add supporting evidence and have a different administrator review it before completing this task.',evidenceHref,pending?'Review pending evidence':'Open task evidence');
-  if(ADMIN.includes(actorRole))block('EXCEPTION_WORKFLOW','If supporting evidence cannot be provided, use the separate documented exception workflow and record its rationale.',link(ctx,'/team',task.id),'Open documented exception workflow');
+  if(ADMIN.includes(actorRole)&&!reviewCompleted)block('EXCEPTION_WORKFLOW','If supporting evidence cannot be provided, use the separate documented exception workflow and record its rationale.',link(ctx,'/team',task.id),'Open documented exception workflow');
  }
  const token=hashValue(wire({version:1,organizationId:ctx.organizationId,actorId:ctx.userId,actorRole,task,files,assessment:assessment?{...assessment,result:undefined}:null,source,participants:people}));
  return {task,actorRole,blockers,evidence:eligible,assessment,source,participants:people,token};
 }
 
 /** Only a receipt for this exact current completion can be shown or replayed after a reopen. */
-async function savedCompletion(tx:Prisma.TransactionClient,ctx:AuthorizedContext,task:Task):Promise<Saved|null> {
+export async function savedCompletion(tx:Prisma.TransactionClient,ctx:AuthorizedContext,task:Task):Promise<Saved|null> {
  if(task.status!=='COMPLETE'||!task.completedAt)return null;
- const event=await tx.auditEvent.findFirst({where:{organizationId:ctx.organizationId,entityType:'Obligation',entityId:task.id,action:ACTION},orderBy:[{createdAt:'desc'},{id:'desc'}],select:{id:true,actorId:true,details:true}});
- if(!event||!event.details||typeof event.details!=='object'||Array.isArray(event.details))return null;
- const details=event.details as Record<string,Prisma.JsonValue>,parsed=receiptSchema.safeParse(details.receipt);
+ const event=await tx.auditEvent.findFirst({where:{organizationId:ctx.organizationId,entityType:'Obligation',entityId:task.id,action:ACTION},orderBy:[{createdAt:'desc'},{id:'desc'}],select:{id:true,actorId:true,action:true,details:true}});
+ const saved=event?verifiedCompletionEvent(ctx,task.id,event):null;
+ return saved?.receipt.completedAt===task.completedAt.toISOString()?saved:null;
+}
+/** Strict receipt verification also supports immutable references to an earlier completion generation. */
+export function verifiedCompletionEvent(ctx:AuthorizedContext,taskId:string,event:{id:string;actorId:string;action:string;details:Prisma.JsonValue}):Saved|null {
+ if(event.action!==ACTION||!event.details||typeof event.details!=='object'||Array.isArray(event.details))return null;
+ const details=event.details as Record<string,Prisma.JsonValue>,parsed=completionReceiptSchema.safeParse(details.receipt);
  if(!parsed.success||typeof details.proofHash!=='string'||typeof details.requestHash!=='string'||hashValue(parsed.data)!==details.proofHash)return null;
  const receipt=parsed.data;
- if(receipt.organizationId!==ctx.organizationId||receipt.task.id!==task.id||receipt.completedAt!==task.completedAt.toISOString()||receipt.completedById!==event.actorId)return null;
+ if(receipt.organizationId!==ctx.organizationId||receipt.task.id!==taskId||receipt.completedById!==event.actorId)return null;
  return {eventId:event.id,requestHash:details.requestHash,actorId:event.actorId,receipt,proofHash:details.proofHash};
 }
 function result(saved:Saved,reused:boolean):CompletionResult {
@@ -159,11 +181,11 @@ function assertReady(current:Context,input:WorkCompletionInput) {
 export async function workCompletion(ctx:AuthorizedContext,taskId:string):Promise<CompletionReadiness> {
  if(!workUuid(taskId))throw new IntelligenceError('Invalid task identifier',400);
  return db.$transaction(async tx=>{
-  const actor=await requireMember(tx,ctx),task=await taskRecord(tx,ctx,taskId);
+  const actor=await requireMember(tx,ctx),task=await completionTaskRecord(tx,ctx,taskId);
   const saved=await savedCompletion(tx,ctx,task);
   const base={organizationId:ctx.organizationId,task:{id:task.id,title:task.title,status:task.status,updatedAt:task.updatedAt.toISOString()},evidenceLimit:COMPLETION_EVIDENCE_LIMIT,scope:COMPLETION_SCOPE};
   if(task.status==='COMPLETE')return {...base,canComplete:false,ready:false,token:null,blockers:saved?[]:[{code:'COMPLETION_RECORD_UNAVAILABLE',message:'This task is marked complete, but a verified evidence completion record is unavailable. Review its activity before relying on the recorded outcome.',href:'',label:''}],evidence:[],assessment:null,completed:saved?{eventId:saved.eventId,completedAt:saved.receipt.completedAt,proofHash:saved.proofHash,evidenceCount:saved.receipt.evidence.length}:null,receipt:saved?.receipt||null};
-  const current=await context(tx,ctx,task,actor.role),ready=current.blockers.length===0;
+  const current=await completionContext(tx,ctx,task,actor.role),ready=current.blockers.length===0;
   return {...base,canComplete:WRITER.includes(actor.role)&&!task.changeAction&&!task.auditRequest&&!task.accessItem,ready,token:ready?current.token:null,blockers:current.blockers,
    evidence:current.evidence.map(file=>({id:file.id,filename:file.filename,sha256:file.sha256,reviewVersion:file.reviewVersion,reviewedAt:file.reviewedAt!.toISOString(),required:!!task.originKey})),
    assessment:current.assessment?{id:current.assessment.id,reviewedAt:current.assessment.reviewedAt!.toISOString(),validUntil:current.assessment.validUntil!.toISOString()}:null,completed:null,receipt:null};
@@ -175,34 +197,29 @@ export async function completeWork(ctx:AuthorizedContext,taskId:string,raw:unkno
  if(!workUuid(taskId))throw new IntelligenceError('Invalid task identifier',400);
  const input=parseWorkCompletion(raw),requestHash=hashValue({organizationId:ctx.organizationId,actorId:ctx.userId,taskId,input});
  const preflight=await transaction(ctx,async tx=>{
-  const actor=await requireMember(tx,ctx,WRITER),task=await taskRecord(tx,ctx,taskId);
+  const actor=await requireMember(tx,ctx,WRITER),task=await completionTaskRecord(tx,ctx,taskId);
   if(task.status==='COMPLETE'){
    const saved=await savedCompletion(tx,ctx,task);
    if(saved&&saved.requestHash===requestHash&&saved.actorId===ctx.userId)return {saved};
    throw new IntelligenceError('This task has already been completed. Refresh to review its saved outcome.',409);
   }
-  const current=await context(tx,ctx,task,actor.role),files=assertReady(current,input);
+  const current=await completionContext(tx,ctx,task,actor.role),files=assertReady(current,input);
   return {current,files};
  });
  if(preflight.saved)return result(preflight.saved,true);
- for(const file of preflight.files){
-  const downloaded=await downloadEvidence(ctx,file.id,dependencies.storage);
-  if(downloaded.sha256!==file.sha256||downloaded.bytes.byteLength!==file.sizeBytes)throw new IntelligenceError('Supporting evidence changed during verification. Refresh the completion check.',409);
- }
+ await verifyCompletionFiles(ctx,preflight.files,dependencies.storage);
  return transaction(ctx,async tx=>{
-  const actor=await requireMember(tx,ctx,WRITER),task=await taskRecord(tx,ctx,taskId);
+  const actor=await requireMember(tx,ctx,WRITER),task=await completionTaskRecord(tx,ctx,taskId);
   if(task.status==='COMPLETE'){
    const saved=await savedCompletion(tx,ctx,task);
    if(saved&&saved.requestHash===requestHash&&saved.actorId===ctx.userId)return result(saved,true);
    throw new IntelligenceError('This task has already been completed. Refresh to review its saved outcome.',409);
   }
-  const current=await context(tx,ctx,task,actor.role),files=assertReady(current,input);
+  const current=await completionContext(tx,ctx,task,actor.role),files=assertReady(current,input);
   const completedAt=new Date();
   const receipt:CompletionReceipt={format:'regpilot-work-completion',version:1,organizationId:ctx.organizationId,
    task:{id:task.id,title:task.title,category:task.category,ownerName:task.ownerName,assigneeId:task.assigneeId,dueDate:task.dueDate.toISOString().slice(0,10),statusBefore:task.status as 'OPEN'|'IN_PROGRESS',updatedAtBefore:task.updatedAt.toISOString()},
-   completedAt:completedAt.toISOString(),completedById:ctx.userId,notes:input.notes,source:sourceForReceipt(current.source),
-   control:task.managedControl?{id:task.managedControl.id,title:task.managedControl.title,version:task.managedControl.version,enabled:task.managedControl.enabled}:null,
-   assessment:assessmentForReceipt(current.assessment),evidence:files.map(file=>({id:file.id,filename:file.filename,sha256:file.sha256,reviewVersion:file.reviewVersion,reviewedAt:file.reviewedAt!.toISOString(),reviewerId:file.reviewerId!,uploadedById:file.uploadedById!})),scope:COMPLETION_SCOPE};
+   completedAt:completedAt.toISOString(),completedById:ctx.userId,notes:input.notes,...completionProofSnapshot(current,files),scope:COMPLETION_SCOPE};
   const proofHash=hashValue(receipt);
   const changed=await tx.obligation.updateMany({where:{id:task.id,organizationId:ctx.organizationId,updatedAt:task.updatedAt,status:task.status},data:{status:'COMPLETE',completedAt,completionException:false,completionRationale:''}});
   if(changed.count!==1)throw new IntelligenceError('The task changed during completion. No completion was saved. Refresh and review it again.',409);

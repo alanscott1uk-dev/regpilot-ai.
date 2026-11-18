@@ -241,9 +241,140 @@ async function journey(viewport,name){
   assert.deepEqual(errors,[]);results.push({name,passed:true,applyCount,startCount,createCount,completionPosts,completionWrites,completionChecks:['review blocker with scoped handoff','explicit evidence and outcome confirmation','stale proof invalidation','rapid activation sends once','completed list and inspectable record','cancelled old-organisation proof','lost-response read-only reconciliation','viewer restriction','scoped exception handoff beyond first 100 tasks','late exception-queue response ignored','unavailable linked organisation has no fallback'],overflow,modalOverflow,fixture:'Fictional auth and API responses; database enforcement tested separately'});
  }finally{await context.close();}
 }
+async function reviewJourney(viewport,name){
+ const context=await browser.newContext({viewport,locale:'en-GB'}),page=await context.newPage(),errors=[];
+ page.on('pageerror',error=>errors.push(error.message));
+ const org='123e4567-e89b-42d3-a456-426614174000',user='123e4567-e89b-42d3-a456-426614174001',other='123e4567-e89b-42d3-a456-426614174002';
+ const auth={access_token:'fixture.'+Buffer.from(JSON.stringify({sub:user,exp:Math.floor(Date.now()/1000)+3600})).toString('base64url')+'.fixture',refresh_token:'fictional-only',expires_at:Math.floor(Date.now()/1000)+3600,expires_in:3600,token_type:'bearer',user:{id:user,email:'owner@example.invalid',aud:'authenticated',role:'authenticated',app_metadata:{},user_metadata:{},created_at:new Date().toISOString()}};
+ await context.addInitScript(value=>localStorage.setItem('sb-auth-fixture-auth-token',JSON.stringify(value)),auth);
+ await context.route('https://auth-fixture.example.invalid/**',route=>route.fulfill({json:{user:auth.user}}));
+ let role='OWNER',queueReads=0,detailReads=0,previewReads=0,followUpPosts=0,followUpWrites=0,verificationPosts=0,verificationWrites=0;
+ let pendingReview=true,evidenceVersion=2,followUpMode='stale',verificationMode='success',holdQueue=false,holdDetail=false;
+ let releaseFollowUp,followUpSubmitted,releaseQueue,queueHeld,queueFinished,releaseDetail,detailHeld,detailFinished;
+ await context.route('**/api/ai/context',route=>route.fulfill({json:{userId:user,email:auth.user.email,organisations:[{id:org,name:'Fictional review company',role},{id:other,name:'Empty review company',role}]}}));
+ const tasks=Array.from({length:106},(_,index)=>({id:'823e4567-e89b-42d3-a456-'+String(index).padStart(12,'0'),title:'Completed action '+String(index).padStart(3,'0'),category:'Quality',ownerName:'owner@example.invalid',dueDate:'2026-10-31',completedAt:'2026-11-01T10:00:00.000Z'}));
+ const target=tasks[105],file={id:'923e4567-e89b-42d3-a456-426614174001',filename:'Reviewed procedure.pdf',sha256:'a'.repeat(64),reviewVersion:1,reviewedAt:'2026-11-01T09:00:00.000Z',reviewerId:'123e4567-e89b-42d3-a456-426614174003',uploadedById:user};
+ const followUps=new Map(),verifications=new Map();
+ const originalFor=task=>({eventId:'completion-'+task.id,proofHash:'f'.repeat(64),completedAt:task.completedAt,receipt:{format:'regpilot-work-completion',version:1,organizationId:org,task:{id:task.id,title:task.title,category:task.category,ownerName:task.ownerName,assigneeId:user,dueDate:task.dueDate,statusBefore:'IN_PROGRESS',updatedAtBefore:'2026-11-01T08:00:00.000Z'},completedAt:task.completedAt,completedById:user,notes:'The procedure was implemented and independently reviewed evidence recorded the outcome.',source:null,control:null,assessment:null,evidence:[file],scope:'Recorded completion and the supporting evidence at that time.'}});
+ const originalSnapshot=JSON.stringify(originalFor(target));
+ function itemFor(task){
+  const latest=(verifications.get(task.id)||[]).at(-1),followUp=(followUps.get(task.id)||[]).at(-1)||null;
+  const state=task.id===target.id?latest?.record.proof.evidence[0].reviewVersion===evidenceVersion?'NO_RECORDED_CHANGES':'NEEDS_REVIEW':task.id===tasks[2].id?'UNAVAILABLE':task.id===tasks[3].id?'SPECIALIST':'NO_RECORDED_CHANGES';
+  const findings=state==='NEEDS_REVIEW'?[{code:'EVIDENCE_CHANGED',message:'Reviewed procedure.pdf has a different review record from the saved completion basis.',href:'/team/evidence?'+new URLSearchParams({organizationId:org,taskId:task.id}),label:'Review current evidence'}]:state==='UNAVAILABLE'?[{code:'RECORD_UNAVAILABLE',message:'A verified original completion record is unavailable.',href:'',label:''}]:state==='SPECIALIST'?[{code:'SPECIALIST_WORKFLOW',message:'Review this outcome in its linked change response.',href:'/team/changes?organizationId='+org,label:'Open change response'}]:[];
+  return {task,state,findings,basis:state==='UNAVAILABLE'?null:latest?.basis||{eventId:'completion-'+task.id,proofHash:'f'.repeat(64),checkedAt:task.completedAt,kind:'COMPLETION'},followUp,href:'/team/work/reviews?'+new URLSearchParams({organizationId:org,taskId:task.id})};
+ }
+ function detailFor(task){
+  const item=itemFor(task),history=verifications.get(task.id)||[],admin=role==='OWNER',open=(followUps.get(task.id)||[]).find(value=>value.status!=='COMPLETE');
+  return {organizationId:org,role,item,original:item.state==='UNAVAILABLE'?null:originalFor(task),latestVerification:history.at(-1)?.record||null,verificationHistory:[...history].reverse().map(({record,basis})=>({eventId:basis.eventId,proofHash:basis.proofHash,verifiedAt:record.verifiedAt,verifiedById:record.verifiedById,notes:record.notes})),historyLimited:false,token:'d'.repeat(64),canCreateFollowUp:admin&&item.state==='NEEDS_REVIEW'&&!open,members:[{id:user,email:'owner@example.invalid'}],membersLimited:false,verification:{canVerify:admin&&!pendingReview,token:!pendingReview?'b'.repeat(64):null,evidence:pendingReview?[]:[{...file,reviewVersion:evidenceVersion,required:false}],evidenceLimit:10,blockers:pendingReview?[{code:'INDEPENDENT_REVIEW',message:'The changed file needs independent review before a fresh verified basis can be recorded.',href:'/team/evidence?'+new URLSearchParams({organizationId:org,taskId:task.id}),label:'Review current evidence'}]:[]},scope:'Recorded changes and review decisions for this completed outcome.'};
+ }
+ await context.route('**/api/workspace/work/reviews*',async route=>{
+  const url=new URL(route.request().url()),organizationId=url.searchParams.get('organizationId'),q=url.searchParams.get('q')||'',requestedPage=Number(url.searchParams.get('page')||1);queueReads++;
+  const matches=organizationId===other?[]:tasks.filter(task=>task.title.toLowerCase().includes(q.toLowerCase())),pages=Math.max(1,Math.ceil(matches.length/25)),pageNumber=Math.min(requestedPage,pages);
+  const body={organizationId,actorId:user,role,items:matches.slice((pageNumber-1)*25,pageNumber*25).map(itemFor),total:matches.length,page:pageNumber,pages,pageSize:25,query:{q,page:pageNumber},scope:'This page compares recorded metadata, not original file bytes.'};
+  const held=holdQueue&&organizationId===org;if(held){holdQueue=false;await new Promise(resolve=>{releaseQueue=resolve;queueHeld();});}
+  try{await route.fulfill({json:body});}catch{}finally{if(held)queueFinished();}
+ });
+ await context.route(url=>/^\/api\/workspace\/work\/[^/]+\/review(?:\/|$)/.test(url.pathname),async route=>{
+  const request=route.request(),url=new URL(request.url()),parts=url.pathname.split('/'),task=tasks.find(value=>value.id===parts[4]);
+  assert.ok(task,'review uses the exact completed task');
+  if(request.method()==='GET'){
+   detailReads++;assert.equal(url.searchParams.get('organizationId'),org);const body=detailFor(task);
+   if(holdDetail){holdDetail=false;await new Promise(resolve=>{releaseDetail=resolve;detailHeld();});try{await route.fulfill({json:body});}catch{}finally{detailFinished();}return;}
+   return route.fulfill({json:body});
+  }
+  const body=request.postDataJSON();assert.equal(body.organizationId,org);
+  if(parts[6]==='follow-up'){
+   assert.ok(body.reason.trim().length>=20);assert.equal(body.assigneeId,user);assert.ok(body.reviewToken);
+   const existing=(followUps.get(task.id)||[]).find(value=>value.status!=='COMPLETE')||null;
+   if(body.phase==='preview'){previewReads++;return route.fulfill({json:{token:'e'.repeat(64),sourceTaskId:task.id,title:'Review completed outcome: '+task.title,assignee:{id:user,email:'owner@example.invalid'},dueDate:body.dueDate,reason:body.reason,findings:itemFor(task).findings,existing}});}
+   followUpPosts++;assert.equal(body.phase,'apply');assert.equal(body.confirm,true);assert.ok(body.token);
+   if(followUpMode==='stale')return route.fulfill({status:409,json:{error:'The review findings changed. Refresh before creating this follow-up.'}});
+   if(followUpMode==='held')await new Promise(resolve=>{releaseFollowUp=resolve;followUpSubmitted();});
+   if(existing)return route.fulfill({json:{taskId:existing.id,sourceTaskId:task.id,eventId:'existing-follow-up',reused:true}});
+   followUpWrites++;const created={id:'a23e4567-e89b-42d3-a456-'+String(followUpWrites).padStart(12,'0'),title:'Review completed outcome: '+task.title,status:'OPEN',dueDate:body.dueDate,ownerName:'owner@example.invalid'};
+   followUps.set(task.id,[...(followUps.get(task.id)||[]),created]);
+   return route.fulfill({json:{taskId:created.id,sourceTaskId:task.id,eventId:'follow-up-created-'+followUpWrites,reused:false}});
+  }
+  assert.equal(parts[6],'verify');verificationPosts++;assert.equal(body.confirm,true);assert.ok(body.notes.trim().length>=20);assert.deepEqual(body.evidenceIds,[file.id]);
+  const previous=itemFor(task).basis,verifiedAt=new Date().toISOString(),eventId='fresh-review-'+(verificationWrites+1),proofHash=String(evidenceVersion).repeat(64);
+  const record={format:'regpilot-work-verification',version:1,organizationId:org,originalTaskId:task.id,completionEventId:'completion-'+task.id,completionProofHash:'f'.repeat(64),previousBasisEventId:previous.eventId,previousBasisProofHash:previous.proofHash,verifiedAt,verifiedById:user,notes:body.notes,proof:{task:{id:task.id,title:task.title,category:task.category,ownerName:task.ownerName,assigneeId:user,dueDate:task.dueDate,updatedAt:'2026-11-01T10:00:00.000Z'},source:null,control:null,assessment:null,evidence:[{...file,reviewVersion:evidenceVersion}]},scope:'Freshly reviewed basis; original completion preserved.'};
+  const basis={eventId,proofHash,checkedAt:verifiedAt,kind:'VERIFICATION'};verificationWrites++;verifications.set(task.id,[...(verifications.get(task.id)||[]),{record,basis}]);
+  if(verificationMode==='lost')return route.abort('failed');
+  return route.fulfill({json:{taskId:task.id,eventId,proofHash,verifiedAt,evidenceCount:1,reused:false,record}});
+ });
+ try{
+  await page.goto(base+'/team/work/reviews?organizationId='+org,{waitUntil:'domcontentloaded'});
+  const list=page.getByRole('region',{name:'Completed work review list',exact:true});
+  await list.getByRole('heading',{name:'106 completed tasks',exact:true}).waitFor();
+  assert.equal(await page.getByRole('navigation',{name:'Main workspace',exact:true}).getByRole('link',{name:'Tasks',exact:true}).getAttribute('aria-current'),'page','completed-work reviews remain under Tasks navigation');
+  await list.getByText('On this page',{exact:true}).waitFor();
+  await list.getByRole('button',{name:'Next review page',exact:true}).click();await list.getByText('Completed action 025',{exact:true}).waitFor();
+  await page.getByLabel('Search completed tasks',{exact:true}).fill('105');await list.getByRole('button',{name:'Search completed work',exact:true}).click();
+  await list.getByText(target.title,{exact:true}).waitFor();await list.getByRole('heading',{name:'1 completed task matching your search',exact:true}).waitFor();
+  const readsBeforeDeepLink=queueReads;
+  await page.goto(base+'/team/work/reviews?'+new URLSearchParams({organizationId:org,taskId:target.id}),{waitUntil:'domcontentloaded'});
+  const detail=page.getByRole('region',{name:'Completed work review',exact:true}),follow=detail.getByRole('region',{name:'Owned follow-up',exact:true}),fresh=detail.getByRole('region',{name:'Fresh review',exact:true});
+  await detail.getByRole('heading',{name:target.title,exact:true}).waitFor();await detail.getByRole('heading',{name:'Needs another review',exact:true}).waitFor();
+  assert.equal(queueReads,readsBeforeDeepLink,'direct task review does not depend on the first100 or fetch an unused list');
+  const evidenceLink=await detail.getByRole('region',{name:'Current review findings',exact:true}).getByRole('link',{name:'Review current evidence',exact:false}).getAttribute('href');assert.ok(evidenceLink.includes('organizationId='+org)&&evidenceLink.includes('taskId='+target.id));
+  await follow.getByLabel('Follow-up assignee',{exact:true}).selectOption(user);await follow.getByLabel('Follow-up due date',{exact:true}).fill('2026-12-01');await follow.getByLabel('Reason for follow-up',{exact:true}).fill('Review the changed procedure and obtain an independent decision before recording a new basis.');
+  await follow.getByRole('button',{name:'Preview follow-up task',exact:true}).click();await follow.getByRole('region',{name:'Follow-up preview',exact:true}).waitFor();assert.equal(followUpWrites,0,'preview creates no task');
+  const detailReadsBeforeStale=detailReads;
+  await follow.getByRole('button',{name:'Create reviewed follow-up',exact:true}).click();await detail.getByRole('alert').filter({hasText:'The review findings changed'}).waitFor();
+  assert.equal(followUpPosts,1);assert.equal(followUpWrites,0);assert.equal(detailReads,detailReadsBeforeStale,'stale creation does not auto-retry or auto-refresh');
+  assert.equal(await follow.getByRole('region',{name:'Follow-up preview',exact:true}).count(),0);
+  await detail.getByRole('button',{name:'Refresh review status',exact:true}).click();await detail.getByRole('heading',{name:'Needs another review',exact:true}).waitFor();
+  await follow.getByRole('button',{name:'Preview follow-up task',exact:true}).click();await follow.getByRole('region',{name:'Follow-up preview',exact:true}).waitFor();
+  await mkdir('artifacts/usability',{recursive:true});await page.screenshot({path:'artifacts/usability/work-review-preview-'+name+'.png',fullPage:true});
+  followUpMode='held';const submitted=new Promise(resolve=>{followUpSubmitted=resolve;});
+  await follow.getByRole('button',{name:'Create reviewed follow-up',exact:true}).evaluate(button=>{button.click();button.click();});await submitted;
+  assert.equal(followUpPosts,2);assert.equal(await page.getByLabel('Organisation',{exact:true}).isDisabled(),true);releaseFollowUp();
+  const followLink=follow.getByRole('link',{name:'Open follow-up task',exact:true});await followLink.waitFor();assert.equal(followUpWrites,1);
+  const firstFollowUp=(followUps.get(target.id)||[])[0],followHref=await followLink.getAttribute('href');assert.ok(followHref.includes('organizationId='+org)&&followHref.includes('taskId='+firstFollowUp.id));
+  await page.reload({waitUntil:'domcontentloaded'});await followLink.waitFor();assert.equal(await follow.getByRole('button',{name:'Create reviewed follow-up',exact:true}).count(),0,'reload shows saved follow-up without creating a duplicate');
+  firstFollowUp.status='COMPLETE';await detail.getByRole('button',{name:'Refresh recorded checks',exact:true}).click();await detail.getByRole('heading',{name:'Needs another review',exact:true}).waitFor();
+  await follow.getByText('Completed',{exact:true}).waitFor();await follow.getByLabel('Reason for follow-up',{exact:true}).fill('The first follow-up ended without resolving the evidence finding. Assign a new explicit review cycle.');
+  await follow.getByRole('button',{name:'Preview follow-up task',exact:true}).click();await follow.getByRole('button',{name:'Create reviewed follow-up',exact:true}).waitFor();
+  followUpMode='success';await follow.getByRole('button',{name:'Create reviewed follow-up',exact:true}).click();await follow.getByText('Open',{exact:true}).waitFor();assert.equal(followUpWrites,2,'a completed follow-up does not block a new explicitly reviewed cycle');
+  pendingReview=false;await detail.getByRole('button',{name:'Refresh recorded checks',exact:true}).click();
+  const verify=fresh.getByRole('button',{name:'Verify files and record fresh review',exact:true}),confirmation=fresh.getByRole('checkbox',{name:'I have checked the current evidence and confirm this reviewed basis.',exact:true});
+  await fresh.getByRole('checkbox',{name:/Reviewed procedure.pdf/}).waitFor();assert.equal(await verify.isDisabled(),true);
+  await fresh.getByLabel('Fresh review outcome',{exact:true}).fill('The changed procedure has an independent approval and now supports this recorded outcome.');await confirmation.focus();await page.keyboard.press('Space');
+  await verify.click();await detail.getByRole('heading',{name:'No recorded changes detected',exact:true}).waitFor();assert.equal(verificationWrites,1);
+  await followLink.waitFor();await follow.getByText('Open',{exact:true}).waitFor();assert.equal((followUps.get(target.id)||[]).filter(value=>value.status!=='COMPLETE').length,1,'fresh verification does not close the linked task');
+  const downloadPromise=page.waitForEvent('download');await detail.getByRole('button',{name:'Download fresh review record',exact:true}).click();const downloaded=await downloadPromise,downloadText=await readFile(await downloaded.path(),'utf8'),downloadBody=JSON.parse(downloadText);assert.equal(downloadBody.record.organizationId,org);assert.equal(downloadBody.record.originalTaskId,target.id);assert.equal(downloadBody.basis.proofHash,'2'.repeat(64));assert.ok(!downloadText.includes('storageKey'));
+  const originalDownload=page.waitForEvent('download');await detail.getByRole('button',{name:'Download original completion record',exact:true}).click();assert.deepEqual(JSON.parse(await readFile(await (await originalDownload).path(),'utf8')),JSON.parse(originalSnapshot),'fresh review preserves the original completion record');
+  await page.reload({waitUntil:'domcontentloaded'});await detail.getByRole('heading',{name:'No recorded changes detected',exact:true}).waitFor();await followLink.waitFor();
+  const overflow=await page.evaluate(()=>Math.max(0,document.documentElement.scrollWidth-innerWidth));assert.ok(overflow<=3,'review workspace horizontal overflow '+overflow);
+  await page.screenshot({path:'artifacts/usability/work-review-record-'+name+'.png',fullPage:true});
+  evidenceVersion=3;await detail.getByRole('button',{name:'Refresh recorded checks',exact:true}).click();await detail.getByRole('heading',{name:'Needs another review',exact:true}).waitFor();
+  await fresh.getByLabel('Fresh review outcome',{exact:true}).fill('The later independent review was checked against the current procedure and the same completed outcome.');await confirmation.check();verificationMode='lost';
+  await verify.click();await detail.getByRole('alert').filter({hasText:'Refresh the review to check what was saved'}).waitFor();assert.equal(verificationPosts,2);assert.equal(verificationWrites,2);
+  await detail.getByRole('button',{name:'Refresh review status',exact:true}).click();await detail.getByRole('heading',{name:'No recorded changes detected',exact:true}).waitFor();assert.equal(verificationPosts,2,'lost verification response is recovered by GET, never resubmitted');
+  role='EDITOR';await page.reload({waitUntil:'domcontentloaded'});await detail.getByRole('heading',{name:'No recorded changes detected',exact:true}).waitFor();assert.equal(await verify.count(),0,'editors cannot record administrative verification');
+  await page.getByRole('button',{name:'Back to completed work reviews',exact:false}).click();await list.getByRole('heading',{name:'106 completed tasks',exact:true}).waitFor();
+  holdQueue=true;const heldQueue=new Promise(resolve=>{queueHeld=resolve;}),finishedQueue=new Promise(resolve=>{queueFinished=resolve;});
+  const oldQueueMatch=value=>{const url=new URL(value.url());return url.pathname==='/api/workspace/work/reviews'&&url.searchParams.get('organizationId')===org;};
+  const oldQueueSettled=Promise.race([page.waitForResponse(oldQueueMatch).then(response=>response.finished()),page.waitForEvent('requestfailed',{predicate:oldQueueMatch})]);
+  await list.getByRole('button',{name:'Refresh checks',exact:true}).click();await heldQueue;await page.getByLabel('Organisation',{exact:true}).selectOption(other);await list.getByRole('heading',{name:'No completed tasks match this search.',exact:true}).waitFor();
+  releaseQueue();await finishedQueue;await oldQueueSettled;await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));assert.equal(await page.getByText('Completed action 000',{exact:true}).count(),0,'old-org review list cannot repopulate a new workspace');
+  holdDetail=true;const heldDetail=new Promise(resolve=>{detailHeld=resolve;}),finishedDetail=new Promise(resolve=>{detailFinished=resolve;});
+  await page.goto(base+'/team/work/reviews?'+new URLSearchParams({organizationId:org,taskId:target.id}),{waitUntil:'domcontentloaded'});await heldDetail;
+  await page.getByLabel('Organisation',{exact:true}).selectOption(other);await list.getByRole('heading',{name:'No completed tasks match this search.',exact:true}).waitFor();releaseDetail();await finishedDetail;
+  assert.equal(await detail.count(),0,'late old-org detail stays cancelled');assert.equal(await page.getByText('Reviewed procedure.pdf',{exact:true}).count(),0);assert.deepEqual(errors,[]);
+  results.push({name:name+'-completed-review',passed:true,previewReads,followUpPosts,followUpWrites,verificationPosts,verificationWrites,overflow,reviewChecks:['paginated completed task search','exact task beyond100','page-scoped counts','preview without mutation','stale preview invalidation','single creation from rapid clicks','saved follow-up after reload','new cycle after completed follow-up','fresh verified basis and immutable original export','open follow-up preserved','lost-response GET reconciliation','editor mutation restriction','old-organisation list and detail suppression'],fixture:'Fictional authenticated UI/API responses; real verification and database rules tested separately'});
+ }catch(error){
+  await mkdir('artifacts/usability',{recursive:true});
+  await page.screenshot({path:'artifacts/usability/work-review-failure-'+name+'.png',fullPage:true}).catch(()=>{});
+  await writeFile('artifacts/usability/work-review-failure-'+name+'.txt',String(error)+'\n\n'+await page.locator('body').ariaSnapshot()).catch(()=>{});
+  throw error;
+ }finally{await context.close();}
+}
+
 try{
  let ready=false;for(let i=0;i<80;i++){if(host.exitCode!==null)throw Error('Server exited');try{if((await fetch(base+'/api/health',{signal:AbortSignal.timeout(1500)})).status<500){ready=true;break;}}catch{}await delay(250);}if(!ready)throw Error('Server did not start');
  browser=await chromium.launch({headless:true,args:['--no-sandbox'],...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}:{})});
  await journey({width:1440,height:1000},'desktop');await journey({width:390,height:844},'mobile');
+ await reviewJourney({width:1440,height:1000},'desktop');await reviewJourney({width:390,height:844},'mobile');
  await writeFile('artifacts/usability/work-hub-results.json',JSON.stringify(results,null,2));console.log(JSON.stringify(results,null,2));
 }finally{await browser?.close();host.kill('SIGTERM');}

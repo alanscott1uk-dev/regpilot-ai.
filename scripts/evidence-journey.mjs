@@ -253,6 +253,130 @@ try{
  await review.getByRole('button',{name:'Close task details'}).click();
  await review.getByRole('button',{name:/Evidence to review/}).click();
  await review.getByRole('button',{name:/Evidence to review\s*0$/}).waitFor();
+ await checkpoint('completed-work proof change fixture');
+ // Controlled fault injection in this disposable database: a previously approved
+ // file now requires another independent review. All recovery below uses the UI
+ // and normal authenticated application routes, not direct database updates.
+ await db.evidence.update({where:{id:record.id},data:{reviewStatus:'PENDING_REVIEW',reviewVersion:{increment:1},reviewerId:null,reviewedAt:null,reviewerNotes:''}});
+ await review.goto(app+'/team/work?'+params);
+ await review.getByRole('link',{name:'Review this completed task',exact:true}).click();
+ const reviewDetail=review.getByRole('region',{name:'Completed work review',exact:true});
+ await reviewDetail.getByRole('heading',{name:'Needs another review',exact:true}).waitFor();
+ assert.equal(new URL(review.url()).searchParams.get('taskId'),task.id);
+ assert.equal(new URL(review.url()).searchParams.get('organizationId'),org.id);
+ assert.equal((await db.obligation.findUniqueOrThrow({where:{id:task.id}})).status,'COMPLETE');
+ assert.deepEqual((await db.auditEvent.findUniqueOrThrow({where:{id:saved.id}})).details,saved.details);
+ passed('A controlled evidence-review change appeared on the exact completed task without rewriting its completion or historical receipt.');
+
+ await checkpoint('preview and confirm owned review follow-up');
+ const followUp=reviewDetail.getByRole('region',{name:'Owned follow-up',exact:true});
+ const reason='Arrange a fresh independent check of the training record and confirm the evidence still supports the completed task.';
+ await followUp.getByLabel('Follow-up assignee',{exact:true}).selectOption(editor.id);
+ await followUp.getByLabel('Follow-up due date',{exact:true}).fill(new Date(Date.now()+7*86400000).toISOString().slice(0,10));
+ await followUp.getByLabel('Reason for follow-up',{exact:true}).fill(reason);
+ const followEndpoint=app+'/api/workspace/work/'+task.id+'/review/follow-up';
+ const beforePreview={tasks:await db.obligation.count({where:{organizationId:org.id}}),events:await db.auditEvent.count({where:{organizationId:org.id}})};
+ const [previewResponse]=await Promise.all([
+  review.waitForResponse(response=>response.url()===followEndpoint&&response.request().method()==='POST'),
+  followUp.getByRole('button',{name:'Preview follow-up task',exact:true}).click()
+ ]);
+ const previewed=await bounded(previewResponse.json(),'Follow-up preview body');
+ assert.equal(previewResponse.status(),200,previewed.error||'follow-up preview failed');
+ assert.equal(await db.obligation.count({where:{organizationId:org.id}}),beforePreview.tasks,'preview must not create work');
+ assert.equal(await db.auditEvent.count({where:{organizationId:org.id}}),beforePreview.events,'preview must not write an audit event');
+ const [followResponse]=await Promise.all([
+  review.waitForResponse(response=>response.url()===followEndpoint&&response.request().method()==='POST'),
+  followUp.getByRole('button',{name:'Create reviewed follow-up',exact:true}).click()
+ ]);
+ const followed=await bounded(followResponse.json(),'Confirmed follow-up body');
+ assert.equal(followResponse.status(),200,followed.error||'follow-up creation failed');
+ const assigned=await db.obligation.findUniqueOrThrow({where:{id:followed.taskId}});
+ assert.equal(assigned.organizationId,org.id);
+ assert.equal(assigned.assigneeId,editor.id);
+ assert.equal(assigned.status,'OPEN');
+ assert.equal(assigned.originKey,null);
+ assert.equal(assigned.controlId,null);
+ assert.equal(await db.obligation.count({where:{organizationId:org.id}}),beforePreview.tasks+1);
+ const originalFollowRequest=followResponse.request(),authorization=(await originalFollowRequest.allHeaders()).authorization;
+ assert.ok(authorization,'the repeated confirmation uses the same local authenticated identity');
+ // Credentials remain local and are never copied into logs or artifacts.
+ const repeatedFollow=await review.request.post(followEndpoint,{headers:{authorization,'content-type':'application/json'},data:originalFollowRequest.postDataJSON(),timeout:15_000});
+ const repeated=await bounded(repeatedFollow.json(),'Repeated follow-up confirmation');
+ assert.equal(repeatedFollow.status(),200,repeated.error||'repeat follow-up failed');
+ assert.equal(repeated.reused,true);
+ assert.equal(repeated.taskId,assigned.id);
+ assert.equal(repeated.eventId,followed.eventId);
+ assert.equal(await db.obligation.count({where:{organizationId:org.id}}),beforePreview.tasks+1,'a repeated confirmation must not duplicate follow-up work');
+ const followLink=followUp.getByRole('link',{name:'Open follow-up task',exact:true});
+ await followLink.waitFor();
+ assert.equal(new URL(await followLink.getAttribute('href'),app).searchParams.get('taskId'),assigned.id);
+ const followLocation=await followLink.getAttribute('href');
+ await review.screenshot({path:artifactDir+'/desktop-review-follow-up.png',fullPage:true});
+ passed('The manager preview wrote nothing; explicit confirmation assigned one linked follow-up and a repeated confirmation reused it.');
+
+ await checkpoint('fresh independent evidence review after completion');
+ await review.goto(vault);
+ await review.getByLabel('Independent review rationale').fill('Rechecked the fictional training record after the requested review; its dates, scope and implementation still support this task.');
+ await review.getByRole('button',{name:'Approve evidence',exact:true}).click();
+ await review.getByText('APPROVED',{exact:true}).waitFor();
+ const rereviewed=await db.evidence.findUniqueOrThrow({where:{id:record.id}});
+ assert.equal(rereviewed.reviewVersion,4);
+ assert.equal(rereviewed.reviewerId,reviewer.id);
+ assert.equal(rereviewed.sha256,record.sha256);
+ await review.getByRole('link',{name:'Return to task',exact:true}).click();
+ await review.getByRole('link',{name:'Review this completed task',exact:true}).click();
+ await reviewDetail.getByRole('heading',{name:'Needs another review',exact:true}).waitFor();
+ const freshReview=reviewDetail.getByRole('region',{name:'Fresh review',exact:true});
+ const freshOutcome='Independently rechecked the current training evidence and its scope; it continues to support the completed training check.';
+ await freshReview.getByLabel('Fresh review outcome',{exact:true}).fill(freshOutcome);
+ await freshReview.getByRole('checkbox',{name:/training-record\.pdf/}).check();
+ const verifyButton=freshReview.getByRole('button',{name:'Verify files and record fresh review',exact:true});
+ assert.equal(await verifyButton.isDisabled(),true,'fresh verification needs explicit confirmation');
+ await freshReview.getByLabel('I have checked the current evidence and confirm this reviewed basis.',{exact:true}).check();
+ const verifyEndpoint=app+'/api/workspace/work/'+task.id+'/review/verify';
+ const [verifiedResponse]=await Promise.all([
+  review.waitForResponse(response=>response.url()===verifyEndpoint&&response.request().method()==='POST'),
+  verifyButton.click()
+ ]);
+ const verified=await bounded(verifiedResponse.json(),'Fresh work verification body');
+ assert.equal(verifiedResponse.status(),200,verified.error||'fresh verification failed');
+ assert.equal(verified.taskId,task.id);
+ assert.equal(verified.reused,false);
+ assert.equal(verified.evidenceCount,1);
+ await reviewDetail.getByRole('heading',{name:'No recorded changes detected',exact:true}).waitFor();
+ const reviewEvent=await db.auditEvent.findUniqueOrThrow({where:{id:verified.eventId}});
+ assert.equal(reviewEvent.organizationId,org.id);
+ assert.equal(reviewEvent.entityId,task.id);
+ assert.equal(reviewEvent.actorId,reviewer.id);
+ assert.equal(reviewEvent.action,'work.review_verified');
+ assert.equal(await db.auditEvent.count({where:{organizationId:org.id,entityId:task.id,action:'work.review_verified'}}),1);
+ assert.deepEqual((await db.auditEvent.findUniqueOrThrow({where:{id:saved.id}})).details,saved.details,'the fresh basis must preserve the original completion receipt');
+ const afterReview=await db.obligation.findUniqueOrThrow({where:{id:task.id}});
+ assert.equal(afterReview.status,'COMPLETE');
+ assert.equal(afterReview.completedAt.toISOString(),finished.completedAt.toISOString());
+ assert.equal((await db.obligation.findUniqueOrThrow({where:{id:assigned.id}})).status,'OPEN','verification must not silently close assigned follow-up work');
+ const freshDownloadReady=review.waitForEvent('download');
+ await reviewDetail.getByRole('button',{name:'Download fresh review record',exact:true}).click();
+ const freshDownload=await freshDownloadReady;
+ const freshRecord=JSON.parse(await readFile(await bounded(freshDownload.path(),'Fresh review record download'),'utf8'));
+ assert.equal(JSON.stringify(freshRecord).includes(record.storageKey),false,'review export must not disclose private storage keys');
+ assert.deepEqual(freshRecord.record,reviewEvent.details.record,'the exported fresh record must match the persisted reviewed decision');
+ assert.equal(freshRecord.basis.eventId,verified.eventId);
+ assert.equal(freshRecord.basis.proofHash,verified.proofHash,'fresh export must identify the persisted reviewed basis');
+ await writeFile(artifactDir+'/fresh-review-record.json',JSON.stringify(freshRecord,null,2)+'\n');
+ await review.reload();
+ await reviewDetail.getByRole('heading',{name:'No recorded changes detected',exact:true}).waitFor();
+ await reviewDetail.getByRole('link',{name:'Open follow-up task',exact:true}).waitFor();
+ await review.screenshot({path:artifactDir+'/desktop-fresh-review.png',fullPage:true});
+ await upload.goto(app+'/team/work/reviews?'+params);
+ await upload.getByRole('region',{name:'Completed work review',exact:true}).getByRole('heading',{name:'No recorded changes detected',exact:true}).waitFor();
+ assert.equal(await upload.getByRole('button',{name:'Verify files and record fresh review',exact:true}).count(),0,'an editor cannot perform administrator review');
+ assert.ok(await bounded(upload.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Mobile fresh-review layout inspection'));
+ await upload.screenshot({path:artifactDir+'/mobile-fresh-review.png',fullPage:true});
+ await review.goto(new URL(followLocation,app).href);
+ await review.getByRole('dialog').getByRole('heading',{name:assigned.title,exact:true}).waitFor();
+ passed('A fresh review verified private bytes, persisted a new basis and cleared the change alert after reload; the original completion and open follow-up remained intact on desktop and mobile.');
+
  await checkpoint('unavailable organisation isolation');
  await review.goto(app+'/team/evidence?'+new URLSearchParams({organizationId:randomUUID(),taskId:task.id}));
  await review.getByText(/belongs to an unavailable organisation/).waitFor();

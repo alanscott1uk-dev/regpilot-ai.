@@ -45,3 +45,7 @@ Check results for the exact branch commit before treating a run as passed. Local
 This is a task completion record, not a legal verdict or a guarantee of continuing compliance. No model call, new dependency, database migration, provider activation, production deployment or merge is included. Private feature configuration and separate release acceptance still apply.
 
 The official-source probe remains a separate coverage signal. The repair run on 18 November retrieved 37 of 38 selected text bodies; the Scottish Government fire-premises source returned HTTP 202, classified as a publisher challenge. The last successful source content was retained and the failure stayed visible. This increment does not claim to resolve that source availability gap or establish competitor parity.
+
+## Subsequent completed-work review
+
+The [completed-work review increment](completed-work-review-20261118.md) adds a separate view of current changes, owned follow-up and explicit fresh verification. It also permits independent renewal of accepted assessments whose unchanged supporting context remains valid. The original completion behavior and receipt described here remain historical records.

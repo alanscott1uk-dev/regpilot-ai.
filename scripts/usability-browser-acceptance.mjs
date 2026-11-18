@@ -14,6 +14,7 @@ import {horizonJourney} from "./horizon-browser-journey.mjs";
 import {sharedEvidenceJourney} from "./shared-evidence-browser-journey.mjs";
 import {changeResponseJourney} from "./change-response-browser-journey.mjs";
 import {setupJourney} from "./setup-browser-journey.mjs";
+import {assuranceRenewalJourney} from "./assurance-renewal-browser-journey.mjs";
 
 const port=await new Promise((resolve,reject)=>{
  const server=createServer().once("error",reject).listen(0,"127.0.0.1",()=>{
@@ -112,6 +113,7 @@ try{
   try{observations.push(await sharedEvidenceJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"shared-evidence-"+name,passed:false,error:e.message});}
   try{observations.push(await changeResponseJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"change-response-"+name,passed:false,error:e.message});}
   try{observations.push(await setupJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"setup-"+name,passed:false,error:e.message});}
+  try{observations.push(await assuranceRenewalJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"assurance-renewal-"+name,passed:false,error:e.message});}
  }
 }finally{await browser.close();host.kill("SIGTERM");await Promise.race([new Promise(r=>host.once("exit",r)),delay(1500)]);if(host.exitCode===null)host.kill("SIGKILL");}
 const report={format:"regpilot-browser-acceptance-v1",startedAt,finishedAt:new Date().toISOString(),

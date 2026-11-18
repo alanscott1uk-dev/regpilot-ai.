@@ -63,7 +63,7 @@ try{
  await waitForServer();
  const routes=[
   "/team/coverage","/team/briefing","/team/recognition","/recognition","/team/access-reviews","/team/answers","/team/questionnaires","/team/trust","/trust","/team/audit-requests","/team/changes","/team/people","/team/vendors","/team/audits","/auditor","/team/services","/team/settings","/team/operations","/team/library","/workbench","/register","/documents","/evidence","/controls",
-  "/assurance","/intelligence","/traceability","/team","/team/work","/team/evidence","/team/sources","/team/intelligence","/team/assurance","/ai"
+  "/assurance","/intelligence","/traceability","/team","/team/work","/team/work/reviews","/team/evidence","/team/sources","/team/intelligence","/team/assurance","/ai"
  ];
  for(const path of routes){
   const res=await response(path);
@@ -108,6 +108,14 @@ try{
   assert.equal(read.status,503,path+" private reads must fail closed");
   const write=await response(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({organizationId:"123e4567-e89b-42d3-a456-426614174000"})});
   assert.equal(write.status,503,path+" private writes must fail closed");
+ }
+ for(const path of ["/api/workspace/work/reviews","/api/workspace/work/123e4567-e89b-42d3-a456-426614174001/review","/api/workspace/assurance/123e4567-e89b-42d3-a456-426614174001/renew"]){
+  const read=await response(path+"?organizationId=123e4567-e89b-42d3-a456-426614174000");
+  assert.equal(read.status,503,path+" private review reads must fail closed");
+ }
+ for(const path of ["/api/workspace/work/123e4567-e89b-42d3-a456-426614174001/review/follow-up","/api/workspace/work/123e4567-e89b-42d3-a456-426614174001/review/verify","/api/workspace/assurance/123e4567-e89b-42d3-a456-426614174001/renew"]){
+  const write=await response(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({organizationId:"123e4567-e89b-42d3-a456-426614174000"})});
+  assert.equal(write.status,503,path+" private review writes must fail closed");
  }
  const rootResponse=await response("/");
  assert.ok([301,302,303,307,308].includes(rootResponse.status),"root should redirect to secure operations");
