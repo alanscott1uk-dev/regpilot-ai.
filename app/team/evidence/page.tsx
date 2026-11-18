@@ -160,11 +160,11 @@ export default function TeamEvidence(){
    {!user&&!authLoading&&enabled===true&&<section className={ui.card}><h2>Sign in to open this task</h2><EmailSignIn destination="/team/work"/></section>}
    {user&&orgs.length===0&&<p className={ui.empty}>Your account has no workspace. <a href="/team">Open team setup</a></p>}
    {user&&orgs.length>0&&<>
-    <section className={ui.bar}><div><label>Organisation<select value={orgId} disabled={busy} onChange={e=>{
+    <section className={ui.bar}><div><label>Organisation<select aria-label="Organisation" value={orgId} disabled={busy} onChange={e=>{
      const id=e.target.value;taskRequest.current++;active.current={...active.current,orgId:id,taskId:""};
      showSelection(id);setNotice("");setTaskId("");setTasks([]);setRows([]);setFile(null);setOrgId(id);
     }}>{!orgId&&<option value="">Choose an organisation</option>}{orgs.map(o=><option key={o.id} value={o.id}>{o.name} · {o.role}</option>)}</select></label></div>
-     <div><label>Task<select value={taskId} disabled={busy||!tasks.length} onChange={e=>{
+     <div><label>Task<select aria-label="Task" value={taskId} disabled={busy||!tasks.length} onChange={e=>{
       const id=e.target.value;active.current={...active.current,taskId:id};showSelection(orgId,id);
       setFile(null);setRows([]);setFileState("loading");setReviewNotes({});setNotice("");setTaskId(id);
      }}>{!tasks.length&&<option value="">No task selected</option>}{tasks.map(t=><option key={t.id} value={t.id}>{t.title}</option>)}</select></label></div></section>

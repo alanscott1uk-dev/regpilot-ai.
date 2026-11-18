@@ -74,11 +74,13 @@ try{
  assert.equal(await upload.getByLabel('Task',{exact:true}).inputValue(),task.id);
  assert.equal(new URL(upload.url()).pathname,'/team/evidence');
  assert.equal(new URL(upload.url()).searchParams.has('code'),false);
+ console.log('Email-link callback restored the requested task beyond the first 100 results.');
  const marked=fixturePdf([['REGPILOT_SCAN_FIXTURE']]);
  await upload.getByLabel('Evidence document').setInputFiles({name:'scanner-fixture.pdf',mimeType:'application/pdf',buffer:marked});
  await upload.getByRole('button',{name:'Scan and store privately'}).click();
  await upload.getByText('Virus scan could not verify a clean result').waitFor();
  assert.equal(await db.evidence.count({where:{organizationId:org.id}}),0);
+ console.log('ClamAV rejected the marked PDF through the upload form.');
  const file=fixturePdf([['Fictional cold-chain training record for independent review.']]);
  await upload.getByLabel('Evidence document').setInputFiles({name:'training-record.pdf',mimeType:'application/pdf',buffer:file});
  await upload.getByRole('button',{name:'Scan and store privately'}).click();
@@ -96,6 +98,7 @@ try{
  await review.getByRole('button',{name:/Evidence to review/}).click();
  await review.getByRole('article').filter({hasText:title}).getByRole('link',{name:'Review files'}).click();
  await review.getByText('training-record.pdf',{exact:true}).waitFor();
+ console.log('Second account opened the submitted file from its independent review queue.');
  const downloadReady=review.waitForEvent('download');
  await review.getByRole('button',{name:'Download verified original'}).click();
  const download=await downloadReady;
