@@ -69,3 +69,12 @@ test("SEPA uses the verified replacement publication linked from its current was
  });
  assert.equal(r.url,sepa.url);assert.equal(r.id,sepa.id);
 });
+
+test("partial responses and publisher interstitials never enter the publication history",async()=>{
+ for(const status of [202,206])await assert.rejects(()=>loadOfficialWeb(source,async()=>response(html(),status)),
+  (e:any)=>e.reasonCode==="HTTP_STATUS"&&e.httpStatus===status);
+ const challenge=response();challenge.headers.set("x-amzn-waf-action","challenge");
+ await assert.rejects(()=>loadOfficialWeb(source,async()=>challenge),(e:any)=>e.reasonCode==="PUBLISHER_CHALLENGE");
+ await assert.rejects(()=>loadOfficialWeb(source,async()=>response("<html><title>Unavailable</title></html>")),
+  (e:any)=>e.reasonCode==="MAIN_REGION_MISSING"&&e.httpStatus===200);
+});

@@ -53,6 +53,9 @@ test("private scanned evidence: metadata, file bytes, permissions, independent r
   await assert.rejects(()=>reviewEvidence(viewerCtx,created.id,{decision:"APPROVED",notes:"Viewer cannot approve evidence from their organisation.",version:1},store),(e:any)=>e.status===403);
   await assert.rejects(()=>reviewEvidence(outsideCtx,created.id,{decision:"APPROVED",notes:"Wrong organisation cannot approve the record.",version:1},store),(e:any)=>e.status===404);
   await assert.rejects(()=>reviewEvidence(adminCtx,created.id,{decision:"APPROVED",notes:"Too short",version:1},store),(e:any)=>e.status===400);
+  await db.evidence.update({where:{id:created.id},data:{uploadedById:null}});
+  await assert.rejects(()=>reviewEvidence(adminCtx,created.id,{decision:"APPROVED",version:1,notes:"Review of an older imported record without a known uploader."},store),(e:any)=>e.status===409);
+  await db.evidence.update({where:{id:created.id},data:{uploadedById:editor.id}});
   const approved=await reviewEvidence(adminCtx,created.id,{decision:"APPROVED",
    notes:"Independently checked the example PDF and recorded the decision.",version:1},store);
   assert.equal(approved.reviewStatus,"APPROVED");assert.equal(approved.reviewVersion,2);

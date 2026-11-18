@@ -13,31 +13,38 @@ const taskSelect=(organizationId:string)=>({id:true,title:true,category:true,own
  _count:{select:{evidence:{where:{organizationId}}}},evidence:{where:{organizationId,scanStatus:'CLEAN',reviewStatus:'PENDING_REVIEW'},take:1,select:{id:true}}
 } satisfies Prisma.ObligationSelect);
 function dayWindow(now:Date){const day=new Date(now.toISOString().slice(0,10)+'T00:00:00.000Z');return {day,week:new Date(day.getTime()+7*86400000)};}
-function inboxWhere(ctx:AuthorizedContext,query:WorkQuery,now:Date):Prisma.ObligationWhereInput {
+function inboxWhere(ctx:AuthorizedContext,query:WorkQuery,now:Date,reviewable:Prisma.EvidenceWhereInput):Prisma.ObligationWhereInput {
  const {day}=dayWindow(now);
  const base:Prisma.ObligationWhereInput={organizationId:ctx.organizationId,status:query.view==='complete'?'COMPLETE':{not:'COMPLETE'}};
  if(query.view==='mine')base.assigneeId=ctx.userId;
  if(query.view==='unassigned')base.assigneeId=null;
  if(query.view==='overdue')base.dueDate={lt:day};
- if(query.view==='review')base.evidence={some:{organizationId:ctx.organizationId,scanStatus:'CLEAN',reviewStatus:'PENDING_REVIEW'}};
+ if(query.view==='review'){
+  delete base.status;
+  base.evidence={some:reviewable};
+ }
  if(query.q)base.OR=[{title:{contains:query.q,mode:'insensitive'}},{category:{contains:query.q,mode:'insensitive'}},{ownerName:{contains:query.q,mode:'insensitive'}}];
  return base;
 }
 /** Full-list counts and server pagination; no first-100-record approximation. */
 export async function workInbox(ctx:AuthorizedContext,query:WorkQuery,now=new Date()) {
  return db.$transaction(async tx=>{
-  const actor=await requireMember(tx,ctx),{day}=dayWindow(now),where=inboxWhere(ctx,query,now);
+  const actor=await requireMember(tx,ctx),{day}=dayWindow(now);
+  const isAdmin=ADMIN.includes(actor.role);
+  // Review belongs to the file. Closing the task does not dispose of a pending file.
+  const reviewable:Prisma.EvidenceWhereInput={organizationId:ctx.organizationId,scanStatus:'CLEAN',reviewStatus:'PENDING_REVIEW'};
+  if(isAdmin)reviewable.OR=[{uploadedById:{not:ctx.userId}},{uploadedById:null}];
+  const where=inboxWhere(ctx,query,now,reviewable);
   const scope={organizationId:ctx.organizationId},open={...scope,status:{not:'COMPLETE' as const}};
   const [total,allOpen,mine,overdue,unassigned,review,complete,members]=await Promise.all([
    tx.obligation.count({where}),tx.obligation.count({where:open}),tx.obligation.count({where:{...open,assigneeId:ctx.userId}}),
    tx.obligation.count({where:{...open,dueDate:{lt:day}}}),tx.obligation.count({where:{...open,assigneeId:null}}),
-   tx.obligation.count({where:{...open,evidence:{some:{...scope,scanStatus:'CLEAN',reviewStatus:'PENDING_REVIEW'}}}}),
+   tx.obligation.count({where:{...scope,evidence:{some:reviewable}}}),
    tx.obligation.count({where:{...scope,status:'COMPLETE'}}),
    tx.membership.findMany({where:{...scope,role:{in:['OWNER','ADMIN','EDITOR']}},orderBy:{userId:'asc'},take:201,select:{role:true,user:{select:{id:true,email:true}}}})
   ]);
   const pages=Math.max(1,Math.ceil(total/WORK_PAGE_SIZE)),page=Math.min(query.page,pages);
   const rows=await tx.obligation.findMany({where,orderBy:[{dueDate:'asc'},{id:'asc'}],skip:(page-1)*WORK_PAGE_SIZE,take:WORK_PAGE_SIZE,select:taskSelect(ctx.organizationId)});
-  const isAdmin=ADMIN.includes(actor.role);
   const items=rows.map(({evidence,...task})=>{
    const safeTask={...task,changeAction:isAdmin||task.assigneeId===ctx.userId?task.changeAction:null};
    return {...safeTask,evidenceToReview:evidence.length>0,planningBlocked:planningBlock(task),canPlan:isAdmin&&!planningBlock(task),workflow:taskWorkflow(safeTask,ctx.organizationId)};

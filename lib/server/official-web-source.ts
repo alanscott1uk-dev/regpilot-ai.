@@ -9,7 +9,8 @@ export function officialMainText(html:string,heading:string){
  // Ignore commented templates and scripts before locating the single semantic main region.
  const clean=html.replace(/<!--[\s\S]*?-->/g,"").replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi,"");
  const blocks=[...clean.matchAll(/<(main)\b[^>]*>|<(div)\b(?=[^>]*\brole\s*=\s*["']main["'])[^>]*>/gi)];
- if(blocks.length!==1)throw new OfficialWebUnavailable("Official page layout changed; inspect the original","MAIN_REGION_COUNT");
+ if(!blocks.length)throw new OfficialWebUnavailable("Official page has no supported main region","MAIN_REGION_MISSING");
+ if(blocks.length>1)throw new OfficialWebUnavailable("Official page has multiple main regions","MAIN_REGION_AMBIGUOUS");
  const start=blocks[0],tag=start[1]||start[2],offset=start.index!+start[0].length,tail=clean.slice(offset),tags=new RegExp(`<\\/?${tag}\\b[^>]*>`,"gi");let depth=1,end=-1;
  for(const t of tail.matchAll(tags)){depth+=t[0].startsWith("</")?-1:1;if(depth===0){end=t.index!;break;}}
  if(end<0)throw new OfficialWebUnavailable("Official page main region is incomplete","MAIN_REGION_INCOMPLETE");
@@ -22,14 +23,24 @@ export function officialMainText(html:string,heading:string){
 export async function loadOfficialWeb(source:RegulatorySource,fetcher:typeof fetch=fetch){
  const known=REGULATORY_SOURCES.find(s=>s.id===source.id&&s.provider==="OFFICIAL_WEB");
  if(!known?.url||!known.heading||source.url!==known.url||source.path!==known.path)throw new OfficialWebUnavailable("Only curated official pages can be fetched");
- const read=resilientGet(fetcher,new URL(known.url).origin,{Accept:"text/html"},{timeoutMs:25000,maxRequests:3});
+ const read=resilientGet(fetcher,new URL(known.url).origin,{Accept:"text/html","User-Agent":"RegPilot/1.0 (public regulatory publication monitor)"},{timeoutMs:25000,maxRequests:3});
  let response:Response;
  try{response=await read(known.url);}catch(error){throw new OfficialWebUnavailable("Official page request failed",error instanceof CollectionError?error.code:"FETCH_FAILED");}
- if(!response.ok){await response.body?.cancel();throw new OfficialWebUnavailable("Official page returned an unsuccessful status","HTTP_STATUS",response.status);}
+ // A queued request, partial document or publisher verification page cannot be a snapshot.
+ if(["challenge","captcha"].includes(response.headers.get("x-amzn-waf-action")||"") || response.headers.get("cf-mitigated")==="challenge"){
+  await response.body?.cancel();
+  throw new OfficialWebUnavailable("Publisher verification is required for this page","PUBLISHER_CHALLENGE",response.status);
+ }
+ if(response.status!==200){await response.body?.cancel();throw new OfficialWebUnavailable("Official page returned an unsuccessful status","HTTP_STATUS",response.status);}
  if(!response.headers.get("content-type")?.includes("text/html")||response.url&&response.url!==known.url){await response.body?.cancel();throw new OfficialWebUnavailable("Official page unavailable, moved or unsupported","RESPONSE_IDENTITY_OR_TYPE");}
  const reader=response.body?.getReader();if(!reader)throw new OfficialWebUnavailable("Official page was empty");const chunks:Uint8Array[]=[];let bytes=0;
  try{while(true){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>1000000)throw new OfficialWebUnavailable("Official page exceeds the safe size limit","RESPONSE_TOO_LARGE");chunks.push(value);}}finally{await reader.cancel().catch(()=>{});}
- const text=officialMainText(Buffer.concat(chunks).toString("utf8"),known.heading);
+ let text:string;
+ try{text=officialMainText(Buffer.concat(chunks).toString("utf8"),known.heading);}
+ catch(error){
+  if(error instanceof OfficialWebUnavailable)throw new OfficialWebUnavailable(error.message,error.reasonCode,response.status);
+  throw error;
+ }
  // Fetch time and HTML Last-Modified are not asserted as a legal effective date or publisher revision date.
  return {id:known.id,title:known.title,url:known.url,updatedAt:null,revisionAt:null,text};
 }

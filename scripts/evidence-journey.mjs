@@ -94,8 +94,7 @@ try{
 
  const review=await signIn(await openContext({width:1440,height:1000}),app+'/team/work',reviewer.email);
  await review.getByRole('button',{name:/Evidence to review/}).click();
- await review.getByRole('button',{name:new RegExp(title)}).click();
- await review.getByRole('dialog').getByRole('link',{name:'Open evidence workspace'}).click();
+ await review.getByRole('article').filter({hasText:title}).getByRole('link',{name:'Review files'}).click();
  await review.getByText('training-record.pdf',{exact:true}).waitFor();
  const downloadReady=review.waitForEvent('download');
  await review.getByRole('button',{name:'Download verified original'}).click();
@@ -103,7 +102,7 @@ try{
  assert.deepEqual(await readFile(await download.path()),file);
  const notes='Checked the dated fictional training record against the task scope.';
  await review.getByLabel('Independent review rationale').fill(notes);
- await review.getByRole('button',{name:'Record reviewed'}).click();
+ await review.getByRole('button',{name:'Approve evidence'}).click();
  await review.getByText('APPROVED',{exact:true}).waitFor();
  const record=await db.evidence.findFirstOrThrow({where:{organizationId:org.id,obligationId:task.id}});
  assert.equal(record.uploadedById,editor.id);

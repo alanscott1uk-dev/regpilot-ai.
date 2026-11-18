@@ -106,6 +106,7 @@ export async function reviewEvidence(ctx:AuthorizedContext,id:string,raw:unknown
  const notes=input.notes.trim();
  const record=await db.evidence.findFirst({where:{id,organizationId:ctx.organizationId}});
  if(!record)throw new EvidenceError("Evidence not found",404);
+ if(!record.uploadedById && input.decision==="APPROVED")throw new EvidenceError("Uploader unknown. Request a new upload before independent approval.",409);
  if(record.uploadedById===ctx.userId)throw new EvidenceError("Uploader cannot approve their own evidence",403);
  if(record.reviewStatus!=="PENDING_REVIEW"||record.reviewVersion!==input.version)
   throw new EvidenceError("Evidence already reviewed or version changed",409);
@@ -114,7 +115,7 @@ export async function reviewEvidence(ctx:AuthorizedContext,id:string,raw:unknown
  return db.$transaction(async tx=>{
   await requireMember(tx,ctx,ADMIN);
   const change=await tx.evidence.updateMany({where:{
-   id,organizationId:ctx.organizationId,reviewStatus:"PENDING_REVIEW",reviewVersion:input.version,scanStatus:"CLEAN"},
+   id,organizationId:ctx.organizationId,uploadedById:record.uploadedById,reviewStatus:"PENDING_REVIEW",reviewVersion:input.version,scanStatus:"CLEAN"},
    data:{reviewStatus:input.decision as "APPROVED"|"REJECTED",reviewerId:ctx.userId,
     reviewVersion:{increment:1},reviewerNotes:notes,reviewedAt:new Date()}
   });

@@ -32,6 +32,14 @@ test('work hub: full-list paging, tenant isolation, private metadata, atomic rev
   const proof=await db.evidence.create({data:{organizationId:ids[0],obligationId:selected[0].id,filename:'fictional-proof.pdf',storageKey:'MUST_NOT_LEAK_PRIVATE_STORAGE',contentType:'application/pdf',sizeBytes:12,sha256:'a'.repeat(64),scanStatus:'CLEAN',reviewStatus:'PENDING_REVIEW'}});
   const detail=await workTask(owner,selected[0].id);assert.equal(detail.task.evidence[0].id,proof.id);assert.doesNotMatch(JSON.stringify(detail),/storageKey|MUST_NOT_LEAK_PRIVATE_STORAGE|sha256|encryptedSecret/);
   assert.equal((await workInbox(owner,{...query,view:'review'},now)).total,1);
+  const completed=await db.obligation.findFirstOrThrow({where:{organizationId:ids[0],status:'COMPLETE'}});
+  const closedProof=await db.evidence.create({data:{organizationId:ids[0],obligationId:completed.id,filename:'later.pdf',storageKey:randomUUID(),contentType:'application/pdf',sizeBytes:100,sha256:'c'.repeat(64),uploadedById:editor.userId,scanStatus:'CLEAN',reviewStatus:'PENDING_REVIEW'}});
+  const reviewQueue=await workInbox(owner,{...query,view:'review'},now);
+  assert.equal(reviewQueue.total,2);assert.equal(reviewQueue.counts.review,2);
+  assert.ok(reviewQueue.items.some(item=>item.id===completed.id));
+  await db.evidence.update({where:{id:closedProof.id},data:{uploadedById:owner.userId}});
+  assert.equal((await workInbox(owner,{...query,view:'review'},now)).total,1,'uploaders cannot review their own files');
+  assert.equal((await workInbox(editor,{...query,view:'review'},now)).counts.review,2,'editors can track pending files');
   await assert.rejects(()=>planWork(viewer,plan),(e:any)=>e.status===403);
   await assert.rejects(()=>planWork(editor,plan),(e:any)=>e.status===403);
   await assert.rejects(()=>planWork(owner,{...plan,changes:{assigneeId:outside.userId}}),(e:any)=>e.status===409);
