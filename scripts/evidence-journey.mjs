@@ -22,13 +22,33 @@ const artifactDir='artifacts/usability/private-evidence';
 const report={passed:false,stage:'local setup',checks:[],responses:[]};
 let browser;
 function passed(message){report.checks.push(message);console.log(message);}
+async function saveReport(){
+ await mkdir(artifactDir,{recursive:true});
+ await writeFile(artifactDir+'/results.json',JSON.stringify({...report,pageErrors:errors},null,2)+'\n');
+}
+async function checkpoint(stage){report.stage=stage;await saveReport();}
+async function bounded(operation,label,timeoutMs=15_000){
+ let timer;
+ try{
+  return await Promise.race([operation,new Promise((_,reject)=>{
+   timer=setTimeout(()=>reject(Error(label+' exceeded '+timeoutMs+'ms')),timeoutMs);
+  })]);
+ }finally{clearTimeout(timer);}
+}
 async function submitEvidence(page,filename,bytes,expectedStatus){
+ await checkpoint('selecting '+filename);
  await page.getByLabel('Evidence document').setInputFiles({name:filename,mimeType:'application/pdf',buffer:bytes});
+ await checkpoint('posting '+filename);
  const [response]=await Promise.all([
   page.waitForResponse(r=>r.url()===app+'/api/workspace/evidence'&&r.request().method()==='POST'),
   page.getByRole('button',{name:'Scan and store privately'}).click()
  ]);
- const body=await response.json();
+ report.uploads||=[];
+ const result={filename,status:response.status()};report.uploads.push(result);
+ await checkpoint('reading upload response for '+filename);
+ const body=await bounded(response.json(),'Evidence upload response body');
+ if(typeof body.error==='string')result.error=body.error;
+ await checkpoint('received upload body for '+filename);
  assert.equal(response.status(),expectedStatus,`Evidence upload returned ${response.status()}: ${body.error||'unexpected success'}`);
  return body;
 }
@@ -79,6 +99,7 @@ async function openContext(viewport){
  return context.newPage();
 }
 try{
+ await checkpoint('local setup');
  const org=await db.organization.create({data:{name:'Fictional quality team'}});
  const editor=await account('editor@example.test','EDITOR',org.id);
  const reviewer=await account('reviewer@example.test','ADMIN',org.id);
@@ -91,7 +112,7 @@ try{
  const params=new URLSearchParams({organizationId:org.id,taskId:task.id});
  const vault=app+'/team/evidence?'+params;
  browser=await chromium.launch();
- report.stage='email-link sign-in and exact-task selection';
+ await checkpoint('email-link sign-in and exact-task selection');
  const upload=await signIn(await openContext({width:390,height:844}),vault,editor.email);
  await upload.getByRole('link',{name:'Return to task'}).waitFor();
  assert.equal(await upload.getByLabel('Task',{exact:true}).inputValue(),task.id);
@@ -99,7 +120,7 @@ try{
  assert.equal(new URL(upload.url()).searchParams.has('code'),false);
  await upload.getByText('No scanned evidence has been recorded for this task.',{exact:true}).waitFor();
  passed('Email-link callback restored the requested task beyond the first 100 results and loaded its evidence.');
- report.stage='marked PDF rejection';
+ await checkpoint('marked PDF rejection');
  const marked=fixturePdf([['REGPILOT_SCAN_FIXTURE']]);
  const rejected=await submitEvidence(upload,'scanner-fixture.pdf',marked,422);
  assert.equal(rejected.error,'Virus scan could not verify a clean result');
@@ -113,15 +134,17 @@ try{
  assert.deepEqual(rejectedObjects.data,[],'rejected PDF must never enter private storage');
  assert.equal(await db.auditEvent.count({where:{organizationId:org.id,action:'evidence.scanned_upload'}}),0);
  passed('ClamAV rejected the marked PDF through the upload form without a stored file, quota reservation or success audit.');
- report.stage='clean PDF upload and mobile task return';
+ await checkpoint('clean PDF upload and mobile task return');
  const file=fixturePdf([['Fictional cold-chain training record for independent review.']]);
  const stored=await submitEvidence(upload,'training-record.pdf',file,201);
  assert.equal(stored.evidence.obligationId,task.id);
  assert.equal(stored.evidence.reviewStatus,'PENDING_REVIEW');
  await upload.getByText('training-record.pdf',{exact:true}).waitFor();
+ await checkpoint('clean file rendered');
  await upload.getByText(/A different owner or administrator must review evidence you uploaded/).waitFor();
  assert.equal(await upload.getByLabel('Independent review rationale').count(),0);
- assert.ok(await upload.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
+ assert.ok(await bounded(upload.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Mobile layout inspection'));
+ await checkpoint('returning to uploaded task');
  const detail=upload.getByRole('dialog');
  await upload.getByRole('link',{name:'Return to task'}).click();
  await detail.getByText('training-record.pdf',{exact:true}).waitFor();
@@ -134,7 +157,7 @@ try{
  await upload.screenshot({path:artifactDir+'/mobile-pending-review.png',fullPage:true});
  passed('Mobile uploader returned to the exact task; pending evidence prevented completion.');
 
- report.stage='independent reviewer sign-in and original download';
+ await checkpoint('independent reviewer sign-in and original download');
  const review=await signIn(await openContext({width:1440,height:1000}),app+'/team/work',reviewer.email);
  await review.getByRole('button',{name:/Evidence to review/}).click();
  await review.getByRole('article').filter({hasText:title}).getByRole('link',{name:'Review files'}).click();
@@ -143,9 +166,9 @@ try{
  const downloadReady=review.waitForEvent('download');
  await review.getByRole('button',{name:'Download verified original'}).click();
  const download=await downloadReady;
- assert.deepEqual(await readFile(await download.path()),file);
+ assert.deepEqual(await readFile(await bounded(download.path(),'Original download completion')),file);
  const notes='Checked the dated fictional training record against the task scope.';
- report.stage='independent review persistence and task state';
+ await checkpoint('independent review persistence and task state');
  await review.getByLabel('Independent review rationale').fill(notes);
  await review.getByRole('button',{name:'Approve evidence'}).click();
  await review.getByText('APPROVED',{exact:true}).waitFor();
@@ -170,7 +193,7 @@ try{
  await review.getByRole('dialog').getByText(/approved · added/i).waitFor();
  passed('The independent approval preserved the open task; public and unauthenticated file downloads remained blocked.');
 
- report.stage='explicit task completion with verified private bytes';
+ await checkpoint('explicit task completion with verified private bytes');
  const completion=review.getByRole('dialog').getByRole('region',{name:'Task completion',exact:true});
  await completion.getByRole('heading',{name:'Ready to complete',exact:true}).waitFor();
  const completeButton=completion.getByRole('button',{name:'Complete with verified evidence',exact:true});
@@ -184,7 +207,7 @@ try{
   review.waitForResponse(response=>response.url()===completionEndpoint&&response.request().method()==='POST'),
   completeButton.click()
  ]);
- const completed=await completedResponse.json();
+ const completed=await bounded(completedResponse.json(),'Task completion response body');
  assert.equal(completedResponse.status(),200,`Completion returned ${completedResponse.status()}: ${completed.error||'unexpected result'}`);
  assert.equal(completed.taskId,task.id);
  assert.equal(completed.status,'COMPLETE');
@@ -217,7 +240,7 @@ try{
  const receiptReady=review.waitForEvent('download');
  await completion.getByRole('button',{name:'Download completion record',exact:true}).click();
  const receiptDownload=await receiptReady;
- const downloaded=JSON.parse(await readFile(await receiptDownload.path(),'utf8'));
+ const downloaded=JSON.parse(await readFile(await bounded(receiptDownload.path(),'Completion record download'),'utf8'));
  assert.deepEqual(downloaded.receipt,receipt,'the exported receipt must match the persisted completion decision');
  assert.equal(downloaded.record.eventId,saved.id);
  assert.equal(downloaded.record.proofHash,saved.details.proofHash);
@@ -230,7 +253,7 @@ try{
  await review.getByRole('button',{name:'Close task details'}).click();
  await review.getByRole('button',{name:/Evidence to review/}).click();
  await review.getByRole('button',{name:/Evidence to review\s*0$/}).waitFor();
- report.stage='unavailable organisation isolation';
+ await checkpoint('unavailable organisation isolation');
  await review.goto(app+'/team/evidence?'+new URLSearchParams({organizationId:randomUUID(),taskId:task.id}));
  await review.getByText(/belongs to an unavailable organisation/).waitFor();
  assert.equal(await review.getByLabel('Evidence document').count(),0);
@@ -240,18 +263,25 @@ try{
  report.stage='complete';
 }catch(error){
  report.failure={name:error.name,message:error.message};
- await mkdir(artifactDir,{recursive:true});
+ await saveReport();
  // Record only our fictional application pages. Auth URLs, tokens, request headers,
  // mailbox contents and local service credentials are deliberately excluded.
  for(const [index,page] of (browser?.contexts().flatMap(context=>context.pages())||[]).entries()){
   const url=new URL(page.url());
   if(url.origin===app&&!url.searchParams.has('code'))
-   await page.screenshot({path:`${artifactDir}/failure-page-${index+1}.png`,fullPage:true}).catch(()=>{});
+   await bounded(page.screenshot({path:`${artifactDir}/failure-page-${index+1}.png`,fullPage:true,timeout:5_000}),'Failure screenshot',7_500).catch(()=>{});
  }
  throw error;
 }finally{
- await mkdir(artifactDir,{recursive:true});
- await writeFile(artifactDir+'/results.json',JSON.stringify({...report,pageErrors:errors},null,2)+'\n');
- await browser?.close();
- await db.$disconnect();
+ report.assertionsPassed=report.passed;report.passed=false;report.cleanup={state:'running'};
+ await saveReport();
+ const cleanup=await Promise.allSettled([
+  bounded(browser?.close()||Promise.resolve(),'Browser cleanup'),
+  bounded(db.$disconnect(),'Database cleanup')
+ ]);
+ report.cleanup={browser:cleanup[0].status,database:cleanup[1].status};
+ const failures=cleanup.filter(result=>result.status==='rejected');
+ report.passed=report.assertionsPassed&&!failures.length;
+ await saveReport();
+ if(failures.length)throw new AggregateError(failures.map(result=>result.reason),'Journey cleanup did not complete');
 }

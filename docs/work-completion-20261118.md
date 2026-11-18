@@ -22,6 +22,8 @@ The evidence endpoint's UUID expression omitted a group, rejecting genuine organ
 
 The real-services browser journey asserts the exact rejected and successful upload responses. A marked PDF must leave no stored object, quota reservation or success audit. Its workflow tests the same PDF fixtures against ClamAV and retains safe response diagnostics and screenshots on failure.
 
+The upload screen also consumes the successful JSON response and verifies its organisation and task before showing stored-file feedback. A targeted Chromium reproduction showed that leaving the successful body unread stalled browser-side response inspection even though the page had already shown success. `scripts/check-upload-response-lifecycle.mjs` retains the A/B reproduction; it is a transport diagnostic, not a substitute for the real-service acceptance journey. The journey now persists phase checkpoints and bounds response-body, screenshot and cleanup waits.
+
 The legacy exception handoff must retain the requested organisation and exact task, including a task outside the first hundred records. Unsupported or stale organisation context must not silently display another workspace's task.
 
 ## Verification

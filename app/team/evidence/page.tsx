@@ -122,7 +122,10 @@ export default function TeamEvidence(){
   try{
    if(! /\.(pdf|docx)$/i.test(file.name)||file.size>5_000_000||file.size<30)throw new Error("Select a PDF or Word document between 30 bytes and 5 MB");
    const form=new FormData();form.append("organizationId",orgId);form.append("obligationId",taskId);form.append("file",file);
-   await request("/api/workspace/evidence",{method:"POST",body:form});
+   const response=await request("/api/workspace/evidence",{method:"POST",body:form});
+   const stored=await response.json();
+   if(stored?.evidence?.organizationId!==scope.orgId||stored?.evidence?.obligationId!==scope.taskId)
+    throw new Error("The server did not confirm this file for the selected task. Refresh the task before trying again.");
    if(!operationIsCurrent(scope))return;
    setFile(null);if(fileInput.current)fileInput.current.value="";
    setNotice("File stored. A different owner or administrator can now review it.");
