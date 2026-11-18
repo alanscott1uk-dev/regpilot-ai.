@@ -21,7 +21,7 @@ export async function fetchOperationalBrief(ctx:AuthorizedContext){
     ORDER BY "firstCapturedAt" DESC,id DESC LIMIT 151`,
    tx.watchSchedule.findMany({where:{organizationId:ctx.organizationId},
      orderBy:{nextCheckAt:"asc"},take:121,
-     select:{sourceId:true,enabled:true,nextCheckAt:true,lastSuccessAt:true,failureCode:true}}),
+     select:{sourceId:true,enabled:true,nextCheckAt:true,lastSuccessAt:true,failureCode:true,lastOutcome:true}}),
    tx.evidenceConnector.findMany({where:{organizationId:ctx.organizationId},
      orderBy:{createdAt:"desc"},take:21,
      select:{id:true,provider:true,repository:true,enabled:true,lastSuccessAt:true,failureCode:true}}),

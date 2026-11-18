@@ -9,8 +9,9 @@ test("seven-day regulatory briefing isolates tenants and distinguishes text chan
  const mark=randomUUID();
  const users=await Promise.all(["one","two"].map(n=>db.user.create({data:{externalId:"brief-"+n+mark,email:"brief-"+n+mark+"@example.invalid"}})));
  const orgs=await Promise.all(["A","B"].map(n=>db.organization.create({data:{name:"Fictional briefing "+n+mark}})));
- const oldAllowed=process.env.REGPILOT_AI_ALLOWED_EMAILS;
+ const oldAllowed=process.env.REGPILOT_AI_ALLOWED_EMAILS,oldMonitoring=process.env.REGPILOT_MONITORING_ENABLED;
  process.env.REGPILOT_AI_ALLOWED_EMAILS=users.map(u=>u.email).join(",");
+ process.env.REGPILOT_MONITORING_ENABLED='false';
  const a:AuthorizedContext={userId:users[0].id,organizationId:orgs[0].id,role:"OWNER"};
  const b:AuthorizedContext={userId:users[1].id,organizationId:orgs[1].id,role:"OWNER"};
  try{
@@ -20,8 +21,9 @@ test("seven-day regulatory briefing isolates tenants and distinguishes text chan
    bodyText:body,contentHash:"a".repeat(64),capturedById:a.userId,reviewStatus:"NEEDS_REVIEW"}});
   await db.auditEvent.create({data:{organizationId:a.organizationId,actorId:a.userId,action:"regulatory.source_text_changed",
    entityType:"RegulatorySnapshot",entityId:snap.id,details:{sourceId:snap.sourceId}}});
+  const retryAt=new Date(Date.now()+60000);
   await db.watchSchedule.create({data:{organizationId:a.organizationId,sourceId:snap.sourceId,configuredById:a.userId,
-   enabled:true,intervalHours:24,failureCode:"HTTP_UNAVAILABLE",nextCheckAt:new Date(Date.now()-7200000)}});
+   enabled:true,intervalHours:24,failureCode:"HTTP_UNAVAILABLE",lastOutcome:'RECOVERY_QUEUED',nextCheckAt:retryAt}});
   await db.obligation.create({data:{organizationId:a.organizationId,title:"Review fictional official source",
    category:"Regulatory intelligence",ownerName:users[0].email,dueDate:new Date(Date.now()+2*86400000)}});
   await db.obligation.create({data:{organizationId:b.organizationId,title:"PRIVATE OTHER ORG TASK",
@@ -29,6 +31,9 @@ test("seven-day regulatory briefing isolates tenants and distinguishes text chan
   const ra=await fetchOperationalBrief(a),rb=await fetchOperationalBrief(b);
   assert.equal(ra.summary.changedPublications,1);assert.equal(ra.changes[0].title,"Fictional A publication");
   assert.equal(ra.summary.awaitingReview,1);assert.equal(ra.summary.sourceCheckIssues,1);
+  assert.equal(ra.collections[0].status,'failed');assert.equal(ra.collections[0].failureCode,'HTTP_UNAVAILABLE');
+  assert.equal(ra.collections[0].monitoringConfigured,false);assert.equal(ra.collections[0].recoveryPending,true);assert.equal(ra.collections[0].nextCheckAt,retryAt.toISOString());
+  assert.equal(ra.collections[0].lastSuccessAt,null);assert.match(ra.collections[0].href,new RegExp('organizationId='+a.organizationId));
   assert.equal(ra.summary.dueWork,1);assert.equal(rb.summary.changedPublications,0);
   assert.equal(rb.summary.sourceCheckIssues,0);assert.equal(rb.summary.dueWork,1);
   assert.ok(rb.tasks.some(x=>x.title==="PRIVATE OTHER ORG TASK"));
@@ -45,5 +50,6 @@ test("seven-day regulatory briefing isolates tenants and distinguishes text chan
   await db.organization.deleteMany({where:{id:{in:ids}}});
   await db.user.deleteMany({where:{id:{in:users.map(u=>u.id)}}});
   if(oldAllowed===undefined)delete process.env.REGPILOT_AI_ALLOWED_EMAILS;else process.env.REGPILOT_AI_ALLOWED_EMAILS=oldAllowed;
+  if(oldMonitoring===undefined)delete process.env.REGPILOT_MONITORING_ENABLED;else process.env.REGPILOT_MONITORING_ENABLED=oldMonitoring;
  }
 });

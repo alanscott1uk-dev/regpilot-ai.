@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {db} from '../lib/server/db';
-import {claimWorker,runPrivateWorker,workerHealth,workerSlotCount} from '../lib/server/worker-runtime';
+import {claimWorker,runPrivateWorker,runCronWorker,workerHealth,workerSlotCount} from '../lib/server/worker-runtime';
+import {monitoringRuntimeStatus} from '../lib/server/monitoring-runtime-status';
+import {randomUUID} from 'node:crypto';
 import {executeScheduledTick} from '../lib/cron-tick.mjs';
 import {runMonitoringBatch} from '../lib/server/monitoring-service';
 import {runConnectorBatch} from '../lib/server/connector-service';
@@ -64,7 +66,7 @@ test('parallel worker capacity is bounded, replay-safe, independently monitored 
   process.env.REGPILOT_MONITORING_ENABLED='false';process.env.REGPILOT_CONNECTORS_ENABLED='false';
   const secondary=await runPrivateWorker(key(7),undefined,1);
   assert.equal(secondary.status,200);
-  assert.ok('modules' in secondary.body);assert.equal(secondary.body.modules.controlReviews.state,'disabled','secondary slots never duplicate recurring review generation');
+  assert.ok(secondary.body.modules);assert.equal(secondary.body.modules.controlReviews.state,'disabled','secondary slots never duplicate recurring review generation');
   const failedSlot=(await claimWorker(key(3),2)).run;
   await db.workerRun.update({where:{id:failedSlot.id},data:{leaseUntil:new Date(0)}});
   assert.equal((await workerHealth()).state,'interrupted','success in another slot cannot hide an interrupted slot');
@@ -99,6 +101,57 @@ test('expired admission budget leaves provider queues unclaimed and reports defe
   await assert.rejects(()=>runConnectorBatch(4,2,Infinity));
   await assert.rejects(()=>runReviewBatch(NaN));
  }finally{
+  for(const k of Object.keys(process.env))if(!(k in saved))delete process.env[k];Object.assign(process.env,saved);
+ }
+});
+
+test('daily cron records failed idle sweeps, preserves incidents, shares worker leases and observes recovery',async()=>{
+ const saved={...process.env},stamp=randomUUID(),prefix=String(Date.now()),clock=new Date();
+ const cronTime=(n:number)=>new Date(clock.getTime()+n*300000);
+ const cronKeys=Array.from({length:5},(_,n)=>'cron:'+Math.floor(cronTime(n).getTime()/300000));
+ Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:'true',REGPILOT_AI_ALLOWED_EMAILS:stamp+'@example.invalid',NEXT_PUBLIC_SUPABASE_URL:'https://fixture.example.invalid',NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:'fixture',REGPILOT_AUTOMATION_ENABLED:'true',REGPILOT_WORKER_ENABLED:'false',REGPILOT_CRON_ENABLED:'true',REGPILOT_MONITORING_ENABLED:'true',REGPILOT_CONNECTORS_ENABLED:'false',REGPILOT_WORKER_SLOTS:'1'});
+ const user=await db.user.create({data:{externalId:stamp,email:stamp+'@example.invalid'}}),org=await db.organization.create({data:{name:'Fictional cron recovery '+stamp}});
+ let calls=0;
+ const emptySweep=async()=>{calls++;return executeScheduledTick({sources:async()=>({processed:0})});};
+ try{
+  const watch=await db.watchSchedule.create({data:{organizationId:org.id,configuredById:user.id,sourceId:'uk-data-protection',enabled:false,attempts:3,failureCode:'FETCH_FAILED',lastOutcome:'FAILED',lastSuccessAt:new Date(Date.now()-86400000)}});
+  const before=await monitoringRuntimeStatus();assert.equal(before.configured,true);assert.equal(before.state,'never-observed');
+  const failed=await runCronWorker(emptySweep,cronTime(0));
+  assert.equal(failed.status,503);assert.equal(failed.body.modules?.sources.state,'attention','empty cron cannot hide a paused failed source');
+  assert.equal((await db.workerRun.findUniqueOrThrow({where:{invocationKey:cronKeys[0]}})).state,'FAILED');
+  assert.equal((await monitoringRuntimeStatus()).state,'degraded');
+  assert.equal((await runCronWorker(emptySweep,cronTime(0))).status,503);assert.equal(calls,1,'same delivery window cannot silently rerun failed work');
+  const stillFailed=await db.watchSchedule.findUniqueOrThrow({where:{id:watch.id}});
+  assert.equal(stillFailed.failureCode,'FETCH_FAILED');assert.equal(stillFailed.enabled,false,'recording a heartbeat cannot clear the incident');
+  // The separate monitoring workflow proves actual retrieval and explicit repair.
+  // Here simulate that persisted recovery, then exercise the real cron observer.
+  await db.watchSchedule.update({where:{id:watch.id},data:{enabled:true,failureCode:null,attempts:0,lastOutcome:'UNCHANGED',lastSuccessAt:new Date(),nextCheckAt:new Date(Date.now()+86400000)}});
+  const recovered=await runCronWorker(emptySweep,cronTime(1));assert.equal(recovered.status,200);
+  const health=await monitoringRuntimeStatus();assert.equal(health.mode,'cron');assert.equal(health.state,'healthy');
+  assert.equal(health.cadenceMinutes,1440);assert.equal(health.staleAfterMinutes,1620);
+  assert.equal(health.channels.length,1);assert.ok(health.lastSuccessfulAt);
+  assert.equal((await monitoringRuntimeStatus(new Date(Date.now()+91*60000))).state,'healthy','a daily scheduler must not be treated as a thirty-minute worker');
+  assert.equal((await monitoringRuntimeStatus(new Date(Date.now()+1621*60000))).state,'stale');
+  process.env.REGPILOT_WORKER_ENABLED='true';
+  assert.equal((await monitoringRuntimeStatus()).state,'never-observed','a healthy cron cannot conceal a worker that has never run');
+  const active=await claimWorker('github:'+prefix+':1');assert.equal(active.kind,'claimed');
+  const rejected=await runCronWorker(emptySweep,cronTime(2));assert.equal(rejected.status,409);assert.equal(calls,2,'cron and worker must share the same live lease');
+  assert.equal(await db.workerRun.count({where:{invocationKey:cronKeys[2]}}),0,'busy cron must not invent a completed heartbeat');
+  await db.workerRun.update({where:{id:active.run.id},data:{leaseUntil:new Date(0)}});
+  assert.equal((await runCronWorker(emptySweep,cronTime(3))).status,200);
+  assert.equal((await workerHealth()).state,'interrupted','cron success cannot mask an interrupted dedicated worker');
+  assert.equal((await monitoringRuntimeStatus()).state,'degraded');
+  const failedRun=await runCronWorker(async()=>{throw Error('fictional-private-credential-must-not-escape')},cronTime(4));assert.equal(failedRun.status,503);
+  const persisted=await db.workerRun.findUniqueOrThrow({where:{invocationKey:cronKeys[4]}});assert.equal(persisted.state,'FAILED');
+  assert.doesNotMatch(JSON.stringify(persisted),/fictional-private-credential/);
+  await db.workerRun.update({where:{id:persisted.id},data:{summary:{credential:'fictional-private-summary',otherOrganisationId:org.id}}});
+  assert.doesNotMatch(JSON.stringify(await monitoringRuntimeStatus()),new RegExp('fictional-private-summary|'+org.id+'|invocationKey|summary|codeCommit'),'customer runtime projection must exclude global record payloads');
+  process.env.REGPILOT_CRON_ENABLED='false';process.env.REGPILOT_WORKER_ENABLED='false';
+  assert.equal((await runCronWorker(emptySweep,cronTime(4))).status,503);
+  assert.equal((await monitoringRuntimeStatus()).state,'inactive');
+ }finally{
+  await db.workerRun.deleteMany({where:{OR:[{invocationKey:{in:cronKeys}},{invocationKey:{startsWith:'github:'+prefix+':'}}]}});
+  await db.watchSchedule.deleteMany({where:{organizationId:org.id}});await db.organization.delete({where:{id:org.id}});await db.user.delete({where:{id:user.id}});
   for(const k of Object.keys(process.env))if(!(k in saved))delete process.env[k];Object.assign(process.env,saved);
  }
 });

@@ -4,6 +4,7 @@ import {REGULATORY_SOURCES} from "../regulatory-sources.mjs";
 import {requireMember,ADMIN} from "./workspace-member";
 import {IntelligenceError} from "./intelligence-service";
 import type {AuthorizedContext} from "./authorization";
+import {preserveWatchIncident} from './monitoring-recovery';
 
 /** Admin-selected portfolios are a monitoring convenience, NEVER an applicability assessment. */
 export const portfolioInput = z.object({
@@ -36,7 +37,7 @@ export async function configureWatchPortfolio(ctx:AuthorizedContext,input:unknow
    const old=byId.get(sourceId);
    if(old?.enabled===plan.enabled&&old.intervalHours===plan.intervalHours&&!old.failureCode){unchanged++;continue;}
    const data={enabled:plan.enabled,intervalHours:plan.intervalHours,configuredById:ctx.userId,nextCheckAt:new Date(),
-    leaseToken:null,leaseUntil:null,attempts:0,failureCode:null};
+    leaseToken:null,leaseUntil:null,attempts:0,...preserveWatchIncident(old,plan.enabled)};
    if(old){
     await tx.watchSchedule.update({where:{id:old.id},data:{...data,version:{increment:1}}});updated++;
    }else{

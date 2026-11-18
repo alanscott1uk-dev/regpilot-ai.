@@ -14,6 +14,7 @@ import {connectorProviderEnabled} from './connector-flags';
 import {recommendSourcePortfolio} from '../regulatory/portfolio-recommendations.mjs';
 import {monitoringRuntimeActive} from './monitoring-runtime-status';
 import type {AuthorizedContext} from './authorization';
+import {preserveWatchIncident} from './monitoring-recovery';
 
 export const setupInput=z.object({
  profileVersion:z.number().int().nonnegative(),activities:z.array(z.enum(ACTIVITIES)).min(1).max(ACTIVITIES.length),
@@ -63,7 +64,7 @@ export async function saveSetupWorkspace(ctx:AuthorizedContext,input:unknown){
   for(const sourceId of plan.sourceIds){
    const prior=byId.get(sourceId);
    if(prior?.enabled&&prior.intervalHours===d.intervalHours&&!prior.failureCode){unchanged++;continue;}
-   const data={enabled:true,intervalHours:d.intervalHours,configuredById:ctx.userId,nextCheckAt:new Date(),leaseUntil:null,leaseToken:null,attempts:0,failureCode:null};
+   const data={enabled:true,intervalHours:d.intervalHours,configuredById:ctx.userId,nextCheckAt:new Date(),leaseUntil:null,leaseToken:null,attempts:0,...preserveWatchIncident(prior,true)};
    if(prior){await tx.watchSchedule.update({where:{id:prior.id},data:{...data,version:{increment:1}}});updated++;}
    else{await tx.watchSchedule.create({data:{organizationId,sourceId,...data}});created++;}
   }

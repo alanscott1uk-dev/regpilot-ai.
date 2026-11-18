@@ -7,6 +7,7 @@ import {authorisedWorkspaceContext,workspaceConfigured,AccessError} from "../../
 import {checkOfficialSource,listSourceSnapshots,RegulatoryWatchError} from "../../../../lib/server/regulatory-watch";
 import {SourceUnavailable} from "../../../../lib/server/ai-sources";
 import {SourceFetchDeferred} from "../../../../lib/server/shared-source-fetch";
+import {monitoringRuntimeStatus} from '../../../../lib/server/monitoring-runtime-status';
 // Covers bounded public retrieval plus three guarded database attempts.
 export const runtime="nodejs";export const dynamic="force-dynamic";export const maxDuration=90;
 const reply=(data:unknown,status=200)=>NextResponse.json(data,{status,headers:{"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"}});
@@ -17,7 +18,7 @@ export async function GET(request:Request){
   const ctx=await authorisedWorkspaceContext(request,org);
   const sourceId=new URL(request.url).searchParams.get("sourceId")||undefined;
   if(sourceId&&sourceId.length>120)return reply({error:"Invalid source selection"},400);
-  const [snapshots,catalogue,coverage]=await Promise.all([listSourceSnapshots(ctx,sourceId),workspaceCatalogue(ctx),sourceCoverage(ctx)]);return reply({snapshots,catalogue,coverage});
+  const [snapshots,catalogue,coverage,monitoringRuntime]=await Promise.all([listSourceSnapshots(ctx,sourceId),workspaceCatalogue(ctx),sourceCoverage(ctx),monitoringRuntimeStatus()]);return reply({snapshots,catalogue,coverage,monitoringRuntime});
  }catch(e){
   if(e instanceof AccessError||e instanceof RegulatoryWatchError||e instanceof IntelligenceError)return reply({error:e.message},e.status);
   return reply({error:"Source history unavailable"},503);

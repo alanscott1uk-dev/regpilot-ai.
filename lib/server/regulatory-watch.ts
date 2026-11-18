@@ -6,6 +6,7 @@ import {resolveWorkspaceSource} from "./publication-catalogue";
 import {sourceTextHash,canonicalSourceText,compareSourceText,publicSnapshot} from "../regulatory/source-fingerprint.mjs";
 import {Prisma} from "@prisma/client";
 import {transaction} from "./intelligence-service";
+import {officialSourceUrl} from "../regulatory-sources.mjs";
 export class RegulatoryWatchError extends Error{
  status:number;
  constructor(message:string,status=400){super(message);this.name="RegulatoryWatchError";this.status=status;}
@@ -29,7 +30,7 @@ export async function checkOfficialSource(ctx:AuthorizedContext,sourceId:string,
   where:{organizationId:ctx.organizationId,sourceId},orderBy:{firstCapturedAt:"desc"}
  });
  const now=new Date();
- if(previous&&now.getTime()-previous.lastCheckedAt.getTime()<15*60*1000){
+ if(previous&&previous.url===officialSourceUrl(source)&&now.getTime()-previous.lastCheckedAt.getTime()<15*60*1000){
   return {state:"COOLDOWN",snapshot:publicSnapshot(previous),comparison:{state:"UNCHANGED",changed:false,added:[],removed:[]},
    note:"Last check was less than 15 minutes ago; official source was not fetched again."};
  }
@@ -46,17 +47,20 @@ export async function checkOfficialSource(ctx:AuthorizedContext,sourceId:string,
   const latest=await tx.regulatorySnapshot.findFirst({
    where:{organizationId:ctx.organizationId,sourceId},orderBy:{firstCapturedAt:"desc"}
   });
-  if(latest&&latest.contentHash===hash){
+  const sourceRelocated=!!latest&&latest.url!==official.url;
+  if(latest&&!sourceRelocated&&latest.contentHash===hash){
    const refreshed=await tx.regulatorySnapshot.update({where:{id:latest.id},data:{lastCheckedAt:now,
     title:official.title,revisionAt:official.revisionAt,sourceFetchedAt}});
    await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,
     action:"regulatory.source_text_unchanged",entityType:"RegulatorySnapshot",entityId:latest.id,
     details:{sourceId,hash,checkedAt:now.toISOString(),sourceFetchedAt:sourceFetchedAt.toISOString(),sharedRetrieval:shared?.reused??false}
    }});
-   return {state:"UNCHANGED",snapshot:publicSnapshot(refreshed),
+   return {state:"UNCHANGED",snapshot:publicSnapshot(refreshed),sourceRelocated:false,
     comparison:{state:"UNCHANGED",changed:false,added:[],removed:[]}};
   }
-  const comparison=compareSourceText(latest?.bodyText||"",text);
+  // A curated address migration is a new identity baseline. Preserve the old
+  // approved record and require review without claiming that its legal text changed.
+  const comparison=compareSourceText(sourceRelocated?"":latest?.bodyText||"",text);
   const row=await tx.regulatorySnapshot.create({data:{
    organizationId:ctx.organizationId,sourceId,title:official.title,url:official.url,
    bodyText:text,contentHash:hash,revisionAt:official.revisionAt,sourceFetchedAt,
@@ -68,11 +72,13 @@ export async function checkOfficialSource(ctx:AuthorizedContext,sourceId:string,
   await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,
    action:comparison.changed?"regulatory.source_text_changed":"regulatory.baseline_created",
    entityType:"RegulatorySnapshot",entityId:row.id,
-   details:{sourceId,hash,previousHash:latest?.contentHash||null,changedText:comparison.changed,sourceFetchedAt:sourceFetchedAt.toISOString(),sharedRetrieval:shared?.reused??false}
+   details:{sourceId,hash,previousHash:latest?.contentHash||null,changedText:comparison.changed,sourceFetchedAt:sourceFetchedAt.toISOString(),sharedRetrieval:shared?.reused??false,
+    ...(sourceRelocated?{sourceRelocated:true,previousSnapshotId:latest!.id,previousUrl:latest!.url,comparisonBasis:"NEW_SOURCE_ADDRESS"}:{})}
   }});
-  return {state:comparison.state,snapshot:publicSnapshot(row),comparison};
+  return {state:comparison.state,snapshot:publicSnapshot(row),comparison,sourceRelocated};
  });
- return {...result,note:result.state==="CONTENT_CHANGED"?
+ return {...result,note:result.sourceRelocated?
+  "Publication address changed. A new source baseline requires independent review; the address change is not a legal change verdict.":result.state==="CONTENT_CHANGED"?
   "Publication text changed. An expert must determine whether any legal requirement changed.":
   "Text baseline saved or rechecked. This is not a legal compliance verdict."};
 }

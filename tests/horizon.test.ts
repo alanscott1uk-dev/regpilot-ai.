@@ -57,3 +57,30 @@ test('publisher cooldown survives published checkpoints and skips early retry wh
  assert.equal(next.calls.length,11);assert.equal(recovered.feeds[0].checkedAt,failed.generatedAt);assert.equal(recovered.items.find(i=>i.publisherIds.includes('mhra'))?.observedAt,initial.generatedAt);
  const due=fixture();const fresh=await collectHorizon(recovered,due.fetch,new Date(now.getTime()+3*3600000));assert.equal(due.calls.length,12);assert.equal(fresh.feeds[0].failureCount,0);assert.equal(fresh.feeds[0].state,'available');
 });
+
+test('discovery diagnostics distinguish safe failure reasons without accepting partial data or refreshing old observations',async()=>{
+ const baseline=await collectHorizon(null,fixture().fetch,now),later=new Date(now.getTime()+60000);
+ const cases:{reason:string;change:(data:any)=>Response}[]=[
+  {reason:'HTTP_STATUS_403',change:()=>new Response('Private provider error secret',{status:403})},
+  {reason:'INVALID_JSON',change:()=>new Response('Private provider error secret')},
+  {reason:'INVALID_RESPONSE_SHAPE',change:data=>Response.json({...data,results:{secret:'Private provider error'}})},
+  {reason:'INVALID_PUBLICATION_PATH',change:data=>{data.results[0].link='https://secret.invalid/private';return Response.json(data);}},
+  {reason:'INVALID_PUBLICATION_TIMESTAMP',change:data=>{data.results[0].public_timestamp='invalid-private-date';return Response.json(data);}},
+  {reason:'UNVERIFIED_PUBLISHER',change:data=>{data.results[0].organisations=[{slug:'private-unknown-publisher'}];return Response.json(data);}},
+  {reason:'INVALID_PUBLICATION_METADATA',change:data=>{data.results[0].title='';return Response.json(data);}},
+  {reason:'DUPLICATE_PAGE',change:data=>Response.json({...data,total:2,results:[data.results[0],data.results[0]]})}
+ ];
+ for(const scenario of cases){
+  const base=fixture();
+  const result=await collectHorizon(baseline,async(url,options)=>{
+   const response=await base.fetch(url,options);
+   return new URL(String(url)).searchParams.get('filter_organisations')==='hm-revenue-customs'?scenario.change(await response.json()):response;
+  },later);
+  const feed=result.feeds.find(f=>f.id==='hmrc')!;
+  assert.equal(feed.state,'unavailable');assert.equal(feed.reason,scenario.reason);assert.equal(feed.retrieved,0);
+  assert.equal(feed.failureCount,1);assert.equal(feed.retryAt,new Date(later.getTime()+900000).toISOString());
+  assert.equal(result.feeds.filter(f=>f.state==='available').length,11);
+  assert.deepEqual(result.items.filter(i=>i.publisherIds.includes('hmrc')),baseline.items.filter(i=>i.publisherIds.includes('hmrc')));
+  assert.doesNotMatch(JSON.stringify(result),/secret|Private provider|private-unknown|invalid-private/);
+ }
+});

@@ -39,3 +39,17 @@ test("source CSV export prevents spreadsheet formula injection and includes user
  assert.match(output,/Publication/);assert.match(output,/current/);
  assert.match(output,/"'=HYPERLINK/);
 });
+
+test("recovery requests preserve the failed status until collection actually succeeds",()=>{
+ const pending=coverage({schedule:watch({failureCode:"PROVIDER_UNAVAILABLE",recoveryPending:true,attempts:0})});
+ const state=classifySource(source,pending,NOW);
+ assert.equal(state.status,"failed");assert.equal(state.attention,true);assert.match(state.detail,/successful collection is still unconfirmed/);
+ assert.equal(coverageDashboard([source],[pending],NOW).summary.current,0);
+});
+test("in-progress checks and overdue first checks are not called current or harmless waiting",()=>{
+ assert.equal(classifySource(source,coverage({schedule:watch({checking:true})}),NOW).status,"checking");
+ const overdue=classifySource(source,coverage({schedule:watch({lastSuccessAt:null,nextCheckAt:time(3)})}),NOW);
+ assert.equal(overdue.status,"overdue");assert.equal(overdue.attention,true);
+ const pending=classifySource(source,coverage({schedule:watch({recoveryPending:true})}),NOW);
+ assert.equal(pending.status,"recovery-pending");assert.equal(pending.attention,true);
+});

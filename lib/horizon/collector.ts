@@ -14,9 +14,14 @@ export function itemKind(path:string,type:string):HorizonItem['kind']{
 }
 export async function boundedJson(url:string,fetcher:typeof fetch=fetch,max=2_000_000,cache:RequestCache='no-store'){
  const response=await fetcher(url,{method:'GET',headers:{accept:'application/json'},redirect:'error',cache,signal:AbortSignal.timeout(10000)});
- if(!response.ok||response.url&&response.url!==url){await response.body?.cancel();throw Error('PUBLIC_SERVICE_UNAVAILABLE');}
- const reader=response.body?.getReader();if(!reader)throw Error('EMPTY_RESPONSE');let size=0;const chunks:Uint8Array[]=[];
- try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>max)throw Error('RESPONSE_TOO_LARGE');chunks.push(value);}return JSON.parse(Buffer.concat(chunks).toString('utf8'));}finally{await reader.cancel().catch(()=>{});}
+ if(!response.ok){await response.body?.cancel();throw new CollectionError('HTTP_STATUS_'+response.status);}
+ if(response.url&&response.url!==url){await response.body?.cancel();throw new CollectionError('RESPONSE_IDENTITY_MISMATCH');}
+ const reader=response.body?.getReader();if(!reader)throw new CollectionError('EMPTY_RESPONSE');let size=0;const chunks:Uint8Array[]=[];
+ try{
+  while(true){let chunk:ReadableStreamReadResult<Uint8Array>;try{chunk=await reader.read();}catch{throw new CollectionError('RESPONSE_READ_FAILED');}
+   if(chunk.done)break;size+=chunk.value.length;if(size>max)throw new CollectionError('RESPONSE_TOO_LARGE');chunks.push(chunk.value);}
+  try{return JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw new CollectionError('INVALID_JSON');}
+ }finally{await reader.cancel().catch(()=>{});}
 }
 export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch,now=new Date(),provenance:{codeCommit:string|null;runId:string|null}={codeCommit:null,runId:null}):Promise<HorizonReport>{
  const started=Date.now(),metrics={requests:0,retries:0};
@@ -32,20 +37,22 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
   try{for(let page=0;page<MAX_PUBLISHER_RESULTS/50;page++){
    const params=new URLSearchParams({filter_organisations:publisher.slug,filter_public_timestamp:'from:'+windowStart.slice(0,10)+',to:'+generatedAt,order:'-public_timestamp',count:'50',start:String(page*50),fields:'title,link,description,public_timestamp,content_store_document_type,organisations'});
    const raw=await boundedJson('https://www.gov.uk/api/search.json?'+params,(url)=>retryRead(String(url)));
-   if(!Array.isArray(raw?.results)||raw.results.length>50||!Number.isSafeInteger(raw.total)||raw.total<0)throw Error('INVALID_RESPONSE');if(total!==null&&total!==raw.total)indexChanged=true;total=raw.total;
+   if(!Array.isArray(raw?.results)||raw.results.length>50||!Number.isSafeInteger(raw.total)||raw.total<0)throw new CollectionError('INVALID_RESPONSE_SHAPE');if(total!==null&&total!==raw.total)indexChanged=true;total=raw.total;
    for(const row of raw.results){
-    const path=horizonPath.parse(row.link),updatedAt=typeof row.public_timestamp==='string'?new Date(row.public_timestamp).toISOString():'';
-    if(!updatedAt||Date.parse(updatedAt)>now.getTime()+300000||!Array.isArray(row.organisations)||!row.organisations.some((o:any)=>o?.slug===publisher.slug))throw Error('UNVERIFIED_PUBLISHER');
-    if(seen.has(path))throw Error('DUPLICATE_PAGE');seen.add(path);retrieved++;
+    const parsedPath=horizonPath.safeParse(row?.link);if(!parsedPath.success)throw new CollectionError('INVALID_PUBLICATION_PATH');const path=parsedPath.data;
+    const timestamp=typeof row.public_timestamp==='string'?Date.parse(row.public_timestamp):NaN;
+    if(!Number.isFinite(timestamp)||timestamp>now.getTime()+300000)throw new CollectionError('INVALID_PUBLICATION_TIMESTAMP');const updatedAt=new Date(timestamp).toISOString();
+    if(!Array.isArray(row.organisations)||!row.organisations.some((o:any)=>o?.slug===publisher.slug))throw new CollectionError('UNVERIFIED_PUBLISHER');
+    if(seen.has(path))throw new CollectionError('DUPLICATE_PAGE');seen.add(path);retrieved++;
     if(Date.parse(updatedAt)<Date.parse(windowStart))continue;
     const url='https://www.gov.uk'+path,title=plain(row.title,240),summary=plain(row.description,360),documentType=plain(row.content_store_document_type,100);
-    if(!title||!documentType)throw Error('INVALID_RESPONSE');
+    if(!title||!documentType)throw new CollectionError('INVALID_PUBLICATION_METADATA');
     const id=digest(url),revision=digest(JSON.stringify({title,summary,documentType,updatedAt})),before=prior.get(id);
     staged.push({id,revision,path,url,title,summary,documentType,kind:itemKind(path,documentType),publisherIds:[publisher.id],updatedAt,firstSeenAt:before?.firstSeenAt||generatedAt,observedAt:generatedAt,discovery:!old?'BASELINE':!before?'FIRST_SEEN':before.revision!==revision?'METADATA_UPDATED':'UNCHANGED'});
    }
    if(raw.results.length<50||retrieved>=total!)break;
   }
-  for(const item of staged)if(collected.has(item.id)&&collected.get(item.id)!.revision!==item.revision)throw Error('INCONSISTENT_PUBLICATION');
+  for(const item of staged)if(collected.has(item.id)&&collected.get(item.id)!.revision!==item.revision)throw new CollectionError('INCONSISTENT_PUBLICATION');
   for(const item of staged){const existing=collected.get(item.id);if(existing){existing.publisherIds=[...new Set([...existing.publisherIds,publisher.id])];}else collected.set(item.id,item);}
   feeds[index]={id:publisher.id,state:total!>retrieved||indexChanged?'limited':'available',checkedAt:generatedAt,total,retrieved,reason:indexChanged?'INDEX_CHANGED':total!>retrieved?'RESULT_LIMIT':null,retryAt:null,failureCount:0};
   }catch(error){const failureCount=Math.min(100,(priorFeed?.failureCount||0)+1),delay=error instanceof CollectionError&&error.code==='RATE_LIMITED'?error.retryAfterSeconds||60:Math.min(21600,900*2**Math.min(5,failureCount-1));

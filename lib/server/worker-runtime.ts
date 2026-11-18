@@ -10,8 +10,10 @@ import {runReviewBatch} from './control-service';
 import {executeWithMaintenance,runWorkerMaintenance} from './worker-maintenance';
 
 export const workerEnabled=()=>workspaceConfigured()&&process.env.REGPILOT_WORKER_ENABLED==='true'&&process.env.REGPILOT_AUTOMATION_ENABLED==='true';
+export const cronEnabled=()=>workspaceConfigured()&&process.env.REGPILOT_CRON_ENABLED==='true'&&process.env.REGPILOT_AUTOMATION_ENABLED==='true';
 const LEASE_MS=180000,STALE_MS=90*60000;
 type TickResult=Awaited<ReturnType<typeof executeScheduledTick>>;
+type RuntimeResult={status:number;body:{ok:boolean;state:string;reused?:boolean;modules?:TickResult['modules'];maintenance?:unknown}};
 export function workerSlotCount(){
  const raw=process.env.REGPILOT_WORKER_SLOTS??'1';
  if(!/^[1-8]$/.test(raw))throw Error('Invalid worker capacity');
@@ -23,6 +25,10 @@ export async function claimWorker(invocationKey:string,slot=0){
  if(!Number.isInteger(slot)||slot<0||slot>=capacity)throw Error('Invalid worker slot');
  // Preserve historical single-slot invocation keys during an eventual rollout.
  const key=slot===0?invocationKey:invocationKey+':slot:'+slot;
+ return claimRuntime(key,slot,capacity);
+}
+/** Cron and dedicated workers share leases: two schedulers must not own slot zero. */
+async function claimRuntime(key:string,slot:number,capacity:number){
  return db.$transaction(async tx=>{
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(710241114)`;
   const now=new Date();
@@ -38,9 +44,22 @@ export async function claimWorker(invocationKey:string,slot=0){
   return {kind:'claimed' as const,run};
  },{timeout:10000});
 }
-export async function runPrivateWorker(invocationKey:string,execute?:()=>Promise<TickResult>,slot=0){
+export async function runPrivateWorker(invocationKey:string,execute?:()=>Promise<TickResult>,slot=0):Promise<RuntimeResult>{
  if(!workerEnabled())return {status:503,body:{ok:false,state:'disabled'}};
  const claim=await claimWorker(invocationKey,slot);
+ return runClaimedRuntime(claim,execute,slot,!execute);
+}
+/** Vercel supplies no invocation identifier. Deduplicate deliveries within five
+ * minutes; persisted queue leases/checkpoints protect work across later retries.
+ * The configured cron remains daily at 06:00 UTC, not a thirty-minute worker. */
+export async function runCronWorker(execute?:()=>Promise<TickResult>,now=new Date()):Promise<RuntimeResult>{
+ if(!cronEnabled())return {status:503,body:{ok:false,state:'disabled'}};
+ if(!Number.isFinite(now.getTime()))throw Error('Invalid cron invocation time');
+ const capacity=workerEnabled()?workerSlotCount():1;
+ const claim=await claimRuntime('cron:'+Math.floor(now.getTime()/300000),0,capacity);
+ return runClaimedRuntime(claim,execute,0,true);
+}
+async function runClaimedRuntime(claim:Awaited<ReturnType<typeof claimRuntime>>,execute:(()=>Promise<TickResult>)|undefined,slot:number,checkCollections:boolean):Promise<RuntimeResult>{
  if(claim.kind==='busy')return {status:409,body:{ok:false,state:'busy'}};
  if(claim.kind==='reused')return {status:claim.run.state==='COMPLETED'?200:claim.run.state==='RUNNING'?409:503,body:{ok:claim.run.state==='COMPLETED',state:claim.run.state.toLowerCase(),reused:true}};
  let result:TickResult&{maintenance?:unknown};
@@ -54,7 +73,7 @@ export async function runPrivateWorker(invocationKey:string,execute?:()=>Promise
    ...(slot===0?{controlReviews:()=>runReviewBatch(admissionDeadline)}:{})
   })),slot===0?runWorkerMaintenance:undefined);
   result=await finalizeAutomationTick(result);
-  if(!execute)result=await finalizeCollectionTick(result);
+  if(checkCollections)result=await finalizeCollectionTick(result);
  }catch{const failed={state:'failed' as const,processed:0,attention:1};result={ok:false,modules:{sources:failed,connectors:failed,controlReviews:failed}};}
  const state=result.ok?'COMPLETED':'FAILED';
  const finished=await db.workerRun.updateMany({where:{id:claim.run.id,state:'RUNNING',leaseUntil:{gt:new Date()}},data:{state,finishedAt:new Date(),summary:result as unknown as Prisma.InputJsonValue}});
@@ -66,8 +85,8 @@ export async function workerHealth(){
  if(!workerEnabled())return {state:'disabled',ok:false};
  const capacity=workerSlotCount();
  const [runs,success,attention]=await Promise.all([
-  Promise.all(Array.from({length:capacity},(_,slot)=>db.workerRun.findFirst({where:{slot},orderBy:{startedAt:'desc'},select:{slot:true,state:true,startedAt:true,finishedAt:true,leaseUntil:true}}))),
-  db.workerRun.findFirst({where:{state:'COMPLETED'},orderBy:{finishedAt:'desc'},select:{finishedAt:true}}),
+  Promise.all(Array.from({length:capacity},(_,slot)=>db.workerRun.findFirst({where:{slot,invocationKey:{startsWith:'github:'}},orderBy:{startedAt:'desc'},select:{slot:true,state:true,startedAt:true,finishedAt:true,leaseUntil:true}}))),
+  db.workerRun.findFirst({where:{state:'COMPLETED',invocationKey:{startsWith:'github:'}},orderBy:{finishedAt:'desc'},select:{finishedAt:true}}),
   collectionAttention()
  ]);
  const now=Date.now();

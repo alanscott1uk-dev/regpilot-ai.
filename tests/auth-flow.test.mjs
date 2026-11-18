@@ -90,5 +90,5 @@ test('connected workspace sign-in restores only verified bounded internal contex
  assert.equal(workspaceReturnIntent('/workbench','?organizationId='+org,'a@example.invalid'),null);
  const f=fixture(),resumed=await resolveSignInReturn(info,'/team/briefing',f.auth,()=>false,()=>'/team/briefing?organizationId='+org);
  assert.equal(resumed.destination,'/team/briefing?organizationId='+org);
- for(const path of ['/team/intelligence','/team/sources','/team/briefing','/team/evidence','/team/assurance','/team/work/reviews'])assert.equal(signInDestination(path),path);
+ for(const path of ['/team/intelligence','/team/coverage','/team/sources','/team/briefing','/team/evidence','/team/assurance','/team/work/reviews'])assert.equal(signInDestination(path),path);
 });

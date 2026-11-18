@@ -34,6 +34,17 @@ test("failed source or connection is distinct from a genuine successful check",(
  assert.equal(r.summary.connectorIssues,1);
  assert.equal(r.connectors[0].status,"failed");
 });
+test('a failed source report retains inactive runtime and queued recovery without inventing success',()=>{
+ const f=fixture();f.watches[0].active=false;f.watches[0].lastOutcome='RECOVERY_QUEUED';
+ const r=prepareComplianceBrief(f,now),source=r.collections.find(x=>x.sourceId==='a');
+ assert.equal(source.status,'failed');assert.equal(source.failureCode,'FETCH_UNAVAILABLE');assert.equal(source.monitoringConfigured,false);
+ assert.equal(source.recoveryPending,true);assert.equal(source.lastSuccessAt,null);assert.equal(source.nextCheckAt,f.watches[0].nextCheckAt);
+ const exported=JSON.parse(JSON.stringify(r)).collections.find(x=>x.sourceId==='a');assert.deepEqual(exported,source);
+ delete f.watches[0].active;assert.equal(prepareComplianceBrief(f,now).collections.find(x=>x.sourceId==='a').monitoringConfigured,null);
+ // An overdue source may be retried without a failure code; it still belongs in open work.
+ f.watches[0].active=true;delete f.watches[0].failureCode;
+ const queued=prepareComplianceBrief(f,now).collections.find(x=>x.sourceId==='a');assert.equal(queued.status,'recovery-queued');assert.equal(queued.recoveryPending,true);
+});
 test("due workload excludes completed and distant tasks",()=>{
  const r=prepareComplianceBrief(fixture(),now);
  assert.equal(r.summary.dueWork,1);assert.equal(r.tasks[0].id,"due");

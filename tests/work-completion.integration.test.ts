@@ -12,6 +12,7 @@ import type {EvidenceObjectStore} from '../lib/server/evidence-storage';
 import {hashValue,type Analysis} from '../lib/regulatory/intelligence';
 import type {AssuranceResult} from '../lib/evidence/assurance';
 import {sourceTextHash} from '../lib/regulatory/source-fingerprint.mjs';
+import {checkOfficialSource} from '../lib/server/regulatory-watch';
 import {fixturePdf} from './helpers/pdf-fixture.mjs';
 
 test('work completion closes the reviewed evidence loop with tenant isolation, exact proof, atomic rechecks and historical receipts',async()=>{
@@ -122,7 +123,7 @@ test('work completion closes the reviewed evidence loop with tenant isolation, e
   // Real content assessment flow: a file approved for one task may be scoped to another requirement.
   await saveBusinessProfile(owner,{activities:['personal-data'],jurisdictions:['Scotland']},0);
   const text='Fictional widget staff must complete documented training before working alone. Widget operators must retain completed training records for review.';
-  const snapshot=await db.regulatorySnapshot.create({data:{organizationId:owner.organizationId,sourceId:'uk-data-protection',title:'Fictional source',url:'https://www.gov.uk/data-protection-your-business',bodyText:text,contentHash:sourceTextHash(text),capturedById:owner.userId,reviewStatus:'REVIEWED',reviewerId:reviewer.userId,reviewedAt:new Date()}});
+  const snapshot=await db.regulatorySnapshot.create({data:{organizationId:owner.organizationId,sourceId:'uk-data-protection',title:'Fictional source',url:'https://www.gov.uk/guidance/fictional-previous-data-protection',bodyText:text,contentHash:sourceTextHash(text),capturedById:owner.userId,reviewStatus:'REVIEWED',reviewerId:reviewer.userId,reviewedAt:new Date()}});
   const run=await createIntelligenceRun(owner,snapshot.id),runRow=await db.intelligenceRun.findUniqueOrThrow({where:{id:run.id}}),candidates=(runRow.result as unknown as Analysis).candidates;
   const decisions=[];
   for(const candidate of candidates)decisions.push(await decideCandidate(reviewer,run.id,{candidateKey:candidate.key,decision:'ACCEPTED',rationale:notes,title:candidate.quote.slice(0,100),ownerName:'Fictional owner',dueDate:'2027-01-31'}));
@@ -161,6 +162,12 @@ test('work completion closes the reviewed evidence loop with tenant isolation, e
   const sourceReceipt=(await workCompletion(viewer,sourceTaskId)).receipt!;
   assert.equal(sourceReceipt.source!.contentHash,snapshot.contentHash);assert.equal(sourceReceipt.source!.reviewerId,reviewer.userId);assert.equal(sourceReceipt.source!.capturedById,owner.userId);assert.equal(sourceReceipt.assessment!.id,assessmentId);assert.equal(sourceReceipt.assessment!.version,2);
   assert.equal((await workCompletion(viewer,reuseTaskId)).receipt!.assessment!.id,reuseAssessmentId);
+
+  const relocated=await checkOfficialSource(owner,snapshot.sourceId,async()=>({id:snapshot.sourceId,title:snapshot.title,url:'https://www.gov.uk/data-protection-your-business',updatedAt:null,revisionAt:null,text}));
+  assert.equal(relocated.state,'BASELINE');assert.equal(relocated.snapshot.reviewStatus,'NEEDS_REVIEW');assert.notEqual(relocated.snapshot.id,snapshot.id);
+  assert.equal(sourceReceipt.source!.url,snapshot.url);assert.equal(sourceReceipt.source!.id,snapshot.id);
+  assert.deepEqual((await workCompletion(viewer,sourceTaskId)).receipt,sourceReceipt,'canonical relocation cannot rewrite the frozen source identity in a completed report');
+  assert.equal((await db.regulatorySnapshot.findUniqueOrThrow({where:{id:snapshot.id}})).url,snapshot.url);
 
   // The hub never substitutes for specialised submission/review workflows, even with approved files.
   const specialistTasks=await Promise.all(['Change response','Audit request','Access remediation'].map(title=>makeTask(title)));

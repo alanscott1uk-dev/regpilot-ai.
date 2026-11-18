@@ -1,6 +1,7 @@
 // Full customer path inside the disposable private-services acceptance runner.
-// Application requests are real. Only the explicitly fictional publication body
-// is inserted into the isolated database; this does not test publisher delivery.
+// Application requests are real. Explicitly fictional publication content and a
+// controlled paused-check fault are inserted only into the isolated database;
+// this does not test publisher delivery or an activated hosted scheduler.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {readFile,writeFile} from 'node:fs/promises';
@@ -59,6 +60,41 @@ export async function createCustomerWorkspace({page,db,app,email,checkpoint,pass
  assert.equal(await page.getByRole('checkbox',{name:'Scotland',exact:true}).isChecked(),true);
  await page.screenshot({path:artifactDir+'/desktop-new-customer-setup.png',fullPage:true});
  passed('Business activities, UK scope and an explicitly reviewed source schedule were saved through the UI and survived reload; inactive monitoring remained clearly labelled.');
+
+ await checkpoint('customer reconciles a failed source schedule without inventing collection');
+ // Controlled failure input. Recovery uses the actual signed-in UI, HTTP route,
+ // permission checks and database transaction, not intercepted application APIs.
+ const faultAt=new Date();
+ await db.watchSchedule.update({where:{id:watch.id},data:{enabled:false,attempts:3,failureCode:'FETCH_FAILED',lastOutcome:'FAILED',lastAttemptAt:faultAt,nextCheckAt:new Date(faultAt.getTime()-3600000)}});
+ await db.auditEvent.create({data:{organizationId:org.id,actorId:reviewer.id,action:'monitoring.check_failed',entityType:'WatchSchedule',entityId:watch.id,details:{sourceId,outcome:'FAILED',failureCode:'FETCH_FAILED',attempt:3,paused:true,fixture:'Explicitly fictional paused-check fault for acceptance'}}});
+ const capturesBefore=await db.regulatorySnapshot.count({where:{organizationId:org.id}});
+ await page.goto(app+'/team/coverage?'+new URLSearchParams({organizationId:org.id}));
+ await page.getByRole('region',{name:'Monitoring runtime',exact:true}).getByRole('heading',{name:'Monitoring awaits activation',exact:true}).waitFor();
+ const publication=page.getByRole('article',{name:'Data protection and your business',exact:true});
+ await publication.getByText('Collection failed',{exact:true}).waitFor();
+ await publication.getByText('Last recorded issue: fetch failed. Previous successful evidence remains available.',{exact:true}).waitFor();
+ const [retryResponse]=await Promise.all([
+  page.waitForResponse(response=>response.url()===app+'/api/workspace/monitoring/retry'&&response.request().method()==='POST'),
+  publication.getByRole('button',{name:'Request recovery',exact:true}).click()
+ ]);
+ const retry=await retryResponse.json();assert.equal(retryResponse.status(),200,retry.error||'monitoring recovery request failed');
+ assert.equal(retry.monitoringConfigured,false,'requesting recovery does not activate an unconfigured worker');
+ await publication.getByText(/Recovery requested — waiting for a completed check/).waitFor();
+ const queued=await db.watchSchedule.findUniqueOrThrow({where:{id:watch.id}});
+ assert.equal(queued.enabled,true);assert.equal(queued.version,watch.version+1);assert.equal(queued.failureCode,'FETCH_FAILED');
+ assert.equal(queued.lastOutcome,'RECOVERY_QUEUED');assert.equal(queued.lastSuccessAt,null,'a queued retry cannot invent a successful collection');
+ assert.equal(await db.regulatorySnapshot.count({where:{organizationId:org.id}}),capturesBefore);
+ const retryEvents=()=>db.auditEvent.count({where:{organizationId:org.id,entityId:watch.id,action:'monitoring.retry_requested'}});
+ assert.equal(await retryEvents(),1);
+ await page.getByRole('button',{name:'Refresh monitoring status',exact:true}).click();
+ await page.getByRole('status').filter({hasText:'Latest saved monitoring status loaded.'}).waitFor();
+ assert.equal(await retryEvents(),1,'reading saved status must not enqueue another recovery');
+ assert.equal(await publication.getByRole('button',{name:'Request recovery',exact:true}).count(),0,'the queued attempt cannot be submitted again');
+ await page.reload();
+ await publication.getByText(/Recovery requested — waiting for a completed check/).waitFor();
+ await publication.getByText('Last recorded issue: fetch failed. Previous successful evidence remains available.',{exact:true}).waitFor();
+ await page.screenshot({path:artifactDir+'/desktop-customer-monitoring-recovery.png',fullPage:true});
+ passed('The customer requested recovery of an explicitly injected paused-source fault through real authenticated application endpoints. One retry was persisted, prior failure remained visible after refresh/reload, no snapshot or successful check was invented, and inactive runtime stayed explicit.');
  return {org,reviewer};
 }
 
@@ -239,7 +275,11 @@ export async function sourceToReportJourney({upload,review,db,app,org,editor,rev
  assert.ok(completionInReport,'source-linked completed work is included in the actual customer report');
  assert.equal(completionInReport.eventId,saved.id);assert.equal(completionInReport.proofHash,saved.details.proofHash);
  assert.deepEqual(completionInReport.receipt,receipt,'customer report must reproduce the persisted completion decision exactly');
- assert.ok(report.collections.some(row=>row.sourceId===sourceId&&row.status==='inactive'),'report distinguishes a saved schedule from running monitoring');
+ const sourceCollection=report.collections.find(row=>row.sourceId===sourceId);
+ assert.ok(sourceCollection,'report retains the unresolved monitoring incident');
+ assert.equal(sourceCollection.status,'failed');assert.equal(sourceCollection.failureCode,'FETCH_FAILED');
+ assert.equal(sourceCollection.monitoringConfigured,false,'report distinguishes a queued schedule from running monitoring');
+ assert.equal(sourceCollection.recoveryPending,true,'report preserves the queued recovery without inventing success');
  for(const row of [...report.changes,...report.pending,...report.collections,...report.connectors,...report.tasks,...report.completedWork]){
   assert.equal(new URL(row.href,app).searchParams.get('organizationId'),org.id,'all report handoffs retain the exact organisation');
  }
@@ -258,6 +298,6 @@ export async function sourceToReportJourney({upload,review,db,app,org,editor,rev
  await upload.getByRole('article').filter({hasText:title}).waitFor();
  assert.ok(await bounded(upload.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Mobile customer report layout'));
  await upload.screenshot({path:artifactDir+'/mobile-customer-report.png',fullPage:true});
- passed('The customer followed Reports navigation and downloaded JSON, CSV and a printable report containing the exact persisted source-to-task-to-evidence decision, current open work and explicit inactive-monitoring status; the same report fit mobile.');
+ passed('The customer followed Reports navigation and downloaded JSON, CSV and a printable report containing the exact persisted source-to-task-to-evidence decision, current open work and the unresolved source failure with queued recovery and inactive monitoring; the same report fit mobile.');
  return {taskId:task.id,snapshotId:snapshot.id,assessmentId:assessment.id,eventId:saved.id};
 }

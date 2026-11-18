@@ -10,3 +10,13 @@
 .connection small{font-size:11px;line-height:1.6;color:#877d91;display:block}
 .connection a{display:inline-block;margin-top:13px;color:#664396;text-decoration:none;font-size:12px;font-weight:750}
 @media(max-width:700px){.connectionGrid{grid-template-columns:1fr}.connectMetrics span{flex:1;min-width:115px}}
+
+/* Runtime observations and recoveries remain distinct from publication review. */
+.runtime{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(220px,1fr);gap:16px;background:#fff;border:1px solid #ded5e9;border-left:4px solid #8062a9;border-radius:14px;padding:20px;margin:18px 0}
+.runtime .overline{color:#745297}.runtime h2{font-size:20px;line-height:1.35;margin:7px 0;color:#332446}.runtime p{font-size:12px;line-height:1.65;color:#665a73;margin:7px 0}
+.runtime[data-state="stale"],.runtime[data-state="degraded"]{border-left-color:#ba6941;background:#fffaf6}.runtime[data-state="healthy"]{border-left-color:#4f8867}
+.runtime dl{display:grid;gap:10px;margin:0;align-content:center}.runtime dl div{border-bottom:1px solid #eae4ef;padding-bottom:8px}.runtime dt{font-size:10px;color:#82758e}.runtime dd{margin:3px 0 0;font-size:12px;font-weight:750;color:#493458}.runtime .runtimeNote{grid-column:1/-1;font-size:11px;margin:0}
+.failure{padding:10px;background:#fff4ec;border-radius:8px}.recoveryHint{font-size:11px;color:#675675;line-height:1.5}.recover{border:1px solid #c6b0de;background:#f5f0fb;border-radius:9px;color:#5a397e;font:inherit;font-size:12px;font-weight:750;cursor:pointer;min-height:44px;padding:10px 14px;margin-top:10px}.recover:disabled{opacity:.5;cursor:not-allowed}
+.attempts{font-size:11px;line-height:1.55;margin-top:12px;color:#63536e}.attempts summary{cursor:pointer;min-height:32px;font-weight:750}.attempts ol{padding-left:20px;margin:0}.attempts li{margin:0 0 9px;padding-left:3px}.attempts strong,.attempts span{display:block}.attempts span{color:#7b6b84}
+.actions a:focus-visible,.actions button:focus-visible,.recover:focus-visible,.sourceActions a:focus-visible{outline:3px solid #9c82bc;outline-offset:3px}.toolbar select:disabled{opacity:.6}
+@media(max-width:700px){.runtime{grid-template-columns:1fr;padding:17px}.runtime dl{grid-template-columns:1fr}.actions button,.actions a{min-height:44px;display:flex;align-items:center;justify-content:center}.sourceActions a{min-height:36px;display:flex;align-items:center}.sourceMeta b{overflow-wrap:anywhere}}

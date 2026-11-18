@@ -8,6 +8,11 @@ import {configureWatch,claimWatch,executeWatch,listWatches} from "../lib/server/
 import {saveBusinessProfile} from "../lib/server/intelligence-service";
 import {configureWatchPortfolio,planSourcePortfolio} from "../lib/server/watch-portfolio";
 import type {AuthorizedContext} from "../lib/server/authorization";
+import {retryWatch} from '../lib/server/monitoring-recovery';
+import {sourceCoverage} from '../lib/server/source-coverage';
+import {publicSourceKey,SourceFetchDeferred} from '../lib/server/shared-source-fetch';
+import {REGULATORY_SOURCES} from '../lib/regulatory-sources.mjs';
+import {saveSetupWorkspace} from '../lib/server/setup-service';
 
 test("monitoring leases, recovery, bounded retries, tenant isolation and revoked permissions",async()=>{
   const suffix=randomUUID(),user=await db.user.create({data:{externalId:suffix,email:suffix+"@example.invalid"}});
@@ -25,7 +30,7 @@ test("monitoring leases, recovery, bounded retries, tenant isolation and revoked
     await assert.rejects(()=>configureWatch(ctx,{...config,sourceId:"https://internal.invalid/secret"}),(e:any)=>e.status===400);
     const saved=await configureWatch(ctx,config);
     await assert.rejects(()=>configureWatch(ctx,config),(e:any)=>e.status===409);
-    assert.equal((await listWatches({...ctx,organizationId:ids[1]})).length,0);
+    await assert.rejects(()=>listWatches({...ctx,organizationId:ids[1]}),(e:any)=>e.status===403,'an unowned workspace is rejected rather than returned as an empty success');
     const claims=await Promise.all([claimWatch(),claimWatch()]);assert.equal(claims.filter(Boolean).length,1);
     const first=claims.find(Boolean)!;assert.equal(await executeWatch(first,loader),"BASELINE");assert.equal(fetches,1);
     assert.equal(await db.intelligenceRun.count({where:{organizationId:ids[0]}}),1);
@@ -169,5 +174,104 @@ test("real monitoring workflow links changed source text to one human-owned task
   await db.membership.deleteMany({where:{organizationId:org.id}});
   await db.organization.delete({where:{id:org.id}});
   await db.user.delete({where:{id:user.id}});
+ }
+});
+
+test('an administrator recovers a failed source without clearing the incident, bypassing cooldown or duplicating work',async()=>{
+ const saved={...process.env},stamp=randomUUID();
+ const [owner,admin,foreign]=await Promise.all(['owner','admin','foreign'].map(n=>db.user.create({data:{externalId:randomUUID(),email:n+stamp+'@example.invalid'}})));
+ const [org,outside]=await Promise.all(['A','B'].map(n=>db.organization.create({data:{name:'Fictional source recovery '+n+stamp}})));
+ const ctx:AuthorizedContext={organizationId:org.id,userId:owner.id,role:'OWNER'},reviewer:AuthorizedContext={organizationId:org.id,userId:admin.id,role:'ADMIN'},out:AuthorizedContext={organizationId:outside.id,userId:foreign.id,role:'OWNER'};
+ const source=REGULATORY_SOURCES.find(s=>s.id==='uk-data-protection')!,cacheKey=publicSourceKey(source);
+ const first={id:source.id,title:'Fictional source recovery baseline',url:'https://www.gov.uk/data-protection-your-business',updatedAt:null,revisionAt:null,text:'Fictional operators retain supplier records and document staff training. This isolated test publication does not describe actual law or customer information.'};
+ Object.assign(process.env,{REGPILOT_AI_ALLOWED_EMAILS:[owner.email,admin.email,foreign.email].join(','),REGPILOT_MONITORING_ENABLED:'true',REGPILOT_AUTOMATION_ENABLED:'true',REGPILOT_WORKER_ENABLED:'true',REGPILOT_CRON_ENABLED:'false'});
+ try{
+  await db.membership.createMany({data:[ctx,reviewer,out]});
+  const configured=await configureWatch(ctx,{sourceId:source.id,enabled:true,intervalHours:24,version:0});
+  assert.equal(await executeWatch((await claimWatch())!,async()=>first),'BASELINE');
+  const success=(await db.watchSchedule.findUniqueOrThrow({where:{id:configured.id}})).lastSuccessAt;
+  await db.regulatorySnapshot.updateMany({where:{organizationId:org.id},data:{lastCheckedAt:new Date(0)}});
+  for(let n=0;n<3;n++){
+   await db.watchSchedule.update({where:{id:configured.id},data:{nextCheckAt:new Date(0)}});
+   await executeWatch((await claimWatch())!,async()=>{throw Error('private provider credentials must never enter recovery history');});
+  }
+  let failed=await db.watchSchedule.findUniqueOrThrow({where:{id:configured.id}});
+  assert.equal(failed.enabled,false);assert.equal(failed.failureCode,'FETCH_FAILED');assert.deepEqual(failed.lastSuccessAt,success);
+  await assert.rejects(()=>retryWatch({...reviewer,role:'VIEWER'},{sourceId:source.id,version:failed.version}),(e:any)=>e.status===403);
+  await assert.rejects(()=>retryWatch({...out,organizationId:org.id},{sourceId:source.id,version:failed.version}),(e:any)=>e.status===403);
+  await assert.rejects(()=>retryWatch(reviewer,{sourceId:source.id,version:failed.version+1}),(e:any)=>e.status===409);
+  await db.membership.update({where:{organizationId_userId:{organizationId:org.id,userId:admin.id}},data:{role:'VIEWER'}});
+  await assert.rejects(()=>retryWatch(reviewer,{sourceId:source.id,version:failed.version}),(e:any)=>e.status===403,'the current database role overrides a stale authorized context');
+  await db.membership.update({where:{organizationId_userId:{organizationId:org.id,userId:admin.id}},data:{role:'ADMIN'}});
+  await db.watchSchedule.update({where:{id:failed.id},data:{enabled:true,leaseToken:randomUUID(),leaseUntil:new Date(Date.now()+60000)}});
+  await assert.rejects(()=>retryWatch(reviewer,{sourceId:source.id,version:failed.version}),(e:any)=>e.status===409,'an administrator cannot steal an active collection lease');
+  await db.watchSchedule.update({where:{id:failed.id},data:{enabled:false,leaseToken:null,leaseUntil:null}});
+  const cooldown=new Date(Date.now()+60000);
+  await db.publicSourceFetch.upsert({where:{key:cacheKey},create:{key:cacheKey,sourceId:source.id,retryAt:cooldown,failureCode:'SOURCE_FETCH_UNAVAILABLE'},update:{retryAt:cooldown,failureCode:'SOURCE_FETCH_UNAVAILABLE'}});
+  const concurrent=await Promise.all([retryWatch(reviewer,{sourceId:source.id,version:failed.version}),retryWatch(reviewer,{sourceId:source.id,version:failed.version})]);
+  assert.equal(concurrent.filter(r=>!r.reused).length,1,'competing requests enqueue one recovery');
+  const retry=concurrent.find(r=>!r.reused)!;
+  assert.equal(retry.reused,false);assert.equal(retry.version,failed.version+1);assert.deepEqual(new Date(retry.nextCheckAt),cooldown);
+  const duplicate=await retryWatch(reviewer,{sourceId:source.id,version:failed.version});assert.equal(duplicate.reused,true);assert.equal(duplicate.version,retry.version);
+  assert.equal((await retryWatch(reviewer,{sourceId:source.id,version:retry.version})).reused,true);
+  assert.equal(await db.auditEvent.count({where:{organizationId:org.id,action:'monitoring.retry_requested'}}),1);
+  assert.equal(await claimWatch(),null,'a queued retry respects shared publisher cooldown');
+  const queued=await db.watchSchedule.findUniqueOrThrow({where:{id:failed.id}});
+  assert.equal(queued.failureCode,'FETCH_FAILED');assert.deepEqual(queued.lastSuccessAt,success);assert.equal(queued.configuredById,admin.id);
+  const foreignEvent=await db.auditEvent.create({data:{organizationId:outside.id,actorId:foreign.id,action:'monitoring.check_failed',entityType:'WatchSchedule',entityId:failed.id,details:{outcome:'FAILED',failureCode:'FOREIGN_PRIVATE_FAILURE'}}});
+  const coverage=(await sourceCoverage(reviewer)).find(s=>s.sourceId===source.id)!;
+  assert.equal(coverage.schedule?.recoveryPending,true);assert.equal(coverage.schedule?.retryAvailable,false);assert.equal(coverage.schedule?.failureCode,'FETCH_FAILED');
+  assert.equal(coverage.schedule?.history?.length,5);assert.equal(coverage.schedule?.historyLimited,true);
+  assert.equal(coverage.schedule?.history?.some(e=>e.id===foreignEvent.id),false);
+  assert.doesNotMatch(JSON.stringify(coverage),/private provider|FOREIGN_PRIVATE_FAILURE/);
+  assert.match(coverage.reviewHref!,new RegExp('organizationId='+org.id));assert.match(coverage.reviewHref!,/sourceId=uk-data-protection/);
+  assert.equal((await listWatches(out)).length,0);
+  // Advance only the isolated persisted schedule/cooldown. No wall-clock sleep or external fetch.
+  await db.publicSourceFetch.update({where:{key:cacheKey},data:{retryAt:new Date(0)}});
+  await db.watchSchedule.update({where:{id:failed.id},data:{nextCheckAt:new Date(0)}});
+  const job=(await claimWatch())!;
+  assert.equal(await executeWatch(job,async()=>({...first,text:first.text+' A newly captured fictional section asks an independent reviewer to inspect a changed record-retention procedure.'})),'CONTENT_CHANGED');
+  const recovered=await db.watchSchedule.findUniqueOrThrow({where:{id:failed.id}});
+  assert.equal(recovered.failureCode,null);assert.equal(recovered.lastOutcome,'CONTENT_CHANGED');assert.equal(recovered.attempts,0);assert.ok(recovered.lastSuccessAt!>=success!);
+  const latest=await db.regulatorySnapshot.findFirstOrThrow({where:{organizationId:org.id},orderBy:{firstCapturedAt:'desc'}});
+  assert.equal(latest.reviewStatus,'NEEDS_REVIEW');assert.equal(latest.capturedById,admin.id);
+  const work=await db.obligation.findMany({where:{organizationId:org.id}});assert.equal(work.length,1);assert.equal(work[0].automationKey,'source-review:'+latest.id);assert.equal(work[0].assigneeId,admin.id);
+  await assert.rejects(()=>retryWatch(reviewer,{sourceId:source.id,version:retry.version}),(e:any)=>e.status===409,'success is not queued for a duplicate new check');
+  assert.equal(await db.aiDailyUsage.count({where:{organizationId:org.id}}),0);
+ }finally{
+  const ids=[org.id,outside.id];
+  await db.publicSourceFetch.deleteMany({where:{key:cacheKey}});
+  for(const table of [db.watchSchedule,db.intelligenceRun,db.obligation,db.auditEvent,db.regulatorySnapshot,db.membership] as any[])await table.deleteMany({where:{organizationId:{in:ids}}});
+  await db.organization.deleteMany({where:{id:{in:ids}}});await db.user.deleteMany({where:{id:{in:[owner.id,admin.id,foreign.id]}}});
+  for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];Object.assign(process.env,saved);
+ }
+});
+
+test('schedule edits and repeated publisher deferrals cannot erase or flood a source incident',async()=>{
+ const saved={...process.env},stamp=randomUUID(),user=await db.user.create({data:{externalId:stamp,email:stamp+'@example.invalid'}}),org=await db.organization.create({data:{name:'Fictional retained incident '+stamp}});
+ const ctx:AuthorizedContext={organizationId:org.id,userId:user.id,role:'OWNER'},sourceId='uk-data-protection';
+ Object.assign(process.env,{REGPILOT_AI_ALLOWED_EMAILS:user.email,REGPILOT_MONITORING_ENABLED:'true'});
+ try{
+  await db.membership.create({data:ctx});
+  const watch=await configureWatch(ctx,{sourceId,enabled:true,intervalHours:24,version:0});
+  await db.watchSchedule.update({where:{id:watch.id},data:{enabled:false,failureCode:'FETCH_FAILED',lastOutcome:'FAILED',lastSuccessAt:new Date(1000)}});
+  await configureWatch(ctx,{sourceId,enabled:true,intervalHours:168,version:1});
+  let row=await db.watchSchedule.findUniqueOrThrow({where:{id:watch.id}});assert.equal(row.failureCode,'FETCH_FAILED');assert.equal(row.lastOutcome,'RECOVERY_QUEUED');assert.deepEqual(row.lastSuccessAt,new Date(1000));
+  await configureWatchPortfolio(ctx,{sourceIds:[sourceId],enabled:true,intervalHours:24});
+  row=await db.watchSchedule.findUniqueOrThrow({where:{id:watch.id}});assert.equal(row.failureCode,'FETCH_FAILED');
+  await saveSetupWorkspace(ctx,{profileVersion:0,activities:['personal-data'],jurisdictions:['Scotland'],sources:[{sourceId,version:row.version}],intervalHours:168,reviewAcknowledged:true});
+  row=await db.watchSchedule.findUniqueOrThrow({where:{id:watch.id}});assert.equal(row.failureCode,'FETCH_FAILED');assert.deepEqual(row.lastSuccessAt,new Date(1000));
+  for(let n=0;n<3;n++){
+   await db.watchSchedule.update({where:{id:watch.id},data:{nextCheckAt:new Date(0)}});
+   assert.equal(await executeWatch((await claimWatch())!,async()=>{throw new SourceFetchDeferred('SOURCE_FETCH_BUSY',new Date(Date.now()+60000));}),'SOURCE_DEFERRED');
+  }
+  row=await db.watchSchedule.findUniqueOrThrow({where:{id:watch.id}});assert.equal(row.failureCode,'FETCH_FAILED');assert.equal(row.attempts,0);assert.deepEqual(row.lastSuccessAt,new Date(1000));
+  assert.equal(await db.auditEvent.count({where:{organizationId:org.id,action:'monitoring.check_deferred'}}),1,'only the first transition creates an audit record');
+  assert.equal(await db.regulatorySnapshot.count({where:{organizationId:org.id}}),0);
+  assert.equal((await sourceCoverage(ctx)).find(s=>s.sourceId===sourceId)?.schedule?.history?.[0].failureCode,'FETCH_FAILED');
+ }finally{
+  for(const table of [db.watchSchedule,db.intelligenceRun,db.businessProfile,db.obligation,db.auditEvent,db.regulatorySnapshot,db.membership] as any[])await table.deleteMany({where:{organizationId:org.id}});
+  await db.organization.delete({where:{id:org.id}});await db.user.delete({where:{id:user.id}});
+  for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];Object.assign(process.env,saved);
  }
 });

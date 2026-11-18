@@ -8,6 +8,8 @@ import {createIntelligenceRun,IntelligenceError,transaction} from "./intelligenc
 import {checkOfficialSource,type Loader} from "./regulatory-watch";
 import {resolveWorkspaceSource} from "./publication-catalogue";
 import {allowedEmail} from "../ai/security.mjs";
+import {requireMember,ADMIN} from './workspace-member';
+import {watchRecoveryState,watchAttemptHistory,preserveWatchIncident} from './monitoring-recovery';
 
 export function monitoringEnabled(){return process.env.REGPILOT_MONITORING_ENABLED==="true";}
 export function validMonitorSecret(request:Request){
@@ -20,21 +22,26 @@ export async function configureWatch(ctx:AuthorizedContext,input:{sourceId:strin
   if(!["OWNER","ADMIN"].includes(ctx.role))throw new IntelligenceError("An administrator must configure monitoring",403);
   if(typeof input.enabled!=="boolean"||![24,168].includes(input.intervalHours)||!Number.isInteger(input.version)||input.version<0)throw new IntelligenceError("Choose a recognised source, daily or weekly schedule and current version");
   return transaction(ctx,async tx=>{
-    const member=await tx.membership.findUnique({where:{organizationId_userId:{organizationId:ctx.organizationId,userId:ctx.userId}}});
-    if(!member||!["OWNER","ADMIN"].includes(member.role))throw new IntelligenceError("Your administration access changed",403);
+    await requireMember(tx,ctx,ADMIN);
     if(!await resolveWorkspaceSource(tx,ctx.organizationId,input.sourceId))throw new IntelligenceError("Choose a registered official source");
     const key={organizationId:ctx.organizationId,sourceId:input.sourceId};
     const old=await tx.watchSchedule.findUnique({where:{organizationId_sourceId:key}});
     if((old?.version||0)!==input.version)throw new IntelligenceError("Monitoring settings changed. Refresh first.",409);
-    const data={enabled:input.enabled,intervalHours:input.intervalHours,configuredById:ctx.userId,nextCheckAt:new Date(),leaseToken:null,leaseUntil:null,attempts:0,failureCode:null};
+    if(!old&&await tx.watchSchedule.count({where:{organizationId:ctx.organizationId}})>=120)throw new IntelligenceError('Maximum 120 monitored publications per organisation',429);
+    const data={enabled:input.enabled,intervalHours:input.intervalHours,configuredById:ctx.userId,nextCheckAt:new Date(),leaseToken:null,leaseUntil:null,attempts:0,...preserveWatchIncident(old,input.enabled)};
     const row=await tx.watchSchedule.upsert({where:{organizationId_sourceId:key},create:{...key,...data},update:{...data,version:{increment:1}}});
     await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:input.enabled?"monitoring.schedule_saved":"monitoring.schedule_paused",entityType:"WatchSchedule",entityId:row.id,details:{sourceId:input.sourceId,intervalHours:input.intervalHours,version:row.version}}});
     return {id:row.id,version:row.version};
   });
 }
 export async function listWatches(ctx:AuthorizedContext){
-  const rows=await db.watchSchedule.findMany({where:{organizationId:ctx.organizationId},orderBy:{sourceId:"asc"},select:{id:true,sourceId:true,enabled:true,intervalHours:true,version:true,nextCheckAt:true,attempts:true,lastAttemptAt:true,lastSuccessAt:true,lastOutcome:true,failureCode:true,leaseUntil:true}});
-  return rows.map(({leaseUntil,...r})=>({...r,state:!r.enabled?(r.failureCode?"attention":"paused"):!monitoringEnabled()?"awaiting-activation":leaseUntil&&leaseUntil.getTime()>Date.now()?"checking":r.failureCode?"retry-scheduled":r.nextCheckAt.getTime()<Date.now()-3600000?"overdue":r.lastSuccessAt?"scheduled":"waiting-for-first-check"}));
+ return transaction(ctx,async tx=>{
+  const member=await requireMember(tx,ctx);
+  const rows=await tx.watchSchedule.findMany({where:{organizationId:ctx.organizationId},orderBy:{sourceId:"asc"},take:121,select:{id:true,sourceId:true,enabled:true,intervalHours:true,version:true,nextCheckAt:true,attempts:true,lastAttemptAt:true,lastSuccessAt:true,lastOutcome:true,failureCode:true,leaseUntil:true}});
+  if(rows.length>120)throw new IntelligenceError('Monitoring exceeds the supported workspace limit',503);
+  const history=await watchAttemptHistory(tx,ctx.organizationId,rows.map(row=>row.id));
+  return rows.map(({leaseUntil,...r})=>({...r,...watchRecoveryState({...r,leaseUntil},ADMIN.includes(member.role)),...(history.get(r.id)??{history:[],historyLimited:false})}));
+ });
 }
 // Atomic cross-worker claim. An expired lease is recoverable; tokens fence stale workers.
 export async function claimWatch():Promise<WatchSchedule|null>{
@@ -76,6 +83,19 @@ async function finish(job:WatchSchedule,outcome:string,failureCode:string|null){
     await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:failureCode?"monitoring.check_failed":"monitoring.check_completed",entityType:"WatchSchedule",entityId:job.id,details:{sourceId:job.sourceId,outcome,failureCode,attempt:job.attempts,paused:halted}}});
     return halted?"ATTENTION":outcome;
   });
+}
+async function deferWatch(job:WatchSchedule,outcome:string,reason:string,retryAt:Date){
+ return db.$transaction(async tx=>{
+  const before=await tx.watchSchedule.findFirst({where:{id:job.id,organizationId:job.organizationId,enabled:true,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},select:{failureCode:true,lastOutcome:true}});
+  if(!before)return 'SUPERSEDED';
+  // A busy shared fetch is not evidence that the previous failed check recovered.
+  const failureCode=['SOURCE_FETCH_BUSY','SOURCE_FETCH_SUPERSEDED'].includes(reason)&&before.failureCode?before.failureCode:reason;
+  const changed=await tx.watchSchedule.updateMany({where:{id:job.id,organizationId:job.organizationId,enabled:true,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},data:{leaseToken:null,leaseUntil:null,attempts:Math.max(0,job.attempts-1),lastOutcome:outcome,failureCode,nextCheckAt:retryAt}});
+  if(!changed.count)return 'SUPERSEDED';
+  // Record transitions, not one duplicate audit row for every publisher retry.
+  if(before.failureCode!==failureCode||before.lastOutcome!==outcome)await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:'monitoring.check_deferred',entityType:'WatchSchedule',entityId:job.id,details:{sourceId:job.sourceId,outcome,failureCode,attempt:job.attempts,paused:false,nextCheckAt:retryAt.toISOString()}}});
+  return outcome;
+ });
 }
 /**
  * Monitoring content changes create one owned investigation, not a compliance
@@ -156,20 +176,17 @@ export async function executeWatch(job:WatchSchedule,loader?:Loader){
   }catch(error){
     if(error instanceof LeaseLost)return "SUPERSEDED";
     if(error instanceof SourceFetchDeferred){
-      const deferred=await db.watchSchedule.updateMany({where:{id:job.id,organizationId:job.organizationId,enabled:true,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},data:{leaseToken:null,leaseUntil:null,attempts:Math.max(0,job.attempts-1),lastOutcome:"SOURCE_DEFERRED",failureCode:error.code,nextCheckAt:error.retryAt}});
-      return deferred.count?"SOURCE_DEFERRED":"SUPERSEDED";
+      return await deferWatch(job,'SOURCE_DEFERRED',error.code,error.retryAt);
     }
     if(stage==='ANALYSIS'&&error instanceof IntelligenceError&&error.status===429){
-      const changed=await db.watchSchedule.updateMany({where:{id:job.id,organizationId:job.organizationId,enabled:true,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},data:{leaseToken:null,leaseUntil:null,attempts:Math.max(0,job.attempts-1),lastOutcome:'ANALYSIS_DEFERRED',failureCode:'ANALYSIS_DEFERRED',nextCheckAt:new Date(Date.now()+3600000)}});
-      return changed.count?'ANALYSIS_DEFERRED':'SUPERSEDED';
+      return await deferWatch(job,'ANALYSIS_DEFERRED','ANALYSIS_DEFERRED',new Date(Date.now()+3600000));
     }
     const databaseCode=error instanceof Prisma.PrismaClientKnownRequestError&&/^P\d{4}$/.test(error.code)?error.code:null;
     if(databaseCode==='P2028'||databaseCode==='P2024'){
       // Capacity/transaction timeouts are infrastructure incidents, not evidence
       // that the publication failed. Keep the schedule eligible for a later tick.
-      const changed=await db.watchSchedule.updateMany({where:{id:job.id,organizationId:job.organizationId,enabled:true,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},data:{leaseToken:null,leaseUntil:null,attempts:Math.max(0,job.attempts-1),lastOutcome:'WORKER_DEFERRED',failureCode:'DATABASE_BUSY',nextCheckAt:new Date(Date.now()+60000)}});
       console.warn('monitoring.database_deferred',{stage,code:databaseCode});
-      return changed.count?'WORKER_DEFERRED':'SUPERSEDED';
+      return await deferWatch(job,'WORKER_DEFERRED','DATABASE_BUSY',new Date(Date.now()+60000));
     }
     const code=error instanceof PermissionLost?'PERMISSION_REVOKED':databaseCode?stage+'_'+databaseCode:stage+'_FAILED';
     // Fixed stage/code only: never log tenant identities, credentials or raw errors.

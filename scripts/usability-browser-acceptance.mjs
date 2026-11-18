@@ -16,6 +16,7 @@ import {changeResponseJourney} from "./change-response-browser-journey.mjs";
 import {setupJourney} from "./setup-browser-journey.mjs";
 import {assuranceRenewalJourney} from "./assurance-renewal-browser-journey.mjs";
 import {todayJourney} from "./today-browser-journey.mjs";
+import {monitoringRecoveryJourney} from "./monitoring-recovery-browser-journey.mjs";
 
 const port=await new Promise((resolve,reject)=>{
  const server=createServer().once("error",reject).listen(0,"127.0.0.1",()=>{
@@ -109,6 +110,7 @@ try{
  await testJourney("desktop",{width:1365,height:880});
  await testJourney("mobile",{width:390,height:844});
  for(const [name,viewport] of [["desktop",{width:1365,height:880}],["mobile",{width:390,height:844}]]){
+  try{observations.push(await monitoringRecoveryJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"monitoring-recovery-"+name,passed:false,error:e.message});}
   try{observations.push(await todayJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"today-"+name,passed:false,error:e.message});}
   try{observations.push(await horizonJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"horizon-"+name,passed:false,error:e.message});}
   try{observations.push(await infrastructureJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"infrastructure-"+name,passed:false,error:e.message});}

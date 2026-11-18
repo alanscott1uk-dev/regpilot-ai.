@@ -22,6 +22,22 @@ The existing Today, Setup, Regulatory updates, Tasks, Evidence and Reports scree
 | Reach evidence and a recorded outcome | The exact accepted task opens in the work hub. The private-services journey uploads scanned files, obtains independent file and content review, and explicitly completes a source-linked task with a frozen receipt. Existing completed-work follow-up and fresh-review acceptance remains part of the same test run. |
 | Produce a useful report | Reports is a primary navigation destination. Its seven-day view combines source issues, pending decisions, due work and validated completion records. JSON includes the frozen receipts; CSV includes record identifiers and proof hashes; print has a readable layout. The acceptance script compares exported receipts with actual persisted decisions. |
 
+## Observed monitoring and recovery — 18 November 2026
+
+The next completed development path is **failed check → visible incident → administrator recovery request → guarded collection → independently reviewed source work**. It uses the existing Source health, Sources and Regulatory updates screens. No scheduler, hosted service or paid model is activated by this change.
+
+- Source health retains the exact requested organisation, rejects unavailable links, discards old account/workspace responses and keeps downloads and review links in scope. A lost recovery response leads to a read-only status check; it does not automatically submit another write.
+- Recovery is an explicit version-checked administrator action. Concurrent requests enqueue one attempt. Active leases cannot be stolen, and the shared publisher cooldown remains in force. The failure and previous successful-check time remain recorded until a successful guarded check. Saving Setup, frequency or a source portfolio cannot erase that incident.
+- Each source exposes its last attempt, next eligible check and latest five safe activity records, with truncation disclosed. Repeated identical publisher deferrals do not flood the audit trail. A queued request is not an executed check.
+- Runtime status distinguishes inactive, configured without observed execution, running, recently completed, degraded and stale operation. Every configured worker slot and scheduler needs its own observation. The dedicated worker's expected cadence is 30 minutes with a 90-minute stale threshold; the existing cron remains daily at 06:00 UTC with a 27-hour stale threshold. The customer projection excludes global record payloads, other organisations' counts, credentials and invocation identifiers.
+- Cron now shares the dedicated worker's leases, maintenance and persistent run records. An empty sweep still reports unresolved paused source failures. A recent completed runtime is separate from each publication's successful retrieval, freshness and independent review.
+- The SEPA waste-duty source uses its directly verified official destination after the publisher moved it. A curated address change creates a new review-required baseline, even if the text is identical or the old capture was recent. The old approved snapshot and completed-work receipt retain their original address. Relocation alone does not invent a legal text change or a text-change task.
+- Discovery failures now retain predefined diagnostic reasons while discarding incomplete new results and preserving older observations at their original timestamps. The earlier HMRC failure was not reproduced during investigation; richer diagnosis is not a claim that the feed can no longer fail.
+
+Development acceptance covers the failure-to-recovery database workflow, scheduler overlap/replay and stale execution, desktop/mobile recovery and uncertain responses, and the actual authenticated customer request against disposable private services. That private-services journey injects an explicitly fictional paused-check fault, proves that recovery preserves the incident through refresh/reload, and leaves inactive execution visible. Actual worker collection is exercised separately against controlled publication input. These are not observations of an activated hosted customer scheduler.
+
+The exact final commit, passed runs, screenshots, exported reports and any live-source failures are recorded in PR #10. Runtime configuration, a successful test run and sustained hosted operation remain different evidence levels.
+
 ### What the guided status means
 
 - **Not started:** the relevant record is absent.
@@ -40,7 +56,7 @@ Task totals are not inferred from the first page. Membership verification is bou
 4. **Report consistency:** the downloaded completion record and customer report match the same database event, source fingerprint, assessment, assignee and file hashes. Neither export discloses object storage keys.
 5. **Durable evidence:** PR #10 records the exact commit, workflow runs, artifacts, remaining failures and release boundaries. New feature work must not reset this completion standard.
 
-The expanded private-services journey uses one clearly labelled fictional publication body inserted into its isolated database and controlled test-team membership. Application endpoints, authentication, uploads, scanning, document extraction, review, task completion and reporting are real. That test does **not** establish publisher delivery, production operation, legal accuracy or independent human usability. No paid model is required for the tested rule analysis and passage retrieval path.
+The expanded private-services journey uses one clearly labelled fictional publication body, a controlled paused-monitoring fault and controlled test-team membership in its isolated database. Application endpoints, authentication, recovery requests, uploads, scanning, document extraction, review, task completion and reporting are real. That test does **not** establish publisher delivery, production operation, legal accuracy or independent human usability. No paid model is required for the tested rule analysis and passage retrieval path.
 
 ## Release gates that remain separate
 
@@ -54,6 +70,6 @@ The expanded private-services journey uses one clearly labelled fictional public
 | UK regulatory accuracy | Qualified review of source coverage, applicability, territorial scope, dates and recommendations. Selected publication captures are not comprehensive UK coverage. |
 | Pharmaceutical scope | Separate specialist benchmark and intended-use/quality review. General SME workflow acceptance does not establish pharmaceutical system validation, recognition or certification. |
 
-Known external constraints must remain visible: the previously checked Scottish Government fire-premises publication returned a publisher challenge; dedicated hosted Vercel/Supabase customer-provider contracts remain unconfigured. Their latest state belongs in the official-source workflow and PR evidence, not a fabricated green product score.
+Known external constraints must remain visible. Publisher challenges, redirects, transport failures and moving discovery indexes can interrupt collection; their latest observed state belongs in the official-source workflow and PR evidence. Dedicated hosted Vercel/Supabase customer-provider contracts remain unconfigured. Neither historical success nor retained publication records establish that the latest upstream collection succeeded.
 
 Continue against these customer outcomes. Record any failed boundary, repair it, and rerun the relevant acceptance before claiming it works. Keep production deployment and paid-provider activation outside this development increment.

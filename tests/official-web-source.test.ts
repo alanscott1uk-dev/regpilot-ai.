@@ -64,10 +64,11 @@ test("official text reads recover transient errors but retain permanent failure 
 test("SEPA uses the verified replacement publication linked from its current waste index",async()=>{
  const sepa=REGULATORY_SOURCES.find(s=>s.id==="sepa-waste-duty")!;
  const r=await loadOfficialWeb(sepa,async(url,options)=>{
-  assert.equal(url,"https://beta.sepa.scot/regulation/waste/duty-of-care/");assert.equal(options?.redirect,"error");
+  assert.equal(url,"https://www.sepa.org.uk/regulation/waste/duty-of-care/");assert.equal(options?.redirect,"error");
   return response(`<main><h1>Duty of Care</h1><p>${"Fictional waste guidance. ".repeat(15)}</p></main>`);
  });
  assert.equal(r.url,sepa.url);assert.equal(r.id,sepa.id);
+ await assert.rejects(()=>loadOfficialWeb({...sepa,url:"https://beta.sepa.scot/regulation/waste/duty-of-care/"},async()=>assert.fail("Do not revisit the redirected former host")),OfficialWebUnavailable);
 });
 
 test("partial responses and publisher interstitials never enter the publication history",async()=>{
