@@ -36,6 +36,16 @@ test("evidence assurance: real PDF content, scoped reuse, independent decisions,
     const decisions=[];
     for(const c of candidates)decisions.push(await decideCandidate(reviewer,run.id,{candidateKey:c.key,decision:"ACCEPTED",rationale:notes,title:c.quote.slice(0,100),ownerName:"Fictional owner",dueDate:"2027-01-31"}));
     const task=decisions[0].obligationId!,secondTask=decisions[1].obligationId!;
+    await db.obligation.createMany({data:Array.from({length:101},(_,i)=>({
+      organizationId:ids[0],title:"Earlier source-linked task "+i,category:"Quality",ownerName:"Fixture",
+      dueDate:new Date("2026-01-01"),originKey:"older-"+i
+    }))});
+    const deepLink=await assuranceWorkspace(reviewer,task);
+    assert.equal(deepLink.taskLimitReached,true);
+    assert.equal(deepLink.selectedTaskId,task);
+    assert.equal(deepLink.tasks[0].id,task);
+    assert.equal(deepLink.tasks.filter(t=>t.id===task).length,1);
+    await assert.rejects(()=>assuranceWorkspace(outside,task),(e:any)=>e.status===404);
     const evidence=await createEvidence(uploader,task,"fictional-training.pdf",pdf,{storage:store,scan:clean});
     await reviewEvidence(reviewer,evidence.id,{decision:"APPROVED",version:1,notes},store);
     const policy=await createEvidence(uploader,secondTask,"fictional-policy.pdf",fixturePdf([["Widget staff will complete training. No completed training record was available for this fictional site."]]),{storage:store,scan:clean});

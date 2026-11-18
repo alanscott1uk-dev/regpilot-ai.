@@ -47,7 +47,10 @@ export default function WorkHub(){
     const params=new URLSearchParams(window.location.search),desired=params.get('organizationId');
     if(sessionUser.current!==value.userId){setCreating(false);setDraft({title:'',category:'Internal',notes:'',dueDate:'',assigneeId:''});generation.current++;setLoaded(null);setSelected([]);setPreview(null);setTaskId('');setDetail(null);setNotice('');setAssignee('keep');setDue('');setReason('');}
     sessionUser.current=value.userId;setSession(value);
-    setOrgId(current=>value.organisations.some((o:{id:string})=>o.id===current)?current:value.organisations.find((o:{id:string})=>o.id===desired)?.id||value.organisations[0]?.id||'');
+    if(desired && !value.organisations.some((o:{id:string})=>o.id===desired)){
+     setOrgId('');setTaskId('');setError('The linked organisation is unavailable for this account.');return;
+    }
+    setOrgId(desired||value.organisations[0]?.id||'');
     try{const initial=parseWorkQuery(params);setQuery(initial);setSearch(initial.q);}catch{setQuery({view:'open',q:'',page:1});}
     const selectedTask=params.get('taskId');if(workUuid(selectedTask))setTaskId(selectedTask);
     setError('');
@@ -84,6 +87,12 @@ export default function WorkHub(){
  const data=loaded?.key===queryKey?loaded.data:null,current=detail?.key===scope+':'+taskId?detail.data:null;
  const org=session?.organisations.find(o=>o.id===orgId),admin=!!org&&['OWNER','ADMIN'].includes(org.role);
  const selectionChanged=()=>{setPreview(null);setNotice('');};
+ function showTask(id:string){
+  const url=new URL(window.location.href);
+  if(id)url.searchParams.set('taskId',id);else url.searchParams.delete('taskId');
+  window.history.replaceState(window.history.state,'',url.pathname+url.search);
+  setTaskId(id);
+ }
  function changeView(next:WorkQuery){generation.current++;setSelected([]);setPreview(null);setQuery(next);setNotice('');}
  function pick(task:Selection,checked:boolean){selectionChanged();setSelected(items=>checked?[...items.filter(x=>x.id!==task.id),{id:task.id,title:task.title,updatedAt:task.updatedAt}]:items.filter(x=>x.id!==task.id));}
  const planInput=()=>({items:selected.map(({id,updatedAt})=>({id,updatedAt})),changes:{...(assignee!=='keep'?{assigneeId:assignee==='unassigned'?null:assignee}:{}),...(due?{dueDate:due}:{})},reason});
@@ -109,7 +118,7 @@ export default function WorkHub(){
  }
  const taskCard=(task:Inbox['items'][number])=><article className={styles.task} key={task.id}>
   {admin&&<input aria-label={'Select '+task.title} type="checkbox" disabled={busy||!task.canPlan} checked={selected.some(x=>x.id===task.id)} onChange={e=>pick(task,e.target.checked)}/>}
-  <button type="button" className={styles.taskOpen} onClick={()=>setTaskId(task.id)}><span className={styles.category}>{task.category}</span><strong>{task.title}</strong><span>{task.assignee?.email||task.ownerName} · Due {date(task.dueDate)}</span><span className={styles.metadata}>{task._count.evidence} evidence file{task._count.evidence===1?'':'s'}{task.evidenceToReview?' · Independent review pending':''}{task.managedControl?' · '+task.managedControl.title:''}</span></button>
+  <button type="button" className={styles.taskOpen} onClick={()=>showTask(task.id)}><span className={styles.category}>{task.category}</span><strong>{task.title}</strong><span>{task.assignee?.email||task.ownerName} · Due {date(task.dueDate)}</span><span className={styles.metadata}>{task._count.evidence} evidence file{task._count.evidence===1?'':'s'}{task.evidenceToReview?' · Independent review pending':''}{task.managedControl?' · '+task.managedControl.title:''}</span></button>
   <span className={styles.badge} data-status={task.status}>{statusLabel(task.status)}</span>
  </article>;
  return <div className={shell.app}><WorkspaceNav/><main className={shell.main}>
@@ -118,9 +127,9 @@ export default function WorkHub(){
   {error&&<div className={styles.error} role="alert">{error} <button type="button" onClick={()=>{if(session)setReload(x=>x+1);else{setSessionBusy(true);setSessionRetry(x=>x+1);}}}>Retry loading</button></div>}
   {notice&&<p className={styles.notice} role="status">{notice}</p>}
   {sessionBusy&&<p role="status">Loading your workspace…</p>}
-  {!sessionBusy&&!orgId&&<section className={styles.empty}><h2>{session?'Create your organisation':'Sign in to your work hub'}</h2>{session?<a href="/team">Create organisation →</a>:<EmailSignIn destination="/team/work"/>}</section>}
+  {!sessionBusy&&!orgId&&<section className={styles.empty}><h2>{session?(session.organisations.length?'Choose a workspace':'Create your organisation'):'Sign in to your work hub'}</h2>{session?(session.organisations.length?session.organisations.map(o=><p key={o.id}><a href={'/team/work?'+new URLSearchParams({organizationId:o.id})}>{o.name}</a></p>):<a href="/team">Create organisation →</a>):<EmailSignIn destination="/team/work"/>}</section>}
   {orgId&&<>
-   <div className={styles.toolbar}><label>Organisation<select aria-label="Organisation" value={orgId} disabled={busy} onChange={e=>{identity.current='';resetWork();setOrgId(e.target.value);setQuery({view:'open',q:'',page:1});setSearch('');}}>{session?.organisations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></label><span className={styles.hint}>Recorded work, not a compliance score. All deadlines use UTC calendar dates.</span></div>
+   <div className={styles.toolbar}><label>Organisation<select aria-label="Organisation" value={orgId} disabled={busy} onChange={e=>{identity.current='';resetWork();showTask('');setOrgId(e.target.value);setQuery({view:'open',q:'',page:1});setSearch('');}}>{session?.organisations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></label><span className={styles.hint}>Recorded work, not a compliance score. All deadlines use UTC calendar dates.</span></div>
    {creating&&org?.role!=='VIEWER'&&<section className={styles.planner} aria-label="Create task"><h2>Create an owned task</h2><form onSubmit={e=>void createTask(e)}><div className={styles.fields}>
     <label>Task title<input required maxLength={160} value={draft.title} disabled={busy} onChange={e=>setDraft(x=>({...x,title:e.target.value}))}/></label>
     <label>Task category<input required maxLength={80} value={draft.category} disabled={busy} onChange={e=>setDraft(x=>({...x,category:e.target.value}))}/></label>
@@ -146,10 +155,10 @@ export default function WorkHub(){
     {preview&&<section className={styles.preview} aria-label="Change preview"><h3>Check the changes before applying</h3><ul>{preview.items.map(item=><li key={item.id}><strong>{item.title}</strong><span>{item.before.ownerName} → {item.after.ownerName}</span><span>Due {date(item.before.dueDate)} → {date(item.after.dueDate)}</span></li>)}</ul><p>{preview.reason}</p><button type="button" disabled={busy} onClick={()=>void plan('apply')}>Apply {preview.items.length} reviewed change{preview.items.length===1?'':'s'}</button><p className={styles.hint}>Changed records or permissions invalidate this preview. The whole batch succeeds or none of it is saved.</p></section>}
    </section>}
   </>}
-  <dialog ref={dialog} className={styles.dialog} aria-labelledby="work-detail-title" onCancel={()=>setTaskId('')} onClose={()=>setTaskId('')}><div className={styles.dialogTop}><span className={styles.eyebrow}>TASK CONTEXT</span><button type="button" aria-label="Close task details" onClick={()=>setTaskId('')}>Close ×</button></div><h2 id="work-detail-title">{current?.task.title||'Task details'}</h2>
+  <dialog ref={dialog} className={styles.dialog} aria-labelledby="work-detail-title" onCancel={()=>showTask('')} onClose={()=>{if(!dialog.current?.open&&taskId)showTask('');}}><div className={styles.dialogTop}><span className={styles.eyebrow}>TASK CONTEXT</span><button type="button" aria-label="Close task details" onClick={()=>showTask('')}>Close ×</button></div><h2 id="work-detail-title">{current?.task.title||'Task details'}</h2>
    {detailError&&<p className={styles.error} role="alert">{detailError}</p>}{!current&&!detailError&&<p role="status">Loading task context…</p>}
    {current&&<><div className={styles.detailMeta}><span className={styles.badge}>{statusLabel(current.task.status)}</span><span>Due {date(current.task.dueDate)}</span><span>{current.task.assignee?.email||current.task.ownerName}</span></div><p>{current.task.notes||'No additional task notes have been recorded.'}</p>
-    <section className={styles.nextStep}><h3>Next step</h3><div className={styles.actions}>{current.canStart&&<button type="button" disabled={busy} onClick={()=>void startTask()}>Start task</button>}<a href={current.workflow.href}>{current.workflow.label} →</a>{current.canPlan&&<button type="button" disabled={busy} onClick={()=>{setSelected([{id:current.task.id,title:current.task.title,updatedAt:current.task.updatedAt}]);setPreview(null);setAssignee('keep');setDue('');setReason('');setTaskId('');setTimeout(()=>document.querySelector('[aria-label="Bulk planning"]')?.scrollIntoView({block:'start'}),0);}}>Plan owner or deadline</button>}</div>{current.planningBlocked&&<p>{current.planningBlocked}</p>}</section>
+    <section className={styles.nextStep}><h3>Next step</h3><div className={styles.actions}>{current.canStart&&<button type="button" disabled={busy} onClick={()=>void startTask()}>Start task</button>}<a href={current.workflow.href}>{current.workflow.label} →</a>{current.canPlan&&<button type="button" disabled={busy} onClick={()=>{setSelected([{id:current.task.id,title:current.task.title,updatedAt:current.task.updatedAt}]);setPreview(null);setAssignee('keep');setDue('');setReason('');showTask('');setTimeout(()=>document.querySelector('[aria-label="Bulk planning"]')?.scrollIntoView({block:'start'}),0);}}>Plan owner or deadline</button>}</div>{current.planningBlocked&&<p>{current.planningBlocked}</p>}</section>
     <section><h3>Source and control context</h3>{current.task.managedControl?<p>Linked control: <strong>{current.task.managedControl.title}</strong>{!current.task.managedControl.enabled?' (paused)':''}</p>:<p>No managed control is directly linked.</p>}
      {safeWorkSource(current.task.sourceUrl)&&<a href={safeWorkSource(current.task.sourceUrl)!} target="_blank" rel="noopener noreferrer">Open recorded source reference ↗</a>}
      {current.task.intelligenceDecisions.map(decision=><article className={styles.reference} key={decision.id}><strong>{decision.run.snapshot.title}</strong><span>Recorded decision: {statusLabel(decision.decision)} · Source checked {date(decision.run.snapshot.lastCheckedAt)}</span>{safeWorkSource(decision.run.snapshot.url)&&<a href={safeWorkSource(decision.run.snapshot.url)!} target="_blank" rel="noopener noreferrer">Read publication ↗</a>}</article>)}

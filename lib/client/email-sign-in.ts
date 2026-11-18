@@ -1,6 +1,6 @@
 "use client";
 import {browserAuth} from './supabase-auth';
-import {authProblem,cooldownSeconds,signInDestination} from '../auth-flow.mjs';
+import {authProblem,cooldownSeconds,signInDestination,taskReturnIntent,WORK_RETURN_KEY} from '../auth-flow.mjs';
 const key='regpilot.sign-in.cooldown.v1';
 let until=0,pending=false;
 export function signInWait(){
@@ -18,6 +18,11 @@ export async function requestSignIn(email:string,path:string){
  // Reserve the resend interval before the network call, including across page reloads.
  pause(60);
  try{
+  const intent = path === '/team/work' ? taskReturnIntent(location.pathname, location.search, email) : null;
+  try {
+   if (intent) localStorage.setItem(WORK_RETURN_KEY, JSON.stringify(intent));
+   else localStorage.removeItem(WORK_RETURN_KEY);
+  } catch {}
   const {error}=await browserAuth().auth.signInWithOtp({email:email.trim(),options:{shouldCreateUser:false,emailRedirectTo:window.location.origin+signInDestination(path)}});
   if(error){const problem=authProblem(error);if(problem.seconds)pause(problem.seconds);return {ok:false,message:problem.message};}
   return {ok:true,message:'Sign-in link requested. Check your inbox and junk folder. Open the latest email in this same browser and on this same device.'};

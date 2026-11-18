@@ -61,3 +61,17 @@ test('URL errors and legacy token links are not silently accepted',async()=>{
   const f=fixture(),r=await resolveSignInReturn(callback,'/register',f.auth,()=>false);assert.equal(r.ok,false);assert.deepEqual(f.calls,['initialize']);
  }
 });
+
+test('a verified work callback resumes only a recent task link for the requesting account',async()=>{
+ const {taskReturnIntent,taskReturnPath}=await import('../lib/auth-flow.mjs');
+ const org='123e4567-e89b-42d3-a456-426614174000',task='123e4567-e89b-42d3-a456-426614174001';
+ const query='?organizationId='+org+'&taskId='+task;
+ const intent=taskReturnIntent('/team/evidence',query+'&other=discard','A@example.invalid',100);
+ const resume=email=>taskReturnPath(intent,email,200);
+ const f=fixture({user:{email:'a@example.invalid'}});
+ assert.equal((await resolveSignInReturn(info,'/team/work',f.auth,()=>false,resume)).destination,'/team/evidence'+query);
+ assert.equal(resume('someone@example.invalid'),null);
+ assert.equal(taskReturnPath(intent,'a@example.invalid',3600101),null);
+ assert.equal(taskReturnPath({...intent,path:'//example.invalid'},'a@example.invalid',200),null);
+ assert.equal(taskReturnIntent('/team/work','?taskId=missing','a@example.invalid'),null);
+});

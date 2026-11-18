@@ -38,3 +38,65 @@ jobs:
           name: regpilot-usability-browser-evidence
           path: artifacts/usability/
           retention-days: 14
+
+  private-evidence-journey:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/regpilot_journey
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      REGPILOT_WORKSPACE_ENABLED: "true"
+      REGPILOT_EVIDENCE_ENABLED: "true"
+      REGPILOT_AI_ALLOWED_EMAILS: editor@example.test,reviewer@example.test
+      REGPILOT_EVIDENCE_BUCKET: journey-files
+      REGPILOT_CLAMD_HOST: 127.0.0.1
+      REGPILOT_AI_ENABLED: "false"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb
+        with:
+          version: 2.83.0
+      - name: Start disposable Auth, mailbox, private Storage and database
+        run: |
+          mkdir -p "$RUNNER_TEMP/journey"
+          cd "$RUNNER_TEMP/journey"
+          supabase init --yes
+          sed -i '/^additional_redirect_urls =/c\additional_redirect_urls = ["http://127.0.0.1:3000/team/work"]' supabase/config.toml
+          supabase start -x realtime,imgproxy,postgres-meta,studio,edge-runtime,logflare,vector,supavisor > "$RUNNER_TEMP/journey-start.log" 2>&1 || { docker ps -a --format '{{.Names}} {{.Status}}'; exit 1; }
+          supabase status -o json > "$RUNNER_TEMP/journey-config.json"
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const keys=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/journey-config.json'));
+          for(const [name,value] of Object.entries({NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:keys.ANON_KEY,SUPABASE_SECRET_KEY:keys.SERVICE_ROLE_KEY})){
+            if(typeof value!=='string'||!value)throw Error('Missing local test credentials');
+            console.log('::add-mask::'+value);
+            fs.appendFileSync(process.env.GITHUB_ENV,name+'='+value+'\n');
+          }
+          JS
+          psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE regpilot_journey'
+      - name: Start local ClamAV engine with a deterministic test signature
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clamav-daemon
+          mkdir -p "$RUNNER_TEMP/journey-scanner"
+          cd "$RUNNER_TEMP/journey-scanner"
+          echo 'RegPilot.Journey.Fixture:0:*:52454750494c4f545f5343414e5f46495854555245' > fixture.ndb
+          printf 'TCPSocket 3310\nTCPAddr 127.0.0.1\nDatabaseDirectory %s\nLogFile %s\n' "$PWD" "$PWD/scan.log" > clamd.conf
+          /usr/sbin/clamd --config-file="$PWD/clamd.conf"
+      - run: npm ci --no-audit --no-fund
+      - run: npm install --no-save --package-lock=false playwright@1.55.1 && npx playwright install --with-deps chromium
+      - name: Build and run against the isolated application database
+        run: |
+          npx prisma db push --skip-generate
+          npm run build
+          node_modules/.bin/next start -H 127.0.0.1 -p 3000 > "$RUNNER_TEMP/journey-next.log" 2>&1 &
+          app_pid=$!
+          trap 'kill "$app_pid" || true' EXIT
+          curl -fsS --retry 25 --retry-delay 1 --retry-connrefused http://127.0.0.1:3000/api/health > /dev/null
+          node scripts/evidence-journey.mjs

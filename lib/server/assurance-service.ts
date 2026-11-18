@@ -13,7 +13,7 @@ import {hashValue,type Analysis} from "../regulatory/intelligence";
 import {ASSURANCE_ENGINE,contentAssessment,groundedAssessment,assertPassages,type AssuranceResult,type EvidenceDocument,type EvidenceManifest} from "../evidence/assurance";
 import {generateAssurance,type AssuranceModelInput} from "./assurance-model";
 import {reserveAiRequest,DailyLimitError} from "./ai-meter";
-import {EvidenceError} from "../evidence/file-guard.mjs";
+import {EvidenceError,MAX_ORG_EVIDENCE_FILES} from "../evidence/file-guard.mjs";
 
 export function assuranceConfigured(){return evidenceConfigured()&&process.env.REGPILOT_ASSURANCE_ENABLED==="true";}
 export function assuranceAiConfigured(){return assuranceConfigured()&&aiConfigured()&&process.env.REGPILOT_ASSURANCE_AI_ENABLED==="true"&&process.env.REGPILOT_AI_SAFEGUARDS_VERIFIED==="true";}
@@ -120,10 +120,18 @@ export async function completionAssessment(tx:Prisma.TransactionClient,organizat
 }
 export async function assuranceWorkspace(ctx:AuthorizedContext,taskId?:string){
   if(taskId&&!uuid(taskId))throw new IntelligenceError("Invalid task identifier");
-  const [tasks,evidence]=await Promise.all([
-    db.obligation.findMany({where:{organizationId:ctx.organizationId,originKey:{not:null}},orderBy:[{dueDate:"asc"},{id:"asc"}],take:100,select:{id:true,title:true,status:true,ownerName:true,dueDate:true}}),
-    db.evidence.findMany({where:{organizationId:ctx.organizationId},orderBy:{createdAt:"desc"},take:120,select:{id:true,obligationId:true,filename:true,sha256:true,reviewVersion:true,reviewStatus:true,scanStatus:true,uploadedById:true,reviewerId:true}})
+  const taskSelect={id:true,title:true,status:true,ownerName:true,dueDate:true} as const;
+  const taskScope={organizationId:ctx.organizationId,originKey:{not:null}};
+  const [page,evidence]=await Promise.all([
+    db.obligation.findMany({where:taskScope,orderBy:[{dueDate:"asc"},{id:"asc"}],take:101,select:taskSelect}),
+    db.evidence.findMany({where:{organizationId:ctx.organizationId},orderBy:{createdAt:"desc"},take:MAX_ORG_EVIDENCE_FILES,select:{id:true,obligationId:true,filename:true,sha256:true,reviewVersion:true,reviewStatus:true,scanStatus:true,uploadedById:true,reviewerId:true}})
   ]);
+  const tasks=page.slice(0,100);
+  if(taskId && !tasks.some(task=>task.id===taskId)){
+    const linked=await db.obligation.findFirst({where:{...taskScope,id:taskId},select:taskSelect});
+    if(!linked)throw new IntelligenceError("Source-linked task unavailable in this organisation",404);
+    tasks.unshift(linked);
+  }
   const selected=taskId||tasks[0]?.id;let source:null|{quote:string;title:string;url:string;hash:string}=null,contextIssue:string|null=null;
   const assessments=selected?await db.assuranceAssessment.findMany({where:{organizationId:ctx.organizationId,obligationId:selected},orderBy:{createdAt:"desc"},take:10}):[];
   if(selected){try{const c=await context(db,ctx.organizationId,selected,[]);source={quote:c.candidate.quote,title:c.snapshot.title,url:c.snapshot.url,hash:c.snapshot.contentHash};}catch(error){if(error instanceof IntelligenceError&&error.status===404)throw error;contextIssue=error instanceof IntelligenceError?error.message:"Source context unavailable";}}
@@ -133,7 +141,7 @@ export async function assuranceWorkspace(ctx:AuthorizedContext,taskId?:string){
   }));
   const accepted=reviews.find(r=>r.status==="ACCEPTED"&&r.current),latest=reviews[0];
   const nextStep=contextIssue||(!selected?"Accept a source recommendation in the regulatory inbox first.":accepted?"Evidence assessment is current. Check the task outcome before marking it complete.":latest?.status==="DRAFT"&&latest.current?"An independent administrator can now check the quoted passages and record a scoped decision.":latest?.reason?latest.reason:"Choose supporting files and prepare a content-level assessment.");
-  return {tasks,evidence,selectedTaskId:selected||null,source,contextIssue,assessments:reviews,nextStep,aiEnabled:assuranceAiConfigured(),taskLimitReached:tasks.length===100};
+  return {tasks,evidence,selectedTaskId:selected||null,source,contextIssue,assessments:reviews,nextStep,aiEnabled:assuranceAiConfigured(),taskLimitReached:page.length>100};
 }
 export async function exportAssurance(ctx:AuthorizedContext,id:string){
   if(!uuid(id))throw new IntelligenceError("Invalid assessment identifier");

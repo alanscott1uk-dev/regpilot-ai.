@@ -1,6 +1,6 @@
 "use client";
 import {createClient} from "@supabase/supabase-js";
-import {callbackInfo,cleanAuthUrl,authProblem,signInDestination,resolveSignInReturn} from '../auth-flow.mjs';
+import {callbackInfo,cleanAuthUrl,authProblem,signInDestination,resolveSignInReturn,taskReturnPath,WORK_RETURN_KEY} from '../auth-flow.mjs';
 let client:ReturnType<typeof createClient>|null=null;
 let incoming:ReturnType<typeof callbackInfo>=null;
 let incomingPath='/team';
@@ -26,7 +26,13 @@ export function completeSignInReturn():Promise<ReturnResult>|null{
   const destination=signInDestination(path);
   try{
    // Observe the SDK's single initialization; never exchange the one-use code a second time.
-   return await resolveSignInReturn(info,path,browserAuth().auth,()=>!!callbackInfo(window.location.search,window.location.hash)?.hasCode);
+   return await resolveSignInReturn(info,path,browserAuth().auth,()=>!!callbackInfo(window.location.search,window.location.hash)?.hasCode, email => {
+    try {
+     const raw = localStorage.getItem(WORK_RETURN_KEY);
+     localStorage.removeItem(WORK_RETURN_KEY);
+     return raw && taskReturnPath(JSON.parse(raw),email);
+    } catch { return null; }
+   });
   }catch(error){return {ok:false,message:authProblem(error).message,destination};}
   finally{window.history.replaceState(window.history.state,'',cleanAuthUrl(window.location.href));}
  })();

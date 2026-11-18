@@ -18,7 +18,7 @@ export function DocumentReader({organizationId,evidenceId,request}:{organization
       <label>Find text in this document<input type="search" value={search} onChange={e=>{setSearch(e.target.value);setLimit(20);}} placeholder="Search a policy, date or responsibility…"/></label>
       <p role="status">{visible.length} matching locations</p><div className={ui.readingPane}>{visible.slice(0,limit).map(u=><article key={u.page}><strong>{locationLabel(u.page,result.coverage.unitKind,u.label)}</strong><pre>{u.text}</pre></article>)}</div>
       {visible.length>limit&&<button onClick={()=>setLimit(n=>n+20)}>Show 20 more locations</button>}
-      <a href="/team/operations">Use documents to prepare a programme ↗</a>
+      <a href={"/team/operations?"+new URLSearchParams({view:"programme",organizationId})}>Use documents to prepare a programme ↗</a>
     </>}
   </details>;
 }

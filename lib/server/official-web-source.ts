@@ -9,14 +9,14 @@ export function officialMainText(html:string,heading:string){
  // Ignore commented templates and scripts before locating the single semantic main region.
  const clean=html.replace(/<!--[\s\S]*?-->/g,"").replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi,"");
  const blocks=[...clean.matchAll(/<(main)\b[^>]*>|<(div)\b(?=[^>]*\brole\s*=\s*["']main["'])[^>]*>/gi)];
- if(blocks.length!==1)throw new OfficialWebUnavailable("Official page layout changed; inspect the original");
+ if(blocks.length!==1)throw new OfficialWebUnavailable("Official page layout changed; inspect the original","MAIN_REGION_COUNT");
  const start=blocks[0],tag=start[1]||start[2],offset=start.index!+start[0].length,tail=clean.slice(offset),tags=new RegExp(`<\\/?${tag}\\b[^>]*>`,"gi");let depth=1,end=-1;
  for(const t of tail.matchAll(tags)){depth+=t[0].startsWith("</")?-1:1;if(depth===0){end=t.index!;break;}}
- if(end<0)throw new OfficialWebUnavailable("Official page main region is incomplete");
+ if(end<0)throw new OfficialWebUnavailable("Official page main region is incomplete","MAIN_REGION_INCOMPLETE");
  const main=tail.slice(0,end),titles=[...main.matchAll(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/gi)];
- if(titles.length!==1||!plain(titles[0][1]).toLowerCase().includes(heading.toLowerCase()))throw new OfficialWebUnavailable("Official page identity changed; inspect the original");
+ if(titles.length!==1||!plain(titles[0][1]).toLowerCase().includes(heading.toLowerCase()))throw new OfficialWebUnavailable("Official page identity changed; inspect the original","HEADING_MISMATCH");
  const text=plain(main);
- if(text.length<200||text.length>60000||/access denied|verify you are human|checking your browser|page not found/i.test(plain(titles[0][1])))throw new OfficialWebUnavailable("Official publication text is unavailable or exceeds the supported size");
+ if(text.length<200||text.length>60000||/access denied|verify you are human|checking your browser|page not found/i.test(plain(titles[0][1])))throw new OfficialWebUnavailable("Official publication text is unavailable or exceeds the supported size","PUBLICATION_BODY_INVALID");
  return text;
 }
 export async function loadOfficialWeb(source:RegulatorySource,fetcher:typeof fetch=fetch){
@@ -28,7 +28,7 @@ export async function loadOfficialWeb(source:RegulatorySource,fetcher:typeof fet
  if(!response.ok){await response.body?.cancel();throw new OfficialWebUnavailable("Official page returned an unsuccessful status","HTTP_STATUS",response.status);}
  if(!response.headers.get("content-type")?.includes("text/html")||response.url&&response.url!==known.url){await response.body?.cancel();throw new OfficialWebUnavailable("Official page unavailable, moved or unsupported","RESPONSE_IDENTITY_OR_TYPE");}
  const reader=response.body?.getReader();if(!reader)throw new OfficialWebUnavailable("Official page was empty");const chunks:Uint8Array[]=[];let bytes=0;
- try{while(true){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>1000000)throw new OfficialWebUnavailable("Official page exceeds the safe size limit");chunks.push(value);}}finally{await reader.cancel().catch(()=>{});}
+ try{while(true){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>1000000)throw new OfficialWebUnavailable("Official page exceeds the safe size limit","RESPONSE_TOO_LARGE");chunks.push(value);}}finally{await reader.cancel().catch(()=>{});}
  const text=officialMainText(Buffer.concat(chunks).toString("utf8"),known.heading);
  // Fetch time and HTML Last-Modified are not asserted as a legal effective date or publisher revision date.
  return {id:known.id,title:known.title,url:known.url,updatedAt:null,revisionAt:null,text};

@@ -30,7 +30,7 @@ export async function listEvidence(ctx:AuthorizedContext,obligationId:string){
  if(!idOk(obligationId))throw new EvidenceError("Invalid task ID",400);
  const task=await db.obligation.findFirst({where:{id:obligationId,organizationId:ctx.organizationId},select:{id:true}});
  if(!task)throw new EvidenceError("Task not found",404);
- const rows=await db.evidence.findMany({where:{organizationId:ctx.organizationId,obligationId},orderBy:{createdAt:"desc"},take:100});
+ const rows=await db.evidence.findMany({where:{organizationId:ctx.organizationId,obligationId},orderBy:[{createdAt:"desc"},{id:"desc"}],take:MAX_ORG_EVIDENCE_FILES});
  return rows.map(recordView);
 }
 

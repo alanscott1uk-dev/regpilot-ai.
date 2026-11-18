@@ -62,7 +62,12 @@ export default function AiStudio(){
    if(!response.ok){setMessage(json.error||"Access unavailable");setUser(null);return}
    setUser({email:json.email,id:json.userId||""});setOwner(o=>o||json.email||"");
    const list:Array<Org>=Array.isArray(json.organisations)?json.organisations:[];
-   setOrganisations(list);setOrgId(prev=>list.some(o=>o.id===prev)?prev:list[0]?.id||"");
+   const requested=new URLSearchParams(location.search).get("organizationId");
+   setOrganisations(list);
+   if(requested && !list.some(o=>o.id===requested)){
+    setOrgId("");setEvidenceId("");setSelectedDocument("");
+    setMessage("This link belongs to an unavailable organisation. Choose a workspace to start a new review.");
+   }else setOrgId(requested||list[0]?.id||"");
   }catch(e){setMessage(e instanceof Error?e.message:"Cannot access pilot account")}finally{setAuthReady(true)}
  },[]);
  useEffect(()=>{
@@ -248,7 +253,7 @@ export default function AiStudio(){
      <div className={ui.sectionHead}><span>01 / ACCESS</span><h2>Secure pilot session</h2></div>
      {user?<div className={ui.session}><div><strong>{user.email}</strong><small>Verified pilot email</small></div><button type="button" onClick={()=>void signOut()}>Sign out</button></div>:
       <EmailSignIn destination="/ai" disabled={working||workspaceFeature!==true}/>}
-     {user&&organisations.length>0&&<label className={ui.fieldLabel}>Authorised business<select value={orgId} onChange={e=>setOrgId(e.target.value)}>{organisations.map(o=><option key={o.id} value={o.id}>{o.name} ({o.role})</option>)}</select></label>}
+     {user&&organisations.length>0&&<label className={ui.fieldLabel}>Authorised business<select value={orgId} disabled={busy||reviewBusy} onChange={e=>window.location.assign("/ai?"+new URLSearchParams({organizationId:e.target.value}))}>{!orgId&&<option value="">Choose an organisation</option>}{organisations.map(o=><option key={o.id} value={o.id}>{o.name} ({o.role})</option>)}</select></label>}
      {user&&organisations.length===0&&<form className={ui.smallForm} onSubmit={bootstrap}><label>Pilot business name<input value={company} minLength={3} maxLength={100} onChange={e=>setCompany(e.target.value)}/></label><button disabled={working}>Set up pilot company</button></form>}
      <div className={ui.sectionHead}><span>02 / AI WORKFLOW</span><h2>What should RegPilot review?</h2></div>
      <div className={ui.modes}>{([{id:"document",name:"Review a policy"},{id:"change",name:"Assess regulatory impact"},{id:"assistant",name:"Ask RegPilot"}] as const).map(m=><button type="button" key={m.id} className={mode===m.id?ui.modeActive:ui.mode} onClick={()=>{setMode(m.id);setResult(null);}}>{m.name}</button>)}</div>
