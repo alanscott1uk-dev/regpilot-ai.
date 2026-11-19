@@ -29,12 +29,14 @@ export default function AssuranceWorkspace(){
   const [notes,setNotes]=useState(""),[until,setUntil]=useState(""),[scope,setScope]=useState(false),[originals,setOriginals]=useState(false);
   const [orgUnavailable,setOrgUnavailable]=useState(false),[renewal,setRenewal]=useState<Renewal|null>(null),[renewing,setRenewing]=useState(false),[renewalLoading,setRenewalLoading]=useState(false),[renewalUncertain,setRenewalUncertain]=useState(false),[renewalRefresh,setRenewalRefresh]=useState(0);
   const [uncertain,setUncertain]=useState<{taskId:string;assessmentId:string;operation:'prepare'|'decision'}|null>(null);
-  const active=useRef({orgId,taskId}),generation=useRef(0),operation=useRef(0),writeLock=useRef(false),authSubject=useRef('');
+  const active=useRef({orgId,taskId}),generation=useRef(0),operation=useRef(0),writeLock=useRef(false),authSubject=useRef(''),accountEpoch=useRef(0);
   useEffect(()=>{active.current={orgId,taskId};},[orgId,taskId]);
   const request=useCallback(async(path:string,opts:RequestInit={})=>{
-    const expectedGeneration=generation.current,expectedSubject=authSubject.current;
+    const expectedGeneration=generation.current,expectedSubject=authSubject.current,expectedAccount=accountEpoch.current;
     const session=(await browserAuth().auth.getSession()).data.session;
-    const valid=()=>generation.current===expectedGeneration&&(!expectedSubject||session?.user.id===expectedSubject)&&(!authSubject.current||session?.user.id===authSubject.current);
+    // Identity discovery is not tied to a selected task. Clearing the old task
+    // during an account switch must not invalidate the new account's context.
+    const valid=()=>accountEpoch.current===expectedAccount&&(path==='/api/ai/context'||generation.current===expectedGeneration)&&(!expectedSubject||session?.user.id===expectedSubject)&&(!authSubject.current||session?.user.id===authSubject.current);
     if(!valid())throw new Error('Your account or task changed. Reload before continuing.');
     const token=session?.access_token;
     if(!token)throw new Error("Sign in through your team workspace first.");
@@ -46,8 +48,8 @@ export default function AssuranceWorkspace(){
   useEffect(()=>{
     let alive=true,sequence=0;const abort=new AbortController();let unsubscribe=()=>{};
     async function load(){const seq=++sequence;try{const response=await request("/api/ai/context",{signal:abort.signal}),body=await response.json();if(alive&&seq===sequence){const available:Org[]=body.organisations||[],preferred=active.current.orgId||new URLSearchParams(window.location.search).get("organizationId"),missing=!!preferred&&!available.some(o=>o.id===preferred);setOrgs(available);setUserId(body.userId||"");setOrgUnavailable(missing);setOrgId(preferred?(missing?"":preferred):available[0]?.id||"");if(missing){generation.current++;setData(null);setNotice("The requested organisation is unavailable to this account. Choose an available organisation explicitly to continue.");}}}catch(e){if(alive&&seq===sequence){generation.current++;setData(null);setOrgId("");setUserId("");setOrgs([]);setNotice(e instanceof Error?e.message:"Sign in first");}}finally{if(alive)setLoading(false);}}
-    try{const {data:auth}=browserAuth().auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_OUT"||authSubject.current&&session?.user.id!==authSubject.current){generation.current++;operation.current++;writeLock.current=false;setBusy(false);sequence++;active.current={orgId:"",taskId:""};setData(null);setSelected('');setUncertain(null);setFiles([]);setPassages([]);setNotes('');setUserId("");setOrgId("");setOrgs([]);}authSubject.current=session?.user.id||'';if(event!=="SIGNED_OUT")setTimeout(()=>{if(alive)void load();},0);});unsubscribe=()=>auth.subscription.unsubscribe();void load();}catch{setNotice("Private workspace sign-in is not configured.");setLoading(false);}
-    return()=>{alive=false;generation.current++;operation.current++;abort.abort();unsubscribe();};
+    try{const {data:auth}=browserAuth().auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_OUT"||authSubject.current&&session?.user.id!==authSubject.current){accountEpoch.current++;generation.current++;operation.current++;writeLock.current=false;setBusy(false);sequence++;active.current={orgId:"",taskId:""};setData(null);setSelected('');setUncertain(null);setFiles([]);setPassages([]);setNotes('');setUserId("");setOrgId("");setOrgs([]);}authSubject.current=session?.user.id||'';if(event!=="SIGNED_OUT")setTimeout(()=>{if(alive)void load();},0);});unsubscribe=()=>auth.subscription.unsubscribe();void load();}catch{setNotice("Private workspace sign-in is not configured.");setLoading(false);}
+    return()=>{alive=false;accountEpoch.current++;generation.current++;operation.current++;abort.abort();unsubscribe();};
   },[request]);
   useEffect(()=>{setTaskId(new URLSearchParams(window.location.search).get("taskId")||"");},[]);
   const endpoint=useCallback((org:string,task:string,assessment='')=>"/api/workspace/assurance?"+new URLSearchParams({organizationId:org,...(task?{taskId:task}:{}),...(assessment?{assessmentId:assessment}:{})}),[]);

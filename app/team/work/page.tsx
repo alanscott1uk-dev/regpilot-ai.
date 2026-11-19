@@ -26,14 +26,14 @@ export default function WorkHub(){
  const [creating,setCreating]=useState(false),[draft,setDraft]=useState({title:'',category:'Internal',notes:'',dueDate:'',assigneeId:''});
  const [taskId,setTaskId]=useState(''),[detail,setDetail]=useState<{key:string;data:Detail}|null>(null),[detailError,setDetailError]=useState('');
  const [notice,setNotice]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[sessionRetry,setSessionRetry]=useState(0);
- const dialog=useRef<HTMLDialogElement>(null),mutation=useRef(false),generation=useRef(0),identity=useRef(''),sessionUser=useRef(''),authSubject=useRef('');
+ const dialog=useRef<HTMLDialogElement>(null),mutation=useRef(false),generation=useRef(0),identity=useRef(''),sessionUser=useRef(''),authSubject=useRef(''),accountEpoch=useRef(0);
  const scope=(session?.userId||'')+':'+orgId,queryKey=scope+':'+JSON.stringify(query);
  const refreshWork=useCallback(()=>setReload(value=>value+1),[]);
  identity.current=scope;
  const request=useCallback(async(path:string,options:RequestInit={})=>{
-  const expectedGeneration=generation.current,expectedSubject=authSubject.current;
+  const expectedGeneration=generation.current,expectedSubject=authSubject.current,expectedAccount=accountEpoch.current;
   const session=(await browserAuth().auth.getSession()).data.session;
-  const valid=()=>generation.current===expectedGeneration&&(!expectedSubject||session?.user.id===expectedSubject)&&(!authSubject.current||session?.user.id===authSubject.current);
+  const valid=()=>accountEpoch.current===expectedAccount&&(path==='/api/ai/context'||generation.current===expectedGeneration)&&(!expectedSubject||session?.user.id===expectedSubject)&&(!authSubject.current||session?.user.id===authSubject.current);
   if(!valid())throw new Error('Your account or workspace changed. Reload before continuing.');
   const token=session?.access_token;
   if(!token)throw new Error('Your session ended. Sign in again to continue.');
@@ -68,12 +68,12 @@ export default function WorkHub(){
   try{
    const auth=browserAuth().auth;
    const {data}=auth.onAuthStateChange((event,currentSession)=>{
-    if(event==='SIGNED_OUT'||authSubject.current&&currentSession?.user.id!==authSubject.current){serial++;identity.current='';generation.current++;setSession(null);setOrgId('');setCreating(false);setDraft({title:'',category:'Internal',notes:'',dueDate:'',assigneeId:''});setLoaded(null);setSelected([]);setPreview(null);setTaskId('');setDetail(null);setNotice('');setError('');setSessionBusy(event!=='SIGNED_OUT');}
+    if(event==='SIGNED_OUT'||authSubject.current&&currentSession?.user.id!==authSubject.current){serial++;identity.current='';accountEpoch.current++;generation.current++;setSession(null);setOrgId('');setCreating(false);setDraft({title:'',category:'Internal',notes:'',dueDate:'',assigneeId:''});setLoaded(null);setSelected([]);setPreview(null);setTaskId('');setDetail(null);setNotice('');setError('');setSessionBusy(event!=='SIGNED_OUT');}
     authSubject.current=currentSession?.user.id||'';
     if(event==='SIGNED_IN'||event==='INITIAL_SESSION')setTimeout(()=>{if(alive)void refreshSession();},0);
    });unsubscribe=()=>data.subscription.unsubscribe();void refreshSession();
   }catch{setError('Private workspace sign-in is not configured in this environment.');setSessionBusy(false);}
-  return()=>{alive=false;serial++;abort.abort();unsubscribe();generation.current++;};
+  return()=>{alive=false;serial++;abort.abort();unsubscribe();accountEpoch.current++;generation.current++;};
  },[request,sessionRetry]);
  useEffect(()=>{
   if(!orgId||!session)return;
