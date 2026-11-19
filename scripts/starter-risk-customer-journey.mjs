@@ -198,7 +198,7 @@ export async function riskCustomerJourney({review,upload,db,app,org,editor,revie
  await checkpoint('controlled evidence revision invalidates current risk reliance without rewriting history');
  // Deliberate isolated fixture change proves that a historical acceptance cannot
  // silently stand in for a current assessment after its evidence basis changes.
- await db.evidence.update({where:{id:evidenceId},data:{reviewVersion:{increment:1},reviewNotes:'Controlled fictional evidence review revision for the connected risk currentness acceptance check.'}});
+ await db.evidence.update({where:{id:evidenceId},data:{reviewVersion:{increment:1},reviewerNotes:'Controlled fictional evidence review revision for the connected risk currentness acceptance check.'}});
  const stale=await open(review,id);assert.equal(stale.selected.reviews[0].id,accepted.id);assert.equal(stale.selected.reviews[0].status,'ACCEPTED');assert.equal(stale.selected.reviews[0].current,false);assert.ok(stale.selected.reviews[0].reason);
  await residual(review).getByText('Not recorded',{exact:true}).waitFor();
  const frozen=await db.riskReview.findUniqueOrThrow({where:{id:accepted.id}});assert.deepEqual(frozen,accepted,'the original accepted review remains immutable when its basis changes');

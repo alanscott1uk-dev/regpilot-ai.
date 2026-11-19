@@ -77,6 +77,16 @@ test('risk acceptance follows actual treatment completion, byte verification and
   const accepted=await decideRiskReview(f.reviewer,prepared.id,decision(prepared.version,prepared.riskVersion),{storage:f.storage});assert.equal(accepted.status,'ACCEPTED');assert.equal((await decideRiskReview(f.reviewer,prepared.id,decision(prepared.version,prepared.riskVersion),{storage:f.storage})).reused,true);
   let workspace=await riskWorkspace(f.owner,{riskId:risk.id});assert.equal(workspace.selected?.latestReview?.current,true);assert.equal(workspace.selected?.risk.status,'ACCEPTED');assert.equal(workspace.selected?.treatments[0].completion.eventId,receipt.eventId);assert.equal(workspace.selected?.treatments[0].completion.current,true);
   const exported=await exportRisk(f.viewer,risk.id);assert.equal(exported.format,'regpilot-risk-record');assert.equal(exported.latestReview?.status,'ACCEPTED');assert.doesNotMatch(JSON.stringify(exported),/storageKey|evidenceManifest|contextHash|proposalHash/);
+  // Match the actual-browser controlled revision against the typed Prisma model.
+  const acceptedHistory=await db.riskReview.findUniqueOrThrow({where:{id:prepared.id}});
+  await db.evidence.update({where:{id:file.id},data:{reviewVersion:{increment:1},reviewerNotes:'Controlled fictional evidence review revision for the connected risk currentness acceptance check.'}});
+  const changedEvidence=await riskWorkspace(f.owner,{riskId:risk.id});
+  assert.equal(changedEvidence.selected?.latestReview?.current,false);
+  assert.equal(changedEvidence.selected?.latestReview?.status,'ACCEPTED');
+  assert.equal(changedEvidence.selected?.risk.score,12,'inherent rating is not rewritten by changed proof');
+  assert.deepEqual(await db.riskReview.findUniqueOrThrow({where:{id:prepared.id}}),acceptedHistory,'stale reliance preserves the original accepted review exactly');
+  await db.evidence.update({where:{id:file.id},data:{reviewVersion:fileRow.reviewVersion,reviewerNotes:fileRow.reviewerNotes}});
+  assert.equal((await riskWorkspace(f.owner,{riskId:risk.id})).selected?.latestReview?.current,true,'restore only the isolated fixture before exercising the separate permission boundary');
   await db.membership.update({where:{organizationId_userId:{organizationId:f.reviewer.organizationId,userId:f.reviewer.userId}},data:{role:'VIEWER'}});assert.equal((await riskWorkspace(f.owner,{riskId:risk.id})).selected?.latestReview?.current,false,'demoting the independent decision maker invalidates current reliance');await db.membership.update({where:{organizationId_userId:{organizationId:f.reviewer.organizationId,userId:f.reviewer.userId}},data:{role:'ADMIN'}});
   const updated=await updateRisk(f.editor,risk.id,{...fields(f.editor.userId),reviewDueAt:date(40),version:accepted.riskVersion});workspace=await riskWorkspace(f.owner,{riskId:risk.id});assert.equal(workspace.selected?.latestReview?.current,false,'even a changed review schedule requires a new decision');assert.equal(workspace.selected?.reviews[0].status,'ACCEPTED','the prior decision remains recorded as history');
   const renewed=await prepareRiskReview(f.editor,risk.id,proposal(updated.version,[file.id]),{storage:f.storage}),second=await decideRiskReview(f.reviewer,renewed.id,decision(renewed.version,renewed.riskVersion),{storage:f.storage});
