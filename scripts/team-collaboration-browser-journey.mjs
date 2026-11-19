@@ -59,7 +59,7 @@ export async function teamCollaborationJourney(browser,base,viewport,name){
   await page.getByRole('heading',{name:'Invite a colleague',exact:true}).waitFor();
   assert.equal(await page.getByRole('combobox',{name:'Organisation',exact:true}).inputValue(),target);
   assert.ok(teamReads.length>0&&teamReads.every(id=>id===target),'a linked organisation must not silently select the first membership');
-  await page.getByLabel('Colleague’s email',{exact:true}).fill(colleagueEmail);await page.getByLabel('Role',{exact:true}).selectOption('EDITOR');
+  await page.getByLabel('Colleague’s email',{exact:true}).fill(colleagueEmail);await page.getByRole('combobox',{name:/^Role/}).selectOption('EDITOR');
   await page.getByRole('button',{name:'Create invitation',exact:true}).evaluate(button=>{button.click();button.click();});
   const reconcile=page.getByRole('button',{name:'Check saved invitation status',exact:true});await reconcile.waitFor();assert.equal(createPosts,1);
   const create=page.getByRole('button',{name:'Create invitation',exact:true});if(await create.count())assert.equal(await create.isDisabled(),true);

@@ -140,7 +140,7 @@ try{
  await review.getByRole('heading',{name:'Invite a colleague',exact:true}).waitFor();
  assert.equal(await review.getByRole('combobox',{name:'Organisation',exact:true}).inputValue(),org.id);
  await review.getByLabel('Colleague’s email',{exact:true}).fill(editor.email);
- await review.getByLabel('Role',{exact:true}).selectOption('EDITOR');
+ await review.getByRole('combobox',{name:/^Role/}).selectOption('EDITOR');
  const [invitedResponse]=await Promise.all([
   review.waitForResponse(response=>response.url()===app+'/api/workspace/team'&&response.request().method()==='POST'),
   review.getByRole('button',{name:'Create invitation',exact:true}).click()
