@@ -65,6 +65,36 @@ The competitor-derived customer outcome is **find an existing file without remem
 
 Acceptance requires desktop/mobile library search, filters, pagination, exact-file access, account replacement and unavailable links. The actual private-services journey must find a previously uploaded original from another task, carry its canonical ID into a new source-task assessment, verify unchanged file/storage metadata and report the new recorded use after independent review. Execution results belong in PR #10 against the final revision.
 
+## Guided starter programmes and connected risks — 19 November 2026
+
+Two further competitor-derived customer jobs now extend the existing Tasks and Evidence workflows. [ISMS.online](https://www.isms.online/platform/) describes guided implementation and templates; [Drata Risk](https://drata.com/products/risk) describes risk ownership, scoring, controls and remediation. These official descriptions inform capability selection, not a measured claim that RegPilot outperforms those products.
+
+### Start a practical programme
+
+An administrator selects **Business foundations**, **People and access** or **Suppliers and continuity**, each with six original suggested actions. The customer selects and edits the work, explains relevance, chooses current member owners and working target dates, then reviews a no-write preview. Explicit confirmation atomically creates the task set and an integrity-checked adoption record. The dates are operational targets, not invented statutory deadlines.
+
+One canonical adoption exists per pack/company. Concurrent identical requests resume the same work; conflicting requests cannot overwrite it. A failed task creation rolls back the whole adoption. Changed owners or edited preview details require a fresh preview. An uncertain response pauses writes until saved programmes are checked through GET only. Saved programme links retain exact company/record context through sign-in. Existing generic evidence review and completion authority remain in force.
+
+The packs do not fabricate a document-derived programme, controls, licensed standard text or a completeness/certification claim. They are a starting scope that the customer must adapt. The programme record preserves the original plan while showing current task titles, assignees, dates, status and attention needs.
+
+### Follow a risk through treatment and review
+
+A writer records an owned risk, its rationale, a likelihood and impact from 1–5, a treatment strategy and review date. The displayed score is their multiplication, not an AI prediction. Up to ten existing active controls can be linked, without assuming that a link reduces risk. The owner, creator or an administrator can edit the risk and link up to ten existing ordinary tasks or create new owned treatment tasks.
+
+A residual proposal checks actual task completion receipts, current source/assessment/control context where applicable, independently reviewed evidence metadata, current participants and the original stored bytes. A completed flag or documented exception alone is insufficient. Renaming completed work cannot repurpose an old receipt to substantiate a different treatment. The author must explicitly confirm the residual rating and rationale. A different current administrator who did not upload any relied-on treatment or review files accepts or returns it; acceptance checks those bytes and the context again before commit.
+
+An accepted residual rating is shown as current only while its saved risk, control, treatment, evidence and permission context still matches and its review period remains valid. A changed schedule or archive/reopen also requires a new decision. Historical acceptances remain visible as recorded decisions; their existence is not current assurance. Routine rechecking of an unchanged source does not alone rewrite treatment proof. Reads check metadata/currentness; proposal and acceptance operations verify stored bytes.
+
+Risk detail links to exact treatment tasks, supporting canonical files and a JSON record export. Treatment tasks link back to their associated risks. Account/company/role changes discard stale requests, edits and downloads. Unknown writes require GET-only reconciliation using the original creation or treatment/proposal request key; automatic submission is never recovery. Editing retains the originally observed version, so a later refresh cannot silently authorise an old draft against a new version.
+
+Risk data adds four private server-owned tables with tenant-bound composite relationships, constrained ratings/statuses and immediate Data API revocation in the reviewed migration. The pilot bounds are 200 risk records/company, ten controls/treatments per risk, thirty review records/risk and thirty unique supporting files per decision. Member/control/evidence pickers disclose their bounded selections. These additions do not deploy the migration or activate hosted services.
+
+### Acceptance for these additions
+
+Targeted PostgreSQL scenarios cover atomic programme adoption, changed preview/owners, concurrent replay/conflict and completion through real file storage/review; risk ownership/tenancy, treatment completion receipts, independent decisions, altered bytes, changed context and stale historical review. The risk migration is checked from the preceding schema with zero drift and private-table access verification.
+
+Desktop/mobile acceptance extends the existing customer journeys with programme editing/adoption, exact task handoffs, risk creation/treatment/proposal/decision, account changes and uncertain-write recovery. The actual private-services journey additionally creates programme tasks through the UI, reuses a completed source task and canonical evidence for a separately reviewed risk, exports the saved risk and observes stale reliance after a controlled evidence change. The previous source/evidence/completion/report checks remain intact. Exact executed results and artifacts belong in PR #10; implementing these tests is not itself a passing result.
+
 ### What the guided status means
 
 - **Not started:** the relevant record is absent.

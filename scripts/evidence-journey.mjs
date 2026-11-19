@@ -8,6 +8,7 @@ import {PrismaClient} from '@prisma/client';
 import {createClient} from '@supabase/supabase-js';
 import {fixturePdf} from '../tests/helpers/pdf-fixture.mjs';
 import {createCustomerWorkspace,sourceToReportJourney} from './customer-journey.mjs';
+import {starterProgrammeCustomerJourney,riskCustomerJourney} from './starter-risk-customer-journey.mjs';
 
 const app='http://127.0.0.1:3000', api='http://127.0.0.1:54321', mail='http://127.0.0.1:54324';
 assert.equal(process.env.NEXT_PUBLIC_SUPABASE_URL,api);
@@ -452,6 +453,8 @@ try{
   return (data||[]).map(object=>({name:object.name,id:object.id,size:object.metadata?.size??null})).sort((a,b)=>a.name.localeCompare(b.name));
  };
  report.customerJourney=await sourceToReportJourney({upload,review,db,app,org,editor,reviewer,submitEvidence,checkpoint,passed,bounded,artifactDir,reuseEvidence:rereviewed,reusedBytes:file,storageSnapshot});
+ report.starterProgrammeJourney=await starterProgrammeCustomerJourney({upload,review,db,app,org,editor,reviewer,checkpoint,passed,bounded,artifactDir});
+ report.riskJourney=await riskCustomerJourney({upload,review,db,app,org,editor,reviewer,checkpoint,passed,bounded,artifactDir,completedSource:report.customerJourney,evidenceId:rereviewed.id,storageSnapshot});
 
  await checkpoint('unavailable organisation isolation');
  await review.goto(app+'/team/evidence?'+new URLSearchParams({organizationId:randomUUID(),taskId:task.id}));

@@ -130,3 +130,19 @@ test('verified sign-in preserves exact evidence library and reuse links only in 
  assert.equal(workspaceReturnIntent('/team/evidence','organizationId='+org+'&evidenceId=','a@example.invalid'),null);
  assert.deepEqual(workspaceReturnIntent('/team/operations','organizationId='+org+'&evidenceId='+file,'a@example.invalid').values,{organizationId:org});
 });
+
+test('starter programme and risk links retain only their exact bounded record through sign-in',async()=>{
+ const {workspaceReturnIntent,workspaceReturnPath}=await import('../lib/auth-flow.mjs');
+ const org='123e4567-e89b-42d3-a456-426614174000',id='123e4567-e89b-42d3-a456-426614174001';
+ for(const [path,key] of [['/team/programmes','programmeId'],['/team/risks','riskId']]){
+  assert.equal(signInDestination(path),path);
+  const query=new URLSearchParams({organizationId:org,[key]:id}).toString();
+  const intent=workspaceReturnIntent(path,query+'&next=https://evil.invalid','A@example.invalid',100);
+  assert.equal(workspaceReturnPath(intent,'a@example.invalid',200),path+'?'+query);
+  assert.equal(workspaceReturnPath(intent,'other@example.invalid',200),null);
+  assert.equal(workspaceReturnPath(intent,'a@example.invalid',3600101),null);
+  for(const suffix of ['', 'invalid', 'https://evil.invalid'])assert.equal(workspaceReturnIntent(path,'organizationId='+org+'&'+key+'='+suffix,'a@example.invalid'),null);
+  assert.equal(workspaceReturnIntent(path,query+'&'+key+'='+id,'a@example.invalid'),null);
+  assert.deepEqual(workspaceReturnIntent('/team/operations',query,'a@example.invalid').values,{organizationId:org});
+ }
+});

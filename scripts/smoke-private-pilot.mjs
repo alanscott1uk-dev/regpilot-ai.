@@ -62,7 +62,7 @@ async function waitForServer(){
 try{
  await waitForServer();
  const routes=[
-  "/team/coverage","/team/briefing","/team/recognition","/recognition","/team/access-reviews","/team/answers","/team/questionnaires","/team/trust","/trust","/team/audit-requests","/team/changes","/team/people","/team/vendors","/team/audits","/auditor","/team/services","/team/settings","/team/operations","/team/library","/workbench","/register","/documents","/evidence","/controls",
+  "/team/programmes","/team/risks","/team/coverage","/team/briefing","/team/recognition","/recognition","/team/access-reviews","/team/answers","/team/questionnaires","/team/trust","/trust","/team/audit-requests","/team/changes","/team/people","/team/vendors","/team/audits","/auditor","/team/services","/team/settings","/team/operations","/team/library","/workbench","/register","/documents","/evidence","/controls",
   "/assurance","/intelligence","/traceability","/team","/team/work","/team/work/reviews","/team/evidence","/team/sources","/team/intelligence","/team/assurance","/ai"
  ];
  for(const path of routes){
@@ -92,7 +92,7 @@ try{
  assert.equal(privateRecognitions.status,503,"private recognition tracking must be authenticated and disabled by default");
  const noSources=await response("/api/workspace/sources?organizationId=123e4567-e89b-42d3-a456-426614174000");
  assert.equal(noSources.status,503,"team regulatory source API must fail closed when private workspace is disabled");
- for(const path of ["/api/workspace/operations","/api/workspace/programme","/api/workspace/connectors","/api/workspace/controls","/api/workspace/assurance","/api/workspace/intelligence","/api/workspace/intelligence/profile","/api/workspace/intelligence/semantic","/api/workspace/intelligence/monitoring","/api/internal/monitor","/api/workspace/intelligence/123e4567-e89b-42d3-a456-426614174000"]){
+ for(const path of ["/api/workspace/programmes","/api/workspace/risks","/api/workspace/operations","/api/workspace/programme","/api/workspace/connectors","/api/workspace/controls","/api/workspace/assurance","/api/workspace/intelligence","/api/workspace/intelligence/profile","/api/workspace/intelligence/semantic","/api/workspace/intelligence/monitoring","/api/internal/monitor","/api/workspace/intelligence/123e4567-e89b-42d3-a456-426614174000"]){
    const method=(path.endsWith("profile")||path.endsWith("monitoring"))?"PUT":"POST";
    const result=await response(path,{method,headers:{"Content-Type":"application/json"},body:"{}"});
    assert.equal(result.status,503,path+" must fail closed");
@@ -117,6 +117,7 @@ try{
   const write=await response(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({organizationId:"123e4567-e89b-42d3-a456-426614174000"})});
   assert.equal(write.status,503,path+" private review writes must fail closed");
  }
+ for(const path of ["/api/workspace/programmes","/api/workspace/risks","/api/workspace/risks/123e4567-e89b-42d3-a456-426614174001/export"]){assert.equal((await response(path+"?organizationId=123e4567-e89b-42d3-a456-426614174000")).status,503,path+" fails closed");}
  const rootResponse=await response("/");
  assert.ok([301,302,303,307,308].includes(rootResponse.status),"root should redirect to secure operations");
  assert.equal(new URL(rootResponse.headers.get("location")||"",root).pathname,"/team/operations","landing route must prefer authenticated operations, not local demo");

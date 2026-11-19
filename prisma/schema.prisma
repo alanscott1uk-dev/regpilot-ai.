@@ -142,6 +142,10 @@ enum ReviewStatus {
 }
 
 model User {
+ risksCreated RiskRecord[] @relation("RiskCreator")
+ risksOwned RiskRecord[] @relation("RiskOwner")
+ riskReviewsPrepared RiskReview[] @relation("RiskReviewAuthor")
+ riskReviewsDecided RiskReview[] @relation("RiskReviewReviewer")
  connectorControlLinks ConnectorControlLink[]
  accessInventories AccessInventory[]
  accessCampaignsCreated AccessCampaign[] @relation("AccessCreator")
@@ -209,6 +213,10 @@ model User {
 }
 
 model Organization {
+ risks RiskRecord[]
+ riskControls RiskControl[]
+ riskTreatments RiskTreatment[]
+ riskReviews RiskReview[]
  connectorControlLinks ConnectorControlLink[]
  dispatchLanes DispatchLane[]
  automationEvents AutomationEvent[]
@@ -364,6 +372,7 @@ model Membership {
 }
 
 model Obligation {
+ riskTreatments RiskTreatment[]
  vendorSignalId String? @db.Uuid
  vendorSignal Vendor? @relation("VendorSignalTasks",fields:[vendorSignalId,organizationId],references:[id,organizationId],onDelete:Restrict)
  @@index([organizationId,vendorSignalId,status])
@@ -681,6 +690,7 @@ model ProgrammeImport {
 }
 
 model ManagedControl {
+ riskLinks RiskControl[]
  connectedEvidenceLinks ConnectorControlLink[]
  changeActions ChangeAction[]
  auditRequests AuditRequest[]
@@ -711,6 +721,93 @@ model ManagedControl {
  @@unique([id,organizationId])
  @@unique([importId,proposalKey])
  @@index([organizationId,enabled,nextReviewAt])
+}
+
+// Internal risk judgements, linked treatment work and independently reviewed residual decisions.
+// Ratings are recorded human judgements, not regulatory or financial risk predictions.
+model RiskRecord {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ createKey String @db.Uuid
+ createdById String @db.Uuid
+ ownerId String @db.Uuid
+ title String @db.VarChar(160)
+ description String @db.VarChar(2000)
+ category String @db.VarChar(32)
+ likelihood Int
+ impact Int
+ ratingRationale String @db.VarChar(1200)
+ strategy String @db.VarChar(20)
+ reviewDueAt DateTime @db.Date
+ status String @default("OPEN") @db.VarChar(20)
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ createdBy User @relation("RiskCreator",fields:[createdById],references:[id],onDelete:Restrict)
+ owner User @relation("RiskOwner",fields:[ownerId],references:[id],onDelete:Restrict)
+ controls RiskControl[]
+ treatments RiskTreatment[]
+ reviews RiskReview[]
+ @@unique([id,organizationId])
+ @@unique([organizationId,createKey])
+ @@index([organizationId,status,reviewDueAt])
+}
+
+model RiskControl {
+ organizationId String @db.Uuid
+ riskId String @db.Uuid
+ controlId String @db.Uuid
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ risk RiskRecord @relation(fields:[riskId,organizationId],references:[id,organizationId],onDelete:Cascade)
+ control ManagedControl @relation(fields:[controlId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ @@id([riskId,controlId])
+ @@index([organizationId,controlId])
+}
+
+model RiskTreatment {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ riskId String @db.Uuid
+ obligationId String @db.Uuid
+ requestKey String @db.Uuid
+ purpose String @db.VarChar(1200)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ risk RiskRecord @relation(fields:[riskId,organizationId],references:[id,organizationId],onDelete:Cascade)
+ obligation Obligation @relation(fields:[obligationId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ @@unique([riskId,requestKey])
+ @@unique([riskId,obligationId])
+ @@index([organizationId,obligationId])
+}
+
+model RiskReview {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ riskId String @db.Uuid
+ requestKey String @db.Uuid
+ authorId String @db.Uuid
+ reviewerId String? @db.Uuid
+ status String @default("PENDING") @db.VarChar(20)
+ version Int @default(1)
+ residualLikelihood Int
+ residualImpact Int
+ rationale String @db.VarChar(1600)
+ validUntil DateTime @db.Date
+ evidenceManifest Json
+ context Json
+ contextHash String @db.VarChar(64)
+ proposalHash String @db.VarChar(64)
+ reviewNotes String @default("") @db.VarChar(1600)
+ reviewedAt DateTime?
+ decisionHash String? @db.VarChar(64)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ risk RiskRecord @relation(fields:[riskId,organizationId],references:[id,organizationId],onDelete:Cascade)
+ author User @relation("RiskReviewAuthor",fields:[authorId],references:[id],onDelete:Restrict)
+ reviewer User? @relation("RiskReviewReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+ @@unique([riskId,requestKey])
+ @@index([organizationId,riskId,createdAt])
 }
 
 // Human-approved scope link; not a claim of certified framework equivalence.

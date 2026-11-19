@@ -95,6 +95,36 @@ test('work hub: full-list paging, tenant isolation, private metadata, atomic rev
  }
 });
 
+test('treatment task backlinks are bounded, exact, company-scoped and contain only risk navigation metadata',async()=>{
+ const suffix=randomUUID(),users=await Promise.all(['risk-owner','other-owner'].map(name=>db.user.create({data:{externalId:name+suffix,email:name+suffix+'@example.invalid'}})));
+ const orgs=await Promise.all(['A','B'].map(name=>db.organization.create({data:{name:'Fictional risk handoff '+name+suffix}}))),ids=orgs.map(org=>org.id),userIds=users.map(user=>user.id),previous=process.env.REGPILOT_AI_ALLOWED_EMAILS;
+ process.env.REGPILOT_AI_ALLOWED_EMAILS=users.map(user=>user.email).join(',');
+ const owner:AuthorizedContext={organizationId:ids[0],userId:userIds[0],role:'OWNER'},outside:AuthorizedContext={organizationId:ids[1],userId:userIds[1],role:'OWNER'},now=new Date('2026-11-19T12:00:00.000Z');
+ try{
+  await db.membership.createMany({data:[owner,outside]});
+  const tasks=await Promise.all([owner,owner,outside].map((ctx,index)=>db.obligation.create({data:{organizationId:ctx.organizationId,title:'Fictional risk treatment '+index,category:'Risk treatment',ownerName:users[index===2?1:0].email,assigneeId:ctx.userId,dueDate:now,status:'IN_PROGRESS'}})));
+  const before=await workTask(owner,tasks[0].id),riskIds=Array.from({length:13},()=>randomUUID());
+  await db.riskRecord.createMany({data:riskIds.map((id,index)=>({id,organizationId:index===12?ids[1]:ids[0],createKey:randomUUID(),createdById:index===12?outside.userId:owner.userId,ownerId:index===12?outside.userId:owner.userId,title:index===12?'PRIVATE_FOREIGN_RISK':'Fictional related risk '+index,description:'PRIVATE_RISK_DESCRIPTION',category:'OPERATIONAL',likelihood:3,impact:4,ratingRationale:'PRIVATE_RISK_RATING_BASIS',strategy:'MITIGATE',reviewDueAt:now,status:index===10?'ACCEPTED':'OPEN'}))});
+  await db.riskTreatment.createMany({data:riskIds.map((riskId,index)=>({organizationId:index===12?ids[1]:ids[0],riskId,obligationId:tasks[index===12?2:index===11?1:0].id,requestKey:randomUUID(),purpose:'PRIVATE_TREATMENT_PURPOSE',createdAt:new Date(now.getTime()+index*1000)}))});
+  const linked=await workTask(owner,tasks[0].id);
+  assert.equal(linked.relatedRisks.length,10);assert.equal(linked.relatedRisksLimited,true,'the bounded projection declares remaining links');
+  assert.deepEqual(linked.relatedRisks.map(risk=>risk.id),riskIds.slice(1,11).reverse(),'only the ten most recently linked records for the exact task are returned');
+  for(const risk of linked.relatedRisks){
+   assert.deepEqual(Object.keys(risk).sort(),['href','id','status','title']);
+   const href=new URL(risk.href,'https://example.invalid');assert.equal(href.pathname,'/team/risks');assert.equal(href.searchParams.get('organizationId'),owner.organizationId);assert.equal(href.searchParams.get('riskId'),risk.id);
+  }
+  assert.equal(linked.relatedRisks[0].status,'ACCEPTED','only the recorded status is exposed, with no inferred current approval');
+  assert.doesNotMatch(JSON.stringify(linked),/PRIVATE_RISK_DESCRIPTION|PRIVATE_RISK_RATING_BASIS|PRIVATE_TREATMENT_PURPOSE|PRIVATE_FOREIGN_RISK|evidenceManifest|storageKey/);
+  assert.deepEqual(linked.workflow,before.workflow,'risk navigation does not alter task progress or completion authority');assert.equal(linked.canStart,before.canStart);assert.equal(linked.canPlan,before.canPlan);assert.equal(linked.task.updatedAt.toISOString(),before.task.updatedAt.toISOString());
+  const otherTask=await workTask(owner,tasks[1].id);assert.deepEqual(otherTask.relatedRisks.map(risk=>risk.id),[riskIds[11]]);assert.equal(otherTask.relatedRisksLimited,false);
+  const foreign=await workTask(outside,tasks[2].id);assert.deepEqual(foreign.relatedRisks.map(risk=>risk.id),[riskIds[12]]);assert.equal(new URL(foreign.relatedRisks[0].href,'https://example.invalid').searchParams.get('organizationId'),outside.organizationId);
+  await assert.rejects(()=>workTask(owner,tasks[2].id),(error:any)=>error.status===404);await assert.rejects(()=>workTask(outside,tasks[0].id),(error:any)=>error.status===404);
+ }finally{
+  if(previous===undefined)delete process.env.REGPILOT_AI_ALLOWED_EMAILS;else process.env.REGPILOT_AI_ALLOWED_EMAILS=previous;
+  await db.riskTreatment.deleteMany({where:{organizationId:{in:ids}}});await db.riskRecord.deleteMany({where:{organizationId:{in:ids}}});await db.obligation.deleteMany({where:{organizationId:{in:ids}}});await db.membership.deleteMany({where:{organizationId:{in:ids}}});await db.organization.deleteMany({where:{id:{in:ids}}});await db.user.deleteMany({where:{id:{in:userIds}}});await db.$disconnect();
+ }
+});
+
 test('task handoff retains content review after file approval and advances only on current independent proof',async()=>{
  const suffix=randomUUID(),users=await Promise.all(['maker','reviewer','uploader','viewer'].map(name=>db.user.create({data:{externalId:name+suffix,email:name+suffix+'@example.invalid'}})));
  const org=await db.organization.create({data:{name:'Fictional task handoff '+suffix}}),previous=process.env.REGPILOT_AI_ALLOWED_EMAILS;

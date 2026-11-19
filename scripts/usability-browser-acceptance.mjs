@@ -19,6 +19,8 @@ import {todayJourney} from "./today-browser-journey.mjs";
 import {monitoringRecoveryJourney} from "./monitoring-recovery-browser-journey.mjs";
 import {teamCollaborationJourney} from "./team-collaboration-browser-journey.mjs";
 import {evidenceLibraryJourney} from "./evidence-library-browser-journey.mjs";
+import {starterProgrammeJourney} from "./starter-programme-browser-journey.mjs";
+import {riskJourney} from "./risk-browser-journey.mjs";
 
 const port=await new Promise((resolve,reject)=>{
  const server=createServer().once("error",reject).listen(0,"127.0.0.1",()=>{
@@ -112,6 +114,8 @@ try{
  await testJourney("desktop",{width:1365,height:880});
  await testJourney("mobile",{width:390,height:844});
  for(const [name,viewport] of [["desktop",{width:1365,height:880}],["mobile",{width:390,height:844}]]){
+  try{observations.push(await riskJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"risk-"+name,passed:false,error:e.message});}
+  try{observations.push(await starterProgrammeJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"starter-programme-"+name,passed:false,error:e.message});}
   try{observations.push(await evidenceLibraryJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"evidence-library-"+name,passed:false,error:e.message});}
   try{observations.push(await teamCollaborationJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"team-collaboration-"+name,passed:false,error:e.message});}
   try{observations.push(await monitoringRecoveryJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"monitoring-recovery-"+name,passed:false,error:e.message});}
