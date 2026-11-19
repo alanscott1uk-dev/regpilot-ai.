@@ -53,6 +53,18 @@ The actual private-services customer acceptance now obtains the preparer's compa
 
 Final execution results and artifacts for this revision belong in PR #10. These development checks do not activate hosted services or replace the release gates below.
 
+## Find and reuse company evidence — 19 November 2026
+
+The competitor-derived customer outcome is **find an existing file without remembering its original task → inspect its provenance and recorded assessment uses → select a source-linked task → deliberately assess the same original for that task**. Drata's [Controls and Evidence](https://drata.com/products/compliance/controls-and-evidence) page describes a central evidence library and reuse across audits/frameworks. This is the capability benchmark; no comparative performance advantage is claimed.
+
+- The primary Evidence destination offers a company-wide library. Filename/original-task search, recorded review state, document format and uploader filters operate over the company population with server-side counts and pagination. Exact-file links are independent of the current page or search filter.
+- The file retains its original task, uploader, hash and review history. Library reads are metadata only. Download uses the existing private-original verification. A recorded file approval does not establish that the file satisfies another requirement.
+- The selected file shows its recorded source-task assessments and their existing currentness checks, with exact task/assessment links. The view states its coverage and bounds; it must not imply it inventories every downstream policy, customer disclosure or external copy.
+- Reuse chooses an open source-linked task and preserves company, task and canonical evidence ID through navigation and sign-in. It selects the existing file for inspection; the customer still explicitly consents to and prepares an assessment. The existing independent evidence and assessment review rules remain authoritative.
+- Reuse does not upload another copy, move the original file to a different task, create a storage object or change the original completion record. Missing, quarantined, foreign or ambiguous file links cannot select a replacement silently. Account/company changes clear the selected file and discard earlier responses and downloads.
+
+Acceptance requires desktop/mobile library search, filters, pagination, exact-file access, account replacement and unavailable links. The actual private-services journey must find a previously uploaded original from another task, carry its canonical ID into a new source-task assessment, verify unchanged file/storage metadata and report the new recorded use after independent review. Execution results belong in PR #10 against the final revision.
+
 ### What the guided status means
 
 - **Not started:** the relevant record is absent.

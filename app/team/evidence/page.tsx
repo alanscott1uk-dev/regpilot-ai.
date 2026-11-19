@@ -8,6 +8,7 @@ import shell from "../../workbench/workbench.module.css";
 import ui from "./evidence.module.css";
 import {DocumentReader} from "./document-reader";
 import {TaskProgressCard} from '../work/task-progress';
+import EvidenceLibrary from './evidence-library';
 type Org={id:string;name:string;role:"OWNER"|"ADMIN"|"EDITOR"|"VIEWER"};
 type Task={id:string;title:string;ownerName:string;status:string};
 type Evidence={id:string;obligationId:string;filename:string;sizeBytes:number;sha256:string;createdAt:string;scanStatus:string;reviewStatus:"DRAFT"|"PENDING_REVIEW"|"APPROVED"|"REJECTED";reviewVersion:number;uploadedById:string|null;reviewerId:string|null;reviewedAt:string|null;reviewerNotes:string};
@@ -21,7 +22,18 @@ function showSelection(orgId:string,taskId=""){
   window.history.replaceState(window.history.state,"",url.pathname+url.search);
   window.dispatchEvent(new Event("regpilot-workspace-navigation"));
 }
-export default function TeamEvidence(){
+export default function EvidencePage(){
+ const [mode,setMode]=useState<'task'|'library'|null>(null);
+ useEffect(()=>{
+  const update=()=>setMode(new URLSearchParams(window.location.search).has('taskId')?'task':'library');
+  update();window.addEventListener('popstate',update);window.addEventListener('regpilot-workspace-navigation',update);
+  return()=>{window.removeEventListener('popstate',update);window.removeEventListener('regpilot-workspace-navigation',update);};
+ },[]);
+ if(mode==='library')return <EvidenceLibrary/>;
+ if(mode==='task')return <TaskEvidence/>;
+ return <div className={shell.app}><WorkspaceNav/><main className={shell.main}><p role="status">Opening your evidence workspace…</p></main></div>;
+}
+function TaskEvidence(){
  const [user,setUser]=useState<{id:string;email:string}|null>(null);
  const [orgs,setOrgs]=useState<Org[]>([]),[orgId,setOrgId]=useState("");
  const [tasks,setTasks]=useState<Task[]>([]),[taskId,setTaskId]=useState("");
@@ -193,7 +205,7 @@ export default function TeamEvidence(){
       const id=e.target.value;boundary.current++;filesRequest.current++;active.current={...active.current,taskId:id,epoch:boundary.current};showSelection(orgId,id);
       setFile(null);setRows([]);setFileState("loading");setReviewNotes({});setNotice("");setTaskId(id);
      }}>{!tasks.length&&<option value="">No task selected</option>}{tasks.map(t=><option key={t.id} value={t.id}>{t.title}</option>)}</select></label></div></section>
-    {orgId&&<div className={ui.taskLinks}><a href={"/team/work?"+new URLSearchParams({organizationId:orgId,...(taskId?{taskId}:{})})}>{taskId?"Return to task":"Choose a task in the work hub"}</a>
+    {orgId&&<div className={ui.taskLinks}><a href={"/team/work?"+new URLSearchParams({organizationId:orgId,...(taskId?{taskId}:{})})}>{taskId?"Return to task":"Choose a task in the work hub"}</a><a href={"/team/evidence?"+new URLSearchParams({organizationId:orgId})}>Browse all evidence</a>
      {enabled&&!taskId&&<button type="button" onClick={()=>{setNotice("");setRetry(r=>r+1);}}>Reload tasks</button>}</div>}
     {taskId&&enabled&&<>
     {fileState==='ready'&&<TaskProgressCard organizationId={orgId} taskId={taskId} accountKey={user.id} refreshKey={rows.map(row=>row.id+':'+row.reviewVersion+':'+row.reviewStatus).join('|')} view="evidence" canInvite={!!canReview} request={request}/>}

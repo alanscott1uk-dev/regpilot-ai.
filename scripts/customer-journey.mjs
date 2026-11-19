@@ -98,7 +98,7 @@ export async function createCustomerWorkspace({page,db,app,email,checkpoint,pass
  return {org,reviewer};
 }
 
-export async function sourceToReportJourney({upload,review,db,app,org,editor,reviewer,submitEvidence,checkpoint,passed,bounded,artifactDir}){
+export async function sourceToReportJourney({upload,review,db,app,org,editor,reviewer,submitEvidence,checkpoint,passed,bounded,artifactDir,reuseEvidence,reusedBytes,storageSnapshot}){
  const progressStages=[];
  async function openTaskProgress(page,taskId,expectedStage){
   const [response]=await Promise.all([
@@ -214,6 +214,46 @@ export async function sourceToReportJourney({upload,review,db,app,org,editor,rev
  assert.equal(nextAssessment.pathname,'/team/assurance');assert.equal(nextAssessment.searchParams.get('organizationId'),org.id);assert.equal(nextAssessment.searchParams.get('taskId'),task.id);
  await preparing.progress.getByRole('link',{name:preparing.body.workflow.label,exact:false}).click();
 
+ await checkpoint('find and reuse the existing reviewed original through the company evidence library');
+ await upload.getByRole('checkbox',{name:/widget-training\.pdf/}).waitFor();
+ assert.notEqual(reuseEvidence.obligationId,task.id,'reuse must begin with a file belonging to a different task');
+ const beforeReuse={files:await db.evidence.count({where:{organizationId:org.id}}),organisation:await db.organization.findUniqueOrThrow({where:{id:org.id}}),objects:await storageSnapshot()};
+ await upload.goto(app+'/team/evidence?'+new URLSearchParams({organizationId:org.id}));
+ await upload.getByRole('heading',{name:'Evidence library',exact:true}).waitFor();
+ await upload.getByRole('button',{name:'Open evidence: '+reuseEvidence.filename,exact:true}).waitFor();
+ await upload.screenshot({path:artifactDir+'/mobile-evidence-library-overview.png',fullPage:false});
+ await upload.getByLabel('Search evidence',{exact:true}).fill(reuseEvidence.filename);
+ await upload.getByRole('button',{name:'Search files',exact:true}).click();
+ const [selectedResponse]=await Promise.all([
+  upload.waitForResponse(response=>{const url=new URL(response.url());return url.pathname==='/api/workspace/evidence/library'&&url.searchParams.get('evidenceId')===reuseEvidence.id&&response.request().method()==='GET';}),
+  upload.getByRole('button',{name:'Open evidence: '+reuseEvidence.filename,exact:true}).click()
+ ]);
+ const selectedBody=await bounded(selectedResponse.json(),'Exact evidence library selection');
+ assert.equal(selectedResponse.status(),200,selectedBody.error||'exact evidence library selection failed');
+ assert.equal(selectedBody.organizationId,org.id);assert.equal(selectedBody.selected.id,reuseEvidence.id);
+ assert.equal(selectedBody.selected.originalTask.id,reuseEvidence.obligationId);
+ const selectedEvidence=upload.getByRole('region',{name:'Selected evidence',exact:true});
+ await selectedEvidence.getByRole('heading',{name:reuseEvidence.filename,exact:true}).waitFor();
+ const oldOriginalReady=upload.waitForEvent('download');
+ await selectedEvidence.getByRole('button',{name:'Download verified original',exact:true}).click();
+ const oldOriginal=await oldOriginalReady;
+ assert.deepEqual(await readFile(await bounded(oldOriginal.path(),'Reused original library download')),reusedBytes);
+ await selectedEvidence.getByLabel('Find a task for this evidence',{exact:true}).fill(title);
+ await selectedEvidence.getByRole('button',{name:'Find tasks',exact:true}).click();
+ await selectedEvidence.getByLabel('Task to assess',{exact:true}).selectOption(task.id);
+ const reuseLink=selectedEvidence.getByRole('link',{name:/^Use this evidence/});
+ await reuseLink.waitFor();
+ const reuseUrl=new URL(await reuseLink.getAttribute('href'),app);
+ assert.equal(reuseUrl.pathname,'/team/assurance');assert.equal(reuseUrl.searchParams.get('organizationId'),org.id);
+ assert.equal(reuseUrl.searchParams.get('taskId'),task.id);assert.equal(reuseUrl.searchParams.get('evidenceId'),reuseEvidence.id);
+ await selectedEvidence.screenshot({path:artifactDir+'/mobile-evidence-library-reuse.png'});
+ await reuseLink.click();
+ const reusedSelection=upload.getByRole('checkbox',{name:/training-record\.pdf/});
+ await reusedSelection.waitFor();assert.equal(await reusedSelection.isChecked(),true,'library handoff selects the exact canonical file without preparing an assessment');
+ assert.equal(await db.assuranceAssessment.count({where:{organizationId:org.id,obligationId:task.id}}),0,'opening the library handoff must not prepare or approve an assessment');
+ assert.equal(await db.evidence.count({where:{organizationId:org.id}}),beforeReuse.files);
+ assert.deepEqual(await storageSnapshot(),beforeReuse.objects,'searching, downloading and selecting existing evidence must not duplicate stored objects');
+
  await checkpoint('editor extracts actual private evidence passages');
  await upload.getByRole('checkbox',{name:/widget-training\.pdf/}).check();
  await upload.getByRole('checkbox',{name:/I agree to process these fictional or non-sensitive files/}).check();
@@ -226,6 +266,7 @@ export async function sourceToReportJourney({upload,review,db,app,org,editor,rev
  const draft=await db.assuranceAssessment.findUniqueOrThrow({where:{id:prepared.id}});
  assert.equal(draft.method,'CONTENT_SEARCH');assert.equal(draft.createdById,editor.id);assert.equal(draft.status,'DRAFT');
  assert.equal(draft.snapshotId,snapshot.id);assert.equal(draft.obligationId,task.id);
+ assert.deepEqual(draft.evidenceManifest.map(file=>file.id).sort(),[evidence.id,reuseEvidence.id].sort(),'assessment retains both canonical originals rather than copied uploads');
  assert.ok(draft.result.passages.some(p=>p.quote.includes(trainingRecord)),'actual PDF extraction must retain the dated training record');
  assert.equal(await upload.getByRole('button',{name:'Record evidence adequate for this task',exact:true}).count(),0);
 
@@ -285,15 +326,36 @@ export async function sourceToReportJourney({upload,review,db,app,org,editor,rev
  assert.equal(saved.organizationId,org.id);assert.equal(saved.entityId,task.id);assert.equal(saved.actorId,reviewer.id);
  assert.equal(receipt.source.id,snapshot.id);assert.equal(receipt.source.contentHash,snapshot.contentHash);
  assert.equal(receipt.assessment.id,assessment.id);assert.equal(receipt.assessment.version,assessment.version);
- assert.equal(receipt.task.assigneeId,editor.id);assert.equal(receipt.evidence[0].id,evidence.id);assert.equal(receipt.evidence[0].sha256,evidence.sha256);
+ assert.equal(receipt.task.assigneeId,editor.id);assert.equal(receipt.evidence.find(file=>file.id===evidence.id)?.sha256,evidence.sha256);
+ assert.equal(receipt.evidence.find(file=>file.id===reuseEvidence.id)?.sha256,reuseEvidence.sha256);
  const completedTask=await db.obligation.findUniqueOrThrow({where:{id:task.id}});
  assert.equal(completedTask.status,'COMPLETE');assert.equal(completedTask.completionException,false);
  await openTaskProgress(review,task.id,'COMPLETED');
  passed('The task’s saved progress advanced from evidence needed to assessment preparation, independent assessment review and explicit completion. A file approval did not hide its draft content assessment: the review queue opened the exact company, task and assessment until that decision was recorded.');
  passed('Explicit task completion froze the exact source version, independent assessment, assigned owner and verified evidence in one persisted receipt.');
 
+ await checkpoint('library shows the saved reuse without copying or moving the original');
+ const [usageResponse]=await Promise.all([
+  review.waitForResponse(response=>{const url=new URL(response.url());return url.pathname==='/api/workspace/evidence/library'&&url.searchParams.get('evidenceId')===reuseEvidence.id&&response.request().method()==='GET';}),
+  review.goto(app+'/team/evidence?'+new URLSearchParams({organizationId:org.id,evidenceId:reuseEvidence.id}))
+ ]);
+ const usage=await bounded(usageResponse.json(),'Recorded evidence reuse');
+ assert.equal(usageResponse.status(),200,usage.error||'recorded evidence use unavailable');
+ const recordedUse=usage.selected.uses.items.find(item=>item.id===assessment.id);
+ assert.ok(recordedUse,'the library must show the actual saved source-task assessment use');
+ assert.equal(recordedUse.taskId,task.id);assert.equal(recordedUse.status,'ACCEPTED');assert.equal(recordedUse.current,true);
+ const recordedUseUrl=new URL(recordedUse.href,app);
+ assert.equal(recordedUseUrl.searchParams.get('organizationId'),org.id);assert.equal(recordedUseUrl.searchParams.get('taskId'),task.id);assert.equal(recordedUseUrl.searchParams.get('assessmentId'),assessment.id);
+ const sameOriginal=await db.evidence.findUniqueOrThrow({where:{id:reuseEvidence.id}}),afterReuse=await db.organization.findUniqueOrThrow({where:{id:org.id}});
+ assert.equal(sameOriginal.obligationId,reuseEvidence.obligationId);assert.equal(sameOriginal.storageKey,reuseEvidence.storageKey);assert.equal(sameOriginal.sha256,reuseEvidence.sha256);assert.equal(sameOriginal.reviewVersion,reuseEvidence.reviewVersion);
+ assert.equal(await db.evidence.count({where:{organizationId:org.id}}),beforeReuse.files);assert.equal(afterReuse.evidenceCount,beforeReuse.organisation.evidenceCount);assert.equal(afterReuse.evidenceBytes,beforeReuse.organisation.evidenceBytes);
+ assert.deepEqual(await storageSnapshot(),beforeReuse.objects,'source-task reuse must preserve the original object population');
+ await review.getByRole('region',{name:'Selected evidence',exact:true}).getByRole('heading',{name:reuseEvidence.filename,exact:true}).waitFor();
+ await review.getByRole('heading',{name:'Recorded assessment uses',exact:true}).waitFor();
+ await review.getByRole('region',{name:'Selected evidence',exact:true}).screenshot({path:artifactDir+'/desktop-evidence-library-recorded-use.png'});
+ passed('The company evidence library found and downloaded an existing approved file from another task, preselected its exact original in a new source-task assessment, and displayed the saved independent decision. Evidence rows, quota bytes, original task and stored object population stayed unchanged.');
+
  await checkpoint('customer exports scoped operational report');
- await review.getByRole('button',{name:'Close task details',exact:true}).click();
  await review.getByRole('link',{name:'Reports',exact:true}).click();
  assert.equal(new URL(review.url()).searchParams.get('organizationId'),org.id,'Reports navigation retains the active workspace');
  const completedRow=review.getByRole('article').filter({hasText:title});
@@ -331,5 +393,5 @@ export async function sourceToReportJourney({upload,review,db,app,org,editor,rev
  assert.ok(await bounded(upload.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Mobile customer report layout'));
  await upload.screenshot({path:artifactDir+'/mobile-customer-report.png',fullPage:true});
  passed('The customer followed Reports navigation and downloaded JSON, CSV and a printable report containing the exact persisted source-to-task-to-evidence decision, current open work and the unresolved source failure with queued recovery and inactive monitoring; the same report fit mobile.');
- return {taskId:task.id,snapshotId:snapshot.id,assessmentId:assessment.id,eventId:saved.id,progressStages};
+ return {taskId:task.id,snapshotId:snapshot.id,assessmentId:assessment.id,eventId:saved.id,progressStages,evidenceReuse:{evidenceId:reuseEvidence.id,originalTaskId:reuseEvidence.obligationId,assessmentId:assessment.id,evidenceCount:beforeReuse.files,storageObjectCount:beforeReuse.objects.length,originalAndPopulationUnchanged:true}};
 }

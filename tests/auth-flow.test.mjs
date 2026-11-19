@@ -115,3 +115,18 @@ test('invitation and assessment handoffs survive verified sign-in without accept
  const otherPage=workspaceReturnIntent('/team/operations','?'+new URLSearchParams({organizationId:org,invitationId:record,assessmentId:record}),'a@example.invalid',100);
  assert.deepEqual(otherPage.values,{organizationId:org});
 });
+
+test('verified sign-in preserves exact evidence library and reuse links only in their intended workspace',async()=>{
+ const {workspaceReturnIntent,workspaceReturnPath}=await import('../lib/auth-flow.mjs');
+ const org='123e4567-e89b-42d3-a456-426614174000',task='123e4567-e89b-42d3-a456-426614174001',file='123e4567-e89b-42d3-a456-426614174002';
+ for(const [path,values] of [['/team/evidence',{organizationId:org,evidenceId:file}],['/team/assurance',{organizationId:org,taskId:task,evidenceId:file}]]){
+  const query=new URLSearchParams(values).toString(),intent=workspaceReturnIntent(path,query+'&next=https://evil.invalid','A@example.invalid',100);
+  assert.equal(workspaceReturnPath(intent,'a@example.invalid',200),path+'?'+query);
+  assert.equal(workspaceReturnPath(intent,'other@example.invalid',200),null);
+  assert.equal(workspaceReturnPath(intent,'a@example.invalid',3600101),null);
+  assert.equal(workspaceReturnIntent(path,query+'&evidenceId='+task,'a@example.invalid'),null);
+ }
+ for(const query of ['organizationId='+org+'&evidenceId='+file,'organizationId='+org+'&taskId='+task+'&evidenceId=invalid','organizationId='+org+'&taskId='+task+'&evidenceId='+file+'&assessmentId='+file])assert.equal(workspaceReturnIntent('/team/assurance',query,'a@example.invalid'),null);
+ assert.equal(workspaceReturnIntent('/team/evidence','organizationId='+org+'&evidenceId=','a@example.invalid'),null);
+ assert.deepEqual(workspaceReturnIntent('/team/operations','organizationId='+org+'&evidenceId='+file,'a@example.invalid').values,{organizationId:org});
+});

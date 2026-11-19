@@ -3,6 +3,7 @@ import WorkspaceNav from "../../components/workspace-nav";
 import EmailSignIn from '../../components/email-sign-in';
 import {TaskProgressCard} from '../work/task-progress';
 import {workUuid} from '../../../lib/work-hub.mjs';
+import {evidenceReuseHandoff,resolveEvidenceReuse} from '../../../lib/evidence/reuse-handoff.mjs';
 import {extractionBlocked,locationLabel} from "../../../lib/documents/coverage";
 import {useCallback,useEffect,useRef,useState} from "react";
 import {browserAuth} from "../../../lib/client/supabase-auth";
@@ -15,10 +16,11 @@ type Renewal={id:string;organizationId:string;version:number;status:string;eligi
 type Workspace={selectedTaskId:string|null;selectedAssessmentId?:string|null;tasks:{id:string;title:string;status:string;ownerName:string;dueDate:string}[];evidence:(EvidenceManifest&{filename:string})[];source:null|{quote:string;title:string;url:string;hash:string};contextIssue:string|null;assessments:Assessment[];nextStep:string;aiEnabled:boolean;taskLimitReached:boolean;assessmentLimitReached?:boolean};
 const date=(v:string)=>new Date(v).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"});
 const status=(v:string)=>({DRAFT:"Needs independent review",ACCEPTED:"Evidence accepted for this task",NEEDS_WORK:"Further work needed",PROCESSING:"Preparing assessment",INTERRUPTED:"Processing interrupted",FAILED:"Assessment failed",REDACTED:"Quoted content removed"}[v]||v.toLowerCase().replaceAll("_"," "));
-function showSelection(organizationId:string,taskId:string,assessmentId=''){
+function showSelection(organizationId:string,taskId:string,assessmentId='',evidenceId=''){
  const url=new URL(window.location.href);url.searchParams.set('organizationId',organizationId);
  if(taskId)url.searchParams.set('taskId',taskId);else url.searchParams.delete('taskId');
  if(assessmentId)url.searchParams.set('assessmentId',assessmentId);else url.searchParams.delete('assessmentId');
+ if(evidenceId)url.searchParams.set('evidenceId',evidenceId);else url.searchParams.delete('evidenceId');
  window.history.replaceState(window.history.state,'',url.pathname+url.search);
  window.dispatchEvent(new Event('regpilot-workspace-navigation'));
 }
@@ -29,6 +31,7 @@ export default function AssuranceWorkspace(){
   const [notes,setNotes]=useState(""),[until,setUntil]=useState(""),[scope,setScope]=useState(false),[originals,setOriginals]=useState(false);
   const [orgUnavailable,setOrgUnavailable]=useState(false),[renewal,setRenewal]=useState<Renewal|null>(null),[renewing,setRenewing]=useState(false),[renewalLoading,setRenewalLoading]=useState(false),[renewalUncertain,setRenewalUncertain]=useState(false),[renewalRefresh,setRenewalRefresh]=useState(0);
   const [uncertain,setUncertain]=useState<{taskId:string;assessmentId:string;operation:'prepare'|'decision'}|null>(null);
+  const [reusedFile,setReusedFile]=useState<{id:string;filename:string}|null>(null);
   const active=useRef({orgId,taskId}),generation=useRef(0),operation=useRef(0),writeLock=useRef(false),authSubject=useRef(''),accountEpoch=useRef(0);
   useEffect(()=>{active.current={orgId,taskId};},[orgId,taskId]);
   const request=useCallback(async(path:string,opts:RequestInit={})=>{
@@ -54,10 +57,10 @@ export default function AssuranceWorkspace(){
   useEffect(()=>{setTaskId(new URLSearchParams(window.location.search).get("taskId")||"");},[]);
   const endpoint=useCallback((org:string,task:string,assessment='')=>"/api/workspace/assurance?"+new URLSearchParams({organizationId:org,...(task?{taskId:task}:{}),...(assessment?{assessmentId:assessment}:{})}),[]);
   useEffect(()=>{
-    operation.current++;writeLock.current=false;setBusy(false);setData(null);setUncertain(null);setFiles([]);setConsent(false);setSelected("");setPassages([]);setNotes("");setScope(false);setOriginals(false);setUntil("");setRenewal(null);setRenewing(false);setRenewalUncertain(false);
+    operation.current++;writeLock.current=false;setBusy(false);setData(null);setUncertain(null);setFiles([]);setReusedFile(null);setConsent(false);setSelected("");setPassages([]);setNotes("");setScope(false);setOriginals(false);setUntil("");setRenewal(null);setRenewing(false);setRenewalUncertain(false);
     if(!orgId)return;const gen=++generation.current,abort=new AbortController();setLoading(true);
-    const linked=new URLSearchParams(window.location.search).get('assessmentId')||'';
-    request(endpoint(orgId,taskId,linked),{signal:abort.signal}).then(r=>r.json()).then((body:Workspace)=>{if(gen===generation.current){if(linked&&!body.assessments.some(row=>row.id===linked))throw new Error('The linked assessment is unavailable for this task.');setData(body);setSelected(linked||body.selectedAssessmentId||'');showSelection(orgId,body.selectedTaskId||taskId,linked);setNotice("");}}).catch(e=>{if(gen===generation.current)setNotice(e.message);}).finally(()=>{if(gen===generation.current)setLoading(false);});
+    const linked=new URLSearchParams(window.location.search).get('assessmentId')||'',reuse=evidenceReuseHandoff(window.location.search);
+    request(endpoint(orgId,taskId,linked),{signal:abort.signal}).then(r=>r.json()).then((body:Workspace)=>{if(gen===generation.current){if(linked&&!body.assessments.some(row=>row.id===linked))throw new Error('The linked assessment is unavailable for this task.');const selection=resolveEvidenceReuse(reuse,orgId,body.selectedTaskId||taskId,body.evidence);setData(body);setSelected(linked||body.selectedAssessmentId||'');if(selection.evidenceId){setFiles([selection.evidenceId]);setReusedFile({id:selection.evidenceId,filename:selection.filename});}showSelection(orgId,body.selectedTaskId||taskId,linked,selection.evidenceId);setNotice(selection.error);}}).catch(e=>{if(gen===generation.current)setNotice(e.message);}).finally(()=>{if(gen===generation.current)setLoading(false);});
     return()=>{abort.abort();generation.current++;};
   },[orgId,taskId,request,endpoint]);
   const org=orgs.find(o=>o.id===orgId),admin=!!org&&["OWNER","ADMIN"].includes(org.role),writer=!!org&&org.role!=="VIEWER";
@@ -84,7 +87,7 @@ export default function AssuranceWorkspace(){
       const refreshed=await request(endpoint(submitted.orgId,submitted.selectedTaskId,saved.id)),body=await refreshed.json();
       if(generation.current!==submitted.generation||active.current.orgId!==submitted.orgId||active.current.taskId!==submitted.taskId)return;
       if(body.selectedTaskId!==submitted.selectedTaskId||!body.assessments?.some((row:Assessment)=>row.id===saved.id))throw new Error('The saved assessment could not be matched to this task.');
-      setData(body);setSelected(saved.id);showSelection(submitted.orgId,submitted.selectedTaskId,saved.id);setPassages([]);setNotes("");setScope(false);setOriginals(false);setUntil("");setNotice(success);
+      setData(body);setSelected(saved.id);setReusedFile(null);showSelection(submitted.orgId,submitted.selectedTaskId,saved.id);setPassages([]);setNotes("");setScope(false);setOriginals(false);setUntil("");setNotice(success);
     }catch(e){if(generation.current===submitted.generation&&active.current.orgId===submitted.orgId&&active.current.taskId===submitted.taskId){setUncertain({taskId:submitted.selectedTaskId,assessmentId:submitted.assessmentId,operation:method==='POST'?'prepare':'decision'});setNotice((e instanceof Error?e.message+'. ':'')+'The result could not be confirmed. Check the saved assessments before submitting another request.');}}finally{if(operationId===operation.current){writeLock.current=false;setBusy(false);}}
   }
   async function reconcileAssessment(){
@@ -95,7 +98,7 @@ export default function AssuranceWorkspace(){
       if(generation.current!==submitted.generation||active.current.orgId!==submitted.orgId||active.current.taskId!==submitted.taskId)return;
       if(body.selectedTaskId!==pending.taskId||pending.assessmentId&&!body.assessments.some(row=>row.id===pending.assessmentId))throw new Error('The requested assessment could not be reconciled.');
       const id=pending.assessmentId||body.selectedAssessmentId||body.assessments[0]?.id||'';
-      setData(body);setSelected(id);showSelection(orgId,pending.taskId,id);setUncertain(null);setPassages([]);setNotes('');setScope(false);setOriginals(false);setUntil('');setConsent(false);
+      setData(body);setSelected(id);setReusedFile(null);showSelection(orgId,pending.taskId,id);setUncertain(null);setPassages([]);setNotes('');setScope(false);setOriginals(false);setUntil('');setConsent(false);
       setNotice('Saved assessments checked. Inspect the recorded status, reviewer and passages before deciding whether further work is needed. No preparation or review request was repeated.');
     }catch(error){if(generation.current===submitted.generation&&active.current.orgId===submitted.orgId&&active.current.taskId===submitted.taskId){setData(null);setNotice(error instanceof Error?error.message:'Saved assessments could not be checked.');}}
     finally{if(operationId===operation.current){writeLock.current=false;setBusy(false);}}
@@ -130,7 +133,7 @@ export default function AssuranceWorkspace(){
   }
   async function download(id:string){if(busy)return;const operationId=++operation.current,gen=generation.current;setBusy(true);try{const r=await request("/api/workspace/evidence/"+id+"?organizationId="+encodeURIComponent(orgId)),blob=await r.blob();if(gen!==generation.current||operationId!==operation.current)return;const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=data?.evidence.find(e=>e.id===id)?.filename||"evidence.pdf";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){if(gen===generation.current)setNotice(e instanceof Error?e.message:"Download failed");}finally{if(operationId===operation.current)setBusy(false);}}
   async function exportRecord(){if(busy||!assessment)return;const operationId=++operation.current,gen=generation.current;setBusy(true);try{const r=await request("/api/workspace/assurance/"+assessment.id+"/export?organizationId="+encodeURIComponent(orgId)),blob=await r.blob();if(gen!==generation.current||operationId!==operation.current)return;const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="regpilot-evidence-assessment.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){if(gen===generation.current)setNotice(e instanceof Error?e.message:"Export unavailable");}finally{if(operationId===operation.current)setBusy(false);}}
-  function choose(id:string){if(blocked)return;setSelected(id);showSelection(orgId,data?.selectedTaskId||taskId,id);setPassages([]);setNotes("");setScope(false);setOriginals(false);setUntil("");setRenewing(false);setRenewalUncertain(false);}
+  function choose(id:string){if(blocked)return;setSelected(id);setReusedFile(null);showSelection(orgId,data?.selectedTaskId||taskId,id);setPassages([]);setNotes("");setScope(false);setOriginals(false);setUntil("");setRenewing(false);setRenewalUncertain(false);}
   function chooseScope(nextOrg:string,nextTask:string){generation.current++;operation.current++;writeLock.current=false;setBusy(false);active.current={orgId:nextOrg,taskId:nextTask};showSelection(nextOrg,nextTask);setData(null);setUncertain(null);setOrgUnavailable(false);setNotice("");setTaskId(nextTask);setOrgId(nextOrg);}
   return <div className={shell.app}>
     <WorkspaceNav/>
@@ -146,6 +149,7 @@ export default function AssuranceWorkspace(){
         {!data.tasks.length&&<section className={ui.empty}><h2>Start with an accepted requirement</h2><p>Review a source recommendation and create a linked task first. This keeps evidence connected to the requirement it is meant to demonstrate.</p><a href="/team/intelligence">Open regulatory inbox ↗</a></section>}
         {data.source&&<section className={ui.source}><span className={ui.eyebrow}>01 / THE REQUIREMENT</span><blockquote>{data.source.quote}</blockquote><a target="_blank" rel="noopener noreferrer" href={data.source.url}>{data.source.title} ↗</a><small>Current source fingerprint {data.source.hash.slice(0,16)}</small></section>}
         {data.source&&writer&&<section className={ui.card} id="task-prepare"><div className={ui.sectionHead}><div><span className={ui.eyebrow}>02 / USE WHAT YOU ALREADY HAVE</span><h2>Choose the evidence to examine</h2></div><span className={ui.count}>{files.length} / 3 files</span></div><p className={ui.help}>Reuse a file from another task when appropriate. Your reviewer must confirm that it covers this requirement, business scope and timeframe.</p>
+          {reusedFile&&files.includes(reusedFile.id)&&<aside className={ui.notice} aria-label="Evidence Library selection"><strong>Selected from your Evidence Library</strong><p>{reusedFile.filename} uses the existing original. Review its relevance to this task, then choose how to prepare the assessment. No new copy or assessment has been created.</p><a href={'/team/evidence?'+new URLSearchParams({organizationId:orgId,evidenceId:reusedFile.id})}>View this file and its recorded uses →</a></aside>}
           <div className={ui.fileGrid}>{[...data.evidence].sort((a,b)=>Number(b.obligationId===data.selectedTaskId)-Number(a.obligationId===data.selectedTaskId)).map(file=><label key={file.id} className={files.includes(file.id)?ui.fileSelected:ui.file}><input type="checkbox" disabled={blocked||file.scanStatus!=="CLEAN"||!files.includes(file.id)&&files.length>=3} checked={files.includes(file.id)} onChange={e=>setFiles(ids=>e.target.checked?[...ids,file.id]:ids.filter(id=>id!==file.id))}/><div><strong>{file.filename}</strong><small>{file.obligationId===data.selectedTaskId?"Attached to this task":"Available to reuse"} · {status(file.reviewStatus)}</small></div></label>)}</div>
           {!data.evidence.length&&<p className={ui.help}>No evidence files yet. <a href={"/team/evidence?"+new URLSearchParams({organizationId:orgId,taskId:data.selectedTaskId||""})}>Add a PDF or Word document in the vault.</a></p>}
           <label className={ui.check}><input type="checkbox" disabled={blocked} checked={consent} onChange={e=>setConsent(e.target.checked)}/>I agree to process these fictional or non-sensitive files and retain short quoted passages for review. Choosing AI also sends extracted text to the configured external provider.</label>

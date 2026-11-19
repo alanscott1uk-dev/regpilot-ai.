@@ -446,7 +446,12 @@ try{
  await review.getByRole('dialog').getByRole('heading',{name:assigned.title,exact:true}).waitFor();
  passed('A fresh review verified private bytes, persisted a new basis and cleared the change alert after reload; the original completion and open follow-up remained intact on desktop and mobile.');
 
- report.customerJourney=await sourceToReportJourney({upload,review,db,app,org,editor,reviewer,submitEvidence,checkpoint,passed,bounded,artifactDir});
+ const storageSnapshot=async()=>{
+  const {data,error}=await supabase.storage.from('journey-files').list(org.id,{limit:1000,sortBy:{column:'name',order:'asc'}});
+  if(error)throw Error('Unable to inspect isolated evidence object population');
+  return (data||[]).map(object=>({name:object.name,id:object.id,size:object.metadata?.size??null})).sort((a,b)=>a.name.localeCompare(b.name));
+ };
+ report.customerJourney=await sourceToReportJourney({upload,review,db,app,org,editor,reviewer,submitEvidence,checkpoint,passed,bounded,artifactDir,reuseEvidence:rereviewed,reusedBytes:file,storageSnapshot});
 
  await checkpoint('unavailable organisation isolation');
  await review.goto(app+'/team/evidence?'+new URLSearchParams({organizationId:randomUUID(),taskId:task.id}));

@@ -17,7 +17,7 @@ export function workspaceHref(path:string,organizationId:string,values:Record<st
 function recordOrganization(id:string,clearLinkedRecords=false){
  const url=new URL(window.location.href);
  if(id)url.searchParams.set('organizationId',id);else url.searchParams.delete('organizationId');
- if(clearLinkedRecords)for(const key of ['taskId','sourceId','snapshotId','assessmentId','importId'])url.searchParams.delete(key);
+ if(clearLinkedRecords)for(const key of ['taskId','sourceId','snapshotId','assessmentId','importId','evidenceId'])url.searchParams.delete(key);
  window.history.replaceState(window.history.state,'',url.pathname+url.search+url.hash);
  window.dispatchEvent(new Event('regpilot-workspace-navigation'));
 }
@@ -49,7 +49,8 @@ export function useWorkspaceContext(){
    const id=requested?.toLowerCase();
    const unavailable=requested!==null&&requested!==undefined&&(!workUuid(requested)||!organisations.some(o=>o.id===id));
    const organizationId=unavailable?'':id||(organisations.some(o=>o.id===current.current.organizationId)?current.current.organizationId:organisations[0]?.id||'');
-   const changed=current.current.organizationId!==organizationId||current.current.userId!==(body.userId||'');
+   const membershipChanged=organisations.length!==current.current.organisations.length||organisations.some(org=>current.current.organisations.find(previous=>previous.id===org.id)?.role!==org.role);
+   const changed=current.current.organizationId!==organizationId||current.current.userId!==(body.userId||'')||membershipChanged;
    publish({organisations,organizationId,userId:body.userId||'',email:body.email||session.user.email||'',loading:false,error:unavailable?'The linked organisation is unavailable for this account. Choose an organisation to continue.':''},changed);
    if(organizationId)recordOrganization(organizationId);
    return true;
@@ -88,5 +89,23 @@ export function useWorkspaceContext(){
   if(!response.ok)throw new Error(body.error||'The request could not be completed.');
   return body;
  },[]);
- return {...context,signedIn:!!context.email,chooseOrganization,refreshContext,capture,request};
+ /** Binary and streaming readers retain the same account boundary as JSON reads.
+  * Callers must also check capture() after consuming the response body.
+  */
+ const requestResponse=useCallback(async(path:string,options:RequestInit={})=>{
+  const revision=current.current.revision,externalId=current.current.externalId;
+  const valid=()=>mounted.current&&revision===current.current.revision&&externalId===current.current.externalId;
+  const session=(await browserAuth().auth.getSession()).data.session;
+  if(!valid()||session?.user.id!==externalId)throw new Error('Your account or organisation changed. Reload before continuing.');
+  if(!session)throw new Error('Sign in to your private workspace first.');
+  const response=await fetch(path,{...options,cache:'no-store',headers:{...options.headers,authorization:'Bearer '+session.access_token}});
+  if(!valid())throw new Error('Your account or organisation changed. Reload before continuing.');
+  if(!response.ok){
+   const body=await response.json().catch(()=>({error:'The request could not be completed.'}));
+   if(!valid())throw new Error('Your account or organisation changed. Reload before continuing.');
+   throw new Error(body.error||'The request could not be completed.');
+  }
+  return response;
+ },[]);
+ return {...context,signedIn:!!context.email,chooseOrganization,refreshContext,capture,request,requestResponse};
 }

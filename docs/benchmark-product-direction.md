@@ -2,6 +2,18 @@
 
 Historical development notes follow. For the latest implemented workflow and measurable acceptance criteria, see [Coordinated change response](coordinated-change-response.md), [Audit periods and wider coverage](audit-period-and-coverage.md) and the current [release checklist](release-checklist.md). Earlier “not implemented” entries describe their original batch, not the current branch.
 
+## Active competitor-derived development choices — 19 November 2026
+
+The user direction is to use the strongest competitor capabilities as the product baseline, then improve the experience for RegPilot's UK SME customers. Compare the complete customer job, implement the missing workflow, and retain its acceptance evidence. Do not count an existing module again as a new capability or infer superiority from a feature list.
+
+| Priority | Current official benchmark | Concrete RegPilot gap and development decision |
+| --- | --- | --- |
+| Company-wide evidence library | [Drata Controls and Evidence](https://drata.com/products/compliance/controls-and-evidence) describes central storage, linked reuse and readiness visibility. | Existing cross-task reuse was difficult to discover from the task-first Evidence screen. Add company search/filter/pagination, exact original and assessment-use visibility, and an explicit canonical-file handoff into a source-task assessment. The acceptance must prove no duplicate upload and preserved company/task/review authority. |
+| Guided starter programme | [ISMS.online Platform](https://www.isms.online/platform/) describes templates, guided methodology and in-platform support; [Vanta Automated Compliance](https://www.vanta.com/products/automated-compliance) describes a first-login-to-audit roadmap. | Current document-to-programme adoption presumes the customer already has suitable documents. A future reviewed starter plan should help customers confirm scope and assign practical work without fabricating document-derived controls or claiming unverified legal coverage. Not implemented by the evidence-library change. |
+| Owned internal risk lifecycle | [Drata Risk](https://drata.com/products/risk) describes risk scoring, ownership, control links and remediation. | Supplier criticality is not a general internal risk register. A future connected risk workflow needs explicit likelihood/impact reasoning, treatment ownership, control/evidence links and reviewed residual decisions. Not implemented by the evidence-library change. |
+
+Official product descriptions were checked on 19 November 2026. They establish relevant vendor-offered capabilities; they do not independently establish product quality, customer outcomes or comparative performance. Current development evidence and remaining release gates are maintained in [product-completion.md](product-completion.md) and [PR #10](https://github.com/alanscott1uk-dev/regpilot-ai./pull/10).
+
 ## Competitive benchmark
 
 - **Vanta**: strongest overall product model for connected compliance operations, automated testing, evidence workflows, integrations and a polished interface. Reference: https://www.vanta.com/products/automated-compliance
