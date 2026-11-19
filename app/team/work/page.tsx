@@ -3,6 +3,7 @@ import {useCallback,useEffect,useRef,useState} from 'react';
 import WorkspaceNav from '../../components/workspace-nav';
 import EmailSignIn from '../../components/email-sign-in';
 import {CompletionPanel} from './completion-panel';
+import {TaskProgress} from './task-progress';
 import {browserAuth} from '../../../lib/client/supabase-auth';
 import {WORK_VIEWS,parseWorkQuery,safeWorkSource,workUuid,type WorkView,type WorkQuery} from '../../../lib/work-hub.mjs';
 import type {workInbox,workTask,planWork} from '../../../lib/server/work-hub-service';
@@ -25,15 +26,20 @@ export default function WorkHub(){
  const [creating,setCreating]=useState(false),[draft,setDraft]=useState({title:'',category:'Internal',notes:'',dueDate:'',assigneeId:''});
  const [taskId,setTaskId]=useState(''),[detail,setDetail]=useState<{key:string;data:Detail}|null>(null),[detailError,setDetailError]=useState('');
  const [notice,setNotice]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[sessionRetry,setSessionRetry]=useState(0);
- const dialog=useRef<HTMLDialogElement>(null),mutation=useRef(false),generation=useRef(0),identity=useRef(''),sessionUser=useRef('');
+ const dialog=useRef<HTMLDialogElement>(null),mutation=useRef(false),generation=useRef(0),identity=useRef(''),sessionUser=useRef(''),authSubject=useRef('');
  const scope=(session?.userId||'')+':'+orgId,queryKey=scope+':'+JSON.stringify(query);
  const refreshWork=useCallback(()=>setReload(value=>value+1),[]);
  identity.current=scope;
  const request=useCallback(async(path:string,options:RequestInit={})=>{
-  const token=(await browserAuth().auth.getSession()).data.session?.access_token;
+  const expectedGeneration=generation.current,expectedSubject=authSubject.current;
+  const session=(await browserAuth().auth.getSession()).data.session;
+  const valid=()=>generation.current===expectedGeneration&&(!expectedSubject||session?.user.id===expectedSubject)&&(!authSubject.current||session?.user.id===authSubject.current);
+  if(!valid())throw new Error('Your account or workspace changed. Reload before continuing.');
+  const token=session?.access_token;
   if(!token)throw new Error('Your session ended. Sign in again to continue.');
   const response=await fetch(path,{...options,cache:'no-store',headers:{...options.headers,authorization:'Bearer '+token}});
   const body=await response.json().catch(()=>({error:'The server returned an unreadable response.'}));
+  if(!valid())throw new Error('Your account or workspace changed. Reload before continuing.');
   if(!response.ok)throw new Error(body.error||'The request could not be completed.');
   return body;
  },[]);
@@ -61,9 +67,10 @@ export default function WorkHub(){
   }
   try{
    const auth=browserAuth().auth;
-   const {data}=auth.onAuthStateChange(event=>{
-    if(event==='SIGNED_OUT'){serial++;identity.current='';generation.current++;setSession(null);setOrgId('');setCreating(false);setDraft({title:'',category:'Internal',notes:'',dueDate:'',assigneeId:''});setLoaded(null);setSelected([]);setPreview(null);setTaskId('');setDetail(null);setNotice('');setError('');setSessionBusy(false);}
-    else if(event==='SIGNED_IN'||event==='INITIAL_SESSION')setTimeout(()=>{if(alive)void refreshSession();},0);
+   const {data}=auth.onAuthStateChange((event,currentSession)=>{
+    if(event==='SIGNED_OUT'||authSubject.current&&currentSession?.user.id!==authSubject.current){serial++;identity.current='';generation.current++;setSession(null);setOrgId('');setCreating(false);setDraft({title:'',category:'Internal',notes:'',dueDate:'',assigneeId:''});setLoaded(null);setSelected([]);setPreview(null);setTaskId('');setDetail(null);setNotice('');setError('');setSessionBusy(event!=='SIGNED_OUT');}
+    authSubject.current=currentSession?.user.id||'';
+    if(event==='SIGNED_IN'||event==='INITIAL_SESSION')setTimeout(()=>{if(alive)void refreshSession();},0);
    });unsubscribe=()=>data.subscription.unsubscribe();void refreshSession();
   }catch{setError('Private workspace sign-in is not configured in this environment.');setSessionBusy(false);}
   return()=>{alive=false;serial++;abort.abort();unsubscribe();generation.current++;};
@@ -88,7 +95,7 @@ export default function WorkHub(){
  },[taskId,orgId,scope,request,reload]);
  const data=loaded?.key===queryKey?loaded.data:null,current=detail?.key===scope+':'+taskId?detail.data:null;
  const org=session?.organisations.find(o=>o.id===orgId),admin=!!org&&['OWNER','ADMIN'].includes(org.role);
- const viewLabel=(view:WorkView)=>view==='review'&&!admin?'Awaiting evidence review':WORK_VIEWS[view];
+ const viewLabel=(view:WorkView)=>view==='review'?(admin?'Reviews to finish':'Awaiting review'):WORK_VIEWS[view];
  const selectionChanged=()=>{setPreview(null);setNotice('');};
  function showTask(id:string){
   const url=new URL(window.location.href);
@@ -121,8 +128,8 @@ export default function WorkHub(){
  }
  const taskCard=(task:Inbox['items'][number])=><article className={styles.task} key={task.id}>
   {admin&&<input aria-label={'Select '+task.title} type="checkbox" disabled={busy||!task.canPlan} checked={selected.some(x=>x.id===task.id)} onChange={e=>pick(task,e.target.checked)}/>}
-  <button type="button" className={styles.taskOpen} onClick={()=>showTask(task.id)}><span className={styles.category}>{task.category}</span><strong>{task.title}</strong><span>{task.assignee?.email||task.ownerName} · Due {date(task.dueDate)}</span><span className={styles.metadata}>{task._count.evidence} evidence file{task._count.evidence===1?'':'s'}{task.evidenceToReview?' · Independent review pending':''}{task.managedControl?' · '+task.managedControl.title:''}</span></button>
-  {query.view==='review'&&<a href={'/team/evidence?'+new URLSearchParams({organizationId:orgId,taskId:task.id})}>{admin?'Review files':'View files'}</a>}
+  <button type="button" className={styles.taskOpen} onClick={()=>showTask(task.id)}><span className={styles.category}>{task.category}</span><strong>{task.title}</strong><span>{task.assignee?.email||task.ownerName} · Due {date(task.dueDate)}</span><span className={styles.metadata}>{task._count.evidence} evidence file{task._count.evidence===1?'':'s'}{task.reviewKinds?.files?' · File review pending':''}{task.reviewKinds?.assessments?' · Evidence decision pending':''}{task.managedControl?' · '+task.managedControl.title:''}</span>{task.workflow.title&&<span className={styles.stageLabel}>{task.workflow.title}</span>}</button>
+  {query.view==='review'&&<a className={styles.reviewAction} href={task.workflow.href}>{task.workflow.label} →</a>}
   <span className={styles.badge} data-status={task.status}>{statusLabel(task.status)}</span>
  </article>;
  return <div className={shell.app}><WorkspaceNav/><main className={shell.main}>
@@ -162,20 +169,30 @@ export default function WorkHub(){
   </>}
   <dialog ref={dialog} className={styles.dialog} aria-labelledby="work-detail-title" onCancel={event=>{if(busy)event.preventDefault();else showTask('');}} onClose={()=>{if(!dialog.current?.open&&taskId)showTask('');}}><div className={styles.dialogTop}><span className={styles.eyebrow}>TASK CONTEXT</span><button type="button" aria-label="Close task details" disabled={busy} onClick={()=>showTask('')}>Close ×</button></div><h2 id="work-detail-title">{current?.task.title||'Task details'}</h2>
    {detailError&&<p className={styles.error} role="alert">{detailError}</p>}{!current&&!detailError&&<p role="status">Loading task context…</p>}
-   {current&&<><div className={styles.detailMeta}><span className={styles.badge}>{statusLabel(current.task.status)}</span><span>Due {date(current.task.dueDate)}</span><span>{current.task.assignee?.email||current.task.ownerName}</span></div><p>{current.task.notes||'No additional task notes have been recorded.'}</p>
-    <section className={styles.nextStep}><h3>Next step</h3><div className={styles.actions}>{current.canStart&&<button type="button" disabled={busy} onClick={()=>void startTask()}>Start task</button>}<a href={current.workflow.href}>{current.workflow.label} →</a>{current.canPlan&&<button type="button" disabled={busy} onClick={()=>{setSelected([{id:current.task.id,title:current.task.title,updatedAt:current.task.updatedAt}]);setPreview(null);setAssignee('keep');setDue('');setReason('');showTask('');setTimeout(()=>document.querySelector('[aria-label="Bulk planning"]')?.scrollIntoView({block:'start'}),0);}}>Plan owner or deadline</button>}</div>{current.planningBlocked&&<p>{current.planningBlocked}</p>}</section>
+   {current&&<><div className={styles.detailMeta}><span className={styles.badge} data-status={current.task.status}>{statusLabel(current.task.status)}</span><span>Due {date(current.task.dueDate)}</span><span>{current.task.assignee?.email||current.task.ownerName}</span></div>
+    <TaskProgress data={current} canInvite={admin}/>
+    <div className={styles.taskLayout}><div className={styles.taskMain}>
+     <section className={styles.taskSection}><div className={styles.sectionTitle}><h3>Evidence and decisions</h3><a href={'/team/evidence?'+new URLSearchParams({organizationId:orgId,taskId:current.task.id})}>Manage evidence →</a></div>
+      {current.task.evidence.length?<ul className={styles.evidence}>{current.task.evidence.map(file=><li key={file.id}><strong>{file.filename}</strong><span>{file.scanStatus==='CLEAN'?statusLabel(file.reviewStatus):'Quarantined — not available for use'} · Added {date(file.createdAt)}</span></li>)}</ul>:<p>No evidence files have been attached. The next step above keeps the upload connected to this task.</p>}
+      {current.evidenceLimited&&<p>Showing the newest 50 files. Open the evidence workspace for the remaining records.</p>}
+      {current.task.assuranceAssessments.length>0&&<div className={styles.assessmentRecords}><h4>Evidence assessments</h4>{current.task.assuranceAssessments.map(a=><a key={a.id} href={'/team/assurance?'+new URLSearchParams({organizationId:orgId,taskId:current.task.id,assessmentId:a.id})}><strong>{statusLabel(a.status)}</strong><span>Prepared {date(a.createdAt)}{a.validUntil?' · Review date '+date(a.validUntil):''}</span><span aria-hidden="true">→</span></a>)}</div>}
+      <p className={styles.hint}>File approval and a scoped evidence decision are separate steps. The completion check verifies the required records.</p>
+     </section>
+     <div id="task-completion" className={styles.completionAnchor}>
     <CompletionPanel key={scope+':'+current.task.id+':'+current.task.updatedAt} organizationId={orgId} taskId={current.task.id} currentStatus={current.task.status} busy={busy} request={request} onStatusChanged={refreshWork}
      beginAction={()=>{if(mutation.current)return false;mutation.current=true;setBusy(true);return true;}}
      endAction={()=>{mutation.current=false;setBusy(false);}}
      onCompleted={result=>{if(identity.current!==scope||result.taskId!==current.task.id)return;setSelected([]);setPreview(null);setNotice('Task completed with '+result.evidenceCount+' verified evidence file'+(result.evidenceCount===1?'':'s')+'. A completion record is saved in its activity history.');setReload(value=>value+1);}}/>
-    <section><h3>Source and control context</h3>{current.task.managedControl?<p>Linked control: <strong>{current.task.managedControl.title}</strong>{!current.task.managedControl.enabled?' (paused)':''}</p>:<p>No managed control is directly linked.</p>}
-     {safeWorkSource(current.task.sourceUrl)&&<a href={safeWorkSource(current.task.sourceUrl)!} target="_blank" rel="noopener noreferrer">Open recorded source reference ↗</a>}
-     {current.task.intelligenceDecisions.map(decision=><article className={styles.reference} key={decision.id}><strong>{decision.run.snapshot.title}</strong><span>Recorded decision: {statusLabel(decision.decision)} · Source checked {date(decision.run.snapshot.lastCheckedAt)}</span>{safeWorkSource(decision.run.snapshot.url)&&<a href={safeWorkSource(decision.run.snapshot.url)!} target="_blank" rel="noopener noreferrer">Read publication ↗</a>}</article>)}
-     <p className={styles.hint}>Recorded references explain provenance; they are not a new legal interpretation or confirmation that the source is current.</p>
-    </section>
-    <section><h3>Supporting evidence <span className={styles.count}>{current.task._count.evidence}</span></h3>{current.task.evidence.length?<ul className={styles.evidence}>{current.task.evidence.map(file=><li key={file.id}><strong>{file.filename}</strong><span>{file.scanStatus==='CLEAN'?statusLabel(file.reviewStatus):'Quarantined — not available for use'} · Added {date(file.createdAt)}</span></li>)}</ul>:<p>No evidence files have been attached.</p>}{current.evidenceLimited&&<p>Showing the newest 50 files. Open the evidence workspace for the remaining records.</p>}<a href={'/team/evidence?'+new URLSearchParams({organizationId:orgId,taskId:current.task.id})}>Open evidence workspace →</a><p className={styles.hint}>A clean scan or an approved file is not by itself a completed evidence assessment.</p></section>
-    {current.task.assuranceAssessments.length>0&&<section><h3>Assessment history</h3><ul className={styles.evidence}>{current.task.assuranceAssessments.map(a=><li key={a.id}><strong>{statusLabel(a.status)}</strong><span>Created {date(a.createdAt)}{a.validUntil?' · Review date '+date(a.validUntil):''}</span></li>)}</ul><a href={'/team/assurance?'+new URLSearchParams({organizationId:orgId,taskId:current.task.id})}>Check current evidence validity →</a></section>}
-    <section><h3>Activity</h3>{current.history.length?<ol className={styles.timeline}>{current.history.map(event=><li key={event.id}><strong>{event.action==='work.plan_applied'?'Ownership or deadline plan updated':event.action==='work.completed'?'Task completed with verified evidence':event.action.replaceAll('.',' · ').replaceAll('_',' ')}</strong><time dateTime={event.createdAt}>{date(event.createdAt)}</time></li>)}</ol>:<p>No activity has been recorded for this task.</p>}{current.historyLimited&&<p>Showing the latest 30 task events.</p>}</section>
+     </div>
+    </div><aside className={styles.taskAside} aria-label="Task context and activity">
+     <section><h3>Task notes</h3><p>{current.task.notes||'No additional task notes have been recorded.'}</p><div className={styles.actions}>{current.canStart&&<button type="button" disabled={busy} onClick={()=>void startTask()}>Start task</button>}{current.canPlan&&<button type="button" className={styles.secondary} disabled={busy} onClick={()=>{setSelected([{id:current.task.id,title:current.task.title,updatedAt:current.task.updatedAt}]);setPreview(null);setAssignee('keep');setDue('');setReason('');showTask('');setTimeout(()=>document.querySelector('[aria-label="Bulk planning"]')?.scrollIntoView({block:'start'}),0);}}>Plan owner or deadline</button>}</div>{current.planningBlocked&&<p className={styles.hint}>{current.planningBlocked}</p>}</section>
+     <section><h3>Source and control context</h3>{current.task.managedControl?<p>Linked control: <strong>{current.task.managedControl.title}</strong>{!current.task.managedControl.enabled?' (paused)':''}</p>:<p>No managed control is directly linked.</p>}
+      {safeWorkSource(current.task.sourceUrl)&&<a href={safeWorkSource(current.task.sourceUrl)!} target="_blank" rel="noopener noreferrer">Open recorded source reference ↗</a>}
+      {current.task.intelligenceDecisions.map(decision=><article className={styles.reference} key={decision.id}><strong>{decision.run.snapshot.title}</strong><span>Recorded decision: {statusLabel(decision.decision)} · Source checked {date(decision.run.snapshot.lastCheckedAt)}</span>{safeWorkSource(decision.run.snapshot.url)&&<a href={safeWorkSource(decision.run.snapshot.url)!} target="_blank" rel="noopener noreferrer">Read publication ↗</a>}</article>)}
+      <p className={styles.hint}>These saved references explain the decision's provenance.</p>
+     </section>
+     <details className={styles.activityDetails}><summary>Task activity · {current.history.length}{current.historyLimited?'+':''}</summary>{current.history.length?<ol className={styles.timeline}>{current.history.map(event=><li key={event.id}><strong>{event.action==='work.plan_applied'?'Ownership or deadline plan updated':event.action==='work.completed'?'Task completed with verified evidence':event.action.replaceAll('.',' · ').replaceAll('_',' ')}</strong><time dateTime={event.createdAt}>{date(event.createdAt)}</time></li>)}</ol>:<p>No activity has been recorded for this task.</p>}{current.historyLimited&&<p>Showing the latest 30 task events.</p>}</details>
+    </aside></div>
     {current.task.completionException&&<p className={styles.error}>Completed with a recorded exception: {current.task.completionRationale}</p>}
    </>}
   </dialog>

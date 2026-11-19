@@ -140,8 +140,9 @@ export async function completionAssessment(tx:Prisma.TransactionClient,organizat
   if(!assessment||(await currentAssessment(tx,organizationId,assessment)).valid!==true)throw new Error("Completion requires a current independently accepted evidence assessment for this source-linked task");
   return assessment;
 }
-export async function assuranceWorkspace(ctx:AuthorizedContext,taskId?:string){
+export async function assuranceWorkspace(ctx:AuthorizedContext,taskId?:string,assessmentId?:string){
   if(taskId&&!uuid(taskId))throw new IntelligenceError("Invalid task identifier");
+  if(assessmentId&&(!uuid(assessmentId)||!taskId))throw new IntelligenceError("Choose the task and a valid assessment identifier");
   const taskSelect={id:true,title:true,status:true,ownerName:true,dueDate:true} as const;
   const taskScope={organizationId:ctx.organizationId,originKey:{not:null}};
   const [page,evidence]=await Promise.all([
@@ -155,7 +156,13 @@ export async function assuranceWorkspace(ctx:AuthorizedContext,taskId?:string){
     tasks.unshift(linked);
   }
   const selected=taskId||tasks[0]?.id;let source:null|{quote:string;title:string;url:string;hash:string}=null,contextIssue:string|null=null;
-  const assessments=selected?await db.assuranceAssessment.findMany({where:{organizationId:ctx.organizationId,obligationId:selected},orderBy:{createdAt:"desc"},take:10}):[];
+  const assessmentPage=selected?await db.assuranceAssessment.findMany({where:{organizationId:ctx.organizationId,obligationId:selected},orderBy:[{createdAt:"desc"},{id:"desc"}],take:11}):[];
+  const assessments=assessmentPage.slice(0,10);
+  if(assessmentId&&!assessments.some(row=>row.id===assessmentId)){
+    const linked=await db.assuranceAssessment.findFirst({where:{id:assessmentId,organizationId:ctx.organizationId,obligationId:selected}});
+    if(!linked)throw new IntelligenceError("The linked assessment is unavailable for this task",404);
+    assessments.push(linked);
+  }
   if(selected){try{const c=await context(db,ctx.organizationId,selected,[]);source={quote:c.candidate.quote,title:c.snapshot.title,url:c.snapshot.url,hash:c.snapshot.contentHash};}catch(error){if(error instanceof IntelligenceError&&error.status===404)throw error;contextIssue=error instanceof IntelligenceError?error.message:"Source context unavailable";}}
   const reviews=await Promise.all(assessments.map(async row=>{
     const manifest=manifestProjection(row.evidenceManifest),state=["PROCESSING","FAILED","REDACTED"].includes(row.status)?{valid:false,reason:row.status==="PROCESSING"?"Processing has not completed; refresh to check its status.":row.status==="REDACTED"?"Retained assessment content was removed.":"Processing did not complete. Check the files and prepare updated evidence."}:await currentAssessment(db,ctx.organizationId,row),integrityValid=!!manifest&&!!row.result&&hashValue(row.result)===row.resultHash&&resultIsStructured(row.result);
@@ -163,7 +170,7 @@ export async function assuranceWorkspace(ctx:AuthorizedContext,taskId?:string){
   }));
   const accepted=reviews.find(r=>r.status==="ACCEPTED"&&r.current),latest=reviews[0];
   const nextStep=contextIssue||(!selected?"Accept a source recommendation in the regulatory inbox first.":accepted?"Evidence assessment is current. Check the task outcome before marking it complete.":latest?.status==="DRAFT"&&latest.current?"An independent administrator can now check the quoted passages and record a scoped decision.":latest?.reason?latest.reason:"Choose supporting files and prepare a content-level assessment.");
-  return {tasks,evidence,selectedTaskId:selected||null,source,contextIssue,assessments:reviews,nextStep,aiEnabled:assuranceAiConfigured(),taskLimitReached:page.length>100};
+  return {tasks,evidence,selectedTaskId:selected||null,selectedAssessmentId:assessmentId||reviews[0]?.id||null,source,contextIssue,assessments:reviews,nextStep,aiEnabled:assuranceAiConfigured(),taskLimitReached:page.length>100,assessmentLimitReached:assessmentPage.length>10};
 }
 export async function exportAssurance(ctx:AuthorizedContext,id:string){
   if(!uuid(id))throw new IntelligenceError("Invalid assessment identifier");

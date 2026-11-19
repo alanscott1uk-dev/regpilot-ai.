@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {randomUUID} from "node:crypto";
 import {db} from "../lib/server/db";
-import {inviteMember,revokeInvitation,decideInvitation,invitationInbox,teamWorkspace,changeMember} from "../lib/server/team-service";
+import {inviteMember,revokeInvitation,decideInvitation,invitationInbox,invitationStatus,teamWorkspace,changeMember} from "../lib/server/team-service";
 import {authorizeOrganization,type AuthorizedContext} from "../lib/server/authorization";
 import {createObligation} from "../lib/server/obligation-service";
 import {createEvidence,downloadEvidence,reviewEvidence} from "../lib/server/evidence-service";
@@ -24,18 +24,28 @@ test("team access: email ownership, tenant isolation, expiry, role escalation, h
   await assert.rejects(()=>inviteMember(o,{email:"not-approved@example.invalid",role:"EDITOR"}),rejects(403));
   const pair=await Promise.all([inviteMember(ad,{email:invitee.email,role:"EDITOR"}),inviteMember(ad,{email:invitee.email,role:"EDITOR"})]);assert.equal(pair[0].id,pair[1].id);
   const inv=pair[0];assert.equal((await invitationInbox(identity(invitee))).length,1);assert.equal((await invitationInbox(identity(outside))).length,0);
+  const pendingStatus=await invitationStatus(identity(invitee),inv.id);assert.equal(pendingStatus.organization.id,a.id);assert.equal(pendingStatus.status,"PENDING");assert.equal(pendingStatus.membership,null);
+  await assert.rejects(()=>invitationStatus(identity(outside),inv.id),rejects(404));
+  assert.equal((await teamWorkspace(o)).organizationId,a.id);
   await assert.rejects(()=>decideInvitation(identity(outside),{id:inv.id,version:1,decision:"ACCEPT"}),rejects(404));
   await assert.rejects(()=>revokeInvitation(out,inv.id,1),rejects(404));
   await assert.rejects(()=>decideInvitation({...identity(invitee),externalId:randomUUID()},{id:inv.id,version:1,decision:"ACCEPT"}),rejects(409));
   const attempts=await Promise.allSettled([decideInvitation(identity(invitee),{id:inv.id,version:1,decision:"ACCEPT"}),decideInvitation(identity(invitee),{id:inv.id,version:1,decision:"ACCEPT"})]);assert.equal(attempts.filter(r=>r.status==="fulfilled").length,1);
   assert.equal((await authorizeOrganization({externalId:invitee.externalId},a.id,["EDITOR"]))?.role,"EDITOR");assert.equal(await authorizeOrganization({externalId:invitee.externalId},b.id,["EDITOR"]),null);
+  const beforeRead=await db.auditEvent.count({where:{organizationId:a.id,entityId:inv.id}});
+  const acceptedStatus=await invitationStatus(identity(invitee),inv.id);assert.equal(acceptedStatus.status,"ACCEPTED");assert.equal(acceptedStatus.membership?.role,"EDITOR");assert.equal(acceptedStatus.version,2);
+  assert.equal(await db.auditEvent.count({where:{organizationId:a.id,entityId:inv.id}}),beforeRead,"lost-response reconciliation reads the receipt without another write");
+  assert.equal((await invitationInbox(identity(invitee))).length,0,"accepted status is available by exact link after it leaves the pending inbox");
+  assert.equal((await invitationStatus({...identity(invitee),externalId:randomUUID()},inv.id)).membership,null,"a matching email alone is never a current membership");
   await assert.rejects(()=>changeMember(ad,{userId:invitee.id,expectedRole:"EDITOR",action:"ROLE",role:"ADMIN"}),rejects(403));
   await assert.rejects(()=>changeMember(o,{userId:owner.id,expectedRole:"OWNER",action:"REMOVE"}),rejects(409));
   await assert.rejects(()=>changeMember(ad,{userId:owner.id,expectedRole:"OWNER",action:"REMOVE"}),rejects(403));
   await assert.rejects(()=>changeMember(o,{userId:editor.id,expectedRole:"VIEWER",action:"REMOVE"}),rejects(409));
   const expired=await inviteMember(o,{email:later.email,role:"EDITOR"});await db.workspaceInvitation.update({where:{id:expired.id},data:{expiresAt:new Date("2020-01-01")}});
+  assert.equal((await invitationStatus(identity(later),expired.id)).status,"EXPIRED");
   await assert.rejects(()=>decideInvitation(identity(later),{id:expired.id,version:1,decision:"ACCEPT"}),rejects(409));
   const revoked=await inviteMember(ad,{email:later.email,role:"EDITOR"});await revokeInvitation(o,revoked.id,1);
+  assert.equal((await invitationStatus(identity(later),revoked.id)).status,"REVOKED");
   await assert.rejects(()=>decideInvitation(identity(later),{id:revoked.id,version:1,decision:"ACCEPT"}),rejects(409));
   const issuerPending=await inviteMember(ad,{email:later.email,role:"EDITOR"});
   // A revoked/demoted issuer cannot leave behind grants that reactivate on re-promotion.
@@ -61,6 +71,7 @@ test("team access: email ownership, tenant isolation, expiry, role escalation, h
   await assert.rejects(()=>createObligation(ed,{title:"Stale request",category:"Internal",ownerName:"Fixture",dueDate:"2026-12-01"}),rejects(403));
   // Recheck membership after a scan/store operation completes. Orphan upload is removed.
   await assert.rejects(()=>createEvidence(ctx(invitee.id,"EDITOR"),task.id,"fixture.pdf",fixturePdf([["Fictional test file."]]),{storage:store,scan:async()=>{await changeMember(o,{userId:invitee.id,expectedRole:"EDITOR",action:"REMOVE"});return scan();}}),rejects(403));assert.equal(objects.size,0);
+  const removedStatus=await invitationStatus(identity(invitee),inv.id);assert.equal(removedStatus.status,"ACCEPTED");assert.equal(removedStatus.membership,null,"historical acceptance must not imply current access after removal");
   const evidence=await createEvidence(ctx(replacement.id,"EDITOR"),task.id,"fixture.pdf",fixturePdf([["Fictional review file."]]),{storage:store,scan});
   const connector=await db.evidenceConnector.create({data:{organizationId:a.id,controlId:control.id,configuredById:admin.id,repository:"fictional/repository",branch:"main",enabled:true,encryptedSecret:"fictional-not-a-credential",leaseToken:randomUUID(),leaseUntil:new Date(Date.now()+60000)}});
   const watch=await db.watchSchedule.create({data:{organizationId:a.id,configuredById:admin.id,sourceId:"fictional-source",enabled:true,leaseToken:randomUUID(),leaseUntil:new Date(Date.now()+60000)}});

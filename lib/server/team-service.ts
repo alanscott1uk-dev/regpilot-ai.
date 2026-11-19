@@ -20,7 +20,7 @@ export async function teamWorkspace(ctx:AuthorizedContext){
   const members=await tx.membership.findMany({where:{organizationId:ctx.organizationId},select:{role:true,user:{select:{id:true,email:true}}},orderBy:{userId:"asc"},take:TEAM_LIMITS.members+1});
   const invitations=await tx.workspaceInvitation.findMany({where:{organizationId:ctx.organizationId},select:inviteSelect,orderBy:{createdAt:"desc"},take:100});
   const activity=await tx.auditEvent.findMany({where:{organizationId:ctx.organizationId,entityType:"WorkspaceAccess"},select:{id:true,action:true,createdAt:true,actor:{select:{email:true}}},orderBy:{createdAt:"desc"},take:30});
-  return {members:members.slice(0,TEAM_LIMITS.members),memberLimitReached:members.length>TEAM_LIMITS.members,invitations,activity,role:member.role,limits:TEAM_LIMITS};
+  return {organizationId:ctx.organizationId,members:members.slice(0,TEAM_LIMITS.members),memberLimitReached:members.length>TEAM_LIMITS.members,invitations,activity,role:member.role,limits:TEAM_LIMITS};
  });
 }
 export async function inviteMember(ctx:AuthorizedContext,input:unknown){
@@ -54,6 +54,17 @@ export async function revokeInvitation(ctx:AuthorizedContext,id:string,version:n
 export async function invitationInbox(identity:VerifiedWorkspaceIdentity){
  eligible(identity.email);
  return db.workspaceInvitation.findMany({where:{email:identity.email,status:"PENDING",expiresAt:{gt:new Date()}},select:{id:true,role:true,version:true,expiresAt:true,organization:{select:{id:true,name:true}}},orderBy:{createdAt:"desc"},take:50});
+}
+/** Resolve a handoff or an uncertain decision without replaying its write.
+ * Email ownership scopes the lookup; a link is never a membership grant.
+ */
+export async function invitationStatus(identity:VerifiedWorkspaceIdentity,id:string){
+ eligible(identity.email);
+ const invitation=await db.workspaceInvitation.findFirst({where:{id,email:identity.email},select:{id:true,role:true,status:true,version:true,expiresAt:true,resolvedAt:true,organization:{select:{id:true,name:true}}}});
+ if(!invitation)throw new IntelligenceError("Invitation not available for this account",404);
+ const user=await db.user.findUnique({where:{externalId:identity.externalId},select:{id:true,email:true}});
+ const membership=user?.email===identity.email?await db.membership.findUnique({where:{organizationId_userId:{organizationId:invitation.organization.id,userId:user.id}},select:{role:true}}):null;
+ return {...invitation,status:invitation.status==="PENDING"&&invitation.expiresAt<=new Date()?"EXPIRED":invitation.status,membership};
 }
 export async function decideInvitation(identity:VerifiedWorkspaceIdentity,input:unknown){
  const d=invitationDecisionSchema.parse(input);eligible(identity.email);

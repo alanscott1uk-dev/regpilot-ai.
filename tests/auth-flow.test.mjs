@@ -92,3 +92,26 @@ test('connected workspace sign-in restores only verified bounded internal contex
  assert.equal(resumed.destination,'/team/briefing?organizationId='+org);
  for(const path of ['/team/intelligence','/team/coverage','/team/sources','/team/briefing','/team/evidence','/team/assurance','/team/work/reviews'])assert.equal(signInDestination(path),path);
 });
+
+test('invitation and assessment handoffs survive verified sign-in without accepting arbitrary returns',async()=>{
+ const {workspaceReturnIntent,workspaceReturnPath}=await import('../lib/auth-flow.mjs');
+ const {teamHandoff,teamInvitationHref}=await import('../lib/team-handoff.mjs');
+ const org='123e4567-e89b-42d3-a456-426614174000',task='123e4567-e89b-42d3-a456-426614174001',record='123e4567-e89b-42d3-a456-426614174002';
+ const invitation=teamInvitationHref(org,record,task);
+ assert.equal(invitation,'/team/settings?'+new URLSearchParams({organizationId:org,invitationId:record,taskId:task}));
+ const intent=workspaceReturnIntent('/team/settings',invitation.split('?')[1]+'&next=https://evil.invalid&access_token=secret','A@example.invalid',100);
+ assert.equal(workspaceReturnPath(intent,'a@example.invalid',200),invitation);
+ assert.equal(workspaceReturnPath(intent,'other@example.invalid',200),null);
+ assert.equal(workspaceReturnPath(intent,'a@example.invalid',3600101),null);
+ assert.deepEqual(teamHandoff(invitation.split('?')[1]),{organizationId:org,invitationId:record,taskId:task,error:''});
+ for(const query of ['?invitationId='+record,'?organizationId='+org+'&invitationId=invalid','?organizationId='+org+'&organizationId='+task,'?organizationId='+org+'&taskId=invalid'])assert.ok(teamHandoff(query).error);
+ assert.equal(teamInvitationHref(org,'https://evil.invalid',task),null);
+ assert.equal(workspaceReturnIntent('/team/settings','?organizationId='+org+'&invitationId=invalid','a@example.invalid'),null);
+ assert.equal(workspaceReturnIntent('/team/settings','?organizationId='+org+'&invitationId='+record+'&invitationId='+task,'a@example.invalid'),null);
+ const assessment=workspaceReturnIntent('/team/assurance','?'+new URLSearchParams({organizationId:org,taskId:task,assessmentId:record,next:'https://evil.invalid'}),'a@example.invalid',100);
+ assert.equal(workspaceReturnPath(assessment,'a@example.invalid',200),'/team/assurance?'+new URLSearchParams({organizationId:org,taskId:task,assessmentId:record}));
+ assert.equal(workspaceReturnIntent('/team/assurance','?organizationId='+org+'&assessmentId='+record,'a@example.invalid'),null);
+ assert.equal(workspaceReturnIntent('/team/assurance','?organizationId='+org+'&taskId='+task+'&assessmentId=invalid','a@example.invalid'),null);
+ const otherPage=workspaceReturnIntent('/team/operations','?'+new URLSearchParams({organizationId:org,invitationId:record,assessmentId:record}),'a@example.invalid',100);
+ assert.deepEqual(otherPage.values,{organizationId:org});
+});

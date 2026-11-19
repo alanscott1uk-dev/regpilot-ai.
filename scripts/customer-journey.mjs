@@ -99,6 +99,21 @@ export async function createCustomerWorkspace({page,db,app,email,checkpoint,pass
 }
 
 export async function sourceToReportJourney({upload,review,db,app,org,editor,reviewer,submitEvidence,checkpoint,passed,bounded,artifactDir}){
+ const progressStages=[];
+ async function openTaskProgress(page,taskId,expectedStage){
+  const [response]=await Promise.all([
+   page.waitForResponse(response=>{const url=new URL(response.url());return url.pathname==='/api/workspace/work'&&url.searchParams.get('organizationId')===org.id&&url.searchParams.get('taskId')===taskId&&response.request().method()==='GET';}),
+   page.goto(app+'/team/work?'+new URLSearchParams({organizationId:org.id,taskId}))
+  ]);
+  const body=await bounded(response.json(),'Authoritative task progress response');
+  assert.equal(response.status(),200,body.error||'task progress unavailable');
+  assert.equal(body.organizationId,org.id);assert.equal(body.task.id,taskId);
+  assert.equal(body.workflow.stage,expectedStage);
+  const progress=page.getByRole('dialog').getByRole('region',{name:'Task progress',exact:true});
+  await progress.getByRole('heading',{name:body.workflow.title,exact:true}).waitFor();
+  progressStages.push(expectedStage);
+  return {body,progress};
+ }
  await checkpoint('fictional source fixture for connected customer journey');
  const snapshot=await db.regulatorySnapshot.create({data:{organizationId:org.id,sourceId,title:sourceTitle,
   url:'https://www.gov.uk/data-protection-your-business',bodyText:requirement,contentHash:sourceTextHash(requirement),
@@ -180,6 +195,7 @@ export async function sourceToReportJourney({upload,review,db,app,org,editor,rev
  await review.getByRole('dialog').getByRole('heading',{name:title,exact:true}).waitFor();
  await review.getByRole('dialog').getByRole('region',{name:'Task completion',exact:true}).getByRole('heading',{name:'Before you can finish',exact:true}).waitFor();
  passed('A real rule analysis and independent applicability decision created one source-linked task with a current member assignee; the exact task handoff retained source and organisation.');
+ await openTaskProgress(upload,task.id,'EVIDENCE_REQUIRED');
 
  await checkpoint('source task gets scanned independently reviewed evidence');
  const params=new URLSearchParams({organizationId:org.id,taskId:task.id}),vault=app+'/team/evidence?'+params;
@@ -193,10 +209,12 @@ export async function sourceToReportJourney({upload,review,db,app,org,editor,rev
  await review.getByText('APPROVED',{exact:true}).waitFor();
  const evidence=await db.evidence.findUniqueOrThrow({where:{id:stored.evidence.id}});
  assert.equal(evidence.reviewerId,reviewer.id);assert.equal(evidence.uploadedById,editor.id);assert.equal(evidence.sha256,createHash('sha256').update(file).digest('hex'));
+ const preparing=await openTaskProgress(upload,task.id,'ASSESSMENT_REQUIRED');
+ const nextAssessment=new URL(preparing.body.workflow.href,app);
+ assert.equal(nextAssessment.pathname,'/team/assurance');assert.equal(nextAssessment.searchParams.get('organizationId'),org.id);assert.equal(nextAssessment.searchParams.get('taskId'),task.id);
+ await preparing.progress.getByRole('link',{name:preparing.body.workflow.label,exact:false}).click();
 
  await checkpoint('editor extracts actual private evidence passages');
- const assessmentUrl=app+'/team/assurance?'+params;
- await upload.goto(assessmentUrl);
  await upload.getByRole('checkbox',{name:/widget-training\.pdf/}).check();
  await upload.getByRole('checkbox',{name:/I agree to process these fictional or non-sensitive files/}).check();
  const [preparedResponse]=await Promise.all([
@@ -212,7 +230,19 @@ export async function sourceToReportJourney({upload,review,db,app,org,editor,rev
  assert.equal(await upload.getByRole('button',{name:'Record evidence adequate for this task',exact:true}).count(),0);
 
  await checkpoint('independent source-scoped assessment and original verification');
- await review.goto(assessmentUrl);
+ const pending=await openTaskProgress(review,task.id,'ASSESSMENT_REVIEW');
+ assert.equal(pending.body.workflow.assessmentId,draft.id);
+ await review.getByRole('button',{name:'Close task details',exact:true}).click();
+ await review.getByRole('button',{name:/Reviews to finish/}).click();
+ const pendingTask=review.getByRole('article').filter({hasText:title});
+ const pendingLink=pendingTask.getByRole('link',{name:pending.body.workflow.label,exact:false});
+ await pendingLink.waitFor();
+ const pendingHref=new URL(await pendingLink.getAttribute('href'),app);
+ assert.equal(pendingHref.pathname,'/team/assurance');assert.equal(pendingHref.searchParams.get('organizationId'),org.id);
+ assert.equal(pendingHref.searchParams.get('taskId'),task.id);assert.equal(pendingHref.searchParams.get('assessmentId'),draft.id);
+ await review.screenshot({path:artifactDir+'/desktop-pending-content-review.png',fullPage:true});
+ await pendingLink.click();
+ assert.equal(new URL(review.url()).searchParams.get('assessmentId'),draft.id,'the review queue opens the exact saved assessment');
  const passage=review.getByRole('article').filter({hasText:trainingRecord}).filter({has:review.getByRole('button',{name:'Original document ↗',exact:true})}).first();
  // Read the actual private original before confirming the evidence decision.
  const originalReady=review.waitForEvent('download');
@@ -239,7 +269,7 @@ export async function sourceToReportJourney({upload,review,db,app,org,editor,rev
  passed('The source-linked task used scanned private PDF bytes, independent file review, actual document extraction and an explicit independent assessment of original passages and business scope.');
 
  await checkpoint('complete source-linked task with frozen traceability');
- await review.goto(taskUrl.href);
+ await openTaskProgress(review,task.id,'READY_TO_COMPLETE');
  const completion=review.getByRole('dialog').getByRole('region',{name:'Task completion',exact:true});
  await completion.getByRole('heading',{name:'Ready to complete',exact:true}).waitFor();
  await completion.getByLabel('What was completed?',{exact:true}).fill('Completed the fictional widget staff training review using the independently accepted source-scoped training record.');
@@ -258,6 +288,8 @@ export async function sourceToReportJourney({upload,review,db,app,org,editor,rev
  assert.equal(receipt.task.assigneeId,editor.id);assert.equal(receipt.evidence[0].id,evidence.id);assert.equal(receipt.evidence[0].sha256,evidence.sha256);
  const completedTask=await db.obligation.findUniqueOrThrow({where:{id:task.id}});
  assert.equal(completedTask.status,'COMPLETE');assert.equal(completedTask.completionException,false);
+ await openTaskProgress(review,task.id,'COMPLETED');
+ passed('The task’s saved progress advanced from evidence needed to assessment preparation, independent assessment review and explicit completion. A file approval did not hide its draft content assessment: the review queue opened the exact company, task and assessment until that decision was recorded.');
  passed('Explicit task completion froze the exact source version, independent assessment, assigned owner and verified evidence in one persisted receipt.');
 
  await checkpoint('customer exports scoped operational report');
@@ -299,5 +331,5 @@ export async function sourceToReportJourney({upload,review,db,app,org,editor,rev
  assert.ok(await bounded(upload.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Mobile customer report layout'));
  await upload.screenshot({path:artifactDir+'/mobile-customer-report.png',fullPage:true});
  passed('The customer followed Reports navigation and downloaded JSON, CSV and a printable report containing the exact persisted source-to-task-to-evidence decision, current open work and the unresolved source failure with queued recovery and inactive monitoring; the same report fit mobile.');
- return {taskId:task.id,snapshotId:snapshot.id,assessmentId:assessment.id,eventId:saved.id};
+ return {taskId:task.id,snapshotId:snapshot.id,assessmentId:assessment.id,eventId:saved.id,progressStages};
 }

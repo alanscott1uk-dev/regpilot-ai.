@@ -35,5 +35,7 @@ test("invitation identity comes from the verified provider, not editable metadat
   await assert.rejects(()=>verifyAiIdentity(req),(e:any)=>e.status===403);
   globalThis.fetch=async()=>Response.json({id,email:"alice@example.invalid",aud:"authenticated",email_confirmed_at:"2026-01-01",user_metadata:{role:"OWNER"}});
   assert.deepEqual(await verifyAiIdentity(req),{externalId:id,email:"alice@example.invalid"});
+  const invalidStatus=await INBOX(new Request("https://example.invalid?invitationId=not-an-id",{headers:req.headers}));
+  assert.equal(invalidStatus.status,400);assert.equal(invalidStatus.headers.get("cache-control"),"no-store");
  }finally{globalThis.fetch=original;}
 });

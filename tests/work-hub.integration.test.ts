@@ -4,6 +4,15 @@ import {randomUUID} from 'node:crypto';
 import {db} from '../lib/server/db';
 import type {AuthorizedContext} from '../lib/server/authorization';
 import {workInbox,workTask,planWork,startWork,createWork} from '../lib/server/work-hub-service';
+import {createEvidence,reviewEvidence} from '../lib/server/evidence-service';
+import {prepareAssurance,reviewAssurance} from '../lib/server/assurance-service';
+import {saveBusinessProfile,createIntelligenceRun,decideCandidate} from '../lib/server/intelligence-service';
+import {workCompletion,completeWork} from '../lib/server/work-completion-service';
+import type {EvidenceObjectStore} from '../lib/server/evidence-storage';
+import type {Analysis} from '../lib/regulatory/intelligence';
+import type {AssuranceResult} from '../lib/evidence/assurance';
+import {sourceTextHash} from '../lib/regulatory/source-fingerprint.mjs';
+import {fixturePdf} from './helpers/pdf-fixture.mjs';
 
 test('work hub: full-list paging, tenant isolation, private metadata, atomic reviewed planning and stale permissions',async()=>{
  const suffix=randomUUID(),users=await Promise.all(['owner','editor','viewer','outside'].map(name=>db.user.create({data:{externalId:name+suffix,email:name+suffix+'@example.invalid'}})));
@@ -83,5 +92,73 @@ test('work hub: full-list paging, tenant isolation, private metadata, atomic rev
   await db.evidence.deleteMany({where:{organizationId:{in:ids}}});await db.auditEvent.deleteMany({where:{organizationId:{in:ids}}});
   await db.obligation.deleteMany({where:{organizationId:{in:ids}}});await db.membership.deleteMany({where:{organizationId:{in:ids}}});
   await db.organization.deleteMany({where:{id:{in:ids}}});await db.user.deleteMany({where:{id:{in:userIds}}});await db.$disconnect();
+ }
+});
+
+test('task handoff retains content review after file approval and advances only on current independent proof',async()=>{
+ const suffix=randomUUID(),users=await Promise.all(['maker','reviewer','uploader','viewer'].map(name=>db.user.create({data:{externalId:name+suffix,email:name+suffix+'@example.invalid'}})));
+ const org=await db.organization.create({data:{name:'Fictional task handoff '+suffix}}),previous=process.env.REGPILOT_AI_ALLOWED_EMAILS;
+ process.env.REGPILOT_AI_ALLOWED_EMAILS=users.map(user=>user.email).join(',');
+ const maker:AuthorizedContext={organizationId:org.id,userId:users[0].id,role:'OWNER'},reviewer:AuthorizedContext={...maker,userId:users[1].id,role:'ADMIN'},uploader:AuthorizedContext={...maker,userId:users[2].id,role:'ADMIN'},viewer:AuthorizedContext={...maker,userId:users[3].id,role:'VIEWER'};
+ const objects=new Map<string,Uint8Array>();let downloads=0;
+ const store:EvidenceObjectStore={async put(key,bytes){objects.set(key,Uint8Array.from(bytes));},async get(key){downloads++;const bytes=objects.get(key);if(!bytes)throw new Error('Fictional file missing');return Uint8Array.from(bytes);},async remove(key){objects.delete(key);}};
+ const scan=async()=>({status:'CLEAN' as const,engine:'fixture-only'}),notes='Independently checked the fictional requirement, original records, business scope and remaining limitations.';
+ const text='Fictional widget staff must complete documented training before working alone. This fictional publication describes the retained staff training records used in the test.',record='Widget staff completed documented training on 4 November 2026 with a supervisor.';
+ const query={view:'review' as const,q:'',page:1},until=new Date(Date.now()+30*86400000).toISOString().slice(0,10);
+ try{
+  await db.membership.createMany({data:[maker,reviewer,uploader,viewer]});
+  await saveBusinessProfile(maker,{activities:['personal-data'],jurisdictions:['Scotland']},0);
+  const source=await db.regulatorySnapshot.create({data:{organizationId:org.id,sourceId:'uk-data-protection',title:'Fictional training source',url:'https://www.gov.uk/data-protection-your-business',bodyText:text,contentHash:sourceTextHash(text),capturedById:maker.userId,reviewStatus:'REVIEWED',reviewerId:reviewer.userId,reviewedAt:new Date()}});
+  const run=await createIntelligenceRun(maker,source.id),saved=await db.intelligenceRun.findUniqueOrThrow({where:{id:run.id}}),candidate=(saved.result as unknown as Analysis).candidates[0];
+  const decision=await decideCandidate(reviewer,run.id,{candidateKey:candidate.key,decision:'ACCEPTED',rationale:notes,title:'Fictional source-linked training task',assigneeId:maker.userId,ownerName:'Fictional owner',dueDate:'2027-01-31'}),taskId=decision.obligationId!;
+  assert.equal((await workTask(maker,taskId)).workflow.stage,'EVIDENCE_REQUIRED');
+  const file=await createEvidence(uploader,taskId,'fictional-training.pdf',fixturePdf([['FICTIONAL TRAINING RECORD',record]]),{storage:store,scan});
+  assert.equal((await workTask(reviewer,taskId)).workflow.stage,'FILE_REVIEW');
+  assert.equal((await workTask(uploader,taskId)).workflow.actor,'teammate');
+  assert.equal((await workInbox(reviewer,query)).total,1);
+  assert.equal((await workInbox(uploader,query)).total,0,'uploaders cannot review their own files');
+  await reviewEvidence(reviewer,file.id,{decision:'APPROVED',version:1,notes},store);
+  assert.equal((await workTask(maker,taskId)).workflow.stage,'ASSESSMENT_REQUIRED');
+  assert.equal((await workInbox(reviewer,query)).total,0);
+  const prepared=await prepareAssurance(maker,{taskId,evidenceIds:[file.id],method:'CONTENT_SEARCH',consent:true},{storage:store});
+  const pending=await workInbox(reviewer,query),row=pending.items[0];
+  assert.equal(pending.total,1);assert.equal(pending.counts.review,1);assert.equal(row.id,taskId);
+  assert.deepEqual(row.reviewKinds,{files:false,assessments:true});assert.equal(row.workflow.stage,'ASSESSMENT_REVIEW');
+  assert.equal(new URL(row.workflow.href,'https://example.invalid').searchParams.get('assessmentId'),prepared.id);
+  assert.equal((await workInbox(maker,query)).total,0,'assessment author does not get their own independent review action');
+  assert.equal((await workInbox(uploader,query)).total,0,'manifest uploaders cannot approve content assessments');
+  assert.equal((await workInbox(viewer,query)).total,1,'non-reviewers can track the handoff without approval rights');
+  assert.equal((await workTask(maker,taskId)).workflow.actor,'teammate');
+  const beforeReads=downloads,detail=await workTask(reviewer,taskId);
+  assert.equal(detail.workflow.stage,'ASSESSMENT_REVIEW');assert.equal(detail.workflow.actor,'you');assert.equal(detail.workflow.verified,true);
+  assert.equal(downloads,beforeReads,'reading task progress never downloads private bytes');
+  assert.doesNotMatch(JSON.stringify(detail),/storageKey|evidenceManifest|bodyText|resultHash/);
+  const assessment=await db.assuranceAssessment.findUniqueOrThrow({where:{id:prepared.id}}),result=assessment.result as unknown as AssuranceResult;
+  await db.assuranceAssessment.update({where:{id:prepared.id},data:{resultHash:'0'.repeat(64)}});
+  assert.equal((await workTask(reviewer,taskId)).workflow.stage,'ASSESSMENT_CHECK');
+  assert.equal((await workInbox(reviewer,query)).total,1,'invalid proof remains visible for recovery');
+  await db.assuranceAssessment.update({where:{id:prepared.id},data:{resultHash:assessment.resultHash}});
+  await db.evidence.update({where:{id:file.id},data:{reviewVersion:{increment:1}}});
+  assert.equal((await workTask(reviewer,taskId)).workflow.stage,'ASSESSMENT_CHECK','changed review invalidates the proposed handoff');
+  await db.evidence.update({where:{id:file.id},data:{reviewVersion:2}});
+  // Two outstanding review kinds still represent one task in the global count and page.
+  const extra=await createEvidence(uploader,taskId,'fictional-extra.pdf',fixturePdf([['FICTIONAL ADDITIONAL RECORD',record]]),{storage:store,scan});
+  const mixed=await workInbox(reviewer,query);assert.equal(mixed.total,1);assert.equal(mixed.items.length,1);assert.deepEqual(mixed.items[0].reviewKinds,{files:true,assessments:true});
+  await reviewEvidence(reviewer,extra.id,{decision:'APPROVED',version:1,notes},store);
+  assert.equal((await workInbox(reviewer,query)).total,1,'file approval must not remove the unfinished content review');
+  await db.membership.update({where:{organizationId_userId:{organizationId:org.id,userId:reviewer.userId}},data:{role:'VIEWER'}});
+  const revoked=await workTask(reviewer,taskId);assert.equal(revoked.workflow.actor,'reviewer');assert.equal(revoked.workflow.canAct,false,'current membership overrides stale ADMIN context');
+  await db.membership.update({where:{organizationId_userId:{organizationId:org.id,userId:reviewer.userId}},data:{role:'ADMIN'}});
+  await reviewAssurance(reviewer,prepared.id,{decision:'ACCEPTED',version:1,notes,passageKeys:[result.passages[0].key],validUntil:until,scopeConfirmed:true,originalsChecked:true},{storage:store});
+  assert.equal((await workInbox(reviewer,query)).total,0);
+  assert.equal((await workInbox(maker,{view:'open',q:taskId,page:1})).items.length,0,'search remains title/category/owner scoped');
+  const ready=await workTask(maker,taskId);assert.equal(ready.workflow.stage,'READY_TO_COMPLETE');assert.equal(ready.workflow.verified,true);
+  const list=await workInbox(maker,{view:'open',q:'source-linked training',page:1});assert.equal(list.items[0].workflow.stage,'COMPLETION_CHECK','a list does not advertise readiness from an accepted status alone');
+  const proof=await workCompletion(maker,taskId);assert.equal(proof.ready,true);
+  await completeWork(maker,taskId,{token:proof.token!,evidenceIds:proof.evidence.map(e=>e.id),confirm:true,notes},{storage:store});
+  assert.equal((await workTask(maker,taskId)).workflow.stage,'COMPLETED');
+ }finally{
+  if(previous===undefined)delete process.env.REGPILOT_AI_ALLOWED_EMAILS;else process.env.REGPILOT_AI_ALLOWED_EMAILS=previous;
+  await db.assuranceAssessment.deleteMany({where:{organizationId:org.id}});await db.intelligenceDecision.deleteMany({where:{organizationId:org.id}});await db.intelligenceRun.deleteMany({where:{organizationId:org.id}});await db.businessProfile.deleteMany({where:{organizationId:org.id}});await db.auditEvent.deleteMany({where:{organizationId:org.id}});await db.evidence.deleteMany({where:{organizationId:org.id}});await db.obligation.deleteMany({where:{organizationId:org.id}});await db.regulatorySnapshot.deleteMany({where:{organizationId:org.id}});await db.membership.deleteMany({where:{organizationId:org.id}});await db.organization.delete({where:{id:org.id}});await db.user.deleteMany({where:{id:{in:users.map(user=>user.id)}}});
  }
 });

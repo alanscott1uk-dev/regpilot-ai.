@@ -53,10 +53,10 @@ async function submitEvidence(page,filename,bytes,expectedStatus){
  assert.equal(response.status(),expectedStatus,`Evidence upload returned ${response.status()}: ${body.error||'unexpected success'}`);
  return body;
 }
-async function account(email,role,organizationId){
+async function account(email){
  const {data,error}=await supabase.auth.admin.createUser({email,email_confirm:true});
  if(error)throw Error('Local Auth account setup failed: '+error.status);
- return db.user.create({data:{externalId:data.user.id,email,memberships:{create:{organizationId,role}}}});
+ return data.user;
 }
 async function signIn(page,url,email){
  await page.goto(url);
@@ -107,23 +107,88 @@ try{
  browser=await chromium.launch();
  const review=await signIn(await openContext({width:1440,height:1000}),app+'/team/setup',reviewerEmail);
  const {org,reviewer}=await createCustomerWorkspace({page:review,db,app,email:reviewerEmail,checkpoint,passed,artifactDir});
- const editor=await account('editor@example.test','EDITOR',org.id);
+ const editorEmail='editor@example.test';
+ await account(editorEmail);
+ await checkpoint('invited colleague already owns another organisation');
+ const upload=await signIn(await openContext({width:390,height:844}),app+'/team/setup',editorEmail);
+ await upload.getByRole('heading',{name:'Create your organisation',exact:true}).waitFor();
+ await upload.getByLabel('Company name',{exact:true}).fill('Fictional colleague existing company');
+ const [otherCreatedResponse]=await Promise.all([
+  upload.waitForResponse(response=>response.url()===app+'/api/ai/context'&&response.request().method()==='POST'),
+  upload.getByRole('button',{name:'Create workspace',exact:true}).click()
+ ]);
+ const otherCreated=await bounded(otherCreatedResponse.json(),'Existing colleague company response');
+ assert.equal(otherCreatedResponse.status(),200,otherCreated.error||'colleague company creation failed');
+ const otherOrgId=otherCreated.organisation.id;
+ assert.notEqual(otherOrgId,org.id);
+ const editor=await db.user.findUniqueOrThrow({where:{email:editorEmail}});
+ assert.equal(await db.membership.count({where:{organizationId:org.id,userId:editor.id}}),0,'the colleague must not be seeded into the invited organisation');
+ await upload.getByRole('heading',{name:'What does your organisation do?',exact:true}).waitFor();
+ assert.equal(new URL(upload.url()).searchParams.get('organizationId'),otherOrgId);
  const {error}=await supabase.storage.createBucket('journey-files',{public:false});
  if(error)throw Error('Could not create the private local test bucket');
- const common={organizationId:org.id,category:'Quality',ownerName:editor.email,assigneeId:editor.id};
+ // Controlled task population exercises exact-task handoffs beyond the first
+ // page. Every seeded task belongs to a current member, before the invite joins.
+ const common={organizationId:org.id,category:'Quality',ownerName:reviewer.email,assigneeId:reviewer.id};
  await db.obligation.createMany({data:Array.from({length:101},(_,i)=>({...common,title:'Earlier deadline '+i,dueDate:new Date('2028-01-01')}))});
  const title='Check cold-chain training records';
  const task=await db.obligation.create({data:{...common,title,dueDate:new Date('2028-12-01')}});
  const params=new URLSearchParams({organizationId:org.id,taskId:task.id});
  const vault=app+'/team/evidence?'+params;
- await checkpoint('email-link sign-in and exact-task selection');
- const upload=await signIn(await openContext({width:390,height:844}),vault,editor.email);
+ await checkpoint('owner invites colleague into the exact company and task');
+ await review.goto(app+'/team/settings?'+params);
+ await review.getByRole('heading',{name:'Invite a colleague',exact:true}).waitFor();
+ assert.equal(await review.getByRole('combobox',{name:'Organisation',exact:true}).inputValue(),org.id);
+ await review.getByLabel('Colleague’s email',{exact:true}).fill(editor.email);
+ await review.getByLabel('Role',{exact:true}).selectOption('EDITOR');
+ const [invitedResponse]=await Promise.all([
+  review.waitForResponse(response=>response.url()===app+'/api/workspace/team'&&response.request().method()==='POST'),
+  review.getByRole('button',{name:'Create invitation',exact:true}).click()
+ ]);
+ const invited=await bounded(invitedResponse.json(),'Created invitation response');
+ assert.equal(invitedResponse.status(),200,invited.error||'colleague invitation failed');
+ await review.getByRole('button',{name:'Copy invitation link',exact:true}).waitFor();
+ const invitationUrl=await review.getByLabel('Invitation link',{exact:true}).inputValue();
+ const invitationLink=new URL(invitationUrl);
+ assert.equal(invitationLink.origin,app);assert.equal(invitationLink.pathname,'/team/settings');
+ assert.equal(invitationLink.searchParams.get('organizationId'),org.id);
+ assert.equal(invitationLink.searchParams.get('taskId'),task.id);
+ assert.equal(invitationLink.searchParams.get('invitationId'),invited.id);
+ assert.equal(await db.membership.count({where:{organizationId:org.id,userId:editor.id}}),0,'inviting cannot grant membership');
+ await upload.goto(invitationUrl);
+ const invitation=upload.getByRole('article').filter({hasText:org.name});
+ await invitation.getByRole('button',{name:'Join workspace',exact:true}).waitFor();
+ const [joinedResponse]=await Promise.all([
+  upload.waitForResponse(response=>response.url()===app+'/api/workspace/invitations'&&response.request().method()==='POST'),
+  invitation.getByRole('button',{name:'Join workspace',exact:true}).click()
+ ]);
+ const joined=await bounded(joinedResponse.json(),'Joined invitation response');
+ assert.equal(joinedResponse.status(),200,joined.error||'joining the invited company failed');
+ assert.equal(joined.organizationId,org.id);assert.equal(joined.status,'ACCEPTED');
+ const invitedTask=upload.getByRole('link',{name:/^Open invited task/});
+ await invitedTask.waitFor();
+ assert.equal(await upload.getByRole('combobox',{name:'Organisation',exact:true}).inputValue(),org.id,'joining must select the invited company instead of the prior membership');
+ const joinedMembership=await db.membership.findUniqueOrThrow({where:{organizationId_userId:{organizationId:org.id,userId:editor.id}}});
+ assert.equal(joinedMembership.role,'EDITOR');
+ assert.equal(await db.membership.count({where:{userId:editor.id}}),2);
+ const acceptedInvitation=await db.workspaceInvitation.findUniqueOrThrow({where:{id:invited.id}});
+ assert.equal(acceptedInvitation.status,'ACCEPTED');assert.equal(acceptedInvitation.invitedById,reviewer.id);assert.equal(acceptedInvitation.email,editor.email);
+ assert.equal(await db.auditEvent.count({where:{organizationId:org.id,entityId:invited.id,action:'team.invitation_accepted',actorId:editor.id}}),1);
+ report.collaboration={organizationId:org.id,previousOrganizationId:otherOrgId,invitationId:invited.id,memberId:editor.id,role:joinedMembership.role,status:acceptedInvitation.status,acceptanceEvents:1,mainCompanyMembershipSeeded:false,taskHandoff:task.id};
+ const invitationOverflow=await bounded(upload.evaluate(()=>Math.max(0,document.documentElement.scrollWidth-innerWidth)),'Mobile invitation layout');
+ assert.ok(invitationOverflow<=3,'mobile invitation must fit the viewport');
+ await upload.screenshot({path:artifactDir+'/mobile-joined-workspace.png',fullPage:true});
+ await invitedTask.click();
+ await upload.getByRole('dialog').getByRole('heading',{name:title,exact:true}).waitFor();
+ assert.equal(new URL(upload.url()).searchParams.get('organizationId'),org.id);
+ assert.equal(new URL(upload.url()).searchParams.get('taskId'),task.id);
+ await upload.getByRole('dialog').getByRole('link',{name:'Manage evidence',exact:false}).click();
  await upload.getByRole('link',{name:'Return to task'}).waitFor();
  assert.equal(await upload.getByLabel('Task',{exact:true}).inputValue(),task.id);
  assert.equal(new URL(upload.url()).pathname,'/team/evidence');
  assert.equal(new URL(upload.url()).searchParams.has('code'),false);
  await upload.getByText('No scanned evidence has been recorded for this task.',{exact:true}).waitFor();
- passed('Email-link callback restored the requested task beyond the first 100 results and loaded its evidence.');
+ passed('A colleague signed in by a real email link, created another company through Setup, then joined the owner’s exact task invitation through normal application endpoints. The saved membership and one acceptance event selected the invited company, opened the task beyond the first 100 results and retained scope into Evidence; no main-company membership was seeded.');
  await checkpoint('marked PDF rejection');
  const marked=fixturePdf([['REGPILOT_SCAN_FIXTURE']]);
  const rejected=await submitEvidence(upload,'scanner-fixture.pdf',marked,422);
@@ -163,8 +228,8 @@ try{
 
  await checkpoint('independent reviewer sign-in and original download');
  await review.goto(app+'/team/work?'+new URLSearchParams({organizationId:org.id}));
- await review.getByRole('button',{name:/Evidence to review/}).click();
- await review.getByRole('article').filter({hasText:title}).getByRole('link',{name:'Review files'}).click();
+ await review.getByRole('button',{name:/Reviews to finish/}).click();
+ await review.getByRole('article').filter({hasText:title}).getByRole('link',{name:'Review supporting evidence',exact:false}).click();
  await review.getByText('training-record.pdf',{exact:true}).waitFor();
  passed('Second account opened the submitted file from its independent review queue.');
  const downloadReady=review.waitForEvent('download');
@@ -255,8 +320,8 @@ try{
  passed('Explicit completion verified stored bytes, saved one attributed completion decision, exported its exact receipt and survived reload.');
 
  await review.getByRole('button',{name:'Close task details'}).click();
- await review.getByRole('button',{name:/Evidence to review/}).click();
- await review.getByRole('button',{name:/Evidence to review\s*0$/}).waitFor();
+ await review.getByRole('button',{name:/Reviews to finish/}).click();
+ await review.getByRole('button',{name:/Reviews to finish\s*0$/}).waitFor();
  await checkpoint('completed-work proof change fixture');
  // Controlled fault injection in this disposable database: a previously approved
  // file now requires another independent review. All recovery below uses the UI

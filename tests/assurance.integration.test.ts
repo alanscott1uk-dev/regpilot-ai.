@@ -2,6 +2,7 @@ import "./helpers/paid-fixture";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {randomUUID} from "node:crypto";
+import type {Prisma} from '@prisma/client';
 import {db} from "../lib/server/db";
 import {prepareAssurance,reviewAssurance,assuranceWorkspace,exportAssurance} from "../lib/server/assurance-service";
 import {saveBusinessProfile,createIntelligenceRun,decideCandidate} from "../lib/server/intelligence-service";
@@ -56,6 +57,18 @@ test("evidence assurance: real PDF content, scoped reuse, independent decisions,
     await assert.rejects(()=>prepareAssurance(outside,input,{storage:store}),(e:any)=>e.status===404);
     await assert.rejects(()=>prepareAssurance(maker,{...input,consent:false},{storage:store}),(e:any)=>e.status===400);
     const prepared=await prepareAssurance(maker,input,{storage:store});assert.equal((await prepareAssurance(maker,input,{storage:store})).id,prepared.id);
+    // A review handoff must open its exact task assessment even beyond the newest ten.
+    const savedDraft=await db.assuranceAssessment.findUniqueOrThrow({where:{id:prepared.id}}),laterIds=Array.from({length:11},()=>randomUUID());
+    await db.assuranceAssessment.createMany({data:laterIds.map((id,i)=>({...savedDraft,id,inputHash:hashValue({fixture:'later unsuccessful assessment',id}),status:'FAILED' as const,evidenceManifest:savedDraft.evidenceManifest as Prisma.InputJsonValue,selectedPassages:[],result:undefined,createdAt:new Date(savedDraft.createdAt.getTime()+i+1)}))});
+    const exactReview=await assuranceWorkspace(reviewer,task,prepared.id);
+    assert.equal(exactReview.selectedAssessmentId,prepared.id);assert.equal(exactReview.assessmentLimitReached,true);
+    assert.equal(exactReview.assessments.filter(row=>row.id===prepared.id).length,1);
+    assert.equal(exactReview.assessments.find(row=>row.id===prepared.id)?.status,'DRAFT');
+    await assert.rejects(()=>assuranceWorkspace(reviewer,secondTask,prepared.id),(e:any)=>e.status===404);
+    await assert.rejects(()=>assuranceWorkspace(outside,task,prepared.id),(e:any)=>e.status===404);
+    await assert.rejects(()=>assuranceWorkspace(reviewer,task,randomUUID()),(e:any)=>e.status===404);
+    await assert.rejects(()=>assuranceWorkspace(reviewer,undefined,prepared.id),(e:any)=>e.status===400);
+    await db.assuranceAssessment.deleteMany({where:{id:{in:laterIds}}});
     let workspace=await assuranceWorkspace(reviewer,task),draft=workspace.assessments[0],result=draft.result as unknown as AssuranceResult;
     const keys=[result.passages.find(p=>p.quote===record)!.key];assert.ok(keys[0]);assert.equal(result.method,"CONTENT_SEARCH");
     assert.equal((await assuranceWorkspace(outside)).assessments.length,0);

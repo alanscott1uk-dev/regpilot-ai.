@@ -5,7 +5,7 @@ import {IntelligenceError} from "../../../../lib/server/intelligence-service";
 export const dynamic="force-dynamic";export const runtime="nodejs";export const maxDuration=120;
 export async function GET(request:Request){
   if(!assuranceConfigured())return reply({error:"Evidence assessment is awaiting activation"},503);
-  try{const url=new URL(request.url),ctx=await authorisedWorkspaceContext(request,url.searchParams.get("organizationId")||"");return reply(await assuranceWorkspace(ctx,url.searchParams.get("taskId")||undefined));}catch(e){return failure(e);}
+  try{const url=new URL(request.url),ctx=await authorisedWorkspaceContext(request,url.searchParams.get("organizationId")||"");return reply(await assuranceWorkspace(ctx,url.searchParams.get("taskId")||undefined,url.searchParams.get("assessmentId")||undefined));}catch(e){return failure(e);}
 }
 export async function POST(request:Request){
   if(!assuranceConfigured())return reply({error:"Evidence assessment is awaiting activation"},503);

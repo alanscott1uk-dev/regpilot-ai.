@@ -38,6 +38,21 @@ Development acceptance covers the failure-to-recovery database workflow, schedul
 
 The exact final commit, passed runs, screenshots, exported reports and any live-source failures are recorded in PR #10. Runtime configuration, a successful test run and sustained hosted operation remain different evidence levels.
 
+## Connected team review and task completion — 19 November 2026
+
+The customer outcome is **invite a colleague → join the intended company → open the assigned task → review files and their content → record completion and report it**. The task must remain visible to the person who can move it forward through every required review.
+
+- Team & access uses the same account and organisation boundary as the connected workspace. A company link never silently selects another membership. Accepting an invitation selects its actual company even when the recipient already has another workspace. Manually copied invitation links retain a bounded company, invitation and optional task context; the verified recipient must still choose to join. No invitation email is sent automatically, and the pilot allowlist and current inviter/role checks remain in force.
+- An uncertain invitation or access-change response offers a read-only check of saved invitation, membership and team state. A repeated acceptance is not used as recovery. The acceptance record and current membership remain distinct: an old accepted invitation does not restore access after removal.
+- Tasks now derives its next action from the saved workflow stage, rather than the existence of a source link. Pending file review and draft content assessment both appear in **Reviews to finish**, with independent creator/uploader exclusions. Filtered totals and pagination use the full organisation scope. Pending review on a completed task remains visible without rewriting its original completion record.
+- Task progress stays visible in the task, file and assessment screens. The next action identifies the required person and opens the exact task or assessment. An assessment link outside the ten latest records is retrieved explicitly within its company and task; an unavailable link never substitutes a different review. The source-linked path distinguishes file approval from a content-level evidence decision and explicit task completion.
+- Inbox stages are navigation projections. Task detail applies the existing source, evidence, membership and assessment metadata checks before offering completion; original file bytes are verified by the explicit completion operation. A stage indicator is not a compliance score or a new approval mechanism.
+- If assessment preparation or review returns an unconfirmed result, further mutation controls pause until the saved assessments are checked. This recovery issues only a GET; it does not repeat a paid request or review decision. A failed reconciliation removes the unconfirmed displayed assessment.
+
+The actual private-services customer acceptance now obtains the preparer's company membership through the invitation UI rather than inserting it into the database. It starts with the preparer already owning a different fictional company, verifies the exact invited task handoff, and then follows the existing source-to-evidence-to-report journey. Source content, a monitoring fault and a large test task population remain clearly controlled fixtures. Auth, invitation creation/acceptance, company membership, file storage/scanning, review and completion use the real application endpoints. Desktop/mobile fixtures separately exercise uncertain responses, exact record selection, account changes and unavailable links.
+
+Final execution results and artifacts for this revision belong in PR #10. These development checks do not activate hosted services or replace the release gates below.
+
 ### What the guided status means
 
 - **Not started:** the relevant record is absent.
@@ -56,7 +71,7 @@ Task totals are not inferred from the first page. Membership verification is bou
 4. **Report consistency:** the downloaded completion record and customer report match the same database event, source fingerprint, assessment, assignee and file hashes. Neither export discloses object storage keys.
 5. **Durable evidence:** PR #10 records the exact commit, workflow runs, artifacts, remaining failures and release boundaries. New feature work must not reset this completion standard.
 
-The expanded private-services journey uses one clearly labelled fictional publication body, a controlled paused-monitoring fault and controlled test-team membership in its isolated database. Application endpoints, authentication, recovery requests, uploads, scanning, document extraction, review, task completion and reporting are real. That test does **not** establish publisher delivery, production operation, legal accuracy or independent human usability. No paid model is required for the tested rule analysis and passage retrieval path.
+The expanded private-services journey uses one clearly labelled fictional publication body, a controlled paused-monitoring fault and a controlled task population in its isolated database. Application endpoints, authentication, invitation acceptance, membership, recovery requests, uploads, scanning, document extraction, review, task completion and reporting are real. That test does **not** establish publisher delivery, production operation, legal accuracy or independent human usability. No paid model is required for the tested rule analysis and passage retrieval path.
 
 ## Release gates that remain separate
 
