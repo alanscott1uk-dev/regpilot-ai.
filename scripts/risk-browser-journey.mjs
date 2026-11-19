@@ -76,14 +76,14 @@ export async function riskJourney(browser,base,viewport,name){
   await page.getByRole('button',{name:'Next risks',exact:true}).click();await page.getByRole('button',{name:'Open risk: '+title,exact:true}).waitFor();
   await page.getByLabel('Search risks',{exact:true}).fill('widget');await page.getByRole('button',{name:'Search risks',exact:true}).click();
   await page.getByRole('button',{name:'Open risk: '+title,exact:true}).click();
-  const detail=page.getByRole('region',{name:'Selected risk',exact:true});await detail.getByRole('heading',{name:title,exact:true}).waitFor();
-  assert.equal(new URL(page.url()).searchParams.get('riskId'),riskId);await detail.getByText('Not recorded',{exact:true}).waitFor();
+  const detail=page.getByRole('region',{name:'Selected risk',exact:true}),residual=detail.getByText('Independently accepted residual rating',{exact:true}).locator('..');await detail.getByRole('heading',{name:title,exact:true}).waitFor();
+  assert.equal(new URL(page.url()).searchParams.get('riskId'),riskId);await residual.getByText('Not recorded',{exact:true}).waitFor();
   await expand('Add treatment');await page.getByLabel('Find a treatment task',{exact:true}).fill('widget');await page.getByRole('button',{name:'Find tasks',exact:true}).click();
   await detail.getByRole('heading',{name:title,exact:true}).waitFor();await expand('Add treatment');
   await page.getByLabel('Treatment task',{exact:true}).selectOption(taskId);await page.getByLabel('Why this task treats the risk',{exact:true}).fill('The independently completed fictional training task records the work that addresses this exposure while retaining the need for a separate residual judgement.');
   await page.getByRole('button',{name:'Link treatment task',exact:true}).evaluate(button=>{button.click();button.click();});
   await detail.getByRole('link',{name:'Open treatment task →',exact:true}).waitFor();assert.equal(treatmentWrites,1);
-  await detail.getByText('Not recorded',{exact:true}).waitFor();assert.equal(rows[30].score,16,'finishing a treatment cannot lower the inherent rating');
+  await residual.getByText('Not recorded',{exact:true}).waitFor();assert.equal(rows[30].score,16,'finishing a treatment cannot lower the inherent rating');
   const taskLink=new URL(await detail.getByRole('link',{name:'Open treatment task →',exact:true}).getAttribute('href'),base);assert.equal(taskLink.searchParams.get('organizationId'),org);assert.equal(taskLink.searchParams.get('taskId'),taskId);
   await expand('Prepare a residual risk review');await page.getByLabel('Residual likelihood',{exact:true}).selectOption('2');await page.getByLabel('Residual impact',{exact:true}).selectOption('3');
   await page.getByLabel('Review rationale',{exact:true}).fill('The fictional completed training record supports a lower remaining likelihood within this bounded exercise. Another administrator must judge the evidence and its limitations before accepting the proposal.');
@@ -91,7 +91,7 @@ export async function riskJourney(browser,base,viewport,name){
   await page.getByRole('checkbox',{name:'I have reviewed the treatment work, supporting evidence and proposed residual rating.',exact:true}).check();
   await page.getByRole('button',{name:'Prepare risk review',exact:true}).evaluate(button=>{button.click();button.click();});
   await detail.getByText('This proposal needs an independent eligible administrator. Its author cannot approve it.',{exact:true}).waitFor();assert.equal(prepareWrites,1);
-  assert.equal(await page.getByRole('button',{name:'Accept residual risk decision',exact:true}).count(),0);await detail.getByText('Not recorded',{exact:true}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'Accept residual risk decision',exact:true}).count(),0);await residual.getByText('Not recorded',{exact:true}).waitFor();
   await replaceAccount(session(owner));await page.getByRole('button',{name:'Accept residual risk decision',exact:true}).waitFor();
   await page.getByLabel('Independent review notes '+reviewId,{exact:true}).fill('Independently reviewed the fictional treatment receipt, original supporting record and the scope and limitations of this remaining risk assessment.');
   assert.equal(await page.getByRole('button',{name:'Accept residual risk decision',exact:true}).isDisabled(),true);
@@ -99,14 +99,14 @@ export async function riskJourney(browser,base,viewport,name){
   await page.getByRole('button',{name:'Accept residual risk decision',exact:true}).evaluate(button=>{button.click();button.click();});
   const recovery=page.getByRole('region',{name:'Unconfirmed risk action',exact:true});await recovery.waitFor();assert.equal(decisionWrites,1);
   failRead=true;await recovery.getByRole('button',{name:'Check saved risk',exact:true}).click();await page.getByRole('alert').filter({hasText:'Fictional risk status temporarily unavailable.'}).waitFor();assert.equal(await detail.count(),0);
-  await recovery.getByRole('button',{name:'Check saved risk',exact:true}).click();await detail.getByText('6 / 25',{exact:true}).waitFor();assert.equal(decisionWrites,1);
-  assert.equal(await detail.getByText('Not recorded',{exact:true}).count(),0);
+  await recovery.getByRole('button',{name:'Check saved risk',exact:true}).click();await residual.getByText('6 / 25',{exact:true}).waitFor();assert.equal(decisionWrites,1);
+  assert.equal(await residual.getByText('Not recorded',{exact:true}).count(),0);
   const evidenceLink=new URL(await detail.getByRole('link',{name:filename+' →',exact:true}).getAttribute('href'),base);assert.equal(evidenceLink.pathname,'/team/evidence');assert.equal(evidenceLink.searchParams.get('evidenceId'),fileId);assert.equal(evidenceLink.searchParams.get('organizationId'),org);
   await page.getByLabel('Risk status',{exact:true}).selectOption('accepted');await page.getByRole('button',{name:'Open risk: '+title,exact:true}).waitFor();
   const overflow=await page.evaluate(()=>Math.max(0,document.documentElement.scrollWidth-innerWidth));assert.ok(overflow<=3,'risk register horizontal overflow '+overflow);
   await mkdir('artifacts/usability',{recursive:true});await detail.screenshot({path:'artifacts/usability/risk-'+name+'-accepted.png'});
-  await page.reload();await detail.getByText('6 / 25',{exact:true}).waitFor();assert.equal(decisionWrites,1);
-  stale=true;await page.getByRole('button',{name:'Refresh risks',exact:true}).click();await detail.getByText('Not recorded',{exact:true}).waitFor();await detail.getByText('The supporting evidence changed. Prepare a fresh review.',{exact:true}).waitFor();
+  await page.reload();await residual.getByText('6 / 25',{exact:true}).waitFor();assert.equal(decisionWrites,1);
+  stale=true;await page.getByRole('button',{name:'Refresh risks',exact:true}).click();await residual.getByText('Not recorded',{exact:true}).waitFor();await detail.getByText('The supporting evidence changed. Prepare a fresh review.',{exact:true}).waitFor();
   assert.equal(review.status,'ACCEPTED');assert.equal(prepareWrites,1);assert.equal(decisionWrites,1);await detail.screenshot({path:'artifacts/usability/risk-'+name+'-changed-evidence.png'});
 
   await page.goto(base+href('/team/risks',{riskId:missing}));await page.getByRole('alert').filter({hasText:'Risk not found in this company'}).waitFor();assert.equal(await detail.count(),0);

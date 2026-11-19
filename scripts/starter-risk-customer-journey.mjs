@@ -90,6 +90,7 @@ export async function riskCustomerJourney({review,upload,db,app,org,editor,revie
  const description='A fictional widget operator may work without current training being demonstrated. The exercise records the observed treatment work and the remaining human judgement, without asserting that harm is impossible.';
  const note='Independently checked the fictional risk, the exact completed training task, its frozen receipt, original supporting records and the limits of the proposed remaining risk rating.';
  const until=new Date(Date.now()+30*86400000).toISOString().slice(0,10);
+ const residual=page=>page.getByRole('region',{name:'Selected risk',exact:true}).getByText('Independently accepted residual rating',{exact:true}).locator('..');
  const evidenceBefore=await db.evidence.count({where:{organizationId:org.id}}),objectsBefore=await storageSnapshot();
  const sourceTask=await db.obligation.findUniqueOrThrow({where:{id:completedSource.taskId}});assert.equal(sourceTask.status,'COMPLETE');
  async function post(page,action,run){
@@ -131,7 +132,7 @@ export async function riskCustomerJourney({review,upload,db,app,org,editor,revie
  assert.deepEqual(treated.selected.blockers,[]);assert.equal(treated.selected.risk.score,16);assert.equal(treated.selected.reviews.length,0);
  const treatmentLink=new URL(await upload.getByRole('link',{name:'Open treatment task →',exact:true}).getAttribute('href'),app);
  assert.equal(treatmentLink.searchParams.get('organizationId'),org.id);assert.equal(treatmentLink.searchParams.get('taskId'),sourceTask.id);
- await upload.getByRole('region',{name:'Selected risk',exact:true}).getByText('Not recorded',{exact:true}).waitFor();
+ await residual(upload).getByText('Not recorded',{exact:true}).waitFor();
  const [treatmentResponse]=await Promise.all([
   upload.waitForResponse(response=>{const url=new URL(response.url());return url.pathname==='/api/workspace/work'&&url.searchParams.get('taskId')===sourceTask.id&&response.request().method()==='GET';}),
   upload.getByRole('link',{name:'Open treatment task →',exact:true}).click()
@@ -163,7 +164,7 @@ export async function riskCustomerJourney({review,upload,db,app,org,editor,revie
  assert.match(draft.context.treatments[0].completion.proofHash,/^[a-f0-9]{64}$/);
  const pending=await open(upload,id);assert.equal(pending.selected.risk.status,'UNDER_REVIEW');assert.equal(pending.selected.risk.score,16);assert.equal(pending.selected.reviews[0].status,'PENDING');assert.equal(pending.selected.canReview,false);
  assert.equal(await upload.getByRole('button',{name:'Accept residual risk decision',exact:true}).count(),0);
- await upload.getByRole('region',{name:'Selected risk',exact:true}).getByText('Not recorded',{exact:true}).waitFor();
+ await residual(upload).getByText('Not recorded',{exact:true}).waitFor();
  assert.equal(await db.riskReview.count({where:{organizationId:org.id,riskId:id}}),1);
  await upload.getByRole('region',{name:'Selected risk',exact:true}).screenshot({path:artifactDir+'/mobile-risk-independent-review-needed.png'});
 
@@ -174,14 +175,14 @@ export async function riskCustomerJourney({review,upload,db,app,org,editor,revie
  await review.getByRole('checkbox',{name:'I independently reviewed this proposal, its treatment records and supporting evidence.',exact:true}).check();
  const decided=await post(review,'DECIDE_REVIEW',()=>review.getByRole('button',{name:'Accept residual risk decision',exact:true}).evaluate(button=>{button.click();button.click();}));
  assert.equal(decided.id,proposed.id);assert.equal(decided.status,'ACCEPTED');
- await review.getByRole('region',{name:'Selected risk',exact:true}).getByText('6 / 25',{exact:true}).waitFor();
+ await residual(review).getByText('6 / 25',{exact:true}).waitFor();
  const accepted=await db.riskReview.findUniqueOrThrow({where:{id:proposed.id}});
  assert.equal(accepted.reviewerId,reviewer.id);assert.equal(accepted.authorId,editor.id);assert.equal(accepted.status,'ACCEPTED');assert.equal(accepted.reviewNotes,note);assert.equal(accepted.version,draft.version+1);assert.match(accepted.decisionHash,/^[a-f0-9]{64}$/);
  assert.equal(accepted.contextHash,draft.contextHash);assert.deepEqual(accepted.context,draft.context,'approval preserves the proposed treatment and file basis');
  assert.equal(await db.auditEvent.count({where:{organizationId:org.id,entityId:id,action:'risk.review_decided'}}),1);
  const current=await open(review,id);assert.equal(current.selected.risk.status,'ACCEPTED');assert.equal(current.selected.risk.score,16);assert.equal(current.selected.reviews[0].current,true);assert.equal(current.selected.reviews[0].score,6);
- const selected=review.getByRole('region',{name:'Selected risk',exact:true});await selected.getByText('6 / 25',{exact:true}).waitFor();
- assert.equal(await selected.getByText('Not recorded',{exact:true}).count(),0);
+ const selected=review.getByRole('region',{name:'Selected risk',exact:true});await residual(review).getByText('6 / 25',{exact:true}).waitFor();
+ assert.equal(await residual(review).getByText('Not recorded',{exact:true}).count(),0);
  const originalLink=new URL(await selected.getByRole('link',{name:original.filename+' →',exact:true}).getAttribute('href'),app);
  assert.equal(originalLink.pathname,'/team/evidence');assert.equal(originalLink.searchParams.get('organizationId'),org.id);assert.equal(originalLink.searchParams.get('evidenceId'),evidenceId);
  const download=review.waitForEvent('download');await selected.getByRole('button',{name:'Download risk record',exact:true}).click();
@@ -199,7 +200,7 @@ export async function riskCustomerJourney({review,upload,db,app,org,editor,revie
  // silently stand in for a current assessment after its evidence basis changes.
  await db.evidence.update({where:{id:evidenceId},data:{reviewVersion:{increment:1},reviewNotes:'Controlled fictional evidence review revision for the connected risk currentness acceptance check.'}});
  const stale=await open(review,id);assert.equal(stale.selected.reviews[0].id,accepted.id);assert.equal(stale.selected.reviews[0].status,'ACCEPTED');assert.equal(stale.selected.reviews[0].current,false);assert.ok(stale.selected.reviews[0].reason);
- await review.getByRole('region',{name:'Selected risk',exact:true}).getByText('Not recorded',{exact:true}).waitFor();
+ await residual(review).getByText('Not recorded',{exact:true}).waitFor();
  const frozen=await db.riskReview.findUniqueOrThrow({where:{id:accepted.id}});assert.deepEqual(frozen,accepted,'the original accepted review remains immutable when its basis changes');
  assert.equal(await db.riskReview.count({where:{organizationId:org.id,riskId:id}}),1);assert.equal(stale.selected.risk.score,16);
  await review.getByRole('region',{name:'Selected risk',exact:true}).screenshot({path:artifactDir+'/desktop-risk-changed-evidence.png'});
