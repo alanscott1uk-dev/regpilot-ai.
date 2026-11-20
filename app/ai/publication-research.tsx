@@ -1,7 +1,8 @@
 "use client";
 
-import {useState, type FormEvent} from "react";
+import {useCallback, useEffect, useId, useRef, useState, type FormEvent} from "react";
 import type {Nation, ResearchResult, ResearchPassage, PassageCheck} from "../../lib/regulatory/research";
+import {MIN_RESEARCH_QUESTION, MAX_RESEARCH_QUESTION} from "../../lib/regulatory/publication-query.mjs";
 import styles from "./ai.module.css";
 
 const example = "Which publications cover GMP and wholesale dealer licensing for medicines?";
@@ -43,15 +44,29 @@ function RecheckCitation({passage}:{passage:ResearchPassage}) {
 
 export function PublicationResults({result}:{result:ResearchResult}) {
   const publicationCount=new Set(result.citations.map(p=>p.sourceId)).size;
+  const prefix=useId();
+  const points=result.answer?.points || [];
   return <div className={styles.researchResults}>
+    {!!points.length&&<section aria-label="RegPilot answer" className={styles.researchAnswer}>
+      <h3>RegPilot answer</h3><p>In the publishers’ own words</p>
+      {points.map(point=>{
+        const citation=result.citations.find(c=>c.id===point.citationId);
+        return citation&&<div key={point.citationId}>
+          <p>{point.text}</p><a href={"#"+prefix+citation.id}>{citation.agency} · {citation.title}</a>
+        </div>;
+      })}
+    </section>}
+    {result.answer&&!result.answer.model&&!!result.citations.length&&<p role="note">The local answer model is unavailable. The matching publisher passages are below.</p>}
+    {result.answer?.model&&!points.length&&!!result.citations.length&&<p role="status">I found related material, but couldn’t identify a sentence that answers this question.</p>}
     <p role="status">{result.citations.length
       ? `${result.citations.length} matching passage${result.citations.length===1?"":"s"} from ${publicationCount} publication${publicationCount===1?"":"s"}.`
       : result.unavailable ? "The available publications did not provide a matching passage. Part of the search is unavailable."
-      : "No matching passage found. Try naming the regulator, activity or licence."}</p>
-    {result.citations.map(p=><article key={p.id}>
+      : "I couldn’t find supporting guidance in this catalogue. Try adding the activity, regulator or licence you mean."}</p>
+    {result.citations.map(p=><article key={p.id} id={prefix+p.id}>
       <h3><a href={p.url} target="_blank" rel="noopener noreferrer">{p.title}</a></h3>
-      <span>{p.agency} · {p.jurisdictions.length ? p.jurisdictions.join(", ") : "Check territorial scope in the publication"}</span>
+      <span>{[p.agency,p.kind,p.jurisdictions.length ? p.jurisdictions.join(", ") : "Check territorial scope in the publication"].filter(Boolean).join(" · ")}</span>
       <blockquote>{p.quote}</blockquote>
+      {p.scopeNote&&<small>{p.scopeNote}</small>}
       <RecheckCitation passage={p}/>
     </article>)}
     {!!result.unavailable&&<p role="note">{result.unavailable} shortlisted publication(s) could not be checked.</p>}
@@ -68,30 +83,45 @@ export default function PublicationResearch() {
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
   const [result,setResult]=useState<ResearchResult|null>(null);
-  async function search(value:string) {
+  const pending=useRef(0);
+  const region=useRef<HTMLElement>(null);
+  const search=useCallback(async(value:string, territory="")=>{
+    const request=++pending.current;
     setQuestion(value);setResult(null);setError("");setBusy(true);
     try {
       const response=await fetch("/api/ai/research",{method:"POST",headers:{"content-type":"application/json"},
-        body:JSON.stringify({question:value,...(nation?{nation}:{})}),cache:"no-store"});
+        body:JSON.stringify({question:value,...(territory?{nation:territory}:{})}),cache:"no-store"});
       const data=await response.json();
       if(!response.ok) throw Error(data.error || "Source search unavailable. Try again.");
-      setResult(data);
-    } catch(e) {setError(e instanceof Error?e.message:"Source search unavailable.");}
-    finally {setBusy(false);}
-  }
-  function submit(event:FormEvent) {event.preventDefault();void search(question);}
-  return <section id="source-research" aria-labelledby="research-heading" className={styles.research}>
+      if(request===pending.current)setResult(data);
+    } catch(e) {if(request===pending.current)setError(e instanceof Error?e.message:"Source search unavailable.");}
+    finally {if(request===pending.current)setBusy(false);}
+  },[]);
+  useEffect(()=>{
+    function openTopic() {
+      const prefix="#source-research?";
+      if(!location.hash.startsWith(prefix)) return;
+      const value=new URLSearchParams(location.hash.slice(prefix.length)).get("q")?.trim();
+      if(!value || value.length<MIN_RESEARCH_QUESTION || value.length>MAX_RESEARCH_QUESTION) return;
+      region.current?.scrollIntoView();
+      setNation("");void search(value);
+    }
+    openTopic();window.addEventListener("hashchange",openTopic);
+    return ()=>{window.removeEventListener("hashchange",openTopic);pending.current++;};
+  },[search]);
+  function submit(event:FormEvent) {event.preventDefault();void search(question,nation);}
+  return <section ref={region} id="source-research" aria-labelledby="research-heading" className={styles.research}>
     <h2 id="research-heading">Search UK regulatory sources</h2>
-    <p>Ask about a UK business activity to find exact passages from official publications. This search runs without an external AI model.</p>
+    <p>Enter a topic or ask a question in your own words. RegPilot searches UK publications by meaning and answers using sentences you can check at the source.</p>
     <form onSubmit={submit}>
-      <label>Research question<input required minLength={8} maxLength={1500} value={question} disabled={busy}
-        placeholder="Which guidance covers a wholesale dealer’s licence?" onChange={e=>{setQuestion(e.target.value);setResult(null);setError("");}}/></label>
+      <label>Research question<input required minLength={MIN_RESEARCH_QUESTION} maxLength={MAX_RESEARCH_QUESTION} value={question} disabled={busy}
+        placeholder="e.g. Where should I put sensors in my medicines store?" onChange={e=>{setQuestion(e.target.value);setResult(null);setError("");}}/></label>
       <label>UK nation<select value={nation} disabled={busy} onChange={e=>{setNation(e.target.value);setResult(null);setError("");}}>
         <option value="">Use my question</option>{nations.map(n=><option key={n}>{n}</option>)}
       </select></label>
-      <button disabled={busy} type="submit">{busy?"Checking publications…":"Find passages"}</button>
+      <button disabled={busy} type="submit">{busy?"Checking publications…":"Ask RegPilot"}</button>
     </form>
-    <button type="button" className={styles.researchExample} disabled={busy} onClick={()=>void search(example)}>Try a medicines question</button>
+    <button type="button" className={styles.researchExample} disabled={busy} onClick={()=>void search(example,nation)}>Try a medicines question</button>
     {busy&&<p role="status">Reading the shortlisted official publications…</p>}
     {error&&<p role="alert">{error}</p>}
     {result&&<PublicationResults result={result}/>}

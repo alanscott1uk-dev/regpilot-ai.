@@ -24,7 +24,19 @@ test('device discovery separates NI surveillance scope and exposes sector-specif
  assert.ok(ids('Scotland','packaging').includes('packaging-epr-scope'));
  assert.equal(new Set(REGULATORY_SOURCES.map(s=>s.id)).size,REGULATORY_SOURCES.length);
 });
-test("all eight additional curated sources use exact allowlisted URLs and existing fail-closed extraction",async()=>{
- const added=REGULATORY_SOURCES.filter(s=>s.provider==="OFFICIAL_WEB"&&s.jurisdictions);assert.equal(added.length,8);
- for(const s of added){const r=await loadOfficialWeb(s,async(url,options)=>{assert.equal(url,s.url);assert.equal(options?.redirect,"error");return new Response(`<main><h1>${s.heading}</h1><p>${"Fictional publication content only, no real legal claims. ".repeat(12)}</p></main>`,{headers:{"content-type":"text/html"}});});assert.equal(r.id,s.id);assert.equal(r.updatedAt,null);assert.ok(s.scopeNote);}
+test("curated territorial publications use their exact allowlisted URL and publisher-specific content scope",async()=>{
+ const added=REGULATORY_SOURCES.filter(s=>s.provider==="OFFICIAL_WEB"&&s.jurisdictions);assert.ok(added.length>=11);
+ for(const s of added){
+  const body="<p>"+("Fictional publication content only, no real legal claims. ").repeat(12)+"</p>";
+  const title="<h1>"+s.heading+"</h1>";
+  const html=s.articleBody?`<article>${title}<div class="${s.articleBody==="sps"?"text-layout-block__text":"entry-content"}">${body}</div></article>`:title+body;
+  const r=await loadOfficialWeb(s,async(url,options)=>{assert.equal(url,s.url);assert.equal(options?.redirect,"error");return new Response("<main>"+html+"</main>",{headers:{"content-type":"text/html"}});});
+  assert.equal(r.id,s.id);assert.equal(r.updatedAt,null);assert.ok(s.scopeNote);
+ }
+});
+test("source portfolio search understands SOPs and mistyped temperature mapping under the chosen territorial filter",()=>{
+ const ids=(q:string,t:string)=>matchingSources(REGULATORY_SOURCES,t,"medicines",q).map(s=>s.id);
+ for(const q of ["SOP","S.O.P.s","standard operating procedures"]) assert.deepEqual(ids(q,"Scotland"),["home-office-controlled-drug-sops"]);
+ assert.deepEqual(ids("temperature mappping","Scotland"),["mhra-temperature-mapping"]);
+ assert.ok(!ids("standard operating procedures","Northern Ireland").includes("home-office-controlled-drug-sops"));
 });

@@ -32,6 +32,7 @@ test("permits only PDF magic signature, size bound",()=>{
 test("assistant and regulatory impact have appropriate input constraints",()=>{
  assert.throws(()=>validateAiRequest({...example,mode:"change",sourceId:""}),InputError);
  assert.throws(()=>validateAiRequest({...example,mode:"assistant",question:"Hi"}),InputError);
+ assert.equal(validateAiRequest({...example,mode:"assistant",question:"SOP"}).question,"SOP");
  assert.equal(validateAiRequest({...example,mode:"assistant",question:"What must be reviewed?"}).mode,"assistant");
 });
 test("quotes must match supplied source and text, not model assertion",()=>{

@@ -6,6 +6,16 @@ import {loadGovUkHtml} from "../lib/server/govuk-html-source";
 const source=REGULATORY_SOURCES.find(s=>s.id==="ico-accountability")!;
 const html=(extra="")=>`<html><nav>Outside navigation</nav><main><h1>${source.heading}</h1><p>${"Fictional accountability guidance. ".repeat(10)}</p>${extra}</main><footer>Outside footer</footer></html>`;
 const response=(body=html(),status=200,type="text/html")=>new Response(body,{status,headers:{"content-type":type,"last-modified":"Mon, 01 Jan 2024 00:00:00 GMT"}});
+test("inspectorate answers use only the identified author's article and exclude reader comments",async()=>{
+ const source=REGULATORY_SOURCES.find(s=>s.id==="mhra-temperature-mapping")!;
+ const wording="Fictional article paragraph about a storage area. ".repeat(7).trim();
+ const article='<article><header><h1>'+source.heading+'</h1></header><div class="entry-content"><p>'+wording+'</p></div></article>';
+ const comments='<section id="comments"><p>Unverified reader suggestion.</p></section>';
+ const read=(content:string)=>loadOfficialWeb(source,async()=>response("<main>"+content+"</main>"));
+ assert.equal((await read(article+comments)).text,wording);
+ for(const changed of [article+article,article.replace("entry-content","reader-content"),article.replace(source.heading!,"Other title"),article.replace("</p>","</p>"+comments),article.replace("</div>",""),article.replace("</div>",'</div><div class="entry-content">Second</div>')])
+  await assert.rejects(()=>read(changed),OfficialWebUnavailable);
+});
 test("curated official pages retain main text only and do not invent publication dates",async()=>{
  const result=await loadOfficialWeb(source,async(url,options)=>{assert.equal(url,source.url);assert.equal(options?.method,"GET");assert.equal(options?.redirect,"error");assert.equal(options?.cache,"no-store");return response(html('<nav>MENU SECRET</nav><script>RAW SCRIPT</script><aside>ASIDE</aside><form>FORM</form><!-- COMMENT --><p>A &amp; B &#xA3;5</p>'));});
  assert.match(result.text,/A & B £5/);assert.doesNotMatch(result.text,/Outside|MENU|RAW|ASIDE|FORM|COMMENT|<p>/);assert.equal(result.updatedAt,null);assert.equal(result.revisionAt,null);assert.equal(result.url,source.url);

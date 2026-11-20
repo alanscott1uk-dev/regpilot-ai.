@@ -45,3 +45,9 @@
 .researchResults blockquote { border-left: 3px solid #9b86bb; margin: 12px 0; padding: 0 12px; line-height: 1.6; }
 .researchResults code { overflow-wrap: anywhere; }
 .researchResults summary { cursor: pointer; }
+.researchAnswer { margin-top: 18px; padding: 18px; background: #f5f2fb; border-left: 3px solid #604396; border-radius: 6px; }
+.researchAnswer h3 { font-size: 19px; }
+.researchAnswer > p, .researchAnswer a, .researchResults small { font-size: 13px; color: #51475f; }
+.researchAnswer div + div { margin-top: 14px; }
+.researchAnswer div p { margin: 0 0 5px; }
+.researchResults small { display: block; margin-bottom: 8px; }

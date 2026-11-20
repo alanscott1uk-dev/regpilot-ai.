@@ -2,8 +2,9 @@ const docxRuntime=["./lib/server/docx-extraction-worker.mjs","./lib/server/docx-
 const pdfRuntime=["./lib/server/pdf-extraction-worker.mjs","./node_modules/pdfjs-dist/legacy/build/*.mjs","./node_modules/pdfjs-dist/package.json","./node_modules/@napi-rs/canvas*/**/*"];
 /** @type {import('next').NextConfig} */
 const config={
-  serverExternalPackages:["pdfjs-dist"],
+  serverExternalPackages:["pdfjs-dist","@yarflam/potion-base-8m"],
   outputFileTracingIncludes:{
+    "/api/ai/research":["./node_modules/@yarflam/potion-base-8m/models/**/*"],
     "/api/workspace/questionnaires/ocr":[...pdfRuntime],
     "/api/workspace/questionnaires/inspect":[...docxRuntime,...pdfRuntime],
     "/api/workspace/questionnaires/import":[...docxRuntime,...pdfRuntime],
@@ -22,7 +23,7 @@ const config={
     "/api/workspace/programme":[...docxRuntime,"./lib/server/pdf-extraction-worker.mjs","./node_modules/pdfjs-dist/legacy/build/*.mjs","./node_modules/pdfjs-dist/package.json","./node_modules/@napi-rs/canvas*/**/*"],
     "/api/workspace/assurance":[...docxRuntime,"./lib/server/pdf-extraction-worker.mjs","./node_modules/pdfjs-dist/legacy/build/*.mjs","./node_modules/pdfjs-dist/package.json","./node_modules/@napi-rs/canvas*/**/*"],
     "/api/workspace/assurance/*":[...docxRuntime,"./lib/server/pdf-extraction-worker.mjs","./node_modules/pdfjs-dist/legacy/build/*.mjs","./node_modules/pdfjs-dist/package.json","./node_modules/@napi-rs/canvas*/**/*"],
-    "/api/ai/analyse":[...docxRuntime,"./lib/server/pdf-extraction-worker.mjs","./node_modules/pdfjs-dist/legacy/build/*.mjs","./node_modules/pdfjs-dist/package.json","./node_modules/@napi-rs/canvas*/**/*"]
+    "/api/ai/analyse":["./node_modules/@yarflam/potion-base-8m/models/**/*",...docxRuntime,"./lib/server/pdf-extraction-worker.mjs","./node_modules/pdfjs-dist/legacy/build/*.mjs","./node_modules/pdfjs-dist/package.json","./node_modules/@napi-rs/canvas*/**/*"]
   }
 };
 export default config;

@@ -1,4 +1,5 @@
 "use client";
+import {MIN_RESEARCH_QUESTION, publicationResearchHref} from "../../lib/regulatory/publication-query.mjs";
 import {useEffect,useMemo,useState} from "react";
 import {validateObligation,isValidDate} from "../../lib/obligations.mjs";
 import {validDocumentMetadata} from "../../lib/document-categories.mjs";
@@ -215,7 +216,7 @@ export default function Workbench(){
       <label className={ui.searchLabel}>Search actions<input aria-label="Search actions" placeholder="Search tasks or owners…" value={search} onChange={e=>setSearch(e.target.value)}/></label>
       <label className={ui.filterLabel}>Show<select aria-label="Filter work" value={filter} onChange={e=>setFilter(e.target.value)}><option value="priority">Needs attention</option><option value="week">Overdue and next 7 days</option><option value="exceptions">Completion exceptions</option><option value="evidence">Evidence gaps</option><option value="complete">Completed</option><option value="all">All actions</option></select></label>
      </div>
-     <div className={ui.queueList}>{!ready?<p className={ui.empty}>Loading work queue…</p>:visible.length===0?<div className={ui.empty}><strong>No items in this view.</strong><p>Switch to all actions or create a new work item.</p></div>:visible.map(row=>
+     <div className={ui.queueList}>{!ready?<p className={ui.empty}>Loading work queue…</p>:visible.length===0?<div className={ui.empty}><strong>No items in this view.</strong><p>Switch to all actions or create a new work item.</p>{search.trim().length>=MIN_RESEARCH_QUESTION&&<a href={publicationResearchHref(search)}>Ask RegPilot about this topic in published guidance</a>}</div>:visible.map(row=>
       <button type="button" key={row.id} className={ui.queueItem+" "+(selectedId===row.id?ui.selected:"")} onClick={()=>{setSelectedId(row.id);setMessage("");}} aria-pressed={selectedId===row.id}>
        <div className={ui.itemTop}><span className={ui.tag+" "+(ui[row.level]||"")}>{tone[row.level]||"Review"}</span><span className={ui.due}>{shortDate(row.due)}</span></div>
        <strong>{row.title}</strong><small>{row.regulator} · {row.owner}</small>

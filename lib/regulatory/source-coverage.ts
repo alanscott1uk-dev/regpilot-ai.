@@ -1,4 +1,5 @@
 import type {RegulatorySource} from "../regulatory-sources.mjs";
+import {matchesPublicationText} from "./publication-query.mjs";
 export const TERRITORIES=["England","Scotland","Wales","Northern Ireland"] as const;
 export const SOURCE_ACTIVITIES={"employing-staff":"Employing people","personal-data":"Personal information","limited-company":"Running a company","consumer-sales":"Selling to consumers","food-business":"Food business","commercial-waste":"Business waste","premises":"Business premises","medicines":"Medicines manufacturing and wholesale","supply-chain":"Supplier and supply-chain duties","sponsored-workers":"Sponsored workers","medical-devices":"Medical devices","clinical-trials":"Clinical trial sponsors and research","aml-regulated":"Anti-money laundering supervision","packaging":"Packaging producer responsibilities"} as const;
 export type MonitoringAttempt={id:string;at:string;action:string;outcome:string|null;failureCode:string|null;attempt:number|null;paused:boolean|null};
@@ -6,7 +7,7 @@ export type SourceCoverage={sourceId:string;snapshotId:string|null;reviewStatus:
 export function matchingSources(sources:readonly RegulatorySource[],territory:string,activity:string,query:string){
  const text=query.trim().toLowerCase();
  // Unclassified sources remain visible: missing metadata is never a not-applicable decision.
- return sources.filter(s=>(!territory||!s.jurisdictions?.length||s.jurisdictions.includes(territory))&&(!activity||!s.activities?.length||s.activities.includes(activity))&&(!text||[s.title,s.agency,s.topic].join(" ").toLowerCase().includes(text)));
+ return sources.filter(s=>(!territory||!s.jurisdictions?.length||s.jurisdictions.includes(territory))&&(!activity||!s.activities?.length||s.activities.includes(activity))&&matchesPublicationText([s.title,s.agency,s.topic].join(" "),text));
 }
 export function sourceNextStep(row?:SourceCoverage){
  if(!row)return "Coverage status unavailable";

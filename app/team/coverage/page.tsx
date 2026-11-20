@@ -6,6 +6,7 @@ import EmailSignIn from "../../components/email-sign-in";
 import type {SourceCoverage} from "../../../lib/regulatory/source-coverage";
 import type {RegulatorySource} from "../../../lib/regulatory-sources.mjs";
 import {coverageDashboard,exportCoverageCsv} from "../../../lib/regulatory/coverage-dashboard.mjs";
+import {matchesPublicationText} from "../../../lib/regulatory/publication-query.mjs";
 import type {ConnectorHealthItem} from "../../../lib/connectors/health-dashboard.mjs";
 import shell from "../../workbench/workbench.module.css";
 import css from "./coverage.module.css";
@@ -76,7 +77,7 @@ export default function Coverage(){
  const dashboard=useMemo(()=>feed?coverageDashboard(feed.catalogue,feed.coverage):null,[feed]);
  const results=useMemo(()=>dashboard?.rows.filter(s=>{
   const pass=status==="all"||status==="attention"&&s.attention||status==="review"&&s.reviewNeeded||s.status===status;
-  return pass&&(agency==="all"||s.agency===agency)&&[s.title,s.agency,s.topic,s.id,...s.activities].join(" ").toLowerCase().includes(term.toLowerCase().trim());
+  return pass&&(agency==="all"||s.agency===agency)&&matchesPublicationText([s.title,s.agency,s.topic,s.id,...s.activities].join(" "),term);
  })||[],[dashboard,status,agency,term]);
  const summary=dashboard?.summary;
  const currentOrg=orgs.find(x=>x.id===orgId),admin=!!currentOrg&&["OWNER","ADMIN"].includes(currentOrg.role);

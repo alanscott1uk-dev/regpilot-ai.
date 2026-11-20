@@ -28,6 +28,10 @@ const cases: [string,string][] = [
   ["Which regulator oversees the Consumer Duty for financial services?","fca-consumer-duty"],
   ["Where can directors verify their identity for Companies House?","companies-house-identity"],
   ["Which records should a sponsor keep for sponsored workers?","employer-sponsor-records"],
+  ["standard operating procedures","home-office-controlled-drug-sops"],
+  ["S.O.P.s","home-office-controlled-drug-sops"],
+  ["temperature mappping","mhra-temperature-mapping"],
+  ["temperature mapping","sps-medicines-temperature-mapping"],
 ];
 test("reference catalogue benchmark across pharma and UK nations",t=>{
   let first=0,reciprocalRank=0;
@@ -40,7 +44,7 @@ test("reference catalogue benchmark across pharma and UK nations",t=>{
   t.diagnostic(`Expected source in first three: ${cases.length}/${cases.length}. First choice: ${first}/${cases.length}. Mean reciprocal rank: ${(reciprocalRank/cases.length).toFixed(3)}.`);
 });
 test("unsupported questions make no publisher requests and geographic terms cannot cause false hits",async()=>{
-  for (const question of ["What was UK GDP growth last quarter?","How far away is Mars?","Does Scotland have purple zebras?","What about quantum gravity?"]) {
+  for (const question of ["What was UK GDP growth last quarter?","How far away is Mars?","Does Scotland have purple zebras?","What about quantum gravity?","How do I install a computer operating system?"]) {
     const result=await researchPublications({question},async()=>assert.fail("unexpected publisher read"));
     assert.equal(result.status,"no_match",question);assert.equal(result.checked.length,0);
   }
@@ -118,10 +122,30 @@ test("public research endpoint works without AI credentials and enforces its que
   const post=(body:unknown)=>POST(new Request("https://example.test/api/ai/research",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}));
   const unsupported=await post({question:"Are there zebras on Mars?"});
   assert.equal(unsupported.status,200);assert.equal((await unsupported.json()).status,"no_match");
-  assert.equal((await post({question:"short"})).status,400);
+  assert.equal((await post({question:"  hi  "})).status,400);
+  assert.equal((await post({question:"xyz"})).status,200);
   assert.equal((await post({question:"Which UK guidance?",url:"https://example.invalid"})).status,400);
   assert.equal((await post({question:"x".repeat(9000)})).status,413);
   assert.equal((await POST(new Request("https://example.test",{method:"POST",body:"hello"}))).status,415);
+});
+
+test("the local model answers a paraphrase with an entire sentence inside its verified source passage",async()=>{
+  const source=REGULATORY_SOURCES.find(s=>s.id==="home-office-controlled-drug-sops")!;
+  const body="Fictional guidance for this test. Staff should be given clear written instructions for handling controlled drugs and should be able to locate them at work.";
+  const reader:ResearchReader=async s=>({...await read(s),text:body});
+  for(const question of ["How do I write instructions for staff handling controlled medicines?","How do I write instructions for staff handling controlled drugs?"]) {
+    const result=await researchPublications({question},reader,[source]);
+    assert.equal(result.answer.model,"potion-base-8M");
+    const point=result.answer.points[0];assert.ok(point,question);
+    assert.equal(point.text,body.slice(body.indexOf("Staff should")));
+    const citation=result.citations.find(c=>c.id===point.citationId)!;
+    assert.ok(citation.start<=point.start && point.end<=citation.end);
+    assert.equal(body.slice(point.start,point.end),point.text);
+  }
+  const cost=await researchPublications({question:"How much do standard operating procedures cost?"},async s=>({...await read(s),text:"A standard operating procedure describes the agreed process. Staff should review standard operating procedures and follow them consistently."}),[source]);
+  assert.equal(cost.answer.points.length,0,"related guidance must not answer an unsupported price question");
+  const unrelated=await researchPublications({question:"geographic mapping"},reader);
+  assert.equal(unrelated.answer.points.length,0);
 });
 
 test("reverification distinguishes edits, exact relocation, removal, ambiguity and damaged references",async()=>{
