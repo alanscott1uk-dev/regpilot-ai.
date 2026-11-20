@@ -8,6 +8,7 @@ import {saveConnector,claimConnector,executeConnector} from '../lib/server/conne
 import {changeConnectorControl} from '../lib/server/connector-control-service';
 import {changeObservationChoices,assertChangeObservations} from '../lib/server/change-observations';
 import {operationsWorkspace} from '../lib/server/operations-service';
+import {testConnectedControl} from '../lib/server/control-policy';
 import {getConnectorHealth} from '../lib/server/connector-health-service';
 import {exportConnectorRun} from '../lib/server/connector-service';
 import type {Observation} from '../lib/connectors/observation';
@@ -49,9 +50,17 @@ test('one collection supports separate controls, evidence revocation and indepen
   await assert.rejects(()=>transaction(x.o,tx=>assertChangeObservations(tx,x.a.id,second.id,secondProof)),rejects(409));
   await transaction(x.o,async tx=>assertChangeObservations(tx,x.a.id,second.id,await changeObservationChoices(tx,x.a.id,second.id)));
   assert.equal(reads,1,'linking, unlinking and relinking must not fetch the provider or duplicate credentials');
+  const params={controlId:second.id,minimumProviders:1};
+  const assessed=await testConnectedControl(x.ad,params);
+  assert.equal(assessed.decision.state,'MEETS_TARGET');assert.equal(assessed.observations[0].runId,first.id);
+  assert.equal((await testConnectedControl(x.ad,{...params,minimumProviders:2})).decision.state,'BELOW_TARGET');
+  assert.equal((await testConnectedControl(x.ad,{...params,controlId:fourth.id})).decision.state,'INSUFFICIENT_EVIDENCE');
+  await assert.rejects(()=>testConnectedControl(x.out,params),rejects(404));
+  await assert.rejects(()=>testConnectedControl(x.ed,params),rejects(403));
   const healthy=await getConnectorHealth(x.o);assert.equal(healthy.observed,1);assert.equal(healthy.items[0].controls.length,3);
   assert.equal((await getConnectorHealth(x.out)).total,0,'affected control titles never cross tenant boundaries');
   const partial=await collect('PASS',true);assert.equal(partial.outcome,'INCOMPLETE');
+  assert.equal((await testConnectedControl(x.ad,params)).decision.state,'INSUFFICIENT_EVIDENCE');
   const partialHealth=await getConnectorHealth(x.o);assert.equal(partialHealth.observed,0);assert.equal(partialHealth.items[0].checksUnknown,1);
   assert.equal(await db.obligation.count({where:{connectorId:saved.id,status:{not:'COMPLETE'}}}),3,'lost coverage notifies each current control owner');
   const repeated=await collect('PASS',true);assert.equal(repeated.outcome,'INCOMPLETE');
@@ -62,6 +71,7 @@ test('one collection supports separate controls, evidence revocation and indepen
   assert.equal((await exportConnectorRun(x.o,restored.id)).currentAtExport,false);
   await db.connectorRun.update({where:{id:restored.id},data:{capturedAt:restored.capturedAt}});
   await db.connectorRun.update({where:{id:restored.id},data:{signalHash:'0'.repeat(64)}});
+  assert.equal((await testConnectedControl(x.ad,params)).observations[0].resultHash,null);
   assert.equal((await getConnectorHealth(x.o)).items[0].status,'untrusted','a correct result hash cannot hide a corrupted signal hash');
   assert.equal((await exportConnectorRun(x.o,restored.id)).currentAtExport,false);
   assert.deepEqual(await choices(primary.id),[]);

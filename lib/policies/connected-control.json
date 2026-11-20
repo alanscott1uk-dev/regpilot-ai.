@@ -1,0 +1,6 @@
+{
+  "id": "connected-control-v1",
+  "compiler": "OPA 1.22.4",
+  "sourceSha256": "3a2dc93944960aaf8738a054472b68c3fc251860ddd958d1449e841b438ed880",
+  "wasmSha256": "3fa9f8b0f9ea14f25e77ef8f29684fb082a8dc0a8c012d14a0abe00ff21905e9"
+}

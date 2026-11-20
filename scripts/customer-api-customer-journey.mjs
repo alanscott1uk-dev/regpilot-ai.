@@ -18,6 +18,17 @@ export async function customerApiCustomerJourney({upload,review,db,app,org,edito
  const accepted=await action(review,'/api/workspace/programme/'+programme.id,'PATCH',()=>review.getByRole('button',{name:'Accept 1 selected control',exact:true}).click()),control=await db.managedControl.findUniqueOrThrow({where:{id:accepted.controlIds[0]}});assert.equal(control.organizationId,org.id);assert.equal(control.ownerId,editor.id);assert.equal(control.importId,programme.id);
  passed('A real reviewed private document was extracted through the programme UI and a separate administrator accepted one quoted control with a current owner. The customer integration uses that application-created control.');
 
+ await checkpoint('run the packaged control evidence policy through the administrator UI');
+ await review.goto(app+'/team/operations'+query+'&view=controls');
+ const tester=review.getByRole('region',{name:'Test a control’s connected evidence'});
+ await tester.getByLabel('Operating control',{exact:true}).selectOption(control.id);
+ await tester.getByLabel('Minimum providers',{exact:true}).selectOption('2');
+ const receipt=await action(review,'/api/workspace/controls/test','POST',()=>tester.getByRole('button',{name:'Run evidence test'}).click());
+ assert.equal(receipt.control.id,control.id);assert.equal(receipt.policy.id,'connected-control-v1');
+ assert.equal(receipt.decision.state,'INSUFFICIENT_EVIDENCE');assert.equal(receipt.minimumProviders,2);
+ await tester.getByRole('heading',{name:'More evidence needed'}).waitFor();
+ passed('The packaged OPA rule evaluated an actual newly created control and reported missing connected evidence separately from a failed provider check.');
+
  await checkpoint('create a scoped one-time customer integration credential through the administrator UI');
  await review.goto(app+'/team/developers'+query);await review.getByRole('heading',{name:'Company integrations',exact:true}).waitFor();const create=review.getByRole('region',{name:'Create API credential',exact:true});await create.getByLabel('Integration name',{exact:true}).fill('Fictional device inventory');await create.getByRole('checkbox',{name:'Read tasks for granted controls',exact:true}).check();await create.getByRole('checkbox',{name:'Grant control '+control.title,exact:true}).check();await create.getByRole('checkbox',{name:'I authorise this named integration to use only the selected scopes and controls until the chosen expiry.',exact:true}).check();
  const created=await action(review,'/api/workspace/developers','POST',()=>create.getByRole('button',{name:'Create API credential',exact:true}).click(),201);let token=created.secret;assert.ok(typeof token==='string'&&token.startsWith('rpk_'));const secretPanel=review.getByRole('region',{name:'One-time API secret',exact:true});await secretPanel.waitFor();assert.equal(await secretPanel.getByLabel('One-time API secret',{exact:true}).getAttribute('type'),'password');await secretPanel.getByRole('button',{name:'I saved the secret',exact:true}).click();await secretPanel.waitFor({state:'hidden'});

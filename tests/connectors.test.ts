@@ -62,3 +62,19 @@ test('stored evidence requires a valid shape, unique checks and matching outcome
  const duplicate={...observation,checks:[observation.checks[0],observation.checks[0]]};
  assert.equal(verifiedObservation({...run,result:duplicate,resultHash:hashValue(duplicate),signalHash:hashValue({engine:duplicate.engine,checks:duplicate.checks})}),null);
 });
+
+test('compiled OPA control decisions require distinct providers, expose failures and withhold incomplete evidence',async()=>{
+ const {evaluateControlPolicy}=await import('../lib/server/control-policy');
+ const {readFile}=await import('node:fs/promises'),{createHash,randomUUID}=await import('node:crypto');
+ const manifest=JSON.parse(await readFile('lib/policies/connected-control.json','utf8'));
+ assert.equal(createHash('sha256').update(await readFile('lib/policies/connected-control.rego')).digest('hex'),manifest.sourceSha256);
+ const first={connectorId:randomUUID(),provider:'GITHUB',status:'OBSERVED' as const},second={...first,connectorId:randomUUID()};
+ const request={observations:[first,second],minimumProviders:2,limited:false};
+ assert.equal((await evaluateControlPolicy(request)).state,'BELOW_TARGET');
+ assert.equal((await evaluateControlPolicy({...request,observations:[first,{...second,provider:'MICROSOFT365'}]})).state,'MEETS_TARGET');
+ assert.equal((await evaluateControlPolicy({...request,observations:[]})).state,'INSUFFICIENT_EVIDENCE');
+ assert.equal((await evaluateControlPolicy({...request,limited:true})).state,'INSUFFICIENT_EVIDENCE');
+ assert.deepEqual((await evaluateControlPolicy({...request,observations:[{...first,status:'UNKNOWN'}]})).unverifiedConnections,[first.connectorId]);
+ const failure=await evaluateControlPolicy({...request,limited:true,observations:[{...first,status:'FAILED'}]});
+ assert.equal(failure.state,'FINDINGS');assert.deepEqual(failure.failingConnections,[first.connectorId]);
+});

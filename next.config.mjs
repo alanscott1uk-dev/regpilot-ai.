@@ -2,8 +2,9 @@ const docxRuntime=["./lib/server/docx-extraction-worker.mjs","./lib/server/docx-
 const pdfRuntime=["./lib/server/pdf-extraction-worker.mjs","./node_modules/pdfjs-dist/legacy/build/*.mjs","./node_modules/pdfjs-dist/package.json","./node_modules/@napi-rs/canvas*/**/*"];
 /** @type {import('next').NextConfig} */
 const config={
-  serverExternalPackages:["pdfjs-dist","@yarflam/potion-base-8m"],
+  serverExternalPackages:["@open-policy-agent/opa-wasm","pdfjs-dist","@yarflam/potion-base-8m"],
   outputFileTracingIncludes:{
+    "/api/workspace/controls/test":["./lib/policies/connected-control.wasm"],
     "/api/ai/research":["./node_modules/@yarflam/potion-base-8m/models/**/*"],
     "/api/workspace/questionnaires/ocr":[...pdfRuntime],
     "/api/workspace/questionnaires/inspect":[...docxRuntime,...pdfRuntime],
