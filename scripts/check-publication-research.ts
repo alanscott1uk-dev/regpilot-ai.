@@ -9,6 +9,14 @@ const cases = [
   {question:"What records must we keep when we charge or reclaim VAT?",expected:["vat-records"]},
   {question:"Where is the guidance on regulating medical devices in Northern Ireland?",expected:["mhra-device-ni"]},
   {question:"What was UK GDP growth last quarter?",expected:[]},
+  {question:"Which publication deals with checking the identity of company directors?",expected:["companies-house-identity"]},
+  {question:"Where can we check market access rules for a medical device in Northern Ireland?",expected:["mhra-device-ni"]},
+  {question:"How does an employer prevent discrimination during right to work checks?",expected:["right-to-work-discrimination"]},
+  {question:"Where can our compliance team check wholesale authorisation for medicinal products?",expected:["mhra-manufacturer-wholesale"]},
+  {question:"Which sources discuss staff grievances and disciplinary procedures?",expected:["acas-disciplinary"]},
+  {question:"Who regulates the duty of care for commercial refuse in Wales?",expected:["nrw-waste-duty"]},
+  {question:"Where can we find standards for sponsoring a clinical trial?",expected:["mhra-clinical-approval"]},
+  {question:"Does the catalogue cover astronomy or planetary orbits?",expected:[]},
 ];
 
 async function main() {

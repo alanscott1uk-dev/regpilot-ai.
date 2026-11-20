@@ -22,6 +22,7 @@ const noise = new Set(("uk gb great britain business businesses need find guide 
   "about relevant official source sources publication publications published apply applies would tell know relating information " +
   "follow subject british england english scotland scottish wales welsh northern ireland irish").split(" "));
 const aliases: [RegExp, string][] = [
+  [/\b(?:commercial|business|trade) (?:refuse|rubbish)\b/gi, " commercial waste "],
   [/\bgood manufacturing practice\b/gi, " gmp "],
   [/\bgood distribution practice\b/gi, " pharmaceuticalgdp "],
   [/\bgdp\b/gi, " pharmaceuticalgdp "],
@@ -61,6 +62,10 @@ function mentionedNations(text:string) {
   return JURISDICTIONS.filter(n=>regions[n].test(text) || (greatBritain && n!=="Northern Ireland"));
 }
 
+function localSource(source:RegulatorySource, nations:readonly Nation[]) {
+  return source.jurisdictions?.length===1 && nations.some(n=>source.jurisdictions!.includes(n));
+}
+
 export function researchCandidates(input: ResearchInput, catalogue: readonly RegulatorySource[] = REGULATORY_SOURCES) {
   const nations = input.nation ? [input.nation] : mentionedNations(input.question);
   const eligible = catalogue.filter(source => !nations.length || !source.jurisdictions?.length ||
@@ -76,10 +81,11 @@ export function researchCandidates(input: ResearchInput, catalogue: readonly Reg
   const byPublisher = bm25Scores(query, publisher);
   const ranked = eligible.map((source, i) => {
     const territorial = nations.length && source.jurisdictions?.length && source.jurisdictions.length < 4;
-    const score = (scores[i] + byPublisher[i] * 0.4) * (territorial ? 1.4 : 1);
-    return {source, score, anchored:!anchors.length || anchors.some(term=>titles[i].includes(term))};
+    const localTopic = localSource(source,nations) && query.filter(term=>!generalTerms.has(term)&&titles[i].includes(term)).length>=2;
+    const score = (scores[i] + byPublisher[i] * 0.4) * (localTopic ? 2 : territorial ? 1.4 : 1);
+    return {source, score, localTopic, anchored:localTopic || !anchors.length || anchors.some(term=>titles[i].includes(term))};
   }).filter(row => row.score > 0 && row.anchored).sort((a,b) => b.score-a.score || a.source.id.localeCompare(b.source.id));
-  return {nations, anchors, sources: ranked.filter(row=>row.score>=ranked[0].score*0.25)
+  return {nations, anchors, sources: ranked.filter(row=>row.localTopic || row.score>=ranked[0].score*0.25)
     .slice(0, RESEARCH_LIMITS.sources).map(row => row.source)};
 }
 
@@ -160,9 +166,10 @@ export async function researchPublications(input: ResearchInput, read: ResearchR
     const mentioned = nations.length ? mentionedNations(span.quote) : [];
     const local = mentioned.some(nation=>nations.includes(nation));
     const applicable = !nations.length || !mentioned.length || local;
-    return {...span, score:applicable?scores[i]*(local?1.5:1):0,
-      matches:substantive.filter(term=>tokens[i].includes(term)).length,
-      anchored:!anchors.length || anchors.some(term=>tokens[i].includes(term))};
+    const matches=substantive.filter(term=>tokens[i].includes(term));
+    const localTopic=localSource(span.row.source,nations) && matches.filter(term=>!generalTerms.has(term)).length>=2;
+    return {...span, score:applicable?scores[i]*(local?1.5:1)*(localTopic?1.5:1):0, matches:matches.length,
+      anchored:localTopic || !anchors.length || anchors.some(term=>tokens[i].includes(term))};
   })
     .filter(span => span.score > 0 && span.anchored && span.matches >= Math.min(2, Math.max(1,substantive.length)))
     .sort((a,b) => b.score-a.score || a.row.source.id.localeCompare(b.row.source.id) || a.start-b.start);

@@ -46,6 +46,8 @@ test("unsupported questions make no publisher requests and geographic terms cann
   }
   const result=researchCandidates({question:"Which rules apply for post-market surveillance of medical devices?",nation:"Northern Ireland"});
   assert.ok(!result.sources.some(s=>s.id==="mhra-device-surveillance"));
+  const regional=researchCandidates({question:"Where can we check market access rules for a medical device in Northern Ireland?"});
+  assert.ok(regional.sources.some(s=>s.id==="mhra-device-ni"),"A cross-UK market access title must not displace the relevant NI publication");
   assert.deepEqual(researchCandidates({question:"What records must we keep when we charge or reclaim VAT?"}).sources.map(s=>s.id),["vat-records"]);
 });
 
