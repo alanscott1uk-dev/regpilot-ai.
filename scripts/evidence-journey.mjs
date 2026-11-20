@@ -6,6 +6,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {chromium} from 'playwright';
 import {PrismaClient} from '@prisma/client';
 import {createClient} from '@supabase/supabase-js';
+import {authenticatedHorizonWatchlist} from './horizon-browser-journey.mjs';
 import {fixturePdf} from '../tests/helpers/pdf-fixture.mjs';
 import {createCustomerWorkspace,sourceToReportJourney} from './customer-journey.mjs';
 import {starterProgrammeCustomerJourney,riskCustomerJourney} from './starter-risk-customer-journey.mjs';
@@ -186,6 +187,8 @@ try{
  assert.equal(acceptedInvitation.status,'ACCEPTED');assert.equal(acceptedInvitation.invitedById,reviewer.id);assert.equal(acceptedInvitation.email,editor.email);
  assert.equal(await db.auditEvent.count({where:{organizationId:org.id,entityId:invited.id,action:'team.invitation_accepted',actorId:editor.id}}),1);
  report.collaboration={organizationId:org.id,previousOrganizationId:otherOrgId,invitationId:invited.id,memberId:editor.id,role:joinedMembership.role,status:acceptedInvitation.status,acceptanceEvents:1,mainCompanyMembershipSeeded:false,taskHandoff:task.id};
+ report.horizonWatchlist=await authenticatedHorizonWatchlist({review,upload,app,org,otherOrgId,db,checkpoint,passed});
+
  const invitationOverflow=await bounded(upload.evaluate(()=>Math.max(0,document.documentElement.scrollWidth-innerWidth)),'Mobile invitation layout');
  assert.ok(invitationOverflow<=3,'mobile invitation must fit the viewport');
  await upload.screenshot({path:artifactDir+'/mobile-joined-workspace.png',fullPage:true});
