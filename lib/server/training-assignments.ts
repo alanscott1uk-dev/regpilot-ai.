@@ -16,7 +16,7 @@ export async function reconcileTrainingCurriculum(tx:Tx,ctx:AuthorizedContext,cu
  const [requirements,enrolments,existing]=await Promise.all([
   tx.trainingRequirement.findMany({where:{organizationId:ctx.organizationId,curriculumId,active:true},orderBy:{id:'asc'},take:TRAINING_LIMITS.requirements+1,include:{policy:{include:{revisions:{where:{status:'PUBLISHED'},orderBy:{number:'desc'},take:1}}}}}),
   tx.trainingEnrollment.findMany({where:{organizationId:ctx.organizationId,curriculumId,active:true},orderBy:{id:'asc'},take:TRAINING_LIMITS.enrolments+1,include:{learner:{select:{email:true,memberships:{where:{organizationId:ctx.organizationId},select:{role:true}}}}}}),
-  tx.trainingAssignment.findMany({where:{organizationId:ctx.organizationId,curriculumId},orderBy:[{createdAt:'desc'},{id:'desc'}],take:10001})
+  tx.trainingAssignment.findMany({where:{organizationId:ctx.organizationId,curriculumId},orderBy:[{createdAt:'desc'},{id:'desc'}],take:10001,include:{release:{select:{state:true}}}})
  ]);
  if(requirements.length>TRAINING_LIMITS.requirements||enrolments.length>TRAINING_LIMITS.enrolments||existing.length>10000)throw new IntelligenceError('This curriculum exceeds the bounded training scope',409);
  const today=new Date().toISOString().slice(0,10),now=new Date(),data:Prisma.TrainingAssignmentCreateManyInput[]=[],supersede:string[]=[];
@@ -24,7 +24,7 @@ export async function reconcileTrainingCurriculum(tx:Tx,ctx:AuthorizedContext,cu
  for(const requirement of requirements){const revision=requirement.policy.revisions[0];if(!requirement.policy.active||!revision||revision.number!==requirement.policy.currentRevision)continue;
   const snapshot=trainingRequirementSnapshot(requirement,revision),snapshotHash=hashValue(snapshot);
   for(const enrolment of eligible){
-   const prior=existing.filter(assignment=>assignment.requirementId===requirement.id&&assignment.enrollmentId===enrolment.id),exact=prior.find(assignment=>assignment.revisionId===revision.id&&assignment.requirementVersion===requirement.version&&assignment.enrollmentVersion===enrolment.version);
+   const prior=existing.filter(assignment=>assignment.requirementId===requirement.id&&assignment.enrollmentId===enrolment.id&&assignment.release?.state!=='SCHEDULED'),exact=prior.find(assignment=>assignment.revisionId===revision.id&&assignment.requirementVersion===requirement.version&&assignment.enrollmentVersion===enrolment.version);
    if(exact&&(['ASSIGNED','SUBMITTED','RETRAIN'].includes(exact.status)||exact.status==='PASSED'&&exact.validUntil&&exact.validUntil.toISOString().slice(0,10)>=today))continue;
    const cycle=exact?exact.cycle+1:1;if(cycle>50)throw new IntelligenceError('This training requirement reached its fifty-renewal history limit',409);
    supersede.push(...prior.filter(assignment=>['ASSIGNED','SUBMITTED','RETRAIN'].includes(assignment.status)).map(assignment=>assignment.id));

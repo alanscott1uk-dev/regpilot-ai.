@@ -8,6 +8,9 @@ import {monitoringEnabled,runMonitoringBatch} from './monitoring-service';
 import {connectorsEnabled,runConnectorBatch} from './connector-service';
 import {runReviewBatch} from './control-service';
 import {executeWithMaintenance,runWorkerMaintenance} from './worker-maintenance';
+import {runIntegrationDeliveryBatch,finalizeIntegrationDeliveryTick,integrationDeliveryHealth} from './integration-delivery-queue';
+import {outboundIntegrationsEnabled} from './integration-delivery-events';
+import {runDuePolicyReleaseBatch} from './policy-effectivity-service';
 
 export const workerEnabled=()=>workspaceConfigured()&&process.env.REGPILOT_WORKER_ENABLED==='true'&&process.env.REGPILOT_AUTOMATION_ENABLED==='true';
 export const cronEnabled=()=>workspaceConfigured()&&process.env.REGPILOT_CRON_ENABLED==='true'&&process.env.REGPILOT_AUTOMATION_ENABLED==='true';
@@ -69,10 +72,12 @@ async function runClaimedRuntime(claim:Awaited<ReturnType<typeof claimRuntime>>,
   result=await executeWithMaintenance(execute||(()=>executeScheduledTick({
    ...(monitoringEnabled()?{sources:()=>runMonitoringBatch(12,3,admissionDeadline)}:{}),
    ...(connectorsEnabled()?{connectors:()=>runConnectorBatch(4,2,admissionDeadline),automations:()=>runAutomationBatch(20,2,admissionDeadline)}:{}),
+   ...(outboundIntegrationsEnabled()?{deliveries:()=>runIntegrationDeliveryBatch(12,2,admissionDeadline)}:{}),
    // One slot owns recurring review generation. Collection slots share fair queues.
-   ...(slot===0?{controlReviews:()=>runReviewBatch(admissionDeadline)}:{})
+   ...(slot===0?{controlReviews:()=>runReviewBatch(admissionDeadline),policyReleases:()=>runDuePolicyReleaseBatch(5,admissionDeadline)}:{})
   })),slot===0?runWorkerMaintenance:undefined);
   result=await finalizeAutomationTick(result);
+  result=await finalizeIntegrationDeliveryTick(result);
   if(checkCollections)result=await finalizeCollectionTick(result);
  }catch{const failed={state:'failed' as const,processed:0,attention:1};result={ok:false,modules:{sources:failed,connectors:failed,controlReviews:failed}};}
  const state=result.ok?'COMPLETED':'FAILED';
@@ -82,18 +87,18 @@ async function runClaimedRuntime(claim:Awaited<ReturnType<typeof claimRuntime>>,
 }
 /** Deliberately excludes tenant, provider target, credentials and task details. */
 export async function workerHealth(){
- if(!workerEnabled())return {state:'disabled',ok:false};
+ if(!workerEnabled())return {state:'disabled',ok:false,slots:undefined};
  const capacity=workerSlotCount();
- const [runs,success,attention]=await Promise.all([
+ const [runs,success,attention,deliveries]=await Promise.all([
   Promise.all(Array.from({length:capacity},(_,slot)=>db.workerRun.findFirst({where:{slot,invocationKey:{startsWith:'github:'}},orderBy:{startedAt:'desc'},select:{slot:true,state:true,startedAt:true,finishedAt:true,leaseUntil:true}}))),
   db.workerRun.findFirst({where:{state:'COMPLETED',invocationKey:{startsWith:'github:'}},orderBy:{finishedAt:'desc'},select:{finishedAt:true}}),
-  collectionAttention()
+  collectionAttention(),integrationDeliveryHealth()
  ]);
  const now=Date.now();
  const slots=runs.map((run,slot)=>({slot,state:!run||now-run.startedAt.getTime()>STALE_MS?'stale':run.state==='RUNNING'?(run.leaseUntil.getTime()>now?'running':'interrupted'):run.state.toLowerCase()}));
  const unhealthy=slots.find(s=>!['completed','running'].includes(s.state));
- const needsAttention=(monitoringEnabled()&&attention.sources>0)||(connectorsEnabled()&&attention.connectors>0);
+ const needsAttention=(monitoringEnabled()&&attention.sources>0)||(connectorsEnabled()&&attention.connectors>0)||(outboundIntegrationsEnabled()&&(deliveries.dead>0||!!deliveries.oldestPendingAt&&now-new Date(deliveries.oldestPendingAt).getTime()>STALE_MS));
  const state=unhealthy?.state||(needsAttention?'attention':slots.some(s=>s.state==='running')?'running':'completed');
  const latest=runs.filter(r=>r!==null).sort((a,b)=>b.startedAt.getTime()-a.startedAt.getTime())[0];
- return {ok:!unhealthy&&!needsAttention,state,capacity,slots,attention,cadenceMinutes:30,staleAfterMinutes:90,lastStartedAt:latest?.startedAt.toISOString()||null,lastFinishedAt:latest?.finishedAt?.toISOString()||null,lastSuccessfulAt:success?.finishedAt?.toISOString()||null};
+ return {ok:!unhealthy&&!needsAttention,state,capacity,slots,attention,...(outboundIntegrationsEnabled()?{deliveries}:{}),cadenceMinutes:30,staleAfterMinutes:90,lastStartedAt:latest?.startedAt.toISOString()||null,lastFinishedAt:latest?.finishedAt?.toISOString()||null,lastSuccessfulAt:success?.finishedAt?.toISOString()||null};
 }

@@ -8,6 +8,7 @@ import {requireMember,ADMIN,WRITER} from './workspace-member';
 import {activeOwner} from './library-service';
 import {completionParticipants} from './work-completion-service';
 import {CustomerApiError,customerApiConfigured,newCustomerApiSecret,customerApiTransaction,customerApiPage,nextCustomerApiCursor,type CustomerApiSession,type CustomerApiPrincipal} from './customer-api-auth';
+import {enqueueCustomerObservationDelivery} from './integration-delivery-events';
 
 type Tx=Prisma.TransactionClient;
 const org=(c:{organizationId:string})=>({organizationId:c.organizationId});
@@ -106,6 +107,7 @@ export async function submitCustomerApiObservation(session:CustomerApiSession,re
   if(await tx.customerApiObservation.count({where:{...org(session),receivedAt:{gte:new Date(now-86400000)}}})>=CUSTOMER_API_LIMITS.dailyObservations)throw new CustomerApiError('The daily company observation allowance has been reached',429,'observation_allowance');
   const context=contextSchema.parse({format:'customer-observation-v1',credentialId:session.credentialId,issuedById:session.issuedById,control:controlSnapshot(control)}),row=await tx.customerApiObservation.create({data:{...org(session),credentialId:session.credentialId,credentialVersion:principal.credential.version,controlId:control.id,requestKey,externalId:d.externalId,payload:json(payload),payloadHash,context:json(context),contextHash:hashValue(context),observedAt,validUntil},include:rowInclude});
   // This durable record attributes the submission to the machine credential. No human audit action is fabricated.
+  await enqueueCustomerObservationDelivery(tx,row);
   return {...(await observationsView(tx,session,[row]))[0],reused:false};
  });
 }
@@ -118,5 +120,5 @@ export async function reviewCustomerApiObservation(c:AuthorizedContext,id:string
   const owner=await activeOwner(tx,c,d.ownerId!),date=new Date(d.dueDate!+'T00:00:00.000Z'),today=new Date(new Date().toISOString().slice(0,10)+'T00:00:00.000Z');if(date<today||date.getTime()>Date.now()+365*86400000)throw new IntelligenceError('Choose a follow-up date from today to one year ahead',400);
   const task=await tx.obligation.create({data:{...org(c),title:('Investigate integration report: '+row.control.title).slice(0,160),category:'Customer integration follow-up',ownerName:owner.user.email,assigneeId:d.ownerId,controlId:row.controlId,originKey:hashValue({customerApiObservation:id}),dueDate:date,status:'OPEN',notes:('Administrator-requested investigation of a customer-submitted integration report.\nIntegration: '+row.credential.name+'\nExternal reference: '+row.externalId+'\nThis report is not verified evidence or a compliance decision.\nReview rationale: '+d.notes).slice(0,3000)}});followUpTaskId=task.id;
  }
- const status=d.decision==='FOLLOW_UP'?'FOLLOW_UP':d.decision==='REJECT'?'REJECTED':'ACKNOWLEDGED',saved=await tx.customerApiObservation.update({where:{id},data:{status,version:{increment:1},reviewerId:c.userId,reviewedAt:new Date(),reviewNotes:d.notes,followUpTaskId}}),result={id,version:saved.version,status,followUpTaskId,requestKey:d.requestKey};await recordOperation(tx,c,d.requestKey,requestHash,'OBSERVATION_REVIEWED',id,result);return {...result,reused:false};
+ const status=d.decision==='FOLLOW_UP'?'FOLLOW_UP':d.decision==='REJECT'?'REJECTED':'ACKNOWLEDGED',saved=await tx.customerApiObservation.update({where:{id},data:{status,version:{increment:1},reviewerId:c.userId,reviewedAt:new Date(),reviewNotes:d.notes,followUpTaskId}}),result={id,version:saved.version,status,followUpTaskId,requestKey:d.requestKey};await recordOperation(tx,c,d.requestKey,requestHash,'OBSERVATION_REVIEWED',id,result);await enqueueCustomerObservationDelivery(tx,saved,true);return {...result,reused:false};
 });}

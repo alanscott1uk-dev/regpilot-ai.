@@ -19,6 +19,7 @@ import {assuranceConfigured,assuranceAiConfigured} from "./assurance-service";
 import {reserveAiRequest,DailyLimitError} from "./ai-meter";
 import {generateQuestionnaireDraft,type QuestionnaireDraftModelInput} from "./questionnaire-draft-model";
 import {QUESTIONNAIRE_DRAFT_ENGINE,QUESTIONNAIRE_DRAFT_LIMITS,prepareQuestionnaireDraftInput,saveQuestionnaireDraftInput,questionnaireDraftResultSchema,searchedQuestionnaireDraft,groundedQuestionnaireDraft,assertDraftDocuments,verifyDraftCitations} from "../questionnaire-drafts";
+import {assertQuestionnaireOcrSourcesCurrent} from './ocr-currentness';
 
 type Tx=Prisma.TransactionClient;
 type Dependencies={storage?:EvidenceObjectStore;generate?:(input:QuestionnaireDraftModelInput)=>Promise<unknown>};
@@ -29,6 +30,7 @@ async function questionnaire(tx:Tx,c:AuthorizedContext,id:string){
  const actor=await requireMember(tx,c,WRITER),row=await tx.assuranceQuestionnaire.findFirst({where:{id,organizationId:c.organizationId}});
  if(!row)throw new IntelligenceError("Questionnaire not found",404);
  const questions=questionsSchema.parse(row.questions),admin=ADMIN.includes(actor.role);
+ await assertQuestionnaireOcrSourcesCurrent(tx,c.organizationId,questions);
  if(!admin&&!questions.some(q=>q.ownerId===c.userId))throw new IntelligenceError("Questionnaire not found",404);
  return {row,questions,admin};
 }
@@ -64,6 +66,12 @@ async function current(tx:Tx,c:AuthorizedContext,run:QuestionnaireDraftRun){
  const original=stored(run),now=await capture(tx,c,run.questionnaireId,run.questionId,original.files.map(f=>f.id),run.createdById,run.method);
  if(now.inputHash!==run.inputHash)throw new IntelligenceError("The question, business scope, selected evidence or participant permissions changed. Prepare a new draft.",409);
  return now;
+}
+/** Independent quality review binds the exact current draft, question, model and evidence. */
+export async function evaluationQuestionnaireDraft(tx:Tx,c:AuthorizedContext,id:string){
+ await requireMember(tx,c,ADMIN);const run=await tx.questionnaireDraftRun.findFirst({where:{id,organizationId:c.organizationId}});
+ if(!run||!['DRAFT','SAVED'].includes(run.status))throw new IntelligenceError('A completed questionnaire draft is required for answer evaluation',409);
+ const state=await current(tx,c,run),result=resultOf(run);return {id:run.id,questionnaireId:run.questionnaireId,question:state.context.question.question,productId:state.context.productContext?.product.id||null,createdById:run.createdById,method:run.method,model:state.context.model,inputHash:run.inputHash,resultHash:run.resultHash!,result,evidenceIds:state.files.map(file=>file.id)};
 }
 async function documents(c:AuthorizedContext,files:ReviewedFile[],storage?:EvidenceObjectStore){
  const output:EvidenceDocument[]=[];

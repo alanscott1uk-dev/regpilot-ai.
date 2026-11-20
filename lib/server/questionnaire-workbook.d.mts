@@ -18,7 +18,7 @@ export type SpreadsheetQuestionnaireSource={
   questionCell:string;referenceCell?:string;answerCell?:string;contextCells?:string[];
 };
 export type DocumentQuestionnaireSource={filename:string;sha256:string;format:'PDF'|'DOCX';unitKind:'page'|'block';unit:number;start:number;end:number;quote:string;extractionVersion:string;unitLabel?:string};
-export type QuestionnaireSource=SpreadsheetQuestionnaireSource|DocumentQuestionnaireSource;
+export type QuestionnaireSource=SpreadsheetQuestionnaireSource|DocumentQuestionnaireSource|import('../ocr').OcrQuestionSource;
 export type OriginalAnswerMapping={sheet:string;productId?:string|null;answerColumn:number};
 export type QuestionnaireImportRow={reference:string;question:string;instructions:string;suppliedAnswer:string;source:SpreadsheetQuestionnaireSource};
 export type QuestionnaireExport={

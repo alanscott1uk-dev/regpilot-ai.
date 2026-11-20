@@ -1,3 +1,4 @@
+import {assertQuestionnaireOcrSourcesCurrent} from './ocr-currentness';
 import {Prisma} from '@prisma/client';
 import {normalQuestion,questionsSchema} from '../assurance-operations';
 import {automationInput,classifyQuestion,knowledgeHealth,QUESTIONNAIRE_AUTOMATION_VERSION,type AutomationInput,type KnowledgeAnswer} from '../questionnaire-automation';
@@ -30,6 +31,7 @@ async function automationState(tx:Tx,c:AuthorizedContext,id:string){
  if(!row)throw new IntelligenceError('Questionnaire not found',404);
  const all=questionsSchema.parse(row.questions),visible=admin?all:all.filter(question=>question.ownerId===c.userId);
  if(!admin&&!visible.length)throw new IntelligenceError('Questionnaire not found',404);
+ await assertQuestionnaireOcrSourcesCurrent(tx,c.organizationId,all);
  const knowledge=await scopedKnowledge(tx,c,row.scope);
  const productState=await loadProductScopeState(tx,c.organizationId,knowledge.flatMap(answer=>answer.files.map(f=>f.id)));
  const productProblems=new Map<string,string>();

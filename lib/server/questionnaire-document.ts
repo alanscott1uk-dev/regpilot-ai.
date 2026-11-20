@@ -27,17 +27,18 @@ export async function inspectQuestionnaireDocument(input:Uint8Array,filename:str
  if(!input.byteLength||input.byteLength>QUESTIONNAIRE_FILE_LIMITS.fileBytes)throw new QuestionnaireWorkbookError('Upload a questionnaire document between 1 byte and 3 MiB.',413);
  const extracted=await extractDocument(input,filename,{allowEmpty:true}),format=/\.pdf$/i.test(filename)?'PDF':'DOCX',unitKind=format==='PDF'?'page':'block';
  const units=extracted.pages.map(page=>({unit:page.page,label:page.label||(unitKind==='page'?'Page ':'Word block ')+page.page,text:page.text}));
- const blockingIssues=[...(extracted.blockingIssues||[]),...(extracted.truncated?['The document exceeds extraction limits. Use a smaller, complete copy.']:[]),...(extracted.skippedPages.length?['Some pages have no readable text. Supply a complete text-based copy; OCR is not enabled.']:[]),...(!extracted.characters?['No readable text was found. Supply a text-based copy; OCR is not enabled.']:[])];
+ const blockingIssues=[...(extracted.blockingIssues||[]),...(extracted.truncated?['The document exceeds extraction limits. Use a smaller, complete copy.']:[]),...(extracted.skippedPages.length?['Some pages have no readable text. Use scanned-document OCR or supply a complete text-based copy.']:[]),...(!extracted.characters?['No readable text was found. Use scanned-document OCR or supply a text-based copy.']:[])];
  const canImport=!!extracted.characters&&!extractionBlocked(extracted),found=documentQuestionCandidates(units,unitKind);
  return {version:'questionnaire-document-v1',filename:filename.trim(),format,sha256:createHash('sha256').update(input).digest('hex'),extractionVersion:extracted.version,unitKind,units,...found,canImport,blockingIssues:[...new Set(blockingIssues)],warnings:[...(extracted.warnings||[]),'Check every selected question against the original document. Layout, headings and nearby instructions may change its meaning.',...(found.candidateLimitReached?['Only the first 500 suggestions are shown. You can select another exact passage from the source text.']:[])]};
 }
 /** Re-extract on import and derive all source metadata here. Caller text cannot forge provenance. */
 export function mapQuestionnaireDocument(document:DocumentQuestionnaireInspection,input:unknown){
  if(!document.canImport||document.blockingIssues.length)throw new QuestionnaireWorkbookError('This document cannot be imported completely. Resolve the extraction issues or use a text-based copy.');
+ const format=document.format;if(format!=='PDF'&&format!=='DOCX')throw new QuestionnaireWorkbookError('OCR image questions require the independently reviewed OCR import route.',409);
  const rows=documentSelectionsSchema.parse(input);
  return rows.map(row=>{
   const unit=document.units.find(unit=>unit.unit===row.unit),quote=unit?.text.slice(row.start,row.end);
   if(!unit||row.end>unit.text.length||!quote||quote.trim().length<10||quote.length>DOCUMENT_QUESTION_LIMITS.sourceCharacters||!quote.isWellFormed())throw new QuestionnaireWorkbookError('A selected question no longer matches its original source passage. Inspect the document again.',409);
-  return {reference:row.reference,question:row.question,instructions:row.instructions||'',suppliedAnswer:'',source:{filename:document.filename,sha256:document.sha256,format:document.format,unitKind:document.unitKind,unit:row.unit,start:row.start,end:row.end,quote,extractionVersion:document.extractionVersion,unitLabel:unit.label}};
+  return {reference:row.reference,question:row.question,instructions:row.instructions||'',suppliedAnswer:'',source:{filename:document.filename,sha256:document.sha256,format,unitKind:document.unitKind,unit:row.unit,start:row.start,end:row.end,quote,extractionVersion:document.extractionVersion,unitLabel:unit.label}};
  });
 }

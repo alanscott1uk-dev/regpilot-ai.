@@ -13,6 +13,17 @@ test("coverage stages never claim mapping validation or compliance from a source
  assert.match(sourceNextStep(),/unavailable/);const row={sourceId:"x",snapshotId:null,reviewStatus:null,lastCheckedAt:null,monitoring:"Not scheduled"};assert.match(sourceNextStep(row),/first baseline/);
  assert.match(sourceNextStep({...row,snapshotId:"x",reviewStatus:"NEEDS_REVIEW"}),/Independent/);assert.match(sourceNextStep({...row,snapshotId:"x",reviewStatus:"REVIEWED"}),/assess requirements and mappings/);assert.match(sourceNextStep({...row,snapshotId:"x",reviewStatus:"NOT_APPLICABLE"}),/last source review/);
 });
+test('device discovery separates NI surveillance scope and exposes sector-specific primary references',()=>{
+ const ids=(territory:string,activity:string)=>matchingSources(REGULATORY_SOURCES,territory,activity,'').map(s=>s.id);
+ assert.ok(ids('Northern Ireland','medical-devices').includes('mhra-device-ni'));
+ assert.ok(!ids('England','medical-devices').includes('mhra-device-ni'));
+ assert.ok(!ids('Northern Ireland','medical-devices').includes('mhra-device-surveillance'));
+ assert.ok(ids('England','medical-devices').includes('mhra-device-surveillance'));
+ assert.ok(ids('Wales','clinical-trials').includes('mhra-clinical-approval'));
+ assert.ok(ids('Scotland','aml-regulated').includes('hmrc-aml-risk'));
+ assert.ok(ids('Scotland','packaging').includes('packaging-epr-scope'));
+ assert.equal(new Set(REGULATORY_SOURCES.map(s=>s.id)).size,REGULATORY_SOURCES.length);
+});
 test("all eight additional curated sources use exact allowlisted URLs and existing fail-closed extraction",async()=>{
  const added=REGULATORY_SOURCES.filter(s=>s.provider==="OFFICIAL_WEB"&&s.jurisdictions);assert.equal(added.length,8);
  for(const s of added){const r=await loadOfficialWeb(s,async(url,options)=>{assert.equal(url,s.url);assert.equal(options?.redirect,"error");return new Response(`<main><h1>${s.heading}</h1><p>${"Fictional publication content only, no real legal claims. ".repeat(12)}</p></main>`,{headers:{"content-type":"text/html"}});});assert.equal(r.id,s.id);assert.equal(r.updatedAt,null);assert.ok(s.scopeNote);}

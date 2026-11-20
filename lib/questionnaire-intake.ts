@@ -9,6 +9,6 @@ export const documentSelectionsSchema=z.array(documentSelectionSchema).min(1).ma
 export type DocumentSelection=z.infer<typeof documentSelectionSchema>;
 export type DocumentQuestionCandidate=DocumentSelection&{id:string;quote:string;label:string};
 export type DocumentQuestionnaireInspection={
- version:'questionnaire-document-v1';filename:string;format:'PDF'|'DOCX';sha256:string;extractionVersion:string;unitKind:'page'|'block';
+ version:'questionnaire-document-v1';filename:string;format:'PDF'|'DOCX'|'PNG'|'JPEG';sha256:string;extractionVersion:string;unitKind:'page'|'block';
  units:{unit:number;label:string;text:string}[];candidates:DocumentQuestionCandidate[];warnings:string[];blockingIssues:string[];canImport:boolean;candidateLimitReached:boolean;
 };

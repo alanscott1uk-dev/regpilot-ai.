@@ -142,6 +142,21 @@ enum ReviewStatus {
 }
 
 model User {
+ evaluationCasesCreated EvaluationCase[] @relation("EvaluationCaseCreator")
+ evaluationCasesReviewed EvaluationCase[] @relation("EvaluationCaseReviewer")
+ evaluationRuns EvaluationRun[] @relation("EvaluationRunCreator")
+ evaluationAnswerReviews EvaluationAnswerReview[] @relation("EvaluationAnswerReviewer")
+ evaluationOperations EvaluationOperation[] @relation("EvaluationOperationActor")
+ integrationEndpoints IntegrationEndpoint[] @relation("IntegrationEndpointIssuer")
+ integrationOperations IntegrationOperation[]
+  ocrCreatedRuns OcrRun[] @relation("OcrCreator")
+  ocrStartedRuns OcrRun[] @relation("OcrStarter")
+  ocrPreparedReviews OcrReview[] @relation("OcrPreparer")
+  ocrReviewedTranscriptions OcrReview[] @relation("OcrReviewer")
+  policyReleasesPrepared PolicyRelease[] @relation("PolicyReleasePreparer")
+  signatureChallenges DocumentSignatureChallenge[] @relation("DocumentChallengeActor")
+  documentAttestations DocumentAttestation[] @relation("DocumentAttestationActor")
+  effectivityOperations PolicyEffectivityOperation[] @relation("PolicyEffectivityActor")
  customerApiCredentials CustomerApiCredential[] @relation("CustomerApiIssuer")
  customerApiReviews CustomerApiObservation[] @relation("CustomerApiReviewer")
  customerApiOperations CustomerApiOperation[]
@@ -235,6 +250,23 @@ model User {
 }
 
 model Organization {
+ evaluationCases EvaluationCase[]
+ evaluationRuns EvaluationRun[]
+ evaluationAnswerReviews EvaluationAnswerReview[]
+ evaluationOperations EvaluationOperation[]
+ integrationEndpoints IntegrationEndpoint[]
+ integrationEndpointControls IntegrationEndpointControl[]
+ integrationEvents IntegrationEvent[]
+ integrationDeliveries IntegrationDelivery[]
+ integrationAttempts IntegrationAttempt[]
+ integrationBudgets IntegrationBudget[]
+ integrationOperations IntegrationOperation[]
+  ocrRuns OcrRun[]
+  ocrReviews OcrReview[]
+  policyReleases PolicyRelease[]
+  signatureChallenges DocumentSignatureChallenge[]
+  documentAttestations DocumentAttestation[]
+  effectivityOperations PolicyEffectivityOperation[]
  customerApiCredentials CustomerApiCredential[]
  customerApiGrants CustomerApiControlGrant[]
  customerApiBudgets CustomerApiBudget[]
@@ -739,6 +771,7 @@ model ProgrammeImport {
 }
 
 model ManagedControl {
+ integrationEndpointControls IntegrationEndpointControl[]
  customerApiGrants CustomerApiControlGrant[]
  customerApiObservations CustomerApiObservation[]
  riskLinks RiskControl[]
@@ -1135,6 +1168,8 @@ model AuditQuestion {
 }
 
 model Policy {
+  controlledEffectivity Boolean @default(false)
+  releases PolicyRelease[]
  trainingRequirements TrainingRequirement[]
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid
@@ -1149,6 +1184,8 @@ model Policy {
  @@index([organizationId,createdAt])
 }
 model PolicyRevision {
+  releases PolicyRelease[]
+  attestations DocumentAttestation[]
  trainingRequirements TrainingRequirement[] @relation("TrainingPreparedRevision")
  trainingAssignments TrainingAssignment[]
  id String @id @default(uuid()) @db.Uuid
@@ -1459,6 +1496,7 @@ model AssuranceQuestionnaire {
 
 // Durable, idempotent private-evidence preparation. No draft is an approval.
 model QuestionnaireDraftRun {
+ evaluationReviews EvaluationAnswerReview[]
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid
  questionnaireId String @db.Uuid
@@ -1660,6 +1698,7 @@ model KnowledgeChunk {
  @@unique([organizationId,indexRunId,ordinal])
 }
 model KnowledgeSearchRun {
+ evaluationRuns EvaluationRun[]
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid
  createdById String @db.Uuid
@@ -1682,6 +1721,7 @@ model KnowledgeSearchRun {
  updatedAt DateTime @default(now()) @updatedAt
  organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
  creator User @relation(fields:[createdById],references:[id],onDelete:Restrict)
+ @@unique([id,organizationId])
  @@unique([organizationId,requestKey])
  @@index([organizationId,inputHash,status])
  @@index([organizationId,queryHash,model,status])
@@ -1804,6 +1844,9 @@ model TrainingEnrollment {
  @@index([organizationId,userId,active])
 }
 model TrainingAssignment {
+  releaseId String? @db.Uuid
+  release PolicyRelease? @relation(fields:[releaseId,organizationId],references:[id,organizationId],onDelete:Restrict)
+  @@index([organizationId,releaseId])
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid
  curriculumId String @db.Uuid
@@ -1975,6 +2018,442 @@ model CustomerApiOperation {
  createdAt DateTime @default(now())
  organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
  actor User @relation(fields:[actorId],references:[id],onDelete:Restrict)
+ @@unique([organizationId,requestKey])
+ @@index([organizationId,createdAt])
+}
+
+model OcrRun {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ requestKey String @db.Uuid
+ requestHash String @db.VarChar(64)
+ createdById String @db.Uuid
+ filename String @db.VarChar(180)
+ format String @db.VarChar(8)
+ contentType String @db.VarChar(100)
+ storageKey String @unique @db.VarChar(240)
+ sha256 String @db.VarChar(64)
+ sizeBytes Int
+ pageCount Int
+ sourceMeta Json
+ scanEngine String @db.VarChar(80)
+ status String @default("DRAFT") @db.VarChar(24)
+ version Int @default(1)
+ operationUrl String?
+ rawResult Json?
+ rawHash String? @db.VarChar(64)
+ currentReviewId String? @unique @db.Uuid
+ leaseToken String? @db.Uuid
+ leaseUntil DateTime?
+ pollAfter DateTime?
+ pollCount Int @default(0)
+ failureCode String? @db.VarChar(80)
+ startedById String? @db.Uuid
+ startedAt DateTime?
+ completedAt DateTime?
+ createdAt DateTime @default(now())
+ updatedAt DateTime @default(now()) @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ creator User @relation("OcrCreator",fields:[createdById],references:[id],onDelete:Restrict)
+ starter User? @relation("OcrStarter",fields:[startedById],references:[id],onDelete:Restrict)
+ reviews OcrReview[] @relation("OcrRunReviews")
+ currentReview OcrReview? @relation("OcrCurrentReview",fields:[currentReviewId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ @@unique([id,organizationId])
+ @@unique([currentReviewId,organizationId])
+ @@unique([organizationId,requestKey])
+ @@index([organizationId,createdAt])
+}
+model OcrReview {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ runId String @db.Uuid
+ requestKey String @db.Uuid
+ requestHash String @db.VarChar(64)
+ preparedById String @db.Uuid
+ reviewedById String? @db.Uuid
+ version Int @default(1)
+ status String @default("DRAFT") @db.VarChar(24)
+ sourceHash String @db.VarChar(64)
+ rawHash String @db.VarChar(64)
+ result Json
+ resultHash String @db.VarChar(64)
+ notes String @default("") @db.VarChar(1600)
+ approvedAt DateTime?
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ run OcrRun @relation("OcrRunReviews",fields:[runId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ currentFor OcrRun? @relation("OcrCurrentReview")
+ preparer User @relation("OcrPreparer",fields:[preparedById],references:[id],onDelete:Restrict)
+ reviewer User? @relation("OcrReviewer",fields:[reviewedById],references:[id],onDelete:Restrict)
+ @@unique([id,organizationId])
+ @@unique([organizationId,requestKey])
+ @@index([organizationId,runId,createdAt])
+}
+
+// Existing-model additions for root integration:
+// Policy: controlledEffectivity Boolean @default(false)
+// Policy: releases PolicyRelease[]
+// PolicyRevision: releases PolicyRelease[]
+// PolicyRevision: attestations DocumentAttestation[]
+// TrainingAssignment: releaseId String? @db.Uuid
+// TrainingAssignment: release PolicyRelease? @relation(fields:[releaseId,organizationId],references:[id,organizationId],onDelete:Restrict)
+// TrainingAssignment: @@index([organizationId,releaseId])
+// Organization: policyReleases PolicyRelease[]
+// Organization: signatureChallenges DocumentSignatureChallenge[]
+// Organization: documentAttestations DocumentAttestation[]
+// Organization: effectivityOperations PolicyEffectivityOperation[]
+// User: policyReleasesPrepared PolicyRelease[] @relation("PolicyReleasePreparer")
+// User: signatureChallenges DocumentSignatureChallenge[] @relation("DocumentChallengeActor")
+// User: documentAttestations DocumentAttestation[] @relation("DocumentAttestationActor")
+// User: effectivityOperations PolicyEffectivityOperation[] @relation("PolicyEffectivityActor")
+
+model PolicyRelease {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ policyId String @db.Uuid
+ revisionId String @db.Uuid
+ preparedById String @db.Uuid
+ createKey String @db.Uuid
+ state String @default("PREPARED") @db.VarChar(24)
+ version Int @default(1)
+ plannedEffectiveAt DateTime
+ trainingMode String @db.VarChar(24)
+ changeReason String @db.VarChar(1600)
+ plan Json
+ planHash String @db.VarChar(64)
+ approvedAt DateTime?
+ activatedAt DateTime?
+ activationProvenance Json?
+ cancelledAt DateTime?
+ cancellation Json?
+ lastCheckedAt DateTime?
+ lastBlockers Json @default("[]")
+ createdAt DateTime @default(now())
+ updatedAt DateTime @default(now()) @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ policy Policy @relation(fields:[policyId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ revision PolicyRevision @relation(fields:[revisionId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ preparer User @relation("PolicyReleasePreparer",fields:[preparedById],references:[id],onDelete:Restrict)
+ challenges DocumentSignatureChallenge[]
+ attestation DocumentAttestation?
+ assignments TrainingAssignment[]
+ operations PolicyEffectivityOperation[]
+ @@unique([id,organizationId])
+ @@unique([organizationId,createKey])
+ @@index([organizationId,policyId,state])
+ @@index([state,plannedEffectiveAt,id])
+}
+
+model DocumentSignatureChallenge {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ releaseVersion Int
+ releaseId String @db.Uuid
+ actorId String @db.Uuid
+ requestKey String @db.Uuid
+ targetHash String @db.VarChar(64)
+ meaning String @db.VarChar(80)
+ reason String @db.VarChar(1600)
+ baselineSessionHash String @db.VarChar(64)
+ baselineAuthenticatedAt DateTime
+ expiresAt DateTime
+ consumedAt DateTime?
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ release PolicyRelease @relation(fields:[releaseId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ actor User @relation("DocumentChallengeActor",fields:[actorId],references:[id],onDelete:Restrict)
+ attestation DocumentAttestation?
+ @@unique([id,organizationId])
+ @@unique([organizationId,requestKey])
+ @@index([organizationId,actorId,releaseId,expiresAt])
+}
+
+model DocumentAttestation {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ releaseId String @unique @db.Uuid
+ revisionId String @db.Uuid
+ challengeId String @unique @db.Uuid
+ actorId String @db.Uuid
+ meaning String @db.VarChar(80)
+ reason String @db.VarChar(1600)
+ signerEmail String @db.VarChar(254)
+ externalSubject String @db.Uuid
+ authMethod String @db.VarChar(40)
+ authenticatedAt DateTime
+ sessionHash String @db.VarChar(64)
+ targetHash String @db.VarChar(64)
+ contentSha256 String @db.VarChar(64)
+ record Json
+ recordHash String @db.VarChar(64)
+ signedAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ release PolicyRelease @relation(fields:[releaseId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ revision PolicyRevision @relation(fields:[revisionId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ challenge DocumentSignatureChallenge @relation(fields:[challengeId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ actor User @relation("DocumentAttestationActor",fields:[actorId],references:[id],onDelete:Restrict)
+ @@unique([id,organizationId])
+ @@unique([releaseId,organizationId])
+ @@unique([challengeId,organizationId])
+ @@index([organizationId,revisionId,signedAt])
+}
+
+model PolicyEffectivityOperation {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ releaseId String @db.Uuid
+ actorId String @db.Uuid
+ requestKey String @db.Uuid
+ action String @db.VarChar(40)
+ requestHash String @db.VarChar(64)
+ result Json
+ resultHash String @db.VarChar(64)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ release PolicyRelease @relation(fields:[releaseId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ actor User @relation("PolicyEffectivityActor",fields:[actorId],references:[id],onDelete:Restrict)
+ @@unique([organizationId,requestKey])
+ @@index([organizationId,releaseId,createdAt])
+}
+
+model IntegrationEndpoint {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ configuredById String @db.Uuid
+ name String @db.VarChar(100)
+ url String @db.VarChar(2048)
+ eventTypes String[] @db.VarChar(60)
+ state String @default("DRAFT") @db.VarChar(20)
+ version Int @default(1)
+ secretVersion Int @default(1)
+ encryptedSecret String?
+ secretHint String @db.VarChar(8)
+ expiresAt DateTime
+ verifiedAt DateTime?
+ verifiedVersion Int?
+ lastDeliveredAt DateTime?
+ lastFailureAt DateTime?
+ failureCode String? @db.VarChar(80)
+ skippedCount Int @default(0)
+ lastSkippedAt DateTime?
+ lastDispatchedAt DateTime?
+ leaseToken String? @db.Uuid
+ leaseUntil DateTime?
+ createdAt DateTime @default(now())
+ updatedAt DateTime @default(now()) @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ configuredBy User @relation("IntegrationEndpointIssuer",fields:[configuredById],references:[id],onDelete:Restrict)
+ controls IntegrationEndpointControl[]
+ deliveries IntegrationDelivery[]
+ @@unique([id,organizationId])
+ @@index([organizationId,state,expiresAt])
+ @@index([lastDispatchedAt,leaseUntil])
+}
+model IntegrationEndpointControl {
+ organizationId String @db.Uuid
+ endpointId String @db.Uuid
+ controlId String @db.Uuid
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ endpoint IntegrationEndpoint @relation(fields:[endpointId,organizationId],references:[id,organizationId],onDelete:Cascade)
+ control ManagedControl @relation(fields:[controlId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ @@id([endpointId,controlId])
+ @@index([organizationId,controlId])
+}
+model IntegrationEvent {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ eventKey String @db.VarChar(64)
+ eventType String @db.VarChar(60)
+ sourceKind String @db.VarChar(40)
+ sourceId String @db.Uuid
+ sourceVersion Int
+ controlIds String[] @db.Uuid
+ payload Json
+ payloadHash String @db.VarChar(64)
+ occurredAt DateTime
+ expiresAt DateTime
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ deliveries IntegrationDelivery[]
+ @@unique([id,organizationId])
+ @@unique([organizationId,eventKey])
+ @@index([organizationId,createdAt])
+}
+model IntegrationDelivery {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ endpointId String @db.Uuid
+ eventId String @db.Uuid
+ endpointVersion Int
+ secretVersion Int
+ controlIds String[] @db.Uuid
+ payload Json
+ payloadHash String @db.VarChar(64)
+ state String @default("PENDING") @db.VarChar(20)
+ version Int @default(1)
+ attempts Int @default(0)
+ cycleAttempts Int @default(0)
+ replayCount Int @default(0)
+ availableAt DateTime @default(now())
+ leaseToken String? @db.Uuid
+ leaseUntil DateTime?
+ lastErrorCode String? @db.VarChar(80)
+ lastHttpStatus Int?
+ deliveredAt DateTime?
+ finishedAt DateTime?
+ createdAt DateTime @default(now())
+ updatedAt DateTime @default(now()) @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ endpoint IntegrationEndpoint @relation(fields:[endpointId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ event IntegrationEvent @relation(fields:[eventId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ deliveryAttempts IntegrationAttempt[]
+ @@unique([id,organizationId])
+ @@unique([endpointId,eventId])
+ @@index([organizationId,state,availableAt])
+ @@index([endpointId,state,availableAt])
+ @@index([organizationId,createdAt,id])
+}
+model IntegrationAttempt {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ deliveryId String @db.Uuid
+ number Int
+ endpointVersion Int
+ secretVersion Int
+ leaseToken String @db.Uuid
+ state String @default("SENDING") @db.VarChar(24)
+ requestHash String @db.VarChar(64)
+ startedAt DateTime @default(now())
+ finishedAt DateTime?
+ httpStatus Int?
+ durationMs Int?
+ responseBytes Int?
+ errorCode String? @db.VarChar(80)
+ peerAddressHash String? @db.VarChar(64)
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ delivery IntegrationDelivery @relation(fields:[deliveryId,organizationId],references:[id,organizationId],onDelete:Cascade)
+ @@unique([deliveryId,number])
+ @@index([organizationId,startedAt])
+}
+model IntegrationBudget {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ bucket String @db.VarChar(80)
+ window DateTime
+ count Int @default(0)
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ @@unique([organizationId,bucket,window])
+ @@index([organizationId,window])
+}
+model IntegrationOperation {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ actorId String @db.Uuid
+ requestKey String @db.Uuid
+ requestHash String @db.VarChar(64)
+ action String @db.VarChar(24)
+ entityId String @db.Uuid
+ result Json
+ resultHash String @db.VarChar(64)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ actor User @relation(fields:[actorId],references:[id],onDelete:Restrict)
+ @@unique([organizationId,requestKey])
+ @@index([organizationId,createdAt])
+}
+
+model EvaluationCase {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ createdById String @db.Uuid
+ reviewedById String? @db.Uuid
+ requestKey String @db.Uuid
+ requestHash String @db.VarChar(64)
+ state String @default("DRAFT") @db.VarChar(16)
+ version Int @default(1)
+ specification Json
+ specificationHash String @db.VarChar(64)
+ referenceContext Json
+ referenceHash String @db.VarChar(64)
+ reviewNotes String? @db.VarChar(2000)
+ reviewedAt DateTime?
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ creator User @relation("EvaluationCaseCreator",fields:[createdById],references:[id],onDelete:Restrict)
+ reviewer User? @relation("EvaluationCaseReviewer",fields:[reviewedById],references:[id],onDelete:Restrict)
+ runs EvaluationRun[]
+ answerReviews EvaluationAnswerReview[]
+ @@unique([id,organizationId])
+ @@unique([organizationId,requestKey])
+ @@index([organizationId,state,createdAt])
+}
+model EvaluationRun {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ caseId String @db.Uuid
+ createdById String @db.Uuid
+ requestKey String @db.Uuid
+ requestHash String @db.VarChar(64)
+ searchRequestKey String @unique @db.Uuid
+ searchRunId String? @db.Uuid
+ retryOfId String? @db.Uuid
+ attempt Int @default(1)
+ status String @default("PROCESSING") @db.VarChar(16)
+ method String @db.VarChar(16)
+ context Json
+ contextHash String @db.VarChar(64)
+ result Json?
+ resultHash String? @db.VarChar(64)
+ failureCode String? @db.VarChar(80)
+ createdAt DateTime @default(now())
+ finishedAt DateTime?
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ evaluationCase EvaluationCase @relation(fields:[caseId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ searchRun KnowledgeSearchRun? @relation(fields:[searchRunId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ retrySource EvaluationRun? @relation("EvaluationRetry",fields:[retryOfId,organizationId],references:[id,organizationId],onDelete:NoAction,onUpdate:NoAction)
+ retries EvaluationRun[] @relation("EvaluationRetry")
+ creator User @relation("EvaluationRunCreator",fields:[createdById],references:[id],onDelete:Restrict)
+ @@unique([id,organizationId])
+ @@unique([organizationId,requestKey])
+ @@index([organizationId,caseId,createdAt])
+ @@index([organizationId,status,createdAt])
+}
+model EvaluationAnswerReview {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ caseId String @db.Uuid
+ draftRunId String @db.Uuid
+ reviewedById String @db.Uuid
+ requestKey String @db.Uuid
+ requestHash String @db.VarChar(64)
+ method String @db.VarChar(24)
+ model String? @db.VarChar(200)
+ context Json
+ contextHash String @db.VarChar(64)
+ rubric Json
+ rubricHash String @db.VarChar(64)
+ rationale String @db.VarChar(3000)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ evaluationCase EvaluationCase @relation(fields:[caseId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ draftRun QuestionnaireDraftRun @relation(fields:[draftRunId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ reviewer User @relation("EvaluationAnswerReviewer",fields:[reviewedById],references:[id],onDelete:Restrict)
+ @@unique([id,organizationId])
+ @@unique([organizationId,requestKey])
+ @@unique([organizationId,caseId,draftRunId])
+ @@index([organizationId,createdAt])
+}
+model EvaluationOperation {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ actorId String @db.Uuid
+ requestKey String @db.Uuid
+ requestHash String @db.VarChar(64)
+ caseId String @db.Uuid
+ result Json
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ actor User @relation("EvaluationOperationActor",fields:[actorId],references:[id],onDelete:Restrict)
  @@unique([organizationId,requestKey])
  @@index([organizationId,createdAt])
 }

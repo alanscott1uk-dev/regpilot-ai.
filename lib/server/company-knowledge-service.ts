@@ -159,8 +159,8 @@ async function corpus(tx:Tx,c:AuthorizedContext,productId:string|null,method:Kno
 }
 function searchStored(run:KnowledgeSearchRun){const context=searchContextSchema.safeParse(run.context);if(!context.success||context.data.method!==run.method||context.data.model!==run.model||hashValue(context.data)!==run.inputHash||hashValue(context.data.query)!==run.queryHash)throw new IntelligenceError("Saved search integrity failed",409);return context.data;}
 function validCachedVector(run:KnowledgeSearchRun){try{const value=checkedStoredKnowledgeVector(run.vector);if(hashValue(value)!==run.vectorHash)throw new Error("Saved query vector integrity failed");return value;}catch{throw new IntelligenceError("Saved query vector integrity failed",409);}}
-async function searchView(tx:Tx,c:AuthorizedContext,run:KnowledgeSearchRun){
- if(run.createdById!==c.userId)throw new IntelligenceError("Knowledge search not found",404);
+async function searchView(tx:Tx,c:AuthorizedContext,run:KnowledgeSearchRun,sharedEvaluation=false){
+ if(run.createdById!==c.userId&&!sharedEvaluation)throw new IntelligenceError("Knowledge search not found",404);
  let current=false,reason="",hits:z.infer<typeof knowledgeHitsSchema>=[],scope:unknown=null,corpusHash:string|null=null;
  try{
   const previous=searchStored(run);corpusHash=previous.corpusHash;
@@ -173,6 +173,15 @@ async function searchView(tx:Tx,c:AuthorizedContext,run:KnowledgeSearchRun){
  }catch(error){if(!(error instanceof IntelligenceError)&&!(error instanceof z.ZodError))throw error;reason=error instanceof IntelligenceError?error.message:"Saved search result could not be verified";}
  return {id:run.id,requestKey:run.requestKey,status:run.status,method:run.method,current,semanticReady:knowledgeSemanticReady(),hits,reason,failureCode:run.failureCode,scope,corpusHash,expiresAt:run.expiresAt.toISOString(),usage:run.usage};
 }
+/** Only the evaluation service uses this bounded company-shared view; no general search sharing route. */
+export async function evaluationKnowledgeSearch(tx:Tx,c:AuthorizedContext,id:string){
+ await requireMember(tx,c,WRITER);const run=await tx.knowledgeSearchRun.findFirst({where:{id,...org(c)}});if(!run)return null;
+ const people=await completionParticipants(tx,c,[run.createdById]);if(!people.some(person=>person.id===run.createdById&&person.approved&&WRITER.includes(person.role as typeof WRITER[number])))throw new IntelligenceError("The search author no longer has current company permission",409);
+ const context=searchStored(run);return {...await searchView(tx,c,run,true),query:context.query,productId:context.productId,model:context.model,createdById:run.createdById,resultHash:run.resultHash};
+}
+export async function evaluationKnowledgeCorpus(tx:Tx,c:AuthorizedContext,productId:string|null,method:KnowledgeMethod){
+ const value=await corpus(tx,c,productId,method);return {corpusHash:value.corpusHash,scope:value.scope,evidenceIds:[...new Set(value.chunks.map(chunk=>chunk.evidenceId))],model:modelFor(method)};
+}
 export async function knowledgeSearch(c:AuthorizedContext,filter:{requestKey?:string;runId?:string}){
  if(!filter.requestKey&&!filter.runId)throw new IntelligenceError("Select the exact saved search request",400);if(filter.requestKey)z.uuid().parse(filter.requestKey);if(filter.runId)z.uuid().parse(filter.runId);
  return transaction(c,async tx=>{await requireMember(tx,c,WRITER);await expireProcessing(tx,c);const run=await tx.knowledgeSearchRun.findFirst({where:{...org(c),createdById:c.userId,...(filter.requestKey?{requestKey:filter.requestKey}:{}),...(filter.runId?{id:filter.runId}:{})}});return run?searchView(tx,c,run):null;});
@@ -184,7 +193,7 @@ export async function searchKnowledge(c:AuthorizedContext,input:unknown,dependen
   configured(d.method);const current=await corpus(tx,c,d.productId||null,d.method);if(!current.chunks.length)throw new IntelligenceError(d.method==="SEMANTIC"?"No current semantic indexes apply to this product. Index approved evidence with this embedding model, or use content search.":"No current indexed evidence applies to this product. Index approved evidence and record its product applicability first.",409);
   const context=searchContextSchema.parse({engine:KNOWLEDGE_ENGINE,method:d.method,query:d.query,productId:d.productId||null,model:modelFor(d.method),corpusHash:current.corpusHash,scope:current.scope}),inputHash=hashValue(context);
   const same=await tx.knowledgeSearchRun.findFirst({where:{...org(c),inputHash,status:"PROCESSING"}});if(same)throw new IntelligenceError("This exact search is already processing. Recover its saved request before another search.",409);
-  const failed=await tx.knowledgeSearchRun.findFirst({where:{...org(c),createdById:c.userId,inputHash,status:"FAILED"},orderBy:{createdAt:"desc"}});
+  const latest=await tx.knowledgeSearchRun.findFirst({where:{...org(c),createdById:c.userId,inputHash},orderBy:[{createdAt:"desc"},{id:"desc"}]}),failed=latest?.status==="FAILED"?latest:null;
   if(failed&&d.retryOfId!==failed.id)throw new IntelligenceError("This exact search has a failed attempt. Inspect it and explicitly retry with its identifier.",409);
   if(d.retryOfId&&!await tx.knowledgeSearchRun.findFirst({where:{id:d.retryOfId,...org(c),createdById:c.userId,status:"FAILED",queryHash:hashValue(d.query),method:d.method}}))throw new IntelligenceError("The failed search attempt is unavailable",409);
   if(await tx.knowledgeSearchRun.count({where:{...org(c),createdAt:{gte:new Date(Date.now()-86400000)}}})>=KNOWLEDGE_LIMITS.dailySearches)throw new IntelligenceError("The daily limit of 100 knowledge searches has been reached",429);

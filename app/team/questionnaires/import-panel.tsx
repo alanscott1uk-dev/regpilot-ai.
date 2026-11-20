@@ -1,11 +1,12 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
-import type {ImportMetadata,Mapping,Member,Product,Request,Workbook,Write} from './types';
+import type {ImportMetadata,Mapping,Member,Product,Request,RawRequest,Workbook,Write} from './types';
 import {DocumentImportPanel} from './document-import-panel';
+import {OcrIntake} from './ocr-intake';
 import type {DocumentQuestionnaireInspection} from '../../../lib/questionnaire-intake';
 import css from './questionnaires.module.css';
 
-type Props={organizationId:string;members:Member[];products:Product[];request:Request;capture:()=>()=>boolean;write:Write;locked:boolean;onCreated:(id:string)=>Promise<void>};
+type Props={organizationId:string;members:Member[];products:Product[];request:Request;requestResponse:RawRequest;capture:()=>()=>boolean;write:Write;locked:boolean;onCreated:(id:string)=>Promise<void>};
 const letter=(number:number)=>{let text='';for(let n=number;n>0;n=Math.floor((n-1)/26))text=String.fromCharCode(65+(n-1)%26)+text;return text;};
 function suggestedMapping(sheet:Workbook['sheets'][number]):Mapping{
  const heading=sheet.rows.find(row=>row.number<=10&&row.cells.some(cell=>/^(question|question text|security question|requirement)$/i.test(cell.trim())))||sheet.rows[0];
@@ -20,7 +21,8 @@ function mappedRows(book:Workbook,mappings:Mapping[]){
   return sheet.rows.filter(row=>row.number!==mapping.headerRow&&row.number>=(mapping.firstRow||1)&&row.number<=(mapping.lastRow||Number.MAX_SAFE_INTEGER)&&!!row.cells[mapping.questionColumn-1]?.trim()).map(row=>({sheet:sheet.name,row:row.number,reference:mapping.referenceColumn?row.cells[mapping.referenceColumn-1]||'':'',question:row.cells[mapping.questionColumn-1].trim(),answer:mapping.answerColumn?row.cells[mapping.answerColumn-1]||'':'',context:mapping.contextColumns.map(column=>row.cells[column-1]||'').filter(Boolean).join(' · ')}));
  });
 }
-export function ImportPanel({organizationId,members,products,request,capture,write,locked,onCreated}:Props){
+export function ImportPanel({organizationId,members,products,request,requestResponse,capture,write,locked,onCreated}:Props){
+ const [showOcr,setShowOcr]=useState(false);
  const [document,setDocument]=useState<DocumentQuestionnaireInspection|null>(null);
  const [file,setFile]=useState<File|null>(null),[book,setBook]=useState<Workbook|null>(null),[mappings,setMappings]=useState<Mapping[]>([]),[inspecting,setInspecting]=useState(false),[error,setError]=useState(''),[confirmed,setConfirmed]=useState(false);
  const [metadata,setMetadata]=useState({title:'',recipient:'',scope:'UK business',ownerId:'',productIds:[] as string[]});
@@ -55,7 +57,9 @@ export function ImportPanel({organizationId,members,products,request,capture,wri
   }});
  }
  return <section className={css.panel} aria-label="Import a questionnaire"><div className={css.heading}><div><span className={css.eyebrow}>01 / BRING THE CUSTOMER’S QUESTIONS</span><h2>Import a questionnaire</h2></div><span className={css.badge}>XLSX · CSV · PDF · DOCX</span></div><p>Select workbook columns or review exact question passages from a text-based PDF or Word document.</p>
-  <fieldset className={css.fieldset} disabled={locked||inspecting}><label className={css.field}>Questionnaire file<input type="file" accept=".xlsx,.csv,.pdf,.docx" onChange={event=>{sequence.current++;setBook(null);setDocument(null);setMappings([]);setConfirmed(false);setError('');const chosen=event.target.files?.[0]||null;if(chosen&&(!/\.(xlsx|csv|pdf|docx)$/i.test(chosen.name)||chosen.size>3*1024*1024)){setFile(null);setError('Choose an XLSX, CSV, text-based PDF or DOCX file no larger than 3 MiB.');event.target.value='';return;}setFile(chosen);}}/></label><p className={css.muted}>Up to 3 MiB and 100 selected questions. Scanned documents require a readable text copy. Keep the original XLSX to return answers in its existing layout.</p><button type="button" disabled={!file} onClick={()=>void inspect()}>{inspecting?'Inspecting file…':'Inspect questionnaire file'}</button></fieldset>
+  <fieldset className={css.fieldset} disabled={locked||inspecting}><label className={css.field}>Questionnaire file<input type="file" accept=".xlsx,.csv,.pdf,.docx" onChange={event=>{sequence.current++;setBook(null);setDocument(null);setMappings([]);setConfirmed(false);setError('');const chosen=event.target.files?.[0]||null;if(chosen&&(!/\.(xlsx|csv|pdf|docx)$/i.test(chosen.name)||chosen.size>3*1024*1024)){setFile(null);setError('Choose an XLSX, CSV, text-based PDF or DOCX file no larger than 3 MiB.');event.target.value='';return;}setFile(chosen);}}/></label><p className={css.muted}>Up to 3 MiB and 100 selected questions. Use the scanned-document OCR option below for images or scanned PDFs. Keep the original XLSX to return answers in its existing layout.</p><button type="button" disabled={!file} onClick={()=>void inspect()}>{inspecting?'Inspecting file…':'Inspect questionnaire file'}</button></fieldset>
+  <div className={css.actions}><button type="button" className={css.secondary} aria-expanded={showOcr} disabled={locked} onClick={()=>setShowOcr(previous=>!previous)}>{showOcr?'Close scanned-document OCR':'Open scanned-document OCR'}</button></div>
+  {showOcr&&<OcrIntake key={organizationId} organizationId={organizationId} members={members} products={products} request={request} requestResponse={requestResponse} capture={capture} write={write} locked={locked} onCreated={onCreated}/>}
   {error&&<p className={css.warning} role="alert">{error}</p>}
   {book&&<form onSubmit={event=>{event.preventDefault();void create();}}><fieldset className={css.fieldset} disabled={locked||inspecting}><div className={css.inspectStrip}><span><strong>{book.filename}</strong> · {book.sheets.length} sheet{book.sheets.length===1?'':'s'}</span><span>File inspected · nothing imported yet</span></div>
    {book.warnings.length>0&&<div className={css.warning}><strong>Inspection notes</strong><ul>{book.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul></div>}

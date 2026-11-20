@@ -60,6 +60,7 @@ async function canPublish(tx:Prisma.TransactionClient,ctx:AuthorizedContext,id:s
  const p=await tx.policy.findFirst({where:{id,...org(ctx)}});
  const r=await tx.policyRevision.findFirst({where:{policyId:id,...org(ctx)},orderBy:{number:"desc"}});
  if(!p||!p.active||p.version!==d.version||!r||r.id!==d.revisionId||r.version!==d.revisionVersion||r.status!=="DRAFT")throw new IntelligenceError("Policy changed; refresh before publishing",409);
+ if(p.controlledEffectivity)throw new IntelligenceError('This procedure uses controlled effectivity. Authorise its exact release plan and pass the readiness gates in Document releases.',409);
  const file=fileOf(r);
  if(r.createdById===ctx.userId||file.uploadedById===ctx.userId)throw new IntelligenceError("A different administrator must approve this policy",403);
  await assertReviewedFiles(tx,ctx.organizationId,[file]);await audience(tx,ctx,d.userIds);futureDate(d.dueDate);
@@ -84,6 +85,7 @@ export async function changePolicy(ctx:AuthorizedContext,id:string,input:unknown
  return transaction(ctx,async tx=>{
   await requireMember(tx,ctx,ADMIN);const p=await tx.policy.findFirst({where:{id,...org(ctx)}});
   if(!p||!p.active||p.version!==d.version)throw new IntelligenceError("Policy changed; refresh before continuing",409);
+  if(['WITHDRAW','REVISE'].includes(d.action)&&await tx.policyRelease.findFirst({where:{...org(ctx),policyId:id,state:{in:['PREPARED','SCHEDULED']}},select:{id:true}}))throw new IntelligenceError('Cancel the open controlled release before withdrawing or revising this procedure',409);
   if(d.action==="WITHDRAW"){
    await tx.policy.update({where:{id},data:{active:false,version:{increment:1}}});
    await tx.policyAssignment.updateMany({where:{...org(ctx),status:"PENDING",revision:{policyId:id}},data:{status:"REVOKED",version:{increment:1}}});

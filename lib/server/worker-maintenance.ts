@@ -2,10 +2,11 @@ import {pruneAutomationEvents} from './automation-queue';
 import {executeScheduledTick} from '../cron-tick.mjs';
 import {pruneWebhookReceipts} from './connector-webhooks';
 import {prunePublicSourceFetches} from './shared-source-fetch';
+import {pruneIntegrationDeliveries} from './integration-delivery-queue';
 type Tick=Awaited<ReturnType<typeof executeScheduledTick>>;
 export async function runWorkerMaintenance(){
- const [webhookReceipts,publicSources,automationEvents]=await Promise.all([pruneWebhookReceipts(),prunePublicSourceFetches(),pruneAutomationEvents()]);
- return {webhookReceipts,publicSources,automationEvents};
+ const [webhookReceipts,publicSources,automationEvents,integrationDeliveries]=await Promise.all([pruneWebhookReceipts(),prunePublicSourceFetches(),pruneAutomationEvents(),pruneIntegrationDeliveries()]);
+ return {webhookReceipts,publicSources,automationEvents,integrationDeliveries};
 }
 /** Maintenance failure must be visible without cancelling independent collection. */
 export async function executeWithMaintenance(execute:()=>Promise<Tick>,maintenance?:()=>Promise<{webhookReceipts:number;publicSources:number}>){

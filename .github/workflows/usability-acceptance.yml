@@ -50,6 +50,18 @@ jobs:
       REGPILOT_ASSURANCE_ENABLED: "true"
       REGPILOT_PROGRAMME_ENABLED: "true"
       REGPILOT_CUSTOMER_API_ENABLED: "true"
+      REGPILOT_OUTBOUND_INTEGRATIONS_ENABLED: "true"
+      REGPILOT_CONNECTOR_ENCRYPTION_KEY: "1111111111111111111111111111111111111111111111111111111111111111"
+      REGPILOT_OCR_ENABLED: "true"
+      REGPILOT_PAID_SERVICES_ENABLED: "true"
+      REGPILOT_PAID_SAFEGUARDS_VERIFIED: "true"
+      REGPILOT_OCR_RESERVE_MICROS: "1000"
+      REGPILOT_PAID_PLATFORM_MONTHLY_MICROS: "1000000"
+      REGPILOT_PAID_ORG_MONTHLY_MICROS: "100000"
+      REGPILOT_APP_ORIGIN: https://regpilot.example.invalid
+      AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT: https://fixture.cognitiveservices.azure.com
+      AZURE_DOCUMENT_INTELLIGENCE_KEY: fictional-ocr-contract-key
+      REGPILOT_OCR_FIXTURE_URL: http://127.0.0.1:4029
       REGPILOT_AI_ALLOWED_EMAILS: editor@example.test,reviewer@example.test
       REGPILOT_EVIDENCE_BUCKET: journey-files
       REGPILOT_CLAMD_HOST: 127.0.0.1
@@ -111,9 +123,12 @@ jobs:
       - name: Run real company setup, invitation handoff, source decision, evidence, completion and report journey
         timeout-minutes: 8
         run: |
-          node_modules/.bin/next start -H 127.0.0.1 -p 3000 > "$RUNNER_TEMP/journey-next.log" 2>&1 &
+          node scripts/ocr-provider-fixture.mjs > "$RUNNER_TEMP/ocr-fixture.log" 2>&1 &
+          ocr_fixture_pid=$!
+          curl -fsS --retry 15 --retry-delay 1 --retry-connrefused http://127.0.0.1:4029/health > /dev/null
+          node --import "$PWD/scripts/ocr-provider-preload.mjs" node_modules/next/dist/bin/next start -H 127.0.0.1 -p 3000 > "$RUNNER_TEMP/journey-next.log" 2>&1 &
           app_pid=$!
-          trap 'kill "$app_pid" || true' EXIT
+          trap 'kill "$app_pid" "$ocr_fixture_pid" || true' EXIT
           curl -fsS --retry 25 --retry-delay 1 --retry-connrefused http://127.0.0.1:3000/api/health > /dev/null
           node scripts/evidence-journey.mjs
       - uses: actions/upload-artifact@v4
