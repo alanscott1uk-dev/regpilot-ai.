@@ -5,6 +5,8 @@ import {collectAwsOrganization,inspectAwsOrganization} from "../lib/connectors/a
 import {CollectionError} from "../lib/connectors/collection-error";
 import {reconcileObservation,observationOutcome} from "../lib/connectors/observation";
 import {compareLicence,licenceImport} from "../lib/supplier-licence";
+import {supplierRegisterLinks} from "../lib/supplier-register-links";
+import {findRegulatorServices,regulatorServices} from "../lib/regulator-services";
 import {operatorQuestions,relevantConnections,researchHandoff} from "../lib/operator-answer";
 import {connectorHealth} from "../lib/connectors/health-dashboard.mjs";
 import {workspaceHref} from "../lib/client/workspace-context";
@@ -74,6 +76,41 @@ test("licence review matches site, legal name, explicit activity and evidence da
   assert.ok(compareLicence(scope,null,identity,"2026-11-20").length);
   assert.equal(licenceImport.safeParse({...record,source:record.source+"9"}).success,false);
   assert.equal(licenceImport.safeParse({...record,source:record.source.replace("cms.mhra.gov.uk","example.invalid")}).success,false);
+});
+test("regulator account questions return official, territory-specific actions independently of evidence search",()=>{
+  const ids=(q:string,nation="")=>findRegulatorServices(q,nation).map(s=>s.id);
+  assert.deepEqual(ids("Where can I sign in to my MHRA WDA(H) account?"),["mhra-process"]);
+  assert.deepEqual(ids("Track our WDA(H) application"),["mhra-tracking"]);
+  assert.deepEqual(ids("Home Office domestic licence renewal","Scotland"),["home-domestic"]);
+  assert.deepEqual(ids("Apply for a domestic controlled-drug licence in Northern Ireland"),["ni-domestic"]);
+  assert.deepEqual(ids("Open the Home Office import account","Northern Ireland"),["home-trade"]);
+  assert.deepEqual(ids("Companies House login"),["companies-house"]);
+  assert.deepEqual(ids("MHRA application for a specials manufacturer"),["mhra-manufacturing"]);
+  for(const query of ["Check a supplier’s MHRA account","Open the public register for WDA(H)","What temperature must we record?"])assert.deepEqual(ids(query),[]);
+  assert.equal(new Set(regulatorServices.map(s=>s.id)).size,regulatorServices.length);
+  for(const service of regulatorServices)for(const url of [service.href,service.guidance].filter((v):v is string=>!!v)){
+    const u=new URL(url);assert.equal(u.protocol,"https:");assert.equal(u.search+u.hash+u.username+u.password,"");
+    assert.ok(u.hostname.endsWith(".gov.uk"));
+  }
+});
+test("supplier records preserve the recorded MHRA edition, require the holder and premises, and reject unrelated identity links",()=>{
+  const scope={companyNumber:"SC123456",number:"012345",premises:"Unit 2, High Street, Glasgow G1 1XX"};
+  const record={state:"SUSPENDED" as const,number:scope.number,holder:"Fixture Ltd.",premises:scope.premises,activities:[],
+    source:"https://cms.mhra.gov.uk/index.php/mhra/wda/uk-wdah-012345-3",checkedOn:"2026-06-01",reviewBy:"2026-07-01",
+    conditions:"Fixture terms",evidenceId:leaver.clientId};
+  const finding={scope,registeredName:"Fixture Ltd",saved:{record},identities:[]};
+  const links=supplierRegisterLinks(finding,null);
+  assert.equal(links[0].href,record.source);assert.match(links[0].note,/suspended on 2026-06-01/);
+  assert.equal(links[1].href,"https://find-and-update.company-information.service.gov.uk/company/SC123456");
+  for(const diff of [{holder:"Other Ltd"},{premises:"Unit 20, High Street, Glasgow"},{number:"12345"},{source:record.source+"?session=fixture"},{source:record.source.replace("cms.mhra.gov.uk","example.invalid")}]){
+    const [fallback]=supplierRegisterLinks({...finding,saved:{record:{...record,...diff}}},null);
+    assert.equal(fallback.kind,"search");assert.equal(fallback.href,"https://cms.mhra.gov.uk/mhra/wda");
+  }
+  assert.equal(supplierRegisterLinks({...finding,registeredName:null},null)[0].kind,"search");
+  const other={current:true,companyNumber:"SC999999",snapshot:{capturedAt:"2026-06-01T12:00:00Z",observation:{sourceUrl:"https://search.gleif.org/#/record/12345678901234567890"}}};
+  assert.equal(supplierRegisterLinks(finding,other).length,2);
+  assert.deepEqual(supplierRegisterLinks(null,{...other,current:false}),[]);
+  assert.equal(supplierRegisterLinks(null,{...other,snapshot:{...other.snapshot,observation:{sourceUrl:other.snapshot.observation.sourceUrl+"?redirect=elsewhere"}}}).length,1);
 });
 test("operator questions ask for missing site or employee and preserve private hand-off fragments",()=>{
   assert.match(operatorQuestions("temperature mappping","",false,false,[]).join(" " ),/storage area/);

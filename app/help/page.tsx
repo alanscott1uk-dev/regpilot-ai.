@@ -20,7 +20,7 @@ export default function HelpCentre(){
     follow();window.addEventListener("hashchange",follow);return()=>window.removeEventListener("hashchange",follow);
   },[]);
   function href(target:string){
-    if(!org||(!target.startsWith("/team")&&!target.startsWith("/sop-builder")))return target;
+    if(!org||(!target.startsWith("/team")&&!target.startsWith("/sop-builder")&&target!=="/regulator-accounts"))return target;
     const url=new URL(target,"https://regpilot.invalid");url.searchParams.set("organizationId",org);return url.pathname+url.search+url.hash;
   }
   function choose(id:string){

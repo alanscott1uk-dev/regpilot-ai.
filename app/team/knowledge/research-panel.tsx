@@ -3,6 +3,7 @@ import {useEffect,useRef,useState,type FormEvent} from 'react';
 import type {researchWorkspaceQuestion} from '../../../lib/server/company-knowledge-service';
 import {workspaceHref,type useWorkspaceContext} from '../../../lib/client/workspace-context';
 import {sopNations,sopHref,sopIntent} from "../../../lib/sop-draft";
+import {RegulatorAccountSuggestions,SupplierRegisterLinks} from "../../components/regulator-account-links";
 import css from '../questionnaires/questionnaires.module.css';
 type Result=Awaited<ReturnType<typeof researchWorkspaceQuestion>>;
 type Passage=Result['evidence'][number];
@@ -43,6 +44,7 @@ export function ResearchPanel({workspace,productId,scopeName}:{workspace:ReturnT
   <label>UK nation for official guidance<select value={nation} disabled={busy} onChange={e=>{setNation(e.target.value);setResult(null);}}><option value="">All UK nations</option>{sopNations.map(n=><option key={n}>{n}</option>)}</select></label>
   <label>Limit evidence to a site or asset (optional)<input maxLength={100} disabled={busy} value={asset} onChange={e=>{setAsset(e.target.value);setResult(null);}} placeholder="Site name or equipment ID"/></label></div>
   <button type="submit" disabled={busy||productId==='INVALID'}>{busy?'Checking sources…':'Search guidance and company records'}</button></form>
+  <RegulatorAccountSuggestions question={question} nation={nation}/>
   {error&&<p role="alert">{error}</p>}
   {result&&<div aria-live="polite"><p>Searched {result.documents} current reviewed company documents in this scope.</p>
   {result.clarifications.length>0&&<><h3>What still needs confirming</h3><ul>{result.clarifications.map(q=><li key={q}>{q}</li>)}</ul></>}
@@ -53,11 +55,12 @@ export function ResearchPanel({workspace,productId,scopeName}:{workspace:ReturnT
     {c.findings.length>0&&<details><summary>Provider checks ({c.findings.length} of {c.checksSeen})</summary>{c.findings.map(f=><p key={f.id}><strong>{f.label}</strong> · {f.status} · {f.observed} {f.sourceUrl&&<a href={f.sourceUrl} rel="noreferrer">Source record</a>}</p>)}</details>}
     {c.openTasks.map(t=><p key={t.id}><a href={workspaceHref("/team/work",result.organizationId,{taskId:t.id})}>{t.title}</a> · {t.ownerName}</p>)}
   </li>)}</ul></>}
-  {result.suppliers.length>0&&<><h3>Supplier site decisions</h3>{result.suppliers.map(s=><div key={s.id}>
-    <p><a href={workspaceHref("/team/vendors",result.organizationId,{vendorId:s.id})}>{s.name}</a> · {s.activity} at {s.premises}</p>
-    <p>UK WDA(H) {s.number} · {s.reviewState.replaceAll("_"," ")}{s.recommendation?" · "+s.recommendation:""} · Owner {s.owner}</p>
+  {result.suppliers.length>0&&<><h3>Supplier reviews and public records</h3>{result.suppliers.map(s=><div key={s.id}>
+    <p><a href={workspaceHref("/team/vendors",result.organizationId,{vendorId:s.id})}>{s.name}</a>{s.premises&&<> · {s.activity} at {s.premises}</>}</p>
+    <p>{s.number&&<>UK WDA(H) {s.number} · </>}{s.reviewState.replaceAll("_"," ")}{s.recommendation?" · "+s.recommendation:""} · Owner {s.owner}</p>
     {s.requiredEntries.length>0&&<p>Required annex entries · {s.requiredEntries.map(e=>e.code+" "+e.label).join(", ")}</p>}
-    {s.source&&<a href={s.source}>Source checked {s.checkedOn}</a>}{s.findings.map(f=><p key={f}>{f}</p>)}{s.openTasks.map(t=><p key={t.id}><a href={workspaceHref("/team/work",result.organizationId,{taskId:t.id})}>{t.title}</a></p>)}</div>)}</>}
+    <SupplierRegisterLinks links={s.publicRecords}/>{s.checkedOn&&<p>Last MHRA register check {s.checkedOn}</p>}
+    {s.findings.map(f=><p key={f}>{f}</p>)}{s.openTasks.map(t=><p key={t.id}><a href={workspaceHref("/team/work",result.organizationId,{taskId:t.id})}>{t.title}</a></p>)}</div>)}</>}
   <h3>Official guidance</h3>{result.official.scopeQuestion&&<p>{result.official.scopeQuestion}</p>}{result.official.unavailable>0&&<p>{result.official.unavailable} shortlisted publications were unavailable.</p>}
   {result.official.answer.points.map(point=>{
    const source=result.official.citations.find(c=>c.id===point.citationId);

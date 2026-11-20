@@ -58,10 +58,11 @@ test("export endpoint enforces request boundaries and can export a draft with no
   assert.equal((await put({},"text/plain")).status,415);
 });
 test("help resolves actual tasks, spelling variants and valid product links",()=>{
-  for(const [q,id] of [["temperature mappping","temperature-mapping"],["standard operating procedures","sop-builder"],["stale connection","connections"],["corrective action","corrective-actions"]]){
+  for(const [q,id] of [["temperature mappping","temperature-mapping"],["standard operating procedures","sop-builder"],["stale connection","connections"],["corrective action","corrective-actions"],["Home Office account","regulator-accounts"]]){
     assert.equal(searchHelp(q)[0]?.id,id,q);
   }
   assert.equal(searchHelp("gibberishword").length,0);
+  assert.equal(searchHelp("add QuickBooks accounting software")[0]?.id,"accounting-software");
   assert.ok(searchHelp("supplier","Integrations").every(a=>a.category==="Integrations"));
   assert.equal(new Set(helpArticles.map(a=>a.id)).size,helpArticles.length);
   for(const a of helpArticles)for(const [,href] of a.links){

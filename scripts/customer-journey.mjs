@@ -61,6 +61,25 @@ export async function createCustomerWorkspace({page,db,app,email,checkpoint,pass
  await page.screenshot({path:artifactDir+'/desktop-new-customer-setup.png',fullPage:true});
  passed('Business activities, UK scope and an explicitly reviewed source schedule were saved through the UI and survived reload; inactive monitoring remained clearly labelled.');
 
+ await checkpoint('customer adds regulator accounts and accounting software');
+ await page.getByRole('link',{name:'Open regulator accounts and workspace shortcuts',exact:true}).click();
+ await page.getByRole('button',{name:'Save Wholesale distribution licensing shortcut',exact:true}).click();
+ const shortcuts=page.getByRole('region',{name:'Workspace shortcuts',exact:true});
+ await shortcuts.getByRole('link',{name:'Sign in to MHRA Process Licensing'}).waitFor();
+ await page.getByRole('link',{name:'Manage your organisation’s accounting software',exact:true}).click();
+ await page.getByLabel('Accounting package',{exact:true}).selectOption('xero');
+ await page.getByRole('button',{name:'Add to workspace',exact:true}).click();
+ const xero=page.getByRole('region',{name:'Xero',exact:true});
+ assert.equal(await xero.getByRole('link',{name:'Open Xero',exact:true}).getAttribute('href'),'https://login.xero.com/');
+ await page.reload();await xero.getByRole('link',{name:'Open Xero',exact:true}).waitFor();
+ const savedAccounts=await db.organization.findUniqueOrThrow({where:{id:org.id},select:{accountShortcuts:true}});
+ assert.deepEqual([...savedAccounts.accountShortcuts].sort(),['mhra-process','xero']);
+ await page.goto(app+'/team/setup?'+new URLSearchParams({organizationId:org.id}));
+ const accountSection=page.locator('section').filter({has:page.getByRole('heading',{name:'Workspace accounts',exact:true})});
+ await accountSection.getByRole('link',{name:'Open Xero',exact:true}).waitFor();
+ await accountSection.getByRole('link',{name:'Sign in to MHRA Process Licensing',exact:true}).waitFor();
+ passed('The owner added a regulator shortcut and Xero through authenticated workspace screens. Both appeared in setup after reload.');
+
  await checkpoint('customer reconciles a failed source schedule without inventing collection');
  // Controlled failure input. Recovery uses the actual signed-in UI, HTTP route,
  // permission checks and database transaction, not intercepted application APIs.

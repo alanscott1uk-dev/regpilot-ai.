@@ -4,6 +4,7 @@ import type {vendorDetail,vendorWorkspace} from "../../../lib/server/vendor-serv
 import {annexCodes,annexLabels,distributionActivities,savedLicence,licenceScope} from "../../../lib/supplier-licence";
 import type {Serial} from "../audits/audit-session";
 import {day} from "../workflow-ui";
+import {OfficialLink} from "../../components/regulator-account-links";
 import ui from "../operations/operations.module.css";
 
 type Detail=Serial<Awaited<ReturnType<typeof vendorDetail>>>;
@@ -24,9 +25,8 @@ export function LicencePanel({detail:d,data,busy,save}:{detail:Detail;data:Data;
   return <section className={ui.review}><h3>MHRA wholesale authorisation</h3>
     {d.licence&&<><p><strong>{scope?.premises}</strong> · {scope?.activity} · UK WDA(H) {scope?.number}</p>
       {scope?.requiredAnnexEntries?.length?<p>Required annex entries · {scope.requiredAnnexEntries.map(c=>c+" "+annexLabels[c]).join(", ")}</p>:null}
-      {d.licence.identities.map(r=><p key={r.provider}><a href={r.sourceUrl}>{r.provider==="GLEIF"?"GLEIF legal entity":"Companies House record"}</a> · checked {new Date(r.capturedAt).toLocaleString("en-GB")}</p>)}
       {d.licence.reasons.length?<ul>{d.licence.reasons.map(reason=><li key={reason}>{reason}</li>)}</ul>:<p>The imported holder, premises and activity match the expected scope. The nominated quality reviewer assesses restrictions and records the decision.</p>}
-      {d.licence.saved&&<p><a href={d.licence.saved.record.source} target="_blank" rel="noreferrer">Open MHRA source</a> · checked {d.licence.saved.record.checkedOn}
+      {d.licence.saved&&<p><OfficialLink href={d.licence.saved.record.source}>Source used for this check</OfficialLink> · {d.licence.saved.record.state.toLowerCase()} on {d.licence.saved.record.checkedOn}
         {d.licence.saved.record.state!=="UNAVAILABLE"&&<> · review by {d.licence.saved.record.reviewBy} · {d.licence.saved.record.conditions}{d.licence.saved.record.annexEntries?.length?" · Recorded entries "+d.licence.saved.record.annexEntries.join(", "):""}</>}</p>}</>}
     {d.vendor.active&&<details><summary>{scope?"Change expected premises or reviewer":"Set expected premises and activity"}</summary>
       <form onSubmit={e=>submit(e,"SET_LICENCE_SCOPE")}><fieldset disabled={busy} className={ui.formGrid}>
@@ -59,7 +59,7 @@ export function LicencePanel({detail:d,data,busy,save}:{detail:Detail;data:Data;
     {d.licenceHistory.length>0&&<details><summary>Site and register history</summary><ol>{d.licenceHistory.map(event=>{
       const details=event.details as Record<string,unknown>,saved=savedLicence.safeParse(details.record),expected=licenceScope.safeParse(details.scope);
       return <li key={event.id}>{new Date(event.createdAt).toLocaleString("en-GB")} · {event.actor.email}
-        {saved.success?<> · {saved.data.record.state} · <a href={saved.data.record.source}>Source checked {saved.data.record.checkedOn}</a>{saved.data.record.state!=="UNAVAILABLE"&&<> · {saved.data.record.holder}, {saved.data.record.premises} · {saved.data.record.activities.join(", ")} · {saved.data.record.conditions}{saved.data.record.annexEntries?.length?" · Annex "+saved.data.record.annexEntries.join(", "):""}</>}</>:expected.success?<> · Expected {expected.data.activity} at {expected.data.premises}</>:null}</li>;
+        {saved.success?<> · {saved.data.record.state} · <OfficialLink href={saved.data.record.source}>Source checked {saved.data.record.checkedOn}</OfficialLink>{saved.data.record.state!=="UNAVAILABLE"&&<> · {saved.data.record.holder}, {saved.data.record.premises} · {saved.data.record.activities.join(", ")} · {saved.data.record.conditions}{saved.data.record.annexEntries?.length?" · Annex "+saved.data.record.annexEntries.join(", "):""}</>}</>:expected.success?<> · Expected {expected.data.activity} at {expected.data.premises}</>:null}</li>;
     })}</ol></details>}
   </section>;
 }

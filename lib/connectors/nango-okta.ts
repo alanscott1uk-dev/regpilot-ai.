@@ -3,15 +3,13 @@ import {z} from "zod";
 import {providerReader, validCredential} from "./bounded-http";
 import {CollectionError} from "./collection-error";
 import type {Observation} from "./observation";
-import {checkedJson} from "../services/http";
+import {brokerOrigin as api,brokerId as connectionId,hostedConnectSession,type NangoConfig} from "./hosted-oauth";
+export type {NangoConfig} from "./hosted-oauth";
 
-const api = "https://api.nango.dev";
-const connectionId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/);
 const groupId = z.string().regex(/^00g[A-Za-z0-9]{17}$/);
 const userId = z.string().regex(/^00u[A-Za-z0-9]{17}$/);
 export const oktaTarget = z.object({connectionId, groupId, removedUserId:userId.optional()});
 export type OktaTarget = z.infer<typeof oktaTarget>;
-export type NangoConfig = {key:string; integration:string};
 export function nangoConfig(): NangoConfig {
   const key = process.env.REGPILOT_NANGO_API_KEY || "";
   const integration = process.env.REGPILOT_NANGO_OKTA_INTEGRATION || "okta";
@@ -53,20 +51,7 @@ export async function findOktaGroups(org:string, id:string, query:string, config
   });
 }
 
-export async function oktaConnectSession(org:string, actor:string, config:NangoConfig, fetcher:typeof fetch=fetch) {
-  const response = await fetcher(api+"/connect/sessions",{
-    method:"POST",cache:"no-store",redirect:"error",signal:AbortSignal.timeout(6000),
-    headers:{Authorization:"Bearer "+config.key,"Content-Type":"application/json"},
-    body:JSON.stringify({allowed_integrations:[config.integration],tags:{organization_id:z.uuid().parse(org),end_user_id:z.uuid().parse(actor)}})
-  });
-  const session = (await checkedJson(response,8192))?.data;
-  const url = new URL(session?.connect_link);
-  const expires = Date.parse(session?.expires_at);
-  if (url.origin!=="https://connect.nango.dev" || url.username || url.password || url.hash ||
-      !Number.isFinite(expires) || expires<=Date.now() || expires>Date.now()+31*60000)
-    throw new CollectionError("INVALID_RESPONSE");
-  return {link:url.href,expiresAt:new Date(expires).toISOString()};
-}
+export const oktaConnectSession=hostedConnectSession;
 
 const lifecycle = new Set(["STAGED","PROVISIONED","ACTIVE","RECOVERY","LOCKED_OUT","PASSWORD_EXPIRED","SUSPENDED","DEPROVISIONED"]);
 const pageSize = 50, maxPages = 8;

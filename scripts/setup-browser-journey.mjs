@@ -30,6 +30,7 @@ export async function setupJourney(browser,base,viewport,name){
  });
  await context.route('**/api/workspace/sources',route=>{captures++;return route.fulfill({status:503,json:{error:'Fictional source unavailable; no baseline stored'}});});
  try{
+  await accountingJourney(context,page,base,org);
   await page.goto(base+'/team/setup',{waitUntil:'domcontentloaded'});
   const save=page.getByRole('button',{name:'Save profile and schedules',exact:true});await save.waitFor();
   assert.equal(await save.isEnabled(),false,'empty setup cannot save');
@@ -80,4 +81,34 @@ export async function setupJourney(browser,base,viewport,name){
   assert.deepEqual(errors,[]);
   return {scenario:'setup-'+name,passed:true,fixture:'fictional browser session and API responses; backend tested separately',writes,captures,overflowPx:overflow};
  }finally{releaseHeld?.();await context.close();}
+}
+
+async function accountingJourney(context,page,base,org){
+ const state={organizationId:org,serviceIds:[],available:['freeagent'],canManage:true};
+ const operations=[];let connected=true;
+ await context.route('**/api/workspace/accounting-software*',async route=>{
+  if(route.request().method()==='GET')return route.fulfill({json:state});
+  const input=route.request().postDataJSON();operations.push(input.action);
+  assert.equal(input.organizationId,org);assert.equal(input.provider,'freeagent');
+  const common={organizationId:org,provider:'freeagent'},checkedAt=new Date().toISOString();
+  if(input.action==='ADD'){state.serviceIds=['freeagent'];return route.fulfill({json:{type:'workspace',workspace:state}});}
+  if(input.action==='AUTHORISE')return route.fulfill({json:{type:'consent',...common,link:'https://connect.nango.dev/?session_token=fixture',expiresAt:checkedAt}});
+  if(input.action==='VERIFY'){assert.equal(input.reference,'fictional');return route.fulfill({json:{type:'business',...common,connectionId:'fixture',name:'Fictional Books Ltd',reference:input.reference,checkedAt}});}
+  if(input.action==='DISCONNECT'){assert.equal(input.confirm,true);connected=false;}
+  return route.fulfill({json:{type:'grants',...common,grants:connected?[{id:'fixture',state:'authorised',lastCheck:null}]:[],checkedAt}});
+ });
+ await page.goto(base+'/team/accounting?organizationId='+org);
+ await page.getByLabel('Accounting package',{exact:true}).selectOption('freeagent');
+ await page.getByRole('button',{name:'Add to workspace',exact:true}).click();
+ const card=page.getByRole('region',{name:'FreeAgent',exact:true});
+ await card.getByRole('button',{name:'Start authorisation'}).click();
+ assert.equal(await card.getByRole('link',{name:'Continue to FreeAgent authorisation'}).getAttribute('referrerpolicy'),'no-referrer');
+ await card.getByRole('button',{name:'Check connections'}).click();
+ await card.getByLabel('FreeAgent business subdomain').fill('fictional');
+ await card.getByRole('button',{name:'Check business identity'}).click();
+ await card.getByText('Fictional Books Ltd',{exact:true}).waitFor();
+ await card.getByRole('button',{name:'Disconnect authorisation'}).click();
+ await card.getByRole('button',{name:'Confirm disconnect'}).click();
+ await card.getByText(/0 connections\./).waitFor();
+ assert.deepEqual(operations,['ADD','AUTHORISE','CHECK','VERIFY','DISCONNECT']);
 }

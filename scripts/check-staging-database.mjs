@@ -24,7 +24,7 @@ try {
   // Exercise actual generated Prisma mappings without returning stored data.
   await db.auditGrant.findFirst({select:{apiIssuerId:true,apiExpiresAt:true,apiLastUsedAt:true,apiKeyHash:true}});
   await db.$queryRaw`SELECT "licenceScope", "licenceRecord" FROM "Vendor" WHERE FALSE`;
-  await db.organization.findFirst({select:{id:true}});
+  await db.organization.findFirst({select:{id:true,accountShortcuts:true}});
   await db.dispatchLane.findFirst({select:{organizationId:true,kind:true,leaseUntil:true}});
   await db.workerRun.findFirst({select:{slot:true}});
   await db.providerGate.findFirst({select:{generation:true,failureScopes:true}});

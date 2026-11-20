@@ -3,6 +3,64 @@ import assert from 'node:assert/strict';
 import {db} from '../lib/server/db';
 import {assuranceFixture,rejects} from './helpers/assurance-fixture';
 import {getSetupWorkspace,saveSetupWorkspace} from '../lib/server/setup-service';
+import {workspaceRegulatorAccounts,saveRegulatorAccount} from '../lib/server/workspace-account-shortcuts';
+import {accountingWorkspace,accountingAction} from '../lib/server/accounting-service';
+
+test('workspace regulator shortcuts survive concurrent saves and retries, and only current admins can manage them',async()=>{
+ const f=await assuranceFixture();
+ try{
+  const add=(serviceId:string)=>({serviceId,pinned:true});
+  assert.deepEqual((await workspaceRegulatorAccounts(f.o)).serviceIds,[]);
+  await Promise.all([saveRegulatorAccount(f.o,add("mhra-process")),saveRegulatorAccount(f.ad,add("home-domestic"))]);
+  await saveRegulatorAccount(f.o,add("mhra-process"));
+  const ids=["home-domestic","mhra-process"];
+  const viewer=await workspaceRegulatorAccounts(f.st);
+  assert.deepEqual(viewer.serviceIds.sort(),ids);assert.equal(viewer.canManage,false);
+  assert.deepEqual((await getSetupWorkspace(f.st)).accountShortcuts.sort(),ids);
+  assert.deepEqual((await workspaceRegulatorAccounts(f.out)).serviceIds,[]);
+  await assert.rejects(workspaceRegulatorAccounts({...f.out,organizationId:f.a.id}),rejects(403));
+  await assert.rejects(saveRegulatorAccount(f.ed,add("home-trade")),rejects(403));
+  for(const bad of [add("https://example.invalid/session"),add("ni-domestic"),{...add("home-trade"),password:"fictional"}])await assert.rejects(saveRegulatorAccount(f.o,bad));
+  assert.equal(await db.auditEvent.count({where:{organizationId:f.a.id,action:"workspace.regulator_account_pinned"}}),2);
+  await saveRegulatorAccount(f.ad,{serviceId:"home-domestic",pinned:false});
+  await saveRegulatorAccount(f.ad,{serviceId:"home-domestic",pinned:false});
+  assert.deepEqual((await workspaceRegulatorAccounts(f.o)).serviceIds,["mhra-process"]);
+  assert.equal(await db.auditEvent.count({where:{organizationId:f.a.id,action:"workspace.regulator_account_unpinned"}}),1);
+ }finally{await f.cleanup();}
+});
+
+test('accounting packages and business checks are tenant-scoped, role-checked and independent of regulator shortcuts',async()=>{
+ const f=await assuranceFixture(),keys=["REGPILOT_ACCOUNTING_ENABLED","REGPILOT_NANGO_API_KEY","REGPILOT_NANGO_FREEAGENT_INTEGRATION"] as const;
+ const old=keys.map(k=>process.env[k]);
+ try{
+  delete process.env.REGPILOT_ACCOUNTING_ENABLED;
+  await saveRegulatorAccount(f.o,{serviceId:"home-domestic",pinned:true});
+  const provider="freeagent",grant="test-grant",add={action:"ADD",provider},verify={action:"VERIFY",provider,connectionId:grant,reference:"fictional"};
+  const impossible:typeof fetch=async()=>{assert.fail("Unauthorised connection request");};
+  await assert.rejects(accountingAction(f.ed,add),rejects(403));
+  await accountingAction(f.o,add);await accountingAction(f.o,add);
+  assert.deepEqual((await workspaceRegulatorAccounts(f.o)).serviceIds,["home-domestic"]);
+  assert.deepEqual((await accountingWorkspace(f.st)).serviceIds,[provider]);
+  assert.deepEqual((await accountingWorkspace(f.out)).serviceIds,[]);
+  await assert.rejects(accountingAction(f.st,verify,impossible),rejects(403));
+  await assert.rejects(accountingAction(f.out,verify,impossible),rejects(409));
+  await assert.rejects(accountingAction(f.o,{action:"AUTHORISE",provider},impossible),rejects(503));
+  Object.assign(process.env,{REGPILOT_ACCOUNTING_ENABLED:"true",REGPILOT_NANGO_API_KEY:"fake-key-finance-pilot",REGPILOT_NANGO_FREEAGENT_INTEGRATION:"fixture-freeagent"});
+  const fetcher:typeof fetch=async input=>{
+    const url=new URL(String(input));
+    if(url.pathname==="/connections")return Response.json({connections:[{provider,connection_id:grant,provider_config_key:"fixture-freeagent",tags:{organization_id:f.a.id,regpilot_accounting_provider:provider},errors:[]}]});
+    assert.equal(url.pathname,"/proxy/v2/company");return Response.json({company:{subdomain:"fictional",name:"Fixture Ltd",email:"do-not-retain@example.invalid"}});
+  };
+  const result=await accountingAction(f.ad,verify,fetcher);
+  assert.equal(result.type,"business");
+  const audit=await db.auditEvent.findFirstOrThrow({where:{organizationId:f.a.id,action:"workspace.accounting_business_checked"}});
+  assert.equal(audit.actorId,f.admin.id);assert.match(JSON.stringify(audit.details),/Fixture Ltd/);assert.doesNotMatch(JSON.stringify(audit.details),/do-not-retain/);
+  const refreshed=await accountingAction(f.o,{action:"CHECK",provider},fetcher);
+  assert.equal(refreshed.type,"grants");if(refreshed.type==="grants")assert.equal(refreshed.grants[0].lastCheck?.name,"Fixture Ltd");
+  await accountingAction(f.o,{action:"REMOVE",provider});assert.deepEqual((await accountingWorkspace(f.o)).serviceIds,[]);
+  assert.deepEqual((await getSetupWorkspace(f.st)).accountShortcuts,["home-domestic"]);
+ }finally{keys.forEach((k,i)=>{if(old[i]===undefined)delete process.env[k];else process.env[k]=old[i];});await f.cleanup();}
+});
 import {operationsWorkspace} from '../lib/server/operations-service';
 import {fetchOperationalBrief} from '../lib/server/briefing-service';
 import {workCompletion,completeWork} from '../lib/server/work-completion-service';

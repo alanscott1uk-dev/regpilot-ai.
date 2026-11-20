@@ -106,6 +106,9 @@ test("an independent quality reviewer can accept the exact UK premises against b
     const ch=await saveConnector(f.o,{...config,provider:"COMPANIES_HOUSE",companyNumber:number,token:"fictional-companies-key"});assert.equal(await scheduled(ch.id),"OBSERVED");
     const v=await createVendor(f.o,{name:"Fixture Bank",service:"Provides secure fictional supplies for this trial.",ownerId:f.editor.id,criticality:"LOW",dataAccess:"NONE",systemAccess:false,nextReview:future(60)});
     await changeVendor(f.o,v.id,{action:"LINK_SIGNAL",version:1,connectorId:main.id,notes:rationale,confirm:true});
+    const identityOnly=await researchWorkspaceQuestion(f.ad,{question:"Fixture Bank"},official);
+    assert.equal(identityOnly.suppliers.find(s=>s.id===v.id)?.publicRecords.length,2);
+    assert.equal(identityOnly.suppliers.find(s=>s.id===v.id)?.number,null);
     const scope={number:"12345",companyNumber:number,activity:"Holding",requiredAnnexEntries:["3.3"],premises:"Unit 2, High Street, Glasgow G1 1XX",reviewerId:f.admin.id};
     await changeVendor(f.o,v.id,{action:"SET_LICENCE_SCOPE",version:2,scope});
     const file=await f.file(),record={state:"LISTED",source:"https://cms.mhra.gov.uk/mhra/wda/uk-wdah-12345",number:"12345",holder:"Fixture Bank",premises:scope.premises,activities:["Holding"],annexEntries:["3.3"],conditions:"Fictional site annex reviewed.",checkedOn:future(0),reviewBy:future(25),evidenceId:file.id};
@@ -113,6 +116,7 @@ test("an independent quality reviewer can accept the exact UK premises against b
     const review=(version:number,runId:string)=>prepareVendorReview(f.o,v.id,{version,evidenceIds:[file.id],assessment:VENDOR_CRITERIA.map(c=>({id:c.id,outcome:"SUPPORTED",rationale,evidenceIds:[file.id]})),recommendation:"APPROVE",rationale,followUpDue:future(7),validUntil:future(20),signalRunId:runId,signalReviewed:true});
     await imp(3,{...record,annexEntries:[],premises:"Unit 3, High Street, Glasgow G1 1XX"});
     const wrong=await vendorDetail(f.o,v.id);assert.ok(wrong.licence?.reasons.some(r=>r.includes("premises")));assert.equal(wrong.signalTasks.filter(t=>t.status==="OPEN").length,1);
+    assert.equal(wrong.publicRecords[0].kind,"search");
     assert.ok(wrong.licence?.reasons.some(r=>r.includes("Cold chain")));
     assert.equal(wrong.signalTasks[0].ownerName,f.editor.email);
     await assert.rejects(review(4,wrong.signal!.snapshot!.runId),rejects(409));
@@ -126,6 +130,8 @@ test("an independent quality reviewer can accept the exact UK premises against b
     const q={question:"MHRA WDA 12345 supplier",asset:"Unit 2"};
     assert.equal((await researchWorkspaceQuestion(f.ad,q,official)).suppliers[0].reviewState,"CURRENT");assert.deepEqual((await researchWorkspaceQuestion(f.out,q,official)).suppliers,[]);
     const cold=await researchWorkspaceQuestion(f.ad,{question:"Cold chain",asset:"Unit 2"},official);
+    assert.deepEqual(cold.suppliers[0].publicRecords,exact.publicRecords);
+    assert.deepEqual(exact.publicRecords.map(r=>r.href),[record.source,"https://find-and-update.company-information.service.gov.uk/company/"+number,"https://search.gleif.org/#/record/"+lei]);
     assert.deepEqual(cold.suppliers[0].requiredEntries,[{code:"3.3",label:"Cold chain products"}]);
     assert.deepEqual((await researchWorkspaceQuestion(f.ad,{...q,asset:"Unit 20"},official)).suppliers,[]);
     inactive=true;await scheduled(ch.id);await scheduled(ch.id);
@@ -134,6 +140,7 @@ test("an independent quality reviewer can accept the exact UK premises against b
     assert.equal((await vendorDetail(f.o,v.id)).reviewState,"STALE");
     await imp(5,{state:"UNAVAILABLE",source:"https://cms.mhra.gov.uk/mhra",checkedOn:future(0),reason:"The official source was unavailable for this site."});
     const after=await vendorDetail(f.ad,v.id);assert.ok(after.licence?.reasons.some(r=>r.includes("retrieve")));assert.equal(after.signalTasks.filter(t=>t.status==="OPEN").length,1);assert.equal(after.licenceHistory.length,4);
+    assert.equal(after.publicRecords[0].kind,"search");
     assert.ok(after.reviews.some(r=>r.id===draft.id&&!r.contextCurrent));await assert.rejects(exportVendorReview(f.ad,v.id,f.store),rejects(409));
   }finally{globalThis.fetch=original;await f.cleanup();}
 });

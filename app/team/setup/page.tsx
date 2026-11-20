@@ -1,5 +1,8 @@
 "use client";
 import WorkspaceNav from "../../components/workspace-nav";
+import {OfficialLink} from "../../components/regulator-account-links";
+import {regulatorServices} from "../../../lib/regulator-services";
+import {accountingIds,accountingSoftware} from "../../../lib/accounting-software";
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {useWorkspaceContext,workspaceHref} from '../../../lib/client/workspace-context';
 import {officialSourceUrl} from '../../../lib/regulatory-sources.mjs';
@@ -102,6 +105,10 @@ export default function Setup(){
    </section>}
    {orgs.length>0&&<div className={ui.toolbar}><label>Organisation<select aria-label="Organisation" disabled={busy} value={orgId} onChange={e=>{epoch.current++;active.current=e.target.value;chooseOrganization(e.target.value);}}>{!orgId&&<option value="" disabled>Choose an organisation</option>}{orgs.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></label>{orgId&&<><button disabled={busy||loading} onClick={()=>void reload()}>Reload saved setup</button><a href={href('/team/operations')}>Back to Today →</a></>}</div>}
    {data&&<>
+    <section className={ui.card}><h2>Workspace accounts</h2>
+     {data.accountShortcuts?.length>0&&<ul>{regulatorServices.filter(s=>data.accountShortcuts.includes(s.id)).map(s=><li key={s.id}><OfficialLink href={s.href}>{s.action}</OfficialLink> · {s.territory}</li>)}
+       {accountingIds.filter(id=>data.accountShortcuts.includes(id)).map(id=><li key={id}><OfficialLink href={accountingSoftware[id].login}>Open {accountingSoftware[id].name}</OfficialLink></li>)}</ul>}
+     <div className={ui.toolbar}><a href={href('/regulator-accounts')}>Open regulator accounts and workspace shortcuts</a><a href={href('/team/accounting')}>Manage accounting software</a></div></section>
     <section className={ui.card} aria-label="Recorded workspace progress"><h2>Configured and checked</h2><p>These are recorded activities, not a compliance score. Status was loaded at {new Date(data.generatedAt).toLocaleTimeString('en-GB')}.</p><div className={ui.stats}><article><span>Schedules enabled</span><strong>{enabled}</strong><small>{data.features.monitoring?'Background monitoring enabled':'Background monitoring awaiting activation'}</small></article><article><span>Sources captured</span><strong>{checked}</strong><small>{reviewed} latest versions reviewed</small></article><article><span>Approved clean files</span><strong>{data.evidence.approved}</strong><small>of {data.evidence.total} stored files</small></article><article><span>Current connections</span><strong>{data.connections.observed}</strong><small>of {data.connections.total} displayed connections have current successful observations</small></article></div>{data.connections.listLimitReached&&<p>Connection status is limited to the latest 20 connections.</p>}</section>
     {!admin&&<p className={ui.notice}>You can inspect setup. An owner or administrator must save changes and run captures here.</p>}
     <section className={ui.card}><span className={ui.eyebrow}>01 / YOUR BUSINESS</span><h2>What does your organisation do?</h2><p>These choices suggest research starting points. Confirm the relevant duties, territorial scope and exemptions in the original publications.</p>

@@ -256,6 +256,7 @@ model User {
 }
 
 model Organization {
+ accountShortcuts String[] @default([])
  lossScenarios RiskLossScenario[]
  aiSystems AiSystem[]
  aiSystemDecisions AiSystemDecision[]

@@ -46,7 +46,7 @@ export async function licenceFinding(tx:Prisma.TransactionClient,v:Vendor,signal
       if(file.sha256!==saved.fileHash||file.reviewVersion!==saved.fileVersion)reasons.push("The source file has changed since import.");
     }catch(e){if(!(e instanceof IntelligenceError))throw e;reasons.push("The source file needs a current independent review.");}
   }
-  return {scope,saved,reasons,identities:receipts};
+  return {scope,saved,reasons,identities:receipts,registeredName:identity?.name||null};
 }
 export async function setLicenceScope(tx:Prisma.TransactionClient,c:AuthorizedContext,v:Vendor,scope:LicenceScope){
   await requireMember(tx,{...c,userId:scope.reviewerId},ADMIN);

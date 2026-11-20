@@ -26,15 +26,16 @@ export const setupInput=z.object({
 export async function getSetupWorkspace(ctx:AuthorizedContext){
  const summary=await db.$transaction(async tx=>{
   const actor=await requireMember(tx,ctx),organizationId=ctx.organizationId;
-  const [profile,watches,members,evidence,controls,tasks]=await Promise.all([
+  const [profile,watches,members,evidence,controls,tasks,organisation]=await Promise.all([
    tx.businessProfile.findUnique({where:{organizationId},select:{activities:true,jurisdictions:true,version:true}}),
    tx.watchSchedule.findMany({where:{organizationId},select:{sourceId:true,version:true,enabled:true,intervalHours:true}}),
    tx.membership.findMany({where:{organizationId,role:{in:['OWNER','ADMIN']}},select:{user:{select:{email:true}}}}),
    tx.evidence.groupBy({by:['scanStatus','reviewStatus'],where:{organizationId},_count:true}),
    tx.managedControl.count({where:{organizationId,enabled:true}}),
-   tx.obligation.count({where:{organizationId,status:{not:'COMPLETE'}}})
+   tx.obligation.count({where:{organizationId,status:{not:'COMPLETE'}}}),
+   tx.organization.findUniqueOrThrow({where:{id:organizationId},select:{accountShortcuts:true}})
   ]);
-  return {role:actor.role,profile:profile?{...parseProfile(profile),version:profile.version}:null,watches,independentReviewers:members.filter(m=>allowedEmail(m.user.email,process.env.REGPILOT_AI_ALLOWED_EMAILS)).length,
+  return {role:actor.role,accountShortcuts:organisation.accountShortcuts,profile:profile?{...parseProfile(profile),version:profile.version}:null,watches,independentReviewers:members.filter(m=>allowedEmail(m.user.email,process.env.REGPILOT_AI_ALLOWED_EMAILS)).length,
    evidence:{total:evidence.reduce((n,r)=>n+r._count,0),approved:evidence.filter(r=>r.scanStatus==='CLEAN'&&r.reviewStatus==='APPROVED').reduce((n,r)=>n+r._count,0)},controls,openTasks:tasks};
  },{isolationLevel:'RepeatableRead',timeout:12000});
  const [catalogue,coverage,connections]=await Promise.all([workspaceCatalogue(ctx),sourceCoverage(ctx),getConnectorHealth(ctx)]);

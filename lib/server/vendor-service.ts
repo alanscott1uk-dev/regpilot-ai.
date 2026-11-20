@@ -1,4 +1,5 @@
 import {matchesNamedScope} from "../operator-answer";
+import {supplierRegisterLinks} from "../supplier-register-links";
 import {licenceFinding,setLicenceScope,importLicence} from "./vendor-licence";
 import {annexLabels,licenceScope,savedLicence} from "../supplier-licence";
 import {vendorAttention,compareVendorSignals} from "../vendor-attention";
@@ -50,17 +51,18 @@ async function reviewState(tx:Prisma.TransactionClient,ctx:AuthorizedContext,v:V
 }
 export async function supplierResearch(tx:Prisma.TransactionClient,ctx:AuthorizedContext,ids:string[],asset:string){
  if(!ids.length)return [];
- const vendors=await tx.vendor.findMany({where:{...org(ctx),id:{in:ids.slice(0,3)},active:true,licenceScope:{not:Prisma.DbNull}},include:{owner:{select:{email:true}},reviews:{where:{status:"ACCEPTED"},orderBy:{createdAt:"desc"},take:1}}});
+ const vendors=await tx.vendor.findMany({where:{...org(ctx),id:{in:ids.slice(0,3)},active:true,OR:[{licenceScope:{not:Prisma.DbNull}},{signalConnectorId:{not:null}}]},include:{owner:{select:{email:true}},reviews:{where:{status:"ACCEPTED"},orderBy:{createdAt:"desc"},take:1}}});
  const output=[];
  for(const v of vendors){
-  const scope=licenceScope.parse(v.licenceScope);
-  if(!matchesNamedScope(scope.premises,asset))continue;
+  const scope=v.licenceScope?licenceScope.parse(v.licenceScope):null;
+  if(!matchesNamedScope(scope?.premises||"",asset))continue;
   const signal=v.signalConnectorId?await vendorSignal(tx,ctx.organizationId,v.signalConnectorId):null;
-  const finding=await licenceFinding(tx,v,signal);if(!finding)continue;
+  const finding=await licenceFinding(tx,v,signal),publicRecords=supplierRegisterLinks(finding,signal);
+  if(!finding&&!publicRecords.length)continue;
   const openTasks=await tx.obligation.findMany({where:{...org(ctx),vendorSignalId:v.id,status:{not:"COMPLETE"}},orderBy:[{dueDate:"asc"},{id:"asc"}],take:5,select:{id:true,title:true}});
   const latest=v.reviews[0],reviewStateValue=await reviewState(tx,ctx,v,latest);
-  output.push({id:v.id,name:v.name,owner:v.owner.email,premises:scope.premises,activity:scope.activity,number:scope.number,requiredEntries:(scope.requiredAnnexEntries||[]).map(code=>({code,label:annexLabels[code]})),
-   openTasks,reviewState:reviewStateValue,recommendation:latest?.recommendation||null,findings:finding.reasons,source:finding.saved?.record.source||null,checkedOn:finding.saved?.record.checkedOn||null});
+  output.push({id:v.id,name:v.name,owner:v.owner.email,premises:scope?.premises||null,activity:scope?.activity||null,number:scope?.number||null,requiredEntries:(scope?.requiredAnnexEntries||[]).map(code=>({code,label:annexLabels[code]})),
+   publicRecords,openTasks,reviewState:reviewStateValue,recommendation:latest?.recommendation||null,findings:finding?.reasons||[],source:finding?.saved?.record.source||null,checkedOn:finding?.saved?.record.checkedOn||null});
  }
  return output;
 }
@@ -97,7 +99,7 @@ export async function vendorDetail(ctx:AuthorizedContext,id:string){return trans
  const signal=v.signalConnectorId?await vendorSignal(tx,ctx.organizationId,v.signalConnectorId):null;const signalTasks=await tx.obligation.findMany({where:{...org(ctx),vendorSignalId:id},select:{id:true,title:true,status:true,ownerName:true,dueDate:true},orderBy:{createdAt:"desc"},take:20});const accepted=rows.find(r=>r.status==="ACCEPTED"),state=await reviewState(tx,ctx,v,accepted);
  const licence=await licenceFinding(tx,v,signal);
  const licenceHistory=await tx.auditEvent.findMany({where:{...org(ctx),entityType:"Vendor",entityId:id,action:{in:["vendor.licence_scope","vendor.licence_import"]}},orderBy:[{createdAt:"desc"},{id:"desc"}],take:25,select:{id:true,action:true,createdAt:true,actor:{select:{email:true}},details:true}});
- return {vendor:v,reviews,signal,licence,licenceHistory,signalTasks,reviewState:state,attention:vendorAttention({...v,reviewState:state,recommendation:accepted?.recommendation||null}),signalChanges:compareVendorSignals(signal?.snapshot?.observation||null,accepted?content(accepted).signal?.observation||null:null)};
+ return {vendor:v,reviews,signal,licence,publicRecords:supplierRegisterLinks(licence,signal),licenceHistory,signalTasks,reviewState:state,attention:vendorAttention({...v,reviewState:state,recommendation:accepted?.recommendation||null}),signalChanges:compareVendorSignals(signal?.snapshot?.observation||null,accepted?content(accepted).signal?.observation||null:null)};
 });}
 export async function prepareVendorReview(ctx:AuthorizedContext,id:string,input:unknown){
  const d=vendorReviewSchema.parse(input),followUpDue=futureDate(d.followUpDue),validUntil=futureDate(d.validUntil);

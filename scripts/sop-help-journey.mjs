@@ -9,6 +9,20 @@ export async function sopHelpJourney(browser,base,viewport,name){
     const page=await context.newPage(),errors=[];
     page.on("pageerror",e=>errors.push(String(e)));
     await page.goto(base+"/help");
+    await page.getByLabel("Search help").fill("Home Office account");
+    await page.getByRole("button",{name:"Open your organisation’s regulator accounts"}).click();
+    await page.getByRole("link",{name:"Open regulator account directory",exact:true}).click();
+    await page.getByRole("heading",{name:"Regulator accounts",exact:true}).waitFor();
+    await page.getByLabel("Where is the site?").selectOption("Scotland");
+    const home=page.getByRole("link",{name:"Open Home Office domestic licensing",exact:true});
+    assert.equal(await home.getAttribute("href"),"https://www.licensing-for-controlled-substances.homeoffice.gov.uk/");
+    assert.equal(await home.getAttribute("referrerpolicy"),"no-referrer");
+    await page.getByLabel("Where is the site?").selectOption("Northern Ireland");
+    assert.equal(await home.count(),0);
+    assert.equal(await page.getByRole("link",{name:"Open Northern Ireland licensing forms",exact:true}).getAttribute("href"),"https://www.health-ni.gov.uk/articles/controlled-drugs");
+    assert.equal(await page.getByRole("link",{name:"Open the National Drugs Control System",exact:true}).getAttribute("href"),"https://dflu.homeoffice.gov.uk/");
+    await checkAccessibility(page,"artifacts/usability/"+name+"-regulator-accounts-axe.json","main");
+    await page.goto(base+"/help");
     await page.getByLabel("Search help").fill("temperature mappping");
     const helpLink=await page.getByRole("link",{name:"Ask this question across procedures, UK guidance and connected evidence"}).getAttribute("href");
     const handoff=new URL(helpLink,base);
@@ -56,6 +70,8 @@ export async function sopHelpJourney(browser,base,viewport,name){
     assert.equal(await page.getByLabel("Document reference").inputValue(),"SOP-TEST");
     await page.goto(base+"/ai");await page.getByLabel("Research question",{exact:true}).fill("standard operating procedures");
     await page.getByRole("link",{name:"Build an SOP for this topic"}).waitFor();
+    await page.getByLabel("Research question",{exact:true}).fill("Sign in to our MHRA WDA account");
+    assert.equal(await page.getByRole("region",{name:"Official regulator services"}).getByRole("link",{name:"Sign in to MHRA Process Licensing"}).getAttribute("href"),"https://pclportal.mhra.gov.uk/login/");
     assert.deepEqual(errors,[]);
     return {scenario:"sop-and-help-"+name,passed:true};
   }finally{await context.close();}

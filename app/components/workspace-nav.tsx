@@ -12,6 +12,8 @@ const primary=[
 const workspace=[
  {label:"Workspace setup",href:"/team/setup",icon:"setup"},
  {label:"Connections",href:"/team/operations?view=connections",icon:"connections"},
+ {label:"Regulator accounts",href:"/regulator-accounts",icon:"reports"},
+ {label:"Accounting software",href:"/team/accounting",icon:"connections"},
  {label:"Help Centre",href:"/help",icon:"help"}
 ];
 const groups=[
