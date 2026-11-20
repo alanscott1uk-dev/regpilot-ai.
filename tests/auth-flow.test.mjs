@@ -146,3 +146,18 @@ test('starter programme and risk links retain only their exact bounded record th
   assert.deepEqual(workspaceReturnIntent('/team/operations',query,'a@example.invalid').values,{organizationId:org});
  }
 });
+
+test('questionnaire answer review returns retain exact company and parent records without accepting malformed or duplicate IDs',async()=>{
+ const {workspaceReturnIntent,workspaceReturnPath}=await import('../lib/auth-flow.mjs');
+ const organizationId='123e4567-e89b-42d3-a456-426614174000',questionnaireId='123e4567-e89b-42d3-a456-426614174001',questionId='123e4567-e89b-42d3-a456-426614174002',answerId='123e4567-e89b-42d3-a456-426614174003';
+ for(const path of ['/team/questionnaires','/team/answers']){
+  const query=new URLSearchParams({organizationId,questionnaireId,questionId,answerId}).toString(),intent=workspaceReturnIntent(path,query+'&next=https://evil.invalid','A@example.invalid',100);
+  assert.equal(workspaceReturnPath(intent,'a@example.invalid',200),path+'?'+query);assert.equal(workspaceReturnPath(intent,'other@example.invalid',200),null);
+  for(const key of ['questionnaireId','questionId','answerId'])assert.equal(workspaceReturnIntent(path,query+'&'+key+'='+answerId,'a@example.invalid'),null);
+  assert.equal(workspaceReturnIntent(path,new URLSearchParams({organizationId,questionId}).toString(),'a@example.invalid'),null);
+  assert.equal(workspaceReturnIntent(path,new URLSearchParams({organizationId,questionnaireId,answerId:'invalid'}).toString(),'a@example.invalid'),null);
+ }
+ assert.equal(workspaceReturnIntent('/team/questionnaires',new URLSearchParams({organizationId,answerId}).toString(),'a@example.invalid'),null);
+ assert.deepEqual(workspaceReturnIntent('/team/operations',new URLSearchParams({organizationId,questionnaireId,questionId,answerId}).toString(),'a@example.invalid').values,{organizationId});
+ assert.deepEqual(workspaceReturnIntent('/team/trust',new URLSearchParams({organizationId,questionnaireId,questionId,answerId}).toString(),'a@example.invalid').values,{organizationId,questionnaireId});
+});

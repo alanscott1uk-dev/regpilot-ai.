@@ -2,6 +2,8 @@
 
 Historical development notes follow. For the latest implemented workflow and measurable acceptance criteria, see [Coordinated change response](coordinated-change-response.md), [Audit periods and wider coverage](audit-period-and-coverage.md) and the current [release checklist](release-checklist.md). Earlier “not implemented” entries describe their original batch, not the current branch.
 
+**Current technical baseline — 20 November:** [Competitive technical specification](technical-spec-20261120.md) records the new file questionnaire, contextual answer reuse, evidence-grounded drafting and durable processing capabilities, plus the remaining advanced-feature and infrastructure requirements. The current user priority is advanced capabilities and infrastructure first, then workflow refinement. Historical snapshots below must not override that direction or be reused as current implementation status.
+
 ## Active competitor-derived development choices — 19 November 2026
 
 The user direction is to use the strongest competitor capabilities as the product baseline, then improve the experience for RegPilot's UK SME customers. Compare the complete customer job, implement the missing workflow, and retain its acceptance evidence. Do not count an existing module again as a new capability or infer superiority from a feature list.

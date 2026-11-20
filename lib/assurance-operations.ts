@@ -29,13 +29,17 @@ export const accessAction=z.discriminatedUnion("action",[
  z.object({action:z.literal("ASSIGN"),version,reviewerId:z.uuid(),notes,confirm:z.literal(true)})
 ]);
 export const campaignAction=z.object({action:z.enum(["CLOSE","CANCEL"]),version,contextHash:z.string().length(64).optional(),notes,confirm:z.literal(true)});
-export const answerInput=z.object({question:z.string().trim().min(10).max(1200),scope:z.string().trim().min(2).max(120),answer:z.string().trim().min(40).max(6000),evidenceIds:ids,validUntil:z.iso.date(),confirm:z.literal(true)});
+export const answerInput=z.object({question:z.string().trim().min(10).max(1200),scope:z.string().trim().min(2).max(120),answer:z.string().trim().min(40).max(6000),evidenceIds:ids,validUntil:z.iso.date(),requestKey:z.uuid().optional(),confirm:z.literal(true)});
 export const answerAction=z.discriminatedUnion("action",[
  answerInput.extend({action:z.literal("REVISE"),version}),
  z.object({action:z.enum(["APPROVE","WITHDRAW"]),version,notes,confirm:z.literal(true)})
 ]);
-export const questionnaireInput=z.object({title:z.string().trim().min(3).max(160),recipient:z.string().trim().min(2).max(160),scope:z.string().trim().min(2).max(120),ownerId:z.uuid(),csv:z.string().max(200000),confirm:z.literal(true)});
-export const questionSchema=z.object({id:z.uuid(),reference:z.string().min(1).max(100),question:z.string().min(10).max(1200),ownerId:z.uuid(),answerId:z.uuid().nullable(),answerVersion:z.number().int().nullable(),answerHash:z.string().nullable(),status:z.enum(["EMPTY","SUGGESTED","READY"]),changedById:z.uuid().nullable()});
+const cellReference=z.string().regex(/^[A-Z]{1,3}[1-9][0-9]{0,6}$/);
+export const questionSourceSchema=z.object({filename:z.string().min(1).max(240),sha256:z.string().regex(/^[a-f0-9]{64}$/),format:z.enum(["CSV","XLSX"]),sheet:z.string().min(1).max(120),row:z.number().int().positive().max(1000000),questionCell:cellReference,referenceCell:cellReference.optional(),answerCell:cellReference.optional(),contextCells:z.array(cellReference).max(40).optional()});
+export const questionImportRowSchema=z.object({reference:z.string().trim().min(1).max(100),question:z.string().trim().min(10).max(1200),instructions:z.string().trim().max(4000).optional(),suppliedAnswer:z.string().trim().max(6000).optional(),source:questionSourceSchema.optional()});
+const questionnaireBase=z.object({title:z.string().trim().min(3).max(160),recipient:z.string().trim().min(2).max(160),scope:z.string().trim().min(2).max(120),ownerId:z.uuid(),requestKey:z.uuid().optional(),confirm:z.literal(true)});
+export const questionnaireInput=z.union([questionnaireBase.extend({csv:z.string().max(200000)}),questionnaireBase.extend({rows:z.array(questionImportRowSchema).min(1).max(OPS_LIMITS.questions)})]);
+export const questionSchema=questionImportRowSchema.extend({id:z.uuid(),ownerId:z.uuid(),answerId:z.uuid().nullable(),answerVersion:z.number().int().nullable(),answerHash:z.string().nullable(),status:z.enum(["EMPTY","SUGGESTED","READY"]),changedById:z.uuid().nullable()});
 export const questionsSchema=z.array(questionSchema).min(1).max(OPS_LIMITS.questions);
 export const questionnaireAction=z.discriminatedUnion("action",[
  z.object({action:z.literal("ANSWER"),version,questionId:z.uuid(),answerId:z.uuid(),confirm:z.literal(true)}),

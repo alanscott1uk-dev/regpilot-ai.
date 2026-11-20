@@ -2,6 +2,8 @@
 
 This is the active completion standard for the development branch. Earlier dated feature notes are implementation history. The current code, its acceptance artifacts and [draft PR #10](https://github.com/alanscott1uk-dev/regpilot-ai./pull/10) are the source of truth for what has actually been verified.
 
+**20 November delivery priority:** the user has asked for advanced features and supporting infrastructure to reach the technical specification first, followed by workflow and interface refinement. The current capability matrix, new questionnaire/AI infrastructure and remaining technical gaps are in [technical-spec-20261120.md](technical-spec-20261120.md). Correctness and persistence checks accompany implementation; the completion and release evidence below remain separate from the count of added features.
+
 ## The customer outcome
 
 A new user must be able to sign in, create their organisation, describe its business, select relevant official publications, inspect changes, record an independent applicability decision, assign work, attach and independently review evidence, complete the task and produce a scoped report. The organisation, source, owner and evidence must remain connected throughout. Errors must explain recovery without inventing success or charging for repeated automatic requests.

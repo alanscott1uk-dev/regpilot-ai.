@@ -157,6 +157,7 @@ model User {
  assuranceAnswersReviewed AssuranceAnswer[] @relation("AnswerReviewer")
  questionnairesCreated AssuranceQuestionnaire[] @relation("QuestionnaireAuthor")
  questionnairesReviewed AssuranceQuestionnaire[] @relation("QuestionnaireReviewer")
+ questionnaireDrafts QuestionnaireDraftRun[]
  changeResponsesCreated ChangeResponse[] @relation("ChangeResponseCreator")
  changeResponsesClosed ChangeResponse[] @relation("ChangeResponseCloser")
  changeActionsSubmitted ChangeAction[] @relation("ChangeActionSubmitter")
@@ -225,6 +226,7 @@ model Organization {
  accessItems AccessReviewItem[]
  assuranceAnswers AssuranceAnswer[]
  questionnaires AssuranceQuestionnaire[]
+ questionnaireDrafts QuestionnaireDraftRun[]
  changeResponses ChangeResponse[]
  changeActions ChangeAction[]
  auditRequests AuditRequest[]
@@ -1369,6 +1371,7 @@ model AssuranceAnswer {
  organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
  author User @relation("AnswerAuthor",fields:[createdById],references:[id],onDelete:Restrict)
  reviewer User? @relation("AnswerReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+ generatedDrafts QuestionnaireDraftRun[]
  @@unique([id,organizationId])
  @@index([organizationId,status,scope])
 }
@@ -1392,8 +1395,41 @@ model AssuranceQuestionnaire {
  organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
  author User @relation("QuestionnaireAuthor",fields:[createdById],references:[id],onDelete:Restrict)
  reviewer User? @relation("QuestionnaireReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+ drafts QuestionnaireDraftRun[]
  @@unique([id,organizationId])
  @@index([organizationId,status,createdAt])
+}
+
+// Durable, idempotent private-evidence preparation. No draft is an approval.
+model QuestionnaireDraftRun {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ questionnaireId String @db.Uuid
+ questionId String @db.Uuid
+ createdById String @db.Uuid
+ requestKey String @db.Uuid
+ requestHash String @db.VarChar(64)
+ inputHash String @db.VarChar(64)
+ engineVersion String @db.VarChar(80)
+ method String @db.VarChar(24)
+ status String @default("PROCESSING") @db.VarChar(16)
+ version Int @default(1)
+ evidenceManifest Json
+ context Json
+ result Json?
+ resultHash String? @db.VarChar(64)
+ answerId String? @db.Uuid
+ saveHash String? @db.VarChar(64)
+ failureCode String? @db.VarChar(80)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @default(now()) @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ questionnaire AssuranceQuestionnaire @relation(fields:[questionnaireId,organizationId],references:[id,organizationId],onDelete:Cascade)
+ creator User @relation(fields:[createdById],references:[id],onDelete:Restrict)
+ answer AssuranceAnswer? @relation(fields:[answerId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ @@unique([organizationId,requestKey])
+ @@unique([organizationId,inputHash,method])
+ @@index([organizationId,questionnaireId,createdAt])
 }
 
 // Explicit evidence reuse; each control keeps its own owner and review decisions.
