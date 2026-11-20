@@ -12,7 +12,7 @@ export function requireLibrary(){if(!libraryEnabled())throw new IntelligenceErro
 export const publicationPath=z.string().min(2).max(450).regex(/^\/[a-z0-9][a-z0-9\/-]*$/).refine(p=>!p.includes("//")&&!p.endsWith("/")&&!p.startsWith("/api/"));
 export async function boundedPublicJson(url:string,fetcher:typeof fetch=fetch){
  const r=await fetcher(url,{method:"GET",headers:{accept:"application/json"},cache:"no-store",redirect:"error",signal:AbortSignal.timeout(9000)});
- if(!r.ok){await r.body?.cancel();throw new IntelligenceError("Official publication service unavailable",503);}const reader=r.body?.getReader();if(!reader)throw new IntelligenceError("Official response was empty",503);const chunks:Uint8Array[]=[];let size=0;
+ if(r.status!==200||r.headers.has("content-range")){await r.body?.cancel();throw new IntelligenceError("Official publication service unavailable",503);}const reader=r.body?.getReader();if(!reader)throw new IntelligenceError("Official response was empty",503);const chunks:Uint8Array[]=[];let size=0;
  try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>1024*1024)throw new IntelligenceError("Official response exceeds the safe size limit",503);chunks.push(value);}return JSON.parse(Buffer.concat(chunks).toString("utf8"));}finally{await reader.cancel().catch(()=>{});}
 }
 export async function discoverPublications(query:string,offset=0,fetcher:typeof fetch=fetch){

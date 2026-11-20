@@ -1,4 +1,5 @@
 import {z} from "zod";
+import {bm25Scores, searchTerms} from "./retrieval/bm25";
 import {hashValue} from "./regulatory/intelligence";
 import {extractionBlocked,type ExtractedDocument} from "./documents/coverage";
 
@@ -64,20 +65,17 @@ export function cosineSimilarity(left:number[],right:number[]):number{
  let dot=0,leftSquare=0,rightSquare=0;for(let i=0;i<left.length;i++){dot+=left[i]*right[i];leftSquare+=left[i]*left[i];rightSquare+=right[i]*right[i];}
  const value=dot/Math.sqrt(leftSquare*rightSquare);if(!Number.isFinite(value))throw new Error("Invalid embedding similarity");return Math.max(-1,Math.min(1,value));
 }
-const stopWords=new Set("the a an and or is are was were do does did how what which who when where why for to of in on at by with from that this these those our your their it its be been as can could would should we you they have has had please describe explain".split(" "));
-function terms(text:string){return (text.toLocaleLowerCase("en-GB").match(/[\p{L}\p{N}]+/gu)||[]).filter(term=>term.length>1&&!stopWords.has(term));}
 export type SearchableKnowledgeChunk=KnowledgeChunkValue&{evidenceId:string;filename:string;indexId:string};
 /** BM25-style content matching and cosine ranking are distinct retrieval methods, never confidence. */
 export function rankKnowledgeChunks(query:string,chunks:SearchableKnowledgeChunk[],method:KnowledgeMethod,queryVector?:number[]):KnowledgeSearchHit[]{
  if(chunks.length>KNOWLEDGE_LIMITS.corpusChunks)throw new Error("Knowledge corpus exceeds the supported retrieval limit");
- const queryTerms=[...new Set(terms(query))].slice(0,64),tokens=method==="CONTENT"?chunks.map(chunk=>terms(chunk.text)):[],average=tokens.reduce((sum,list)=>sum+list.length,0)/Math.max(1,tokens.length),frequencies=new Map(queryTerms.map(term=>[term,tokens.filter(list=>list.includes(term)).length]));
+ const terms=[...new Set(searchTerms(query))].slice(0,64);
+ const contentScores=method==="CONTENT"?bm25Scores(terms,chunks.map(chunk=>searchTerms(chunk.text))):[];
  const hits=chunks.map((chunk,index)=>{
-  let score=0;
+  let score=contentScores[index];
   if(method==="SEMANTIC"){
    if(!queryVector||!chunk.vector)throw new Error("Semantic retrieval requires compatible embeddings");
    score=cosineSimilarity(queryVector,chunk.vector);
-  }else{
-   const list=tokens[index];for(const term of queryTerms){const count=list.filter(token=>token===term).length;if(!count)continue;const idf=Math.log(1+(chunks.length-(frequencies.get(term)||0)+0.5)/((frequencies.get(term)||0)+0.5));score+=idf*(count*2.2)/(count+1.2*(0.25+0.75*list.length/Math.max(1,average)));}
   }
   const hit={evidenceId:chunk.evidenceId,filename:chunk.filename,indexId:chunk.indexId,unit:chunk.unit,unitKind:chunk.unitKind,quote:chunk.text,start:chunk.start,end:chunk.end,quoteHash:"",score,scoreKind:method==="SEMANTIC"?"COSINE_SIMILARITY" as const:"CONTENT_MATCH" as const};hit.quoteHash=citationHash(hit);return hit;
  }).filter(hit=>method==="SEMANTIC"||hit.score>0).sort((a,b)=>b.score-a.score||a.evidenceId.localeCompare(b.evidenceId)||a.unit-b.unit||a.start-b.start);

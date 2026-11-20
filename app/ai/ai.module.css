@@ -27,3 +27,21 @@
 
 .redact{float:right;border:1px solid #edc9d1;border-radius:8px;color:#a9495b;background:#fff5f6;padding:8px 10px;font-size:11px;font-weight:800;cursor:pointer}
 .redact:disabled{opacity:.45;cursor:default}
+
+.research { margin: 20px 0; padding: clamp(18px, 3vw, 30px); background: white; color: #26213b; border: 1px solid #ddd6e9; border-radius: 18px; }
+.research h2 { margin: 0 0 6px; font-size: 23px; }
+.research p, .researchResults p { line-height: 1.5; }
+.research form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.research label { display: grid; gap: 5px; font-weight: 650; font-size: 14px; }
+.research label:first-child { flex: 1 1 280px; min-width: 0; }
+.research input, .research select { width: 100%; color: #241d34; background: #fff; border: 1px solid #80758f; border-radius: 7px; padding: 10px; font: inherit; }
+.research button { color: white; background: #573e8d; border: 1px solid #573e8d; border-radius: 7px; padding: 10px 15px; font-weight: 650; cursor: pointer; }
+.research button:disabled { opacity: .7; cursor: wait; }
+.research button.researchExample { display: inline-block; margin-top: 8px; color: #533980; padding: 7px 0; border: 0; background: transparent; text-decoration: underline; }
+.researchResults article { padding: 12px 0; border-top: 1px solid #ddd6e9; }
+.researchResults h3 { margin: 0 0 4px; font-size: 16px; }
+.researchResults a { color: #553282; text-decoration: underline; }
+.researchResults span, .researchResults details { color: #51475f; font-size: 13px; }
+.researchResults blockquote { border-left: 3px solid #9b86bb; margin: 12px 0; padding: 0 12px; line-height: 1.6; }
+.researchResults code { overflow-wrap: anywhere; }
+.researchResults summary { cursor: pointer; }

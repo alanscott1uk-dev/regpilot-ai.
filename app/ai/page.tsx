@@ -1,5 +1,8 @@
 "use client";
 import {useCallback,useEffect,useState} from "react";
+import PublicationResearch, {PublicationResults} from "./publication-research";
+import type {ResearchResult} from "../../lib/regulatory/research";
+import type {PassageCitation} from "../../lib/ai/research-grounding";
 import EmailSignIn from "../components/email-sign-in";
 import {browserAuth} from "../../lib/client/supabase-auth";
 import {readDemoCertificateFile} from "../../lib/demo-certificate-files.mjs";
@@ -11,10 +14,10 @@ import ui from "./ai.module.css";
 type Mode="document"|"change"|"assistant";
 type Org={id:string;name:string;role:string};
 type SavedReview={id:string;organizationId:string;requestId:string;createdById:string;createdAt:string;mode:string;modelId:string;sourceUrl:string|null;status:"PENDING_REVIEW"|"REVIEWED"|"NEEDS_CHANGES"|"REDACTED";version:number;summary:string;reviewerId:string|null;reviewerNotes:string;reviewedAt:string|null;ai?:Result;sha256?:string};
-type Finding={type:string;priority:string;title:string;rationale:string;recommendation:string;sourceQuote:string;documentQuote:string;sourceQuoteMatched:boolean;documentQuoteMatched:boolean;citationStatus:string;grounding?:string;reviewChecks?:string[];documentAnchor?:{page?:number;label?:string;coordinateSystem?:string;ambiguous:boolean;start:number;end:number}|null};
-type Suggestion={title:string;reason:string;ownerSuggestion:string;sourceQuote:string;sourceQuoteMatched?:boolean};
+type Finding={sourceCitation?:PassageCitation;type:string;priority:string;title:string;rationale:string;recommendation:string;sourceQuote:string;documentQuote:string;sourceQuoteMatched:boolean;documentQuoteMatched:boolean;citationStatus:string;grounding?:string;reviewChecks?:string[];documentAnchor?:{page?:number;label?:string;coordinateSystem?:string;ambiguous:boolean;start:number;end:number}|null};
+type Suggestion={sourceCitation?:PassageCitation;title:string;reason:string;ownerSuggestion:string;sourceQuote:string;sourceQuoteMatched?:boolean};
 type Amendment={section:string;proposedText:string;rationale:string;supportingSourceQuote:string;supportingSourceQuoteMatched?:boolean};
-type Result={groundingSummary?:{documentCoverage?:{totalPages:number;extractedPages:number;truncated:boolean;blockingIssues?:string[]};pdfCoverage?:{totalPages:number;extractedPages:number;truncated:boolean;unreadablePages:number[]};findings:number;dualTextMatches:number;unverified:number;pdfRequiresManualCheck:boolean;meaningVerified:boolean};summary:string;confidence:string;findings:Finding[];suggestedActions:Suggestion[];suggestedAmendments:Amendment[];questions:string[];limitations:string[];scope:string;generatedAt:string;source:{id:string;title:string;url:string;updatedAt:string|null;revisionAt:string|null}|null;model:string;usage?:{inputTokens:number|null;outputTokens:number|null}};
+type Result={research?:ResearchResult&{omitted:number};groundingSummary?:{documentCoverage?:{totalPages:number;extractedPages:number;truncated:boolean;blockingIssues?:string[]};pdfCoverage?:{totalPages:number;extractedPages:number;truncated:boolean;unreadablePages:number[]};findings:number;dualTextMatches:number;unverified:number;pdfRequiresManualCheck:boolean;meaningVerified:boolean};summary:string;confidence:string;findings:Finding[];suggestedActions:Suggestion[];suggestedAmendments:Amendment[];questions:string[];limitations:string[];scope:string;generatedAt:string;source:{id:string;title:string;url:string;updatedAt:string|null;revisionAt:string|null}|null;model:string;usage?:{inputTokens:number|null;outputTokens:number|null}};
 
 function dueIn(days:number){const d=new Date();d.setDate(d.getDate()+days);return [d.getFullYear(),String(d.getMonth()+1).padStart(2,"0"),String(d.getDate()).padStart(2,"0")].join("-");}
 function toBase64(bytes:Uint8Array){let binary="";for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(binary);}
@@ -177,7 +180,7 @@ export default function AiStudio(){
  }
  function exportDraft(){
   if(!result)return;
-  const payload={format:"regpilot-ai-draft-review",version:1,generatedAt:result.generatedAt,requestId,model:result.model,source:result.source,summary:result.summary,findings:result.findings,suggestedActions:result.suggestedActions,suggestedAmendments:result.suggestedAmendments,questions:result.questions,limitations:result.limitations,scope:result.scope,groundingSummary:result.groundingSummary};
+  const payload={format:"regpilot-ai-draft-review",version:1,generatedAt:result.generatedAt,requestId,model:result.model,source:result.source,...(result.research?{research:result.research}:{}),summary:result.summary,findings:result.findings,suggestedActions:result.suggestedActions,suggestedAmendments:result.suggestedAmendments,questions:result.questions,limitations:result.limitations,scope:result.scope,groundingSummary:result.groundingSummary};
   const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}));
   const a=document.createElement("a");a.href=url;a.download="regpilot-ai-review-draft.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
  }
@@ -192,10 +195,10 @@ export default function AiStudio(){
    const response=await fetch("/api/workspace/obligations",{
     method:"POST",headers:{"Content-Type":"application/json",authorization:"Bearer "+token},
     body:JSON.stringify({
-     organizationId:orgId,title:s.title.slice(0,160),category:result?.source?"Official source impact review":"AI-assisted work",
+     organizationId:orgId,title:s.title.slice(0,160),category:(s.sourceCitation||result?.source)?"Official source impact review":"AI-assisted work",
      ownerName:responsible.slice(0,80),dueDate:dueIn(7),
      notes:("AI-generated draft suggestion accepted by an authorised user. Human review is still required: "+s.reason).slice(0,500),
-     sourceUrl:result?.source?.url||""
+     sourceUrl:s.sourceCitation?.url||result?.source?.url||""
     })
    });
    const body=await response.json();
@@ -245,7 +248,8 @@ export default function AiStudio(){
   <main className={shell.main}>
    <div className={shell.topbar}><span className={shell.crumb}>Workspace / AI review studio</span><div className={shell.topActions}><span className={shell.demo}>SECURE PILOT · DEVELOPMENT</span><a href="/workbench" className={shell.profile}>Dashboard</a></div></div>
    <header className={ui.hero}><div><span className={ui.eyebrow}>REGPILOT INTELLIGENCE ENGINE</span><h1>Review smarter.<br/><em>Decide with confidence.</em></h1><p>AI-assisted policy reviews, regulatory impact drafts and plain-English questions, with source-grounded excerpts and human approval.</p></div><div className={ui.heroSide}><span>PROCESSING POLICY</span><strong>Human-led</strong><p>Findings are provisional, quotes are checked where possible, and nothing is automatically approved or filed.</p></div></header>
-   <div className={shell.warning}><strong>Private AI pilot — no sensitive information.</strong> Supplied text and document content are transmitted to an external model provider, potentially outside the UK. Do not send genuine patient, staff, supplier, confidential or regulated records. No legal or regulatory conclusion is provided.</div>
+   <PublicationResearch/>
+   <div className={shell.warning}><strong>Private AI pilot — no sensitive information.</strong> The private drafting tools below send supplied text and documents to an external model provider, potentially outside the UK. Do not send genuine patient, staff, supplier, confidential or regulated records. No legal or regulatory conclusion is provided.</div>
    {message&&<div className={ui.alert} role="status">{message}<button type="button" onClick={()=>setMessage("")} aria-label="Dismiss">×</button></div>}
    {feature===false&&<div className={ui.setup}><strong>AI integration is installed but not activated.</strong><p>Verified Supabase login, an invite allowlist, a migrated database and Gateway credentials are required. The server intentionally refuses AI requests until configured.</p></div>}
    <div className={ui.layout}>
@@ -259,7 +263,7 @@ export default function AiStudio(){
      <div className={ui.modes}>{([{id:"document",name:"Review a policy"},{id:"change",name:"Assess regulatory impact"},{id:"assistant",name:"Ask RegPilot"}] as const).map(m=><button type="button" key={m.id} className={mode===m.id?ui.modeActive:ui.mode} onClick={()=>{setMode(m.id);setResult(null);}}>{m.name}</button>)}</div>
      <form onSubmit={run} className={ui.form}>
       <label>UK business context (fictional)<textarea rows={2} maxLength={2500} value={businessContext} onChange={e=>setBusinessContext(e.target.value)} placeholder="Example: Small wholesale business reviewing supplier procedures."/></label>
-      <label>Official GOV.UK source<select value={sourceId} onChange={e=>setSourceId(e.target.value)} required={mode==="change"}><option value="">No official source selected</option>{REGULATORY_SOURCES.map(s=><option key={s.id} value={s.id}>{s.agency}: {s.title}</option>)}</select></label>
+      <label>Official UK publication<select value={sourceId} onChange={e=>setSourceId(e.target.value)} required={mode==="change"}><option value="">{mode==="assistant"?"Find official passages from my question":"No official source selected"}</option>{REGULATORY_SOURCES.map(s=><option key={s.id} value={s.id}>{s.agency}: {s.title}</option>)}</select></label>
       {(mode==="document"||mode==="assistant")&&<label>{mode==="document"?"Policy/document text (fictional)":"Relevant policy or context (optional)"}<textarea rows={5} maxLength={16000} value={documentText} onChange={e=>setDocumentText(e.target.value)} placeholder="Paste non-sensitive example policy text…"/></label>}
       {mode==="document"&&evidenceId&&<p className={ui.hint}>Private organisation evidence selected (up to 2 MB). RegPilot retrieves and verifies the stored bytes server-side after checking your membership; no public file URL is issued. <button type="button" onClick={()=>setEvidenceId("")}>Clear selection</button></p>}
       {mode==="document"&&selectedDocument&&<p className={ui.hint}>Selected document from demo library: <strong>{selectedDocument}</strong>. Review the content before sending it to an external model provider.</p>}
@@ -283,10 +287,11 @@ export default function AiStudio(){
      {!result?<div className={ui.empty}><span>✧</span><h3>Ready for evidence-led analysis</h3><p>Authenticate, choose a workflow and submit fictional material. The result will be marked as a draft and will never alter records automatically.</p></div>:<>
       <div className={ui.summary}><span>AI DRAFT · HUMAN REVIEW REQUIRED</span><h3>Summary</h3><p>{result.summary}</p><small>Model: {result.model} · Confidence: {result.confidence} · {new Date(result.generatedAt).toLocaleString("en-GB")}</small><p className={ui.savedNote}>{savedReviewId?"Draft retained in organisation review inbox · "+savedReviewId:"Not retained in the server review inbox."}</p><button type="button" className={ui.export} onClick={exportDraft}>Download draft review (JSON)</button>
        {result.source&&<a href={result.source.url} target="_blank" rel="noopener noreferrer">Open original official source ↗</a>}</div>
+      {result.research&&<div className={ui.summary}><h3>Official publications behind this answer</h3>{result.research.omitted>0&&<p>{result.research.omitted} suggestion(s) were omitted because the quotation could not be verified.</p>}<PublicationResults result={result.research}/></div>}
       {result.groundingSummary&&<div className={ui.summary}><h3>Evidence behind this review</h3><p>{result.groundingSummary.dualTextMatches} findings quote both the supplied source and document. {result.groundingSummary.unverified} findings have no matching quotation in either.</p><small>Text matches locate evidence; they do not verify the model’s interpretation.{result.groundingSummary.pdfRequiresManualCheck?" Check the original PDF’s layout, images and signatures.":""}</small>{result.groundingSummary.documentCoverage&&<><p>Word extraction: {result.groundingSummary.documentCoverage.extractedPages} / {result.groundingSummary.documentCoverage.totalPages} blocks{result.groundingSummary.documentCoverage.truncated?" · extraction limited":""}. References identify paragraphs or table rows, not Word pages. Inspect the original layout and signatures.</p>{result.groundingSummary.documentCoverage.blockingIssues?.map(issue=><p key={issue}>{issue}</p>)}</>}{result.groundingSummary.pdfCoverage&&<p>Server extraction: {result.groundingSummary.pdfCoverage.extractedPages} / {result.groundingSummary.pdfCoverage.totalPages} pages{result.groundingSummary.pdfCoverage.truncated?" · extraction limited":""}{result.groundingSummary.pdfCoverage.unreadablePages.length?" · unreadable pages: "+result.groundingSummary.pdfCoverage.unreadablePages.join(", "):""}.</p>}</div>}
       <div className={ui.findings}><div className={ui.resultHeading}><h3>Potential findings</h3><span>{result.findings.length}</span></div>
        {result.findings.length===0?<p>No specific finding was returned. This does not mean the material is compliant.</p>:result.findings.map((f,i)=><article key={i} className={ui.finding}><div className={ui.flag}>{f.type} · {f.priority} priority</div><h4>{f.title}</h4><p>{f.rationale}</p><div className={ui.recommendation}><strong>Suggested next step</strong><p>{f.recommendation}</p></div>
-        {f.sourceQuote&&<blockquote><span>{f.sourceQuoteMatched?"Source excerpt text matched":"Source quotation NOT verified"}</span><p>“{f.sourceQuote}”</p></blockquote>}
+        {f.sourceQuote&&<blockquote><span>{f.sourceQuoteMatched?"Source excerpt text matched":"Source quotation NOT verified"}</span><p>“{f.sourceQuote}”</p>{f.sourceCitation&&<a href={f.sourceCitation.url} target="_blank" rel="noopener noreferrer">{f.sourceCitation.title}</a>}</blockquote>}
         {f.reviewChecks&&<details><summary>What the reviewer needs to verify</summary><ul>{f.reviewChecks.map(check=><li key={check}>{check}</li>)}</ul></details>}
         {f.documentQuote&&<blockquote><span>{f.documentQuoteMatched?f.documentAnchor?.page?f.documentAnchor.coordinateSystem==="normalised-word-block"?"Word text matched · "+(f.documentAnchor.label||"block "+f.documentAnchor.page):"PDF text matched · page "+f.documentAnchor.page:"Document text matched":"Document quotation NOT uniquely verified"}</span><p>“{f.documentQuote}”</p>{f.documentAnchor?.ambiguous&&<small>This passage occurs more than once; check its context.</small>}</blockquote>}
        </article>)}
@@ -299,7 +304,7 @@ export default function AiStudio(){
       </div>}
       <div className={ui.actions}><h3>Suggested corrective work</h3><p>Only an authorised user can add a suggested task to the organisation database. Nothing is added automatically.</p>
        {result.suggestedActions.length>0&&<label className={ui.fieldLabel}>Responsible owner for accepted tasks<input maxLength={80} value={owner} onChange={e=>setOwner(e.target.value)}/></label>}
-       {result.suggestedActions.map((s,i)=><div key={i} className={ui.suggestion}><div><strong>{s.title}</strong><p>{s.reason}</p>{s.sourceQuote&&<small>{s.sourceQuoteMatched?"Source quotation matched retrieved text":"Source quotation not verified"}: “{s.sourceQuote}”</small>}</div><button type="button" disabled={accepted.includes(i)} onClick={()=>void accept(s,i)}>{accepted.includes(i)?"Added to team queue ✓":"Add to team queue"}</button></div>)}
+       {result.suggestedActions.map((s,i)=><div key={i} className={ui.suggestion}><div><strong>{s.title}</strong><p>{s.reason}</p>{s.sourceQuote&&<small>{s.sourceQuoteMatched?"Source quotation matched retrieved text":"Source quotation not verified"}: “{s.sourceQuote}”</small>}{s.sourceCitation&&<a href={s.sourceCitation.url} target="_blank" rel="noopener noreferrer">{s.sourceCitation.title}</a>}</div><button type="button" disabled={accepted.includes(i)} onClick={()=>void accept(s,i)}>{accepted.includes(i)?"Added to team queue ✓":"Add to team queue"}</button></div>)}
       </div>
       {(result.questions.length>0||result.limitations.length>0)&&<div className={ui.questions}><h3>Questions and limitations</h3>{result.questions.map((q,i)=><p key={"q"+i}>• {q}</p>)}{result.limitations.map((q,i)=><p key={"l"+i}>• {q}</p>)}</div>}
       <p className={ui.request}>Request ID: {requestId} · AI usage: {result.usage?.inputTokens??"?"} input / {result.usage?.outputTokens??"?"} output tokens</p>
@@ -315,6 +320,7 @@ export default function AiStudio(){
       <span className={ui.inboxStatus}>{activeReview.status.replaceAll("_"," ")}</span>{activeReview.status!=="REDACTED"&&<button type="button" className={ui.redact} disabled={reviewBusy} onClick={()=>void redactSavedReview()}>Remove saved AI content</button>}<h3>{activeReview.summary}</h3>
       <small>Request {activeReview.requestId} · Model {activeReview.modelId} · Result SHA-256: {activeReview.sha256?.slice(0,16)||"—"}…</small>
       <div className={ui.inboxDraft}>{(activeReview.ai?.findings||[]).map((x,i)=><div key={i}><strong>{x.title}</strong><p>{x.rationale}</p><small>{x.sourceQuoteMatched?"Source quotation matches the retrieved text.":"Official source quotation not verified."}</small></div>)}</div>
+      {activeReview.ai?.research&&<PublicationResults result={activeReview.ai.research}/>}
       {activeReview.status==="PENDING_REVIEW"&&<form onSubmit={recordDecision} className={ui.inboxForm}>
        <label>Human decision<select value={reviewDecision} onChange={e=>setReviewDecision(e.target.value as "REVIEWED"|"NEEDS_CHANGES")}><option value="REVIEWED">Reviewed — findings assessed</option><option value="NEEDS_CHANGES">Needs changes or further evidence</option></select></label>
        <label>Review rationale (at least 20 characters)<textarea required minLength={20} maxLength={800} rows={3} value={reviewNotes} onChange={e=>setReviewNotes(e.target.value)} placeholder="Explain what was checked, what remains uncertain and why." /></label>

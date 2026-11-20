@@ -28,6 +28,9 @@ jobs:
           restore-keys: source-watch-v1-${{ github.ref }}-
       - name: Retrieve official text and compare against last good captures
         run: node --import tsx scripts/verify-regulatory-sources.mjs
+      - name: Verify cross-publication research against live official texts
+        if: ${{ !cancelled() }}
+        run: node --import tsx scripts/check-publication-research.ts
       - name: Discover newly published and updated official material
         if: ${{ !cancelled() }}
         run: node --import tsx scripts/collect-horizon.mjs

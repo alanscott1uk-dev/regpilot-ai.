@@ -79,3 +79,12 @@ test("partial responses and publisher interstitials never enter the publication 
  await assert.rejects(()=>loadOfficialWeb(source,async()=>response("<html><title>Unavailable</title></html>")),
   (e:any)=>e.reasonCode==="MAIN_REGION_MISSING"&&e.httpStatus===200);
 });
+
+test("a partial or queued GOV.UK response cannot provide evidence for a research citation",async()=>{
+ const {boundedPublicJson}=await import("../lib/server/publication-catalogue");
+ const publication=REGULATORY_SOURCES.find(row=>row.id==="mhra-gmp-gdp")!;
+ for(const status of [202,206]) {
+  await assert.rejects(()=>loadGovUkHtml(publication,async()=>new Response("<main><h1>"+publication.title+"</h1>"+("Text ".repeat(70))+"</main>",{status,headers:{"content-type":"text/html"}})));
+  await assert.rejects(()=>boundedPublicJson("https://www.gov.uk/api/content"+publication.path,async()=>new Response('{"title":"partial"}',{status})));
+ }
+});

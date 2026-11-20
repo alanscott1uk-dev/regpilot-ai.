@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import {chromium} from "playwright";
 import {checkAccessibility} from './browser-accessibility.mjs';
 import {infrastructureJourney} from "./infrastructure-browser-journey.mjs";
+import {publicationResearchJourney} from "./publication-research-journey.mjs";
 import {horizonJourney} from "./horizon-browser-journey.mjs";
 import {sharedEvidenceJourney} from "./shared-evidence-browser-journey.mjs";
 import {changeResponseJourney} from "./change-response-browser-journey.mjs";
@@ -123,6 +124,7 @@ try{
   try{observations.push(await teamCollaborationJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"team-collaboration-"+name,passed:false,error:e.message});}
   try{observations.push(await monitoringRecoveryJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"monitoring-recovery-"+name,passed:false,error:e.message});}
   try{observations.push(await todayJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"today-"+name,passed:false,error:e.message});}
+  try{observations.push(await publicationResearchJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"publication-research-"+name,passed:false,error:e.message});}
   try{observations.push(await horizonJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"horizon-"+name,passed:false,error:e.message});}
   try{observations.push(await infrastructureJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"infrastructure-"+name,passed:false,error:e.message});}
   try{observations.push(await sharedEvidenceJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"shared-evidence-"+name,passed:false,error:e.message});}

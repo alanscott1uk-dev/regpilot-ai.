@@ -1,4 +1,6 @@
 import {generateText,Output} from "ai";
+import {groundResearchDraft} from "../ai/research-grounding";
+import type {ResearchResult} from "../regulatory/research";
 import {z} from "zod";
 import {safeModelName,validateAndAnnotateAiOutput} from "../ai/contract.mjs";
 import type {DocumentUnit,DocumentCoverage} from "../documents/coverage";
@@ -54,15 +56,15 @@ function instructions(mode:AiInput["mode"]){
   "Return short concise structured output. The findings severity is a triage suggestion, never an authoritative risk classification."
  ].join("\n");
 }
-export async function runRegPilotAi(input:AiInput,official:Official){
+export async function runRegPilotAi(input:AiInput,official:Official,research?:ResearchResult){
  const model=safeModelName(process.env.REGPILOT_AI_MODEL||"");
- const sourceText=official?.text||"";
+ const sourceInfo=official?{id:official.id,title:official.title,url:official.url,updatedAt:official.updatedAt,revisionAt:official.revisionAt}:null;
  const text=[
   "MODE: "+input.mode,
   "BUSINESS CONTEXT (unverified, entered by user):\n"+(input.businessContext||"Not supplied"),
   "USER QUESTION:\n"+(input.question||"Review this material and prepare a concise findings report."),
-  "OFFICIAL SOURCE METADATA:\n"+(official?JSON.stringify({id:official.id,title:official.title,url:official.url,updatedAt:official.updatedAt,revisionAt:official.revisionAt}):"No primary source selected. Do not infer official requirements."),
-  "OFFICIAL SOURCE TEXT START\n"+(sourceText||"[NO VERIFIED SOURCE EXCERPT]")+"\nOFFICIAL SOURCE TEXT END",
+  "OFFICIAL SOURCE METADATA:\n"+(sourceInfo?JSON.stringify(sourceInfo):research?"Retrieved publications follow. Put each answer point in findings and copy one exact supporting quotation per point. Territorial tags describe catalogue scope; confirm applicability.":"No primary source selected. Do not infer official requirements."),
+  "OFFICIAL SOURCE TEXT START\n"+(research?JSON.stringify(research.citations.map(c=>({title:c.title,sourceId:c.sourceId,jurisdictions:c.jurisdictions,quote:c.quote}))):official?.text||"[NO VERIFIED SOURCE EXCERPT]")+"\nOFFICIAL SOURCE TEXT END",
   "INPUT DOCUMENT START\n"+(input.documentUnitKind==="block"?JSON.stringify({coverage:input.documentCoverage,blocks:input.documentPages}):input.documentText|| (input.fileBytes?"[PDF attached; read file content as input]":"[NO DOCUMENT PROVIDED]"))+"\nINPUT DOCUMENT END"
  ].join("\n\n");
  const content:Array<{type:"text";text:string}|{type:"file";data:Uint8Array;mediaType:"application/pdf"}>=[{type:"text",text}];
@@ -74,16 +76,30 @@ export async function runRegPilotAi(input:AiInput,official:Official){
   output:Output.object({schema:outputSchema}),
   maxOutputTokens:2100,
   maxRetries:0,
-  abortSignal:AbortSignal.timeout(45000)
+  abortSignal:AbortSignal.timeout(research?30000:45000)
  });
- const annotated=validateAndAnnotateAiOutput(result.output,{
-  sourceText,sourceVerified:!!official,
+ return {...annotateDraft(input, official, result.output, research),model,source:sourceInfo,
+  usage:{inputTokens:result.usage?.inputTokens??null,outputTokens:result.usage?.outputTokens??null},
+  generatedAt:new Date().toISOString()
+ };
+}
+
+export function annotateDraft(input:AiInput,official:Official,output:z.infer<typeof outputSchema>,research?:ResearchResult) {
+ const sourceText=official?.text||research?.citations.map(c=>c.quote).join("\n\n")||"";
+ const supported=research?groundResearchDraft(output,research.citations):null;
+ const draft=supported?{...output,summary:supported.summary,findings:supported.findings,suggestedActions:supported.suggestedActions,
+  confidence:"limited",questions:[],suggestedAmendments:[],limitations:["A matching quotation establishes its wording. Review applicability, exceptions and effective dates."]}:output;
+ const annotated=validateAndAnnotateAiOutput(draft,{
+  sourceText,sourceVerified:!!official||!!supported,
   documentText:input.documentText,hadPdf:!!input.fileBytes,documentUnitKind:input.documentUnitKind,documentPages:input.documentPages,documentCoverage:input.documentCoverage
  });
  return {...annotated,
-  model,
-  source:official?{id:official.id,title:official.title,url:official.url,updatedAt:official.updatedAt,revisionAt:official.revisionAt}:null,
-  usage:{inputTokens:result.usage?.inputTokens??null,outputTokens:result.usage?.outputTokens??null},
-  generatedAt:new Date().toISOString()
+  ...(supported&&research?{
+   findings:annotated.findings.map((finding:Record<string,unknown>,i:number)=>{
+    const sourceCitation=supported.findings[i].sourceCitation;
+    return {...finding,sourceCitation,sourceAnchor:{start:sourceCitation.start,end:sourceCitation.end,coordinateSystem:"extracted-official-text",ambiguous:false}};
+   }),
+   research:{...research,omitted:supported.omitted},
+  }:{})
  };
 }

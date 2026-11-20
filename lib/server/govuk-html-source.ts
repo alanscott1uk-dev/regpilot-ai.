@@ -27,7 +27,7 @@ export async function loadGovUkHtml(source:RegulatorySource,fetcher:typeof fetch
   throw new OfficialWebUnavailable("GOV.UK HTML fallback expects a registered publication identity");
  const url="https://www.gov.uk"+source.path;
  const response=await fetcher(url,{method:"GET",headers:{Accept:"text/html"},cache:"no-store",redirect:"error",signal:AbortSignal.timeout(9000)});
- if(!response.ok||!response.headers.get("content-type")?.includes("text/html")||response.url&&response.url!==url){
+ if(response.status!==200||response.headers.has("content-range")||!response.headers.get("content-type")?.includes("text/html")||response.url&&response.url!==url){
   await response.body?.cancel();throw new OfficialWebUnavailable("GOV.UK official page unavailable, redirected or unsupported");
  }
  const html=await boundedHtml(response);

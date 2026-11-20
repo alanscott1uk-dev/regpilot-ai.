@@ -1,3 +1,4 @@
+import {searchOfficialPublications} from "../../../../lib/server/publication-research";
 import {IntelligenceError} from "../../../../lib/server/intelligence-service";
 import {NextResponse} from "next/server";
 import {aiConfigured,workspaceConfigured,AccessError,authorisedAiContext} from "../../../../lib/server/ai-auth";
@@ -41,6 +42,11 @@ export async function POST(request:Request){
   const input=validateAiRequest(raw);
   const ctx=await authorisedAiContext(request,input.organizationId);
   const official=await loadOfficialSource(input.sourceId);
+  const research=input.mode==="assistant"&&!input.sourceId?await searchOfficialPublications({question:input.question}):undefined;
+  if(research&&!research.citations.length){
+   const message=research.unavailable?"Some official publications could not be checked. Open the source research results or try again later.":"No supporting passage was found. Refine the question or select an official publication.";
+   return json({error:message,research},422);
+  }
   let aiInput:Parameters<typeof runRegPilotAi>[0]=input;
   if(input.evidenceId&&process.env.REGPILOT_AI_PRIVATE_EVIDENCE_APPROVED!=="true")return json({error:"AI processing of private evidence is not approved for this pilot. Use a synthetic working draft instead."},403);
   if(input.evidenceId){
@@ -51,7 +57,7 @@ export async function POST(request:Request){
   }
   if(aiInput.fileBytes){const extracted=await extractDocument(aiInput.fileBytes,aiInput.fileFormat==="DOCX"?"input.docx":"input.pdf",{allowEmpty:true});aiInput={...aiInput,fileBytes:extracted.format==="DOCX"?null:aiInput.fileBytes,documentUnitKind:extracted.unitKind,documentPages:extracted.pages,documentCoverage:{...coverageOf(extracted),unreadablePages:extracted.skippedPages}};}
   requestId=await reserveAiRequest(ctx,input.mode,input.useDeclaration);
-  const ai=await runRegPilotAi(aiInput,official);
+  const ai=await runRegPilotAi(aiInput,official,research);
   let reviewId:string|null=null,storageWarning:string|null=null;
   if(input.retainDraft){
    try{
