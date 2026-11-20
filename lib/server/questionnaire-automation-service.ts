@@ -1,11 +1,12 @@
 import {Prisma} from '@prisma/client';
-import {questionsSchema} from '../assurance-operations';
+import {normalQuestion,questionsSchema} from '../assurance-operations';
 import {automationInput,classifyQuestion,knowledgeHealth,QUESTIONNAIRE_AUTOMATION_VERSION,type AutomationInput,type KnowledgeAnswer} from '../questionnaire-automation';
 import {hashValue} from '../regulatory/intelligence';
 import {transaction,IntelligenceError} from './intelligence-service';
 import {requireMember,ADMIN,WRITER} from './workspace-member';
 import {completionParticipants} from './work-completion-service';
 import {checkedAssuranceAnswers,questionnaireOperationRecord,saveQuestionnaireOperation} from './customer-assurance-service';
+import {savedQuestionnaireAnswerOrigin} from './questionnaire-draft-service';
 import {reviewedFilesSchema,verifyReviewedBytes,type ReviewedFile} from './reviewed-files';
 import type {AuthorizedContext} from './authorization';
 import type {EvidenceObjectStore} from './evidence-storage';
@@ -28,12 +29,25 @@ async function automationState(tx:Tx,c:AuthorizedContext,id:string){
  const all=questionsSchema.parse(row.questions),visible=admin?all:all.filter(question=>question.ownerId===c.userId);
  if(!admin&&!visible.length)throw new IntelligenceError('Questionnaire not found',404);
  const knowledge=await scopedKnowledge(tx,c,row.scope);
+ const approvedIds=knowledge.filter(answer=>answer.current).map(answer=>answer.id);
+ // Each successful preparation creates its own canonical answer, so the 300-answer
+ // library cap also bounds eligible saved origins. No history text enters the response.
+ const savedRuns=approvedIds.length?await tx.questionnaireDraftRun.findMany({where:{...org(c),questionnaireId:id,questionId:{in:all.map(question=>question.id)},status:'SAVED',answerId:{in:approvedIds}},orderBy:[{updatedAt:'desc'},{createdAt:'desc'},{id:'asc'}],take:300}):[];
+ const preferredOrigins=new Map<string,ReturnType<typeof savedQuestionnaireAnswerOrigin>>();
+ for(const run of savedRuns){
+  if(preferredOrigins.has(run.questionId))continue;
+  try{
+   const origin=savedQuestionnaireAnswerOrigin(run),question=all.find(question=>question.id===origin.questionId),answer=knowledge.find(answer=>answer.id===origin.answerId&&answer.current);
+   if(origin.organizationId!==c.organizationId||origin.questionnaireId!==id||!question||!answer||origin.scope!==row.scope||answer.scope!==origin.scope||normalQuestion(origin.question)!==normalQuestion(question.question)||normalQuestion(answer.question)!==normalQuestion(origin.question)||origin.instructions!==(question.instructions||'')||hashValue(origin.files)!==hashValue(answer.files))continue;
+   preferredOrigins.set(question.id,origin);
+  }catch(error){if(!(error instanceof IntelligenceError))throw error;}
+ }
  const people=await completionParticipants(tx,c,[c.userId,row.createdById,...all.flatMap(question=>[question.ownerId,question.changedById])]);
  const questions=visible.map(question=>{
-  const {candidates,...insight}=classifyQuestion(question,knowledge);
+  const {candidates,...insight}=classifyQuestion({...question,preferredAnswerId:preferredOrigins.get(question.id)?.answerId},knowledge);
   return {...question,instructions:question.instructions||'',suppliedAnswer:question.suppliedAnswer||'',...insight,candidates:candidates.map(({participants:_participants,...candidate})=>candidate)};
  });
- const token=hashValue({engine:QUESTIONNAIRE_AUTOMATION_VERSION,organizationId:c.organizationId,actorId:c.userId,role:actor.role,questionnaire:{id:row.id,version:row.version,title:row.title,recipient:row.recipient,scope:row.scope,status:row.status,questions:row.questions},people,knowledge});
+ const token=hashValue({engine:QUESTIONNAIRE_AUTOMATION_VERSION,organizationId:c.organizationId,actorId:c.userId,role:actor.role,questionnaire:{id:row.id,version:row.version,title:row.title,recipient:row.recipient,scope:row.scope,status:row.status,questions:row.questions},people,knowledge,preferredOrigins:[...preferredOrigins.values()].sort((a,b)=>a.questionId.localeCompare(b.questionId))});
  return {row,all,knowledge,people,token,view:{questionnaireId:row.id,version:row.version,canPrepare:admin&&row.status==='DRAFT',summary:{total:questions.length,supported:questions.filter(question=>question.classification==='SUPPORTED').length,ambiguous:questions.filter(question=>question.classification==='AMBIGUOUS').length,unanswered:questions.filter(question=>question.classification==='UNANSWERED').length,conflicting:questions.filter(question=>question.classification==='CONFLICTING').length,expired:questions.filter(question=>question.classification==='EXPIRED').length,ready:questions.filter(question=>question.status==='READY').length},questions,knowledgeHealth:knowledgeHealth(knowledge)}};
 }
 

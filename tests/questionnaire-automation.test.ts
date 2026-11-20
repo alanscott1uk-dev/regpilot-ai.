@@ -47,6 +47,17 @@ test('conflict detection considers knowledge beyond the visible result limit and
  assert.ok(insight.candidates.some(candidate=>candidate.id===answers[5].id),'The saved selection must remain inspectable');
 });
 
+test('a current originating answer remains reachable beside the selection and conflicting alternatives in a crowded library',()=>{
+ const answers=Array.from({length:10},(_,index)=>answer({id:'00000000-0000-4000-8000-'+String(index+1).padStart(12,'0')}));
+ answers[1].answer='A different independently reviewed response describes the applicable exceptions to encrypted backups.';
+ const insight=classifyQuestion({question,answerId:answers[8].id,preferredAnswerId:answers[9].id},answers);
+ assert.equal(insight.candidates.length,5);assert.equal(insight.candidates[0].id,answers[9].id);assert.equal(insight.candidates[0].selectable,true);
+ assert.ok(insight.candidates.some(candidate=>candidate.id===answers[8].id));assert.ok(insight.candidates.some(candidate=>candidate.id===answers[1].id));assert.equal(insight.classification,'CONFLICTING');assert.equal(insight.recommendedAnswerId,null);
+ answers[9]={...answers[9],current:false,status:'DRAFT',reason:'Answer is unapproved or withdrawn'};
+ const unapproved=classifyQuestion({question,preferredAnswerId:answers[9].id},answers);
+ assert.ok(!unapproved.candidates.some(candidate=>candidate.id===answers[9].id&&candidate.selectable));assert.notEqual(unapproved.candidates[0].id,answers[9].id);
+});
+
 test('structured questionnaire input preserves bounded instructions and coordinates while supporting legacy CSV',()=>{
  const base={title:'Buyer questions',recipient:'Fictional buyer',scope:'UK customer systems',ownerId:randomUUID(),requestKey:randomUUID(),confirm:true};
  const row={reference:'Q-1',question,instructions:'Explain exceptions and specify review dates.',suppliedAnswer:'Unverified buyer-supplied answer.',source:{filename:'buyer.xlsx',sha256:'b'.repeat(64),format:'XLSX',sheet:'Security',row:7,questionCell:'C7',referenceCell:'A7',answerCell:'D7',contextCells:['B7']}};

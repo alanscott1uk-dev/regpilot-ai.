@@ -8,6 +8,7 @@ import {assuranceFixture,future,rejects} from './helpers/assurance-fixture';
 import {createAssuranceAnswer,changeAssuranceAnswer,createQuestionnaire,questionnaireWorkspace,questionnaireDetail,changeQuestionnaire,exportQuestionnaire,answerWorkspace,checkedAssuranceAnswers} from '../lib/server/customer-assurance-service';
 import {automateQuestionnaire,questionnaireAutomation} from '../lib/server/questionnaire-automation-service';
 import {transaction} from '../lib/server/intelligence-service';
+import {prepareQuestionnaireDraft,questionnaireDrafts,saveQuestionnaireDraft} from '../lib/server/questionnaire-draft-service';
 
 const scope='Fictional UK customer systems';
 const question='How do you encrypt and restore customer backups?';
@@ -157,5 +158,46 @@ test('the complete 300-answer library uses bounded queries and retains exact fil
   const separate=rows.find(answer=>answer.id!==a.id&&answer.id!==changed.id)!;
   await db.assuranceAnswer.update({where:{id:separate.id},data:{scope:'Separate customer scope',contentHash:hashValue({question:separate.question,scope:'Separate customer scope',answer:separate.answer,files:separate.files,validUntil:separate.validUntil.toISOString()})}});
   view=await questionnaireAutomation(x.o,q.id);assert.equal(view.knowledgeHealth.total,299);assert.ok(view.questions.flatMap(question=>question.candidates).every(candidate=>candidate.scope===scope));
+ }finally{await x.cleanup();}
+});
+
+test('the latest eligible saved response is reachable from its exact originating question among more than five approved variants',async()=>{
+ const x=await assuranceFixture();configured();process.env.REGPILOT_ASSURANCE_ENABLED='true';try{
+  const wording='How do you retain assurance documents?',firstFile=await x.file(),prior=await approved(x,firstFile.id,{question:wording}),q=await createQuestionnaire(x.o,importInput(x,[{reference:'SEC-1',question:wording},{reference:'SEC-2',question:wording}]));
+  const detail=await questionnaireDetail(x.ed,q.id),questionId=detail.questions[0].id;
+  async function prepareAndSave(fileId:string,text:string){
+   const prepared=await prepareQuestionnaireDraft(x.ed,q.id,{questionId,questionnaireVersion:1,evidenceIds:[fileId],method:'CONTENT_SEARCH',requestKey:randomUUID(),confirm:true},{storage:x.store});
+   const draft=(await questionnaireDrafts(x.ed,q.id,{runId:prepared.id})).drafts[0];assert.ok(draft.result?.citations.length);
+   const saved=await saveQuestionnaireDraft(x.ed,q.id,prepared.id,{action:'SAVE_ANSWER',version:draft.version,answer:text,validUntil:future(30),reviewedSupport:true,confirm:true},{storage:x.store});
+   return {runId:prepared.id,answerId:saved.answerId!};
+  }
+  const first=await prepareAndSave(firstFile.id,'The supplied fictional assurance document is retained for independent review. Its content does not establish further implemented controls.');
+  await changeAssuranceAnswer(x.ad,first.answerId,{action:'APPROVE',version:1,notes,confirm:true},x.store);
+  const template=await db.assuranceAnswer.findUniqueOrThrow({where:{id:prior.id}});
+  const variants=Array.from({length:8},(_,index)=>{
+   const answer='Earlier fictional response '+index+' records the available assurance document and explains its particular review limitations.',id='00000000-0000-4000-8000-'+String(index+1).padStart(12,'0');
+   return {id,organizationId:x.a.id,createdById:x.o.userId,reviewerId:x.ad.userId,question:wording,scope,answer,files:template.files as Prisma.InputJsonValue,validUntil:template.validUntil,status:'APPROVED',version:2,reviewedAt:new Date(),contentHash:hashValue({question:wording,scope,answer,files:template.files,validUntil:template.validUntil.toISOString()})};
+  });
+  await db.assuranceAnswer.createMany({data:variants});
+  const original=await db.questionnaireDraftRun.findUniqueOrThrow({where:{id:first.runId}});
+  let view=await questionnaireAutomation(x.o,q.id),origin=view.questions.find(question=>question.id===questionId)!;
+  assert.equal(origin.candidates.length,5);assert.equal(origin.candidates[0].id,first.answerId);assert.ok(origin.candidates.some(candidate=>candidate.id===prior.id));assert.equal(origin.classification,'CONFLICTING');assert.equal(origin.recommendedAnswerId,null);
+  assert.ok(!view.questions[1].candidates.some(candidate=>candidate.id===first.answerId),'An origin pin must not transfer to another question with identical wording');
+  const other=await createQuestionnaire(x.o,importInput(x,[{reference:'OTHER',question:wording}]));assert.ok(!(await questionnaireAutomation(x.o,other.id)).questions[0].candidates.some(candidate=>candidate.id===first.answerId));
+  await assert.rejects(()=>questionnaireAutomation(x.out,q.id),rejects(404));
+  await db.questionnaireDraftRun.update({where:{id:first.runId},data:{resultHash:'f'.repeat(64)}});view=await questionnaireAutomation(x.o,q.id);assert.ok(!view.questions[0].candidates.some(candidate=>candidate.id===first.answerId),'An invalid saved result must not acquire origin priority');
+  await db.questionnaireDraftRun.update({where:{id:first.runId},data:{resultHash:original.resultHash}});
+  const changedContext=structuredClone(original.context) as Record<string,any>;changedContext.question.instructions='A different customer instruction that is not present in this question';
+  await db.questionnaireDraftRun.update({where:{id:first.runId},data:{context:changedContext,inputHash:hashValue(changedContext)}});assert.ok(!(await questionnaireAutomation(x.o,q.id)).questions[0].candidates.some(candidate=>candidate.id===first.answerId),'A different instruction context must not acquire origin priority');
+  await db.questionnaireDraftRun.update({where:{id:first.runId},data:{context:original.context as Prisma.InputJsonValue,inputHash:original.inputHash}});
+  const secondFile=await x.file(),later=await prepareAndSave(secondFile.id,'The newer fictional assurance document is retained with its recorded supporting quotations. Further implemented controls require separate evidence.');
+  view=await questionnaireAutomation(x.o,q.id);assert.equal(view.questions[0].candidates[0].id,first.answerId,'An unapproved newer answer must not displace the approved origin');assert.ok(!view.questions[0].candidates.some(candidate=>candidate.id===later.answerId&&candidate.selectable));
+  await changeAssuranceAnswer(x.ad,later.answerId,{action:'APPROVE',version:1,notes,confirm:true},x.store);
+  view=await questionnaireAutomation(x.ed,q.id);assert.equal(view.questions[0].candidates[0].id,later.answerId);assert.ok(view.questions[0].candidates[0].current);
+  const stale=await preview(x,q.id),apply={operation:'APPLY',version:stale.version,previewToken:stale.previewToken,requestKey:randomUUID(),selections:[{questionId,answerId:later.answerId}],confirm:true};
+  await db.questionnaireDraftRun.update({where:{id:later.runId},data:{version:{increment:1}}});await assert.rejects(()=>automateQuestionnaire(x.o,q.id,apply,x.store),rejects(409));
+  const fresh=await preview(x,q.id);assert.equal(fresh.questions[0].candidates[0].id,later.answerId);await automateQuestionnaire(x.o,q.id,{...apply,previewToken:fresh.previewToken,requestKey:randomUUID()},x.store);
+  const saved=await questionnaireDetail(x.ed,q.id);assert.equal(saved.questions[0].answerId,later.answerId);assert.equal(saved.questions[0].status,'SUGGESTED');assert.equal(saved.questions[0].changedById,null);
+  await changeAssuranceAnswer(x.ad,later.answerId,{action:'WITHDRAW',version:2,notes,confirm:true},x.store);view=await questionnaireAutomation(x.o,q.id);assert.equal(view.questions[0].candidates[0].id,first.answerId);assert.ok(!view.questions[0].candidates.some(candidate=>candidate.id===later.answerId&&candidate.selectable));
  }finally{await x.cleanup();}
 });

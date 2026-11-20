@@ -49,6 +49,13 @@ function resultOf(run:QuestionnaireDraftRun){
  if(!result.success||hashValue(result.data)!==run.resultHash)throw new IntelligenceError("Draft result integrity failed",409);
  return result.data;
 }
+/** A historical origin reference only; callers must separately verify the linked answer is current. */
+export function savedQuestionnaireAnswerOrigin(run:QuestionnaireDraftRun){
+ if(run.status!=="SAVED"||!run.answerId||!run.saveHash||!/^[a-f0-9]{64}$/.test(run.saveHash))throw new IntelligenceError("Saved answer origin unavailable",409);
+ const {context,files}=stored(run),result=resultOf(run);
+ if(!result.citations.length||result.citations.some(citation=>!files.some(file=>file.id===citation.evidenceId&&file.filename===citation.filename)))throw new IntelligenceError("Saved answer origin evidence failed its integrity check",409);
+ return {id:run.id,organizationId:run.organizationId,questionnaireId:run.questionnaireId,questionId:run.questionId,answerId:run.answerId,version:run.version,savedAt:run.updatedAt.toISOString(),inputHash:run.inputHash,resultHash:run.resultHash!,saveHash:run.saveHash,question:context.question.question,instructions:context.question.instructions,scope:context.scope,files};
+}
 async function current(tx:Tx,c:AuthorizedContext,run:QuestionnaireDraftRun){
  const original=stored(run),now=await capture(tx,c,run.questionnaireId,run.questionId,original.files.map(f=>f.id),run.createdById,run.method);
  if(now.inputHash!==run.inputHash)throw new IntelligenceError("The question, business scope, selected evidence or participant permissions changed. Prepare a new draft.",409);
