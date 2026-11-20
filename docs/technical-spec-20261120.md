@@ -202,3 +202,13 @@ The supplier adapter compares the deployed revision with the latest public asses
 | UK supplier identity | Vanta provides vendor assessment and ongoing monitoring. | RegPilot can bind a GLEIF LEI to the exact Companies House number and registration authority, freeze it in an independently accepted supplier review, and assign the supplier owner when evidence changes or fails. |
 
 [RegPilot setup and collection scope](aws-gleif-evidence.md) · [Vanta AWS integration](https://www.vanta.com/integrations/aws) · [Vanta vendor risk management](https://www.vanta.com/products/third-party-risk-management)
+
+## SOP authoring and in-app help
+
+Open `/sop-builder` directly, from Documents or from an SOP-related AI Studio or company knowledge search. Authors can use a general starting point or a medicines temperature-mapping, staff offboarding, supplier qualification or food allergen handover starter. Each editable step has a responsible role, an instruction, an evidence record and an optional official passage. The existing UK publication research engine can suggest exact source wording for a new step. The author chooses and edits it.
+
+Download a RegPilot JSON draft to resume in the builder, or an editable Word draft for review. The Word export verifies the current publisher text, restores the reference from the official catalogue and records the quotation, location, publication digest and check date. A changed or unavailable selected source requires fresh research or explicit removal. Blank fields and outstanding site decisions remain visible. The public editor keeps its working copy in memory until the user saves a file.
+
+A workspace editor can send the exact Word document to a task in the private Evidence Vault. The normal scanner, DOCX reader, tenant checks and independent review apply. A retry for the same author, task, filename and bytes can reuse the existing evidence without changing its review status. An administrator can subsequently use the reviewed file in the existing policy version and controlled release process.
+
+The searchable Help Centre at `/help` covers ten tasks across procedures, AI research, integrations, access and evidence. Topics have stable links and carry the selected workspace into the relevant destination. Production operation still depends on the configured private services and sector-specific review of intended use.

@@ -44,7 +44,7 @@ export async function POST(request:Request){
   const ctx=await authorisedWorkspaceContext(request,orgId,["OWNER","ADMIN","EDITOR"]);
   if(!(file instanceof File))throw new EvidenceError("A PDF or Word attachment is required",415);
   const bytes=new Uint8Array(await file.arrayBuffer());
-  const record=await createEvidence(ctx,taskId,file.name,bytes);
+  const record=await createEvidence(ctx,taskId,file.name,bytes,{reuseExactUpload:form.get("reuseExactUpload")==="true"});
   return reply({evidence:record},201);
  }catch(e){
   if(e instanceof AccessError||e instanceof EvidenceError)return reply({error:e.message},e.status);

@@ -1,0 +1,58 @@
+import assert from "node:assert/strict";
+import {readFile} from "node:fs/promises";
+import {checkAccessibility} from "./browser-accessibility.mjs";
+import {parseDocx} from "../lib/server/docx-parser.mjs";
+
+export async function sopHelpJourney(browser,base,viewport,name){
+  const context=await browser.newContext({viewport,acceptDownloads:true});
+  try{
+    const page=await context.newPage(),errors=[];
+    page.on("pageerror",e=>errors.push(String(e)));
+    await page.goto(base+"/help");
+    await page.getByLabel("Search help").fill("temperature mappping");
+    await page.getByRole("button",{name:"Start a temperature-mapping procedure"}).click();
+    await checkAccessibility(page,"artifacts/usability/"+name+"-help-axe.json","main");
+    await page.getByRole("link",{name:"Open temperature-mapping starter"}).click();
+    await page.getByRole("button",{name:"Create SOP draft"}).click();
+    assert.equal(await page.getByLabel("Procedure title",{exact:true}).inputValue(),"Medicines temperature mapping");
+    await page.getByLabel("Document reference",{exact:true}).fill("SOP-TEST");
+    await page.getByLabel("Accountable owner",{exact:true}).fill("Fixture quality lead");
+    await page.getByRole("button",{name:"Add step",exact:true}).click();
+    const last=page.getByRole("group",{name:"Step 5",exact:true});
+    await last.getByLabel("Instruction").fill("Review the fictional handover.");
+    await last.getByLabel("Responsible role").fill("Fixture reviewer");
+    await last.getByLabel("Evidence to retain").fill("Review receipt");
+    await last.getByRole("button",{name:"Move step 5 up"}).click();
+    const step4=page.getByRole("group",{name:"Step 4",exact:true});
+    assert.equal(await step4.getByLabel("Instruction").inputValue(),"Review the fictional handover.");
+    const quote="Review the synthetic, approved study protocol before recording observations.";
+    const passage={id:"a".repeat(64),sourceId:"mhra-temperature-mapping",documentHash:"b".repeat(64),start:0,end:quote.length,quote,title:"Fixture mapping publication",agency:"Fixture publisher",url:"https://www.gov.uk/",jurisdictions:["Scotland"]};
+    await page.route("**/api/ai/research",route=>route.fulfill({json:{citations:[passage],answer:{points:[{citationId:passage.id,text:quote}]},unavailable:0}}));
+    await page.getByRole("button",{name:"Find official guidance"}).click();
+    await page.getByText("Fixture publisher · Fixture mapping publication",{exact:true}).click();
+    await page.getByRole("button",{name:"Use wording in a new step"}).click();
+    const suggested=page.getByRole("group",{name:"Step 6",exact:true});
+    assert.equal(await suggested.getByLabel("Instruction").inputValue(),quote);
+    assert.equal(await suggested.getByLabel("Supporting passage").inputValue(),passage.id);
+    await page.getByRole("button",{name:"Remove passage"}).click();
+    assert.equal(await suggested.getByLabel("Supporting passage").count(),0);
+    await suggested.getByRole("button",{name:"Remove step 6"}).click();
+    await checkAccessibility(page,"artifacts/usability/"+name+"-sop-builder-axe.json","main");
+    const word=page.waitForEvent("download");
+    await page.getByRole("button",{name:"Download Word draft"}).click();
+    const file=await word;
+    assert.equal(file.suggestedFilename(),"SOP-TEST-draft.docx");
+    const parsed=await parseDocx(await readFile(await file.path()));
+    assert.ok(parsed.pages.some(p=>p.text.includes("Review the fictional handover.")));
+    const saved=page.waitForEvent("download");await page.getByRole("button",{name:"Save editable draft"}).click();
+    const sourceFile=await (await saved).path();
+    await page.reload();
+    await page.getByLabel("Resume a saved RegPilot draft").setInputFiles({name:"test.json",mimeType:"application/json",buffer:await readFile(sourceFile)});
+    assert.equal(await page.getByLabel("Accountable owner").inputValue(),"Fixture quality lead");
+    assert.equal(await page.getByLabel("Document reference").inputValue(),"SOP-TEST");
+    await page.goto(base+"/ai");await page.getByLabel("Research question",{exact:true}).fill("standard operating procedures");
+    await page.getByRole("link",{name:"Build an SOP for this topic"}).waitFor();
+    assert.deepEqual(errors,[]);
+    return {scenario:"sop-and-help-"+name,passed:true};
+  }finally{await context.close();}
+}

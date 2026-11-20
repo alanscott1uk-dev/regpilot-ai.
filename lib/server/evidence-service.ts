@@ -1,5 +1,7 @@
 import {requireMember,ADMIN,WRITER} from "./workspace-member";
 import {db} from "./db";
+import type {Prisma} from "@prisma/client";
+import {transaction} from "./intelligence-service";
 import type {AuthorizedContext} from "./authorization";
 import type {EvidenceObjectStore} from "./evidence-storage";
 import {privateEvidenceStore} from "./evidence-storage";
@@ -38,7 +40,7 @@ export async function listEvidence(ctx:AuthorizedContext,obligationId:string){
  * Insertion is limited atomically by per-organisation quotas.
  */
 export async function createEvidence(ctx:AuthorizedContext,taskId:string,filename:string,uploaded:Uint8Array,
- dependencies:{storage?:EvidenceObjectStore;scan?:Scan}={}){
+ dependencies:{storage?:EvidenceObjectStore;scan?:Scan;reuseExactUpload?:boolean}={}){
  await db.$transaction(tx=>requireMember(tx,ctx,WRITER));
  if(!canUpload(ctx))throw new EvidenceError("Insufficient permission to upload",403);
  if(!idOk(taskId))throw new EvidenceError("Invalid task ID",400);
@@ -54,8 +56,12 @@ export async function createEvidence(ctx:AuthorizedContext,taskId:string,filenam
  const store=dependencies.storage||await privateEvidenceStore();
  await store.put(key,bytes,file.contentType);
  try{
-  const record=await db.$transaction(async tx=>{
+  const persist=async (tx:Prisma.TransactionClient)=>{
    await requireMember(tx,ctx,WRITER);
+   if(dependencies.reuseExactUpload){
+    const existing=await tx.evidence.findFirst({where:{organizationId:ctx.organizationId,obligationId:taskId,uploadedById:ctx.userId,filename:contentDispositionFilename(filename),sha256:hash,scanStatus:"CLEAN"},orderBy:[{createdAt:"asc"},{id:"asc"}]});
+    if(existing)return existing;
+   }
    const reserved=await tx.organization.updateMany({
     where:{id:ctx.organizationId,
      evidenceCount:{lt:MAX_ORG_EVIDENCE_FILES},
@@ -74,7 +80,11 @@ export async function createEvidence(ctx:AuthorizedContext,taskId:string,filenam
     details:{taskId,hash,sizeBytes:bytes.byteLength,scanEngine:result.engine}
    }});
    return row;
-  },{isolationLevel:"Serializable",timeout:8000,maxWait:4000});
+  };
+  const record=dependencies.reuseExactUpload?await transaction(ctx,persist):await db.$transaction(persist,{isolationLevel:"Serializable",timeout:8000,maxWait:4000});
+  if(record.storageKey!==key){
+   try{await store.remove(key);}catch{ /* The existing reviewed object remains authoritative. */ }
+  }
   return recordView(record);
  }catch(error){
   try{await store.remove(key);}catch{ /* follow-up required: orphan object must be reconciled */ }

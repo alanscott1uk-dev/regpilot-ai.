@@ -4,6 +4,7 @@ import {useCallback, useEffect, useId, useRef, useState, type FormEvent} from "r
 import type {Nation, ResearchResult, ResearchPassage, PassageCheck} from "../../lib/regulatory/research";
 import {MIN_RESEARCH_QUESTION, MAX_RESEARCH_QUESTION} from "../../lib/regulatory/publication-query.mjs";
 import styles from "./ai.module.css";
+import {sopHref,sopIntent} from "../../lib/sop-draft";
 
 const example = "Which publications cover GMP and wholesale dealer licensing for medicines?";
 const nations: Nation[] = ["England","Scotland","Wales","Northern Ireland"];
@@ -122,6 +123,7 @@ export default function PublicationResearch() {
       <button disabled={busy} type="submit">{busy?"Checking publications…":"Ask RegPilot"}</button>
     </form>
     <button type="button" className={styles.researchExample} disabled={busy} onClick={()=>void search(example,nation)}>Try a medicines question</button>
+    {sopIntent(question)&&<p><a href={sopHref(question,nation)}>Build an SOP for this topic</a></p>}
     {busy&&<p role="status">Reading the shortlisted official publications…</p>}
     {error&&<p role="alert">{error}</p>}
     <p><a href="/team/knowledge#workspace-research">Compare guidance with your organisation’s procedures and evidence</a></p>

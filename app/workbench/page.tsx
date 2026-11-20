@@ -128,6 +128,7 @@ export default function Workbench(){
     <a href="/team/evidence">▣ &nbsp;Evidence vault</a>
     <a href="/team/assurance">◎ &nbsp;Evidence assessment</a>
     <a href="/ai">✦ &nbsp;AI Studio</a>
+    <a href="/sop-builder">SOP builder</a><a href="/help">Help Centre</a>
    </nav>
    <details className={ui.demoTools}><summary>Explore demo tools</summary><nav aria-label="Demonstration tools"><a href="/register">Action register</a><a href="/documents">Documents</a><a href="/evidence">Evidence gaps</a><a href="/controls">Shared controls</a><a href="/traceability">Traceability explorer</a><a href="/assurance">Review centre</a><a href="/intelligence">Source comparison</a><a href="/regulatory-sources">Official sources</a><a href="/departments">Business setup</a><a href="/distribution">Distribution</a></nav></details>
    <div className={ui.sideFoot}><strong>Prototype workspace</strong><p>Records are local to this browser. Do not upload confidential business or personal data.</p></div>

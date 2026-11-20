@@ -64,7 +64,7 @@ try{
  await waitForServer();
  const routes=[
   "/team/programmes","/team/risks","/team/products","/team/knowledge","/team/quality","/team/training","/team/developers","/team/evaluations","/team/effectivity","/team/integrations","/team/coverage","/team/briefing","/team/recognition","/recognition","/team/access-reviews","/team/answers","/team/questionnaires","/team/trust","/trust","/team/audit-requests","/team/changes","/team/people","/team/vendors","/team/audits","/auditor","/team/services","/team/settings","/team/operations","/team/library","/workbench","/register","/documents","/evidence","/controls",
-  "/assurance","/intelligence","/traceability","/team","/team/work","/team/work/reviews","/team/evidence","/team/sources","/team/intelligence","/team/assurance","/ai"
+  "/assurance","/intelligence","/traceability","/team","/team/work","/team/work/reviews","/team/evidence","/team/sources","/team/intelligence","/team/assurance","/ai","/sop-builder","/help"
  ];
  for(const path of routes){
   const res=await response(path);

@@ -2,6 +2,7 @@
 import {useEffect,useRef,useState,type FormEvent} from 'react';
 import type {researchWorkspaceQuestion} from '../../../lib/server/company-knowledge-service';
 import {workspaceHref,type useWorkspaceContext} from '../../../lib/client/workspace-context';
+import {sopHref,sopIntent} from "../../../lib/sop-draft";
 import css from '../questionnaires/questionnaires.module.css';
 type Result=Awaited<ReturnType<typeof researchWorkspaceQuestion>>;
 type Passage=Result['evidence'][number];
@@ -30,6 +31,7 @@ export function ResearchPanel({workspace,productId,scopeName}:{workspace:ReturnT
  }
  return <section id="workspace-research" className={css.panel}><h2>Ask across your compliance workspace</h2>
   <p>Search UK guidance, controls, risks, suppliers, audit work and approved documents. Document scope: {scopeName}.</p>
+  {sopIntent(question)&&<p><a href={sopHref(question).replace("/sop-builder","/sop-builder?"+new URLSearchParams({organizationId:workspace.organizationId}))}>Build an SOP for this topic</a></p>}
   <form onSubmit={ask}><div className={css.formGrid}><label>Question<input required minLength={3} maxLength={1200} disabled={busy} value={question} onChange={e=>{setQuestion(e.target.value);setResult(null);}} placeholder="Which controls and records cover supplier access?"/></label>
   <label>Limit evidence to a site or asset (optional)<input maxLength={100} disabled={busy} value={asset} onChange={e=>{setAsset(e.target.value);setResult(null);}} placeholder="Site name or equipment ID"/></label></div>
   <button type="submit" disabled={busy||productId==='INVALID'}>{busy?'Checking sources…':'Search guidance and company records'}</button></form>

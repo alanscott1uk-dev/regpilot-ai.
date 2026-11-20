@@ -1,3 +1,4 @@
+export function writeOfficeZip(parts: Array<[string,string | Buffer]>): Buffer;
 export const QUESTIONNAIRE_FILE_LIMITS:Readonly<{
   fileBytes:number;requestBytes:number;entries:number;entryBytes:number;inflatedBytes:number;
   compressionRatio:number;sheets:number;rows:number;rowNumber:number;columns:number;cells:number;
