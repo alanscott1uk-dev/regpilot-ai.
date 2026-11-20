@@ -133,9 +133,9 @@ function DecisionForm({item,data,busy,send}:{item:Item;data:Inventory;busy:boole
     e.preventDefault();const f=new FormData(e.currentTarget);
     void send({action:"DECIDE",id:item.id,version:item.version,verdict:f.get("verdict"),rationale:f.get("rationale"),evidenceId:f.get("evidence"),validUntil:f.get("date")});
   }
-  return <form onSubmit={submit} className={styles.review}><h3>Review this version</h3><div className={ui.formGrid}><label>Decision<select required name="verdict" defaultValue=""><option value="">Choose a decision</option>{options(["APPROVED","RESTRICTED","DECLINED"])}</select></label>
+  return <form onSubmit={submit} className={styles.review}><h3>Review this version</h3><div className={ui.formGrid}><label>Decision<select aria-label="Decision" required name="verdict" defaultValue=""><option value="">Choose a decision</option>{options(["APPROVED","RESTRICTED","DECLINED"])}</select></label>
     <label>Review through<input required type="date" name="date" min={new Date().toISOString().slice(0,10)} max={new Date(Date.now()+366*86400000).toISOString().slice(0,10)}/></label>
-    <label className={ui.full}>Supporting evidence<select required name="evidence" defaultValue=""><option value="">Choose an approved file</option>{data.evidence.map(f=><option key={f.id} value={f.id}>{f.filename}</option>)}</select></label>
+    <label className={ui.full}>Supporting evidence<select aria-label="Supporting evidence" required name="evidence" defaultValue=""><option value="">Choose an approved file</option>{data.evidence.map(f=><option key={f.id} value={f.id}>{f.filename}</option>)}</select></label>
     <label className={ui.full}>Reason and any conditions<textarea required name="rationale" minLength={16} maxLength={1600}/></label></div>
     <button disabled={busy || !data.evidence.length}>Record independent decision</button></form>;
 }

@@ -16,6 +16,7 @@ import {productKnowledgeCustomerJourney} from './product-knowledge-customer-jour
 import {runQuestionnaireFormatJourney} from './questionnaire-format-customer-journey.mjs';
 import {trainingCustomerJourney} from './training-customer-journey.mjs';
 import {customerApiCustomerJourney} from './customer-api-customer-journey.mjs';
+import {riskLossJourney} from './risk-loss-customer-journey.mjs';
 import {aiInventoryJourney} from './ai-inventory-customer-journey.mjs';
 import {evaluationCustomerJourney} from './evaluation-customer-journey.mjs';
 import {policyEffectivityCustomerJourney} from './policy-effectivity-customer-journey.mjs';
@@ -470,6 +471,7 @@ try{
  report.capaJourney=await capaCustomerJourney({upload,review,db,app,org,editor,reviewer,evidenceId:rereviewed.id,checkpoint,passed,bounded,artifactDir,completedSource:report.customerJourney});
  report.starterProgrammeJourney=await starterProgrammeCustomerJourney({upload,review,db,app,org,editor,reviewer,checkpoint,passed,bounded,artifactDir});
  report.riskJourney=await riskCustomerJourney({upload,review,db,app,org,editor,reviewer,checkpoint,passed,bounded,artifactDir,completedSource:report.customerJourney,evidenceId:rereviewed.id,storageSnapshot});
+ report.riskLossJourney=await riskLossJourney({upload,app,org,riskId:report.riskJourney.riskId,evidenceId:rereviewed.id,checkpoint,passed});
  report.questionnaireJourney=await questionnaireCustomerJourney({upload,review,db,app,org,editor,reviewer,checkpoint,passed,bounded,artifactDir,evidenceId:rereviewed.id});
  report.trainingJourney=await trainingCustomerJourney({upload,review,db,app,org,editor,reviewer,submitEvidence,evidenceId:rereviewed.id,completedSource:report.customerJourney,checkpoint,passed,bounded,artifactDir});
  report.effectivityJourney=await policyEffectivityCustomerJourney({upload,review,db,app,org,editor,reviewer,submitEvidence,trainingSource:report.trainingJourney,emailLink,checkpoint,passed,bounded,artifactDir});

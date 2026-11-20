@@ -61,7 +61,7 @@ test("BOM preview, selective import, replay protection and change detection oper
   const a=model("a","1"),b=model("b","1"),first=bom(1,[a,b]);
   try {
     const preview=await inventoryAction(f.ed,{action:"PREVIEW",bom:first});
-    assert.ok("candidates" in preview && preview.candidates.length===2);
+    assert.ok("candidates" in preview && preview.candidates?.length===2);
     assert.equal((await inventoryWorkspace(f.ed)).systems.length,0);
     assert.deepEqual(await inventoryAction(f.ed,{action:"IMPORT",bom:first,refs:["a"]}),{changed:1,unchanged:0});
     assert.deepEqual(await inventoryAction(f.ed,{action:"IMPORT",bom:first,refs:["a"]}),{changed:0,unchanged:1});

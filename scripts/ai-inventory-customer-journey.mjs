@@ -26,7 +26,16 @@ export async function aiInventoryJourney({upload, review, app, org, db, evidence
   await upload.getByRole("button",{name:"Save system",exact:true}).click();
   await upload.getByText("Model · Awaiting review · Version 2",{exact:true}).waitFor();
   assert.equal(await upload.getByRole("button",{name:"Record independent decision"}).count(),0);
-  await review.goto(upload.url());
+  const registered = await db.aiSystem.findFirstOrThrow({where:{organizationId:org.id,bomSerial:serial}});
+  const target = url + "&systemId=" + registered.id;
+  assert.equal(new URL(upload.url()).searchParams.get("systemId"),registered.id);
+  const [response] = await Promise.all([
+    review.waitForResponse(r=>new URL(r.url()).pathname==="/api/workspace/ai-inventory" && r.request().method()==="GET"),
+    review.goto(target),
+  ]);
+  const current=await response.json();
+  assert.equal(current.systems.find(s=>s.id===registered.id)?.canDecide,true,"the independent administrator can decide on this exact version");
+  await review.getByRole("heading",{name,exact:true}).waitFor();
   await review.getByLabel("Decision",{exact:true}).selectOption("RESTRICTED");
   await review.getByLabel("Review through").fill(new Date(Date.now()+21*86400000).toISOString().slice(0,10));
   await review.getByLabel("Supporting evidence").selectOption(evidenceId);

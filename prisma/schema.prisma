@@ -142,6 +142,7 @@ enum ReviewStatus {
 }
 
 model User {
+ lossScenarios RiskLossScenario[]
  aiSystemsOwned AiSystem[] @relation("AiSystemOwner")
  aiSystemsEdited AiSystem[] @relation("AiSystemEditor")
  aiSystemDecisions AiSystemDecision[]
@@ -254,6 +255,7 @@ model User {
 }
 
 model Organization {
+ lossScenarios RiskLossScenario[]
  aiSystems AiSystem[]
  aiSystemDecisions AiSystemDecision[]
  horizonWatchlists HorizonWatchlist[]
@@ -501,6 +503,7 @@ model Obligation {
 }
 
 model Evidence {
+ lossScenarios RiskLossScenario[]
  aiSystemDecisions AiSystemDecision[]
  productApplicability EvidenceApplicability?
  knowledgeIndexes KnowledgeIndexRun[]
@@ -819,6 +822,7 @@ model ManagedControl {
 // Internal risk judgements, linked treatment work and independently reviewed residual decisions.
 // Ratings are recorded human judgements, not regulatory or financial risk predictions.
 model RiskRecord {
+ lossScenarios RiskLossScenario[]
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid
  createKey String @db.Uuid
@@ -2532,4 +2536,28 @@ model AiSystemDecision {
   system         AiSystem @relation(fields:[systemId,organizationId],references:[id,organizationId],onDelete:Restrict)
   @@unique([systemId,systemVersion])
   @@index([organizationId,systemId,createdAt])
+}
+
+model RiskLossScenario {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  riskId         String @db.Uuid
+  riskVersion    Int
+  requestKey     String @db.Uuid
+  requestHash    String @db.VarChar(64)
+  authorId       String @db.Uuid
+  title          String @db.VarChar(160)
+  assumptions    String @db.VarChar(1600)
+  inputs         Json
+  method         String @db.VarChar(40)
+  results        Json
+  evidenceId     String? @db.Uuid
+  evidenceBasis  Json?
+  createdAt      DateTime @default(now())
+  organization   Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+  risk           RiskRecord @relation(fields:[riskId,organizationId],references:[id,organizationId],onDelete:Cascade)
+  author         User @relation(fields:[authorId],references:[id],onDelete:Restrict)
+  evidence       Evidence? @relation(fields:[evidenceId,organizationId],references:[id,organizationId],onDelete:Restrict)
+  @@unique([riskId,requestKey])
+  @@index([organizationId,riskId,createdAt])
 }
