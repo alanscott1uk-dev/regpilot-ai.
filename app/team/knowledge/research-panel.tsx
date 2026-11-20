@@ -56,6 +56,7 @@ export function ResearchPanel({workspace,productId,scopeName}:{workspace:ReturnT
   {result.suppliers.length>0&&<><h3>Supplier site decisions</h3>{result.suppliers.map(s=><div key={s.id}>
     <p><a href={workspaceHref("/team/vendors",result.organizationId,{vendorId:s.id})}>{s.name}</a> · {s.activity} at {s.premises}</p>
     <p>UK WDA(H) {s.number} · {s.reviewState.replaceAll("_"," ")}{s.recommendation?" · "+s.recommendation:""} · Owner {s.owner}</p>
+    {s.requiredEntries.length>0&&<p>Required annex entries · {s.requiredEntries.map(e=>e.code+" "+e.label).join(", ")}</p>}
     {s.source&&<a href={s.source}>Source checked {s.checkedOn}</a>}{s.findings.map(f=><p key={f}>{f}</p>)}{s.openTasks.map(t=><p key={t.id}><a href={workspaceHref("/team/work",result.organizationId,{taskId:t.id})}>{t.title}</a></p>)}</div>)}</>}
   <h3>Official guidance</h3>{result.official.scopeQuestion&&<p>{result.official.scopeQuestion}</p>}{result.official.unavailable>0&&<p>{result.official.unavailable} shortlisted publications were unavailable.</p>}
   {result.official.answer.points.map(point=>{

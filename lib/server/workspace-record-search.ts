@@ -1,3 +1,5 @@
+import {annexLabels} from "../supplier-licence";
+import {scopeWords} from "../operator-answer";
 import type {Prisma} from '@prisma/client';
 import {searchTerms} from '../retrieval/bm25';
 import {normalisePublicationText} from '../regulatory/publication-query.mjs';
@@ -24,17 +26,21 @@ type RecordRow={kind:keyof typeof destinations;id:string;target:string;title:str
 const filler=new Set('about find show give list need me relevant current open linked records record our business organisation latest supporting please'.split(' '));
 
 /** Search operational metadata, not evidence bytes or draft questionnaire answers. Caller checks admin and product scope. */
-export async function searchWorkspaceRecords(tx:Prisma.TransactionClient,org:string,question:string){
+export async function searchWorkspaceRecords(tx:Prisma.TransactionClient,org:string,question:string,asset=""){
  const terms=[...new Set(searchTerms(normalisePublicationText(question)))].filter(t=>!filler.has(t)).slice(0,24);
  if(!terms.length)return [];
  // searchTerms emits only Unicode letters and numbers. The tsquery operand is also a bound parameter.
- const query=terms.join(' | ');
+ const query=terms.join(' | '),siteFilter=scopeWords(asset);
  const rows=await tx.$queryRaw<RecordRow[]>`
  WITH records(kind,id,target,title,status,detail) AS (
   SELECT 'Control',id,"importId",title,'Enabled',description||' '||"testProcedure" FROM "ManagedControl" WHERE "organizationId"=${org}::uuid AND enabled
   UNION ALL SELECT 'Risk',id,id,title,status,description||' '||category FROM "RiskRecord" WHERE "organizationId"=${org}::uuid AND status<>'ARCHIVED'
   UNION ALL SELECT 'AI system',id,id,name,'Inventory version '||version,kind||' AI governance '||coalesce(profile->>'purpose','') FROM "AiSystem" WHERE "organizationId"=${org}::uuid
-  UNION ALL SELECT 'Supplier',id,id,name,criticality,service||' vendor '||CASE WHEN "licenceScope" IS NULL THEN '' ELSE ' MHRA WDA wholesale licence authorisation supplier site '||coalesce("licenceScope"->>'premises','')||' '||coalesce("licenceScope"->>'number','')||' '||coalesce("licenceScope"->>'companyNumber','')||' '||coalesce("licenceScope"->>'activity','') END FROM "Vendor" WHERE "organizationId"=${org}::uuid AND active
+  UNION ALL SELECT 'Supplier',id,id,name,criticality,service||' vendor '||CASE WHEN "licenceScope" IS NULL THEN '' ELSE ' MHRA WDA wholesale licence authorisation supplier site '||coalesce("licenceScope"->>'premises','')||' '||coalesce("licenceScope"->>'number','')||' '||coalesce("licenceScope"->>'companyNumber','')||' '||coalesce("licenceScope"->>'activity','')||' '||
+    coalesce((SELECT string_agg(entry.value,' ') FROM jsonb_each_text(${JSON.stringify(annexLabels)}::jsonb) entry
+      WHERE ("licenceScope"->'requiredAnnexEntries') ? entry.key),'') END
+    FROM "Vendor" WHERE "organizationId"=${org}::uuid AND active AND (${siteFilter}='' OR
+      position((' '||${siteFilter}||' ') in (' '||regexp_replace(lower("licenceScope"->>'premises'),'[^[:alnum:]]+',' ','g')||' '))>0)
   UNION ALL SELECT 'Access review',id,id,title,status,'access campaign' FROM "AccessCampaign" WHERE "organizationId"=${org}::uuid
   UNION ALL SELECT 'Questionnaire',id,id,title,status,scope FROM "AssuranceQuestionnaire" WHERE "organizationId"=${org}::uuid AND status<>'WITHDRAWN'
   UNION ALL SELECT 'Audit room',id,id,title,status,purpose FROM "AuditRoom" WHERE "organizationId"=${org}::uuid AND status<>'CLOSED'

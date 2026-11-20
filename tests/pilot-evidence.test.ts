@@ -67,6 +67,9 @@ test("licence review matches site, legal name, explicit activity and evidence da
   const record={state:"LISTED" as const,number:"12345",holder:identity.name,premises:scope.premises,activities:["Holding" as const],source:"https://cms.mhra.gov.uk/mhra/wda/uk-wdah-12345",checkedOn:"2026-11-01",reviewBy:"2026-12-01",conditions:"Specific products under the site annex",evidenceId:leaver.clientId};
   const compare=(r:typeof record)=>compareLicence(scope,r,identity,"2026-11-20");
   assert.deepEqual(compare(record),[]);
+  const special={...scope,requiredAnnexEntries:["3.3","3.1.1"] as ("3.3"|"3.1.1")[]};
+  assert.equal(compareLicence(special,record,identity,"2026-11-20").length,2);
+  assert.deepEqual(compareLicence(special,{...record,annexEntries:["3.3","3.1.1"]},identity,"2026-11-20"),[]);
   for(const diff of [{holder:identity.name+" UK"},{premises:scope.premises.replace("2","3")},{activities:[]},{number:"1234"},{reviewBy:"2026-11-19"}])assert.ok(compare({...record,...diff}).length);
   assert.ok(compareLicence(scope,null,identity,"2026-11-20").length);
   assert.equal(licenceImport.safeParse({...record,source:record.source+"9"}).success,false);

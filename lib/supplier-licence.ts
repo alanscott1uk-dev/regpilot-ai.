@@ -2,16 +2,22 @@ import {z} from "zod";
 
 export const distributionActivities=["Procurement","Holding","Supply","Export"] as const;
 const activity=z.enum(distributionActivities);
+export const annexCodes=["2.6","2.6a","2.6b","3.1.1","3.1.2","3.1.3","3.3"] as const;
+export const annexLabels:Record<typeof annexCodes[number],string>={
+  "2.6":"Imports from listed countries","2.6a":"Imports certified under Article 51","2.6b":"Imports without Article 51 certification",
+  "3.1.1":"Narcotic or psychotropic products","3.1.2":"Medicines derived from blood","3.1.3":"Immunological medicines","3.3":"Cold chain products"
+};
+const annexEntries=z.array(z.enum(annexCodes)).max(annexCodes.length).refine(v=>new Set(v).size===v.length).optional();
 const premises=z.string().trim().min(10).max(450);
 const number=z.string().trim().regex(/^\d{1,8}$/);
 export const licenceScope=z.object({
   companyNumber:z.string().trim().toUpperCase().regex(/^(?:\d{8}|[A-Z]{2}\d{6})$/),
-  number,premises,activity,reviewerId:z.uuid()
+  number,premises,activity,reviewerId:z.uuid(),requiredAnnexEntries:annexEntries
 }).strict();
 const source=z.string().trim().max(450).regex(/^https:\/\/cms\.mhra\.gov\.uk\/(?:index\.php\/)?mhra\/wda\/uk-wdah-\d{1,8}(?:-\d+)?\/?$/);
 const observed=z.object({
   state:z.enum(["LISTED","SUSPENDED","WITHDRAWN"]),number,source,holder:z.string().trim().min(2).max(250),
-  premises,activities:z.array(activity).max(4).refine(v=>new Set(v).size===v.length),
+  premises,annexEntries,activities:z.array(activity).max(4).refine(v=>new Set(v).size===v.length),
   conditions:z.string().trim().min(4).max(1000),checkedOn:z.iso.date(),reviewBy:z.iso.date(),evidenceId:z.uuid()
 }).strict().refine(v=>new URL(v.source).pathname.match(/uk-wdah-(\d+)/)?.[1]===v.number,"The record URL must identify the same authorisation");
 export const licenceImport=z.union([observed,z.object({
@@ -35,6 +41,9 @@ export function compareLicence(scope:LicenceScope,record:LicenceRecord|null,iden
   if(identity&&normalise(record.holder)!==normalise(identity.name))reasons.push("The holder differs from the registered legal name.");
   if(normalise(record.premises)!==normalise(scope.premises))reasons.push("The recorded premises differ from the expected site.");
   if(!record.activities.includes(scope.activity))reasons.push("The site annex does not list the required activity.");
+  for(const code of scope.requiredAnnexEntries||[]){
+    if(!record.annexEntries?.includes(code))reasons.push("The site record needs evidence for annex entry "+code+" ("+annexLabels[code]+").");
+  }
   if(record.checkedOn>today||record.reviewBy<today)reasons.push("The register evidence is outside its review period.");
   return reasons;
 }

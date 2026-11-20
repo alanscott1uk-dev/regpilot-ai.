@@ -8,7 +8,7 @@ const topics:Record<string,string>={
   GLEIF:"supplier legal identity lei companies house",COMPANIES_HOUSE:"supplier legal identity companies house",
   OKTA:"okta workforce access identity",MICROSOFT365:"microsoft entra access identity",INTUNE:"intune endpoint device"
 };
-function scopeWords(value:string){
+export function scopeWords(value:string){
   return value.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(" ")||"";
 }
 export function matchesNamedScope(text:string,scope:string){

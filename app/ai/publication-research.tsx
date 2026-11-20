@@ -59,10 +59,10 @@ export function PublicationResults({result}:{result:ResearchResult}) {
     </section>}
     {result.answer&&!result.answer.model&&!!result.citations.length&&<p role="note">The local answer model is unavailable. The matching publisher passages are below.</p>}
     {result.answer?.model&&!points.length&&!!result.citations.length&&<p role="status">I found related material, but couldn’t identify a sentence that answers this question.</p>}
-    <p role="status">{result.citations.length
+    <p role="status">{result.scopeQuestion|| (result.citations.length
       ? `${result.citations.length} matching passage${result.citations.length===1?"":"s"} from ${publicationCount} publication${publicationCount===1?"":"s"}.`
       : result.unavailable ? "The available publications did not provide a matching passage. Part of the search is unavailable."
-      : "I couldn’t find supporting guidance in this catalogue. Try adding the activity, regulator or licence you mean."}</p>
+      : "I couldn’t find supporting guidance in this catalogue. Try adding the activity, regulator or licence you mean.")}</p>
     {result.citations.map(p=><article key={p.id} id={prefix+p.id}>
       <h3><a href={p.url} target="_blank" rel="noopener noreferrer">{p.title}</a></h3>
       <span>{[p.agency,p.kind,p.jurisdictions.length ? p.jurisdictions.join(", ") : "Check territorial scope in the publication"].filter(Boolean).join(" · ")}</span>
@@ -70,7 +70,6 @@ export function PublicationResults({result}:{result:ResearchResult}) {
       {p.scopeNote&&<small>{p.scopeNote}</small>}
       <RecheckCitation passage={p}/>
     </article>)}
-    {result.scopeQuestion&&<p role="status">{result.scopeQuestion}</p>}
     {!!result.unavailable&&<p role="note">{result.unavailable} shortlisted publication(s) could not be checked.</p>}
     <details><summary>Search coverage</summary>
       <p>Ranked a catalogue of {result.catalogueSize} publications and selected {result.checked.length} for passage matching. {result.nations.length ? "Territorial filter: "+result.nations.join(", ")+". " : ""}Results cover extracted page text. Linked files and legal applicability require separate review.</p>

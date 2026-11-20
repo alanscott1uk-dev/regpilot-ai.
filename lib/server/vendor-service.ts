@@ -1,6 +1,6 @@
 import {matchesNamedScope} from "../operator-answer";
 import {licenceFinding,setLicenceScope,importLicence} from "./vendor-licence";
-import {licenceScope,savedLicence} from "../supplier-licence";
+import {annexLabels,licenceScope,savedLicence} from "../supplier-licence";
 import {vendorAttention,compareVendorSignals} from "../vendor-attention";
 import {registerProviders,vendorSignal,vendorSignalSchema,sameVendorSignal,siteInvestigation,siteTaskCategory} from "./vendor-signals";
 import {Prisma,type Vendor,type VendorReview} from "@prisma/client";
@@ -59,7 +59,7 @@ export async function supplierResearch(tx:Prisma.TransactionClient,ctx:Authorize
   const finding=await licenceFinding(tx,v,signal);if(!finding)continue;
   const openTasks=await tx.obligation.findMany({where:{...org(ctx),vendorSignalId:v.id,status:{not:"COMPLETE"}},orderBy:[{dueDate:"asc"},{id:"asc"}],take:5,select:{id:true,title:true}});
   const latest=v.reviews[0],reviewStateValue=await reviewState(tx,ctx,v,latest);
-  output.push({id:v.id,name:v.name,owner:v.owner.email,premises:scope.premises,activity:scope.activity,number:scope.number,
+  output.push({id:v.id,name:v.name,owner:v.owner.email,premises:scope.premises,activity:scope.activity,number:scope.number,requiredEntries:(scope.requiredAnnexEntries||[]).map(code=>({code,label:annexLabels[code]})),
    openTasks,reviewState:reviewStateValue,recommendation:latest?.recommendation||null,findings:finding.reasons,source:finding.saved?.record.source||null,checkedOn:finding.saved?.record.checkedOn||null});
  }
  return output;
@@ -186,7 +186,10 @@ export async function changeVendor(ctx:AuthorizedContext,id:string,input:unknown
   }
   if(v.version!==d.version)throw new IntelligenceError("Supplier changed; refresh before continuing",409);
   if(d.action==="SET_LICENCE_SCOPE"){
-   await setLicenceScope(tx,ctx,v,d.scope);await event(tx,ctx,"licence_scope",id,{version:v.version+1,scope:d.scope});return {id};
+   if(v.licenceScope&&hashValue(licenceScope.parse(v.licenceScope))===hashValue(d.scope))return {id};
+   await setLicenceScope(tx,ctx,v,d.scope);
+   if(v.licenceRecord)await siteInvestigation(tx,ctx,v,"The expected site, activity, product requirements or reviewer changed. Collect a matching source record and obtain a new decision.",String(v.version+1));
+   await event(tx,ctx,"licence_scope",id,{version:v.version+1,scope:d.scope});return {id};
   }
   if(d.action==="IMPORT_LICENCE"){
    const record=await importLicence(tx,ctx,v,d.record);
