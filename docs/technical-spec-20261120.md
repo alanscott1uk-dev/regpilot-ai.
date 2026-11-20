@@ -164,3 +164,13 @@ Primary vendor documentation checked on 20 November 2026:
 - [Drata November updates](https://drata.com/updates) record multi-product questionnaires, enterprise SCIM and delivery warnings. RegPilot already has product-bound questionnaire preparation; SCIM and general communication-delivery monitoring remain distinct gaps.
 
 Technical verification for the exact final commit is recorded in PR #10. The prior `c6f8649` verification does not cover this subsequent source tree. No live provider, production deployment or hosted schema migration is implied by this implementation section.
+
+## AI inventory and use approvals
+
+Open **AI inventory** under Reviews & assurance. Editors and administrators can register tools, models, agents and MCP servers. Each use records an accountable owner, data sensitivity, intended purpose, permissions, affected people and safeguards. Linked supplier and control records come from the same company. Company-wide AI research can find a system by name or intended use and link to its inventory record.
+
+The CycloneDX 1.6/1.7 JSON import previews declared machine-learning models in the root assembly and its nested components. It requires a BOM serial number, document version and distinct model references. The importer selects which models to save. Reimporting the same model is idempotent. A changed model reopens the review. Older exports and conflicting model manifests at the same document version are rejected. Omitting a model leaves its existing entry in place. Discovery covers the uploaded assembly. Live identity-provider discovery, network observation and runtime enforcement are outside this implementation.
+
+Review priority follows the declared data, permissions and impact. It is an internal triage rule. An independent administrator records an approval, restriction or rejection with a review date, rationale and a byte-verified Evidence Vault file. A change to the use, model, linked control, supplier, evidence or participant eligibility can invalidate reliance on a decision. Earlier decisions retain their evidence and context snapshots. The register shows the five most recent decisions per system and supports 200 systems per company.
+
+The additive database change is `prisma/changes/ai-inventory.sql`. It creates two private tables with tenant-bound foreign keys and the existing restricted-role policy. Run the normal staging migration, access and evidence-storage acceptance checks before inviting a pilot company.

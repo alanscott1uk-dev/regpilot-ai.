@@ -6,6 +6,7 @@ import {workspaceLink} from './workspace-journey';
 const destinations={
  Control:['/team/operations',''],
  Risk:['/team/risks','riskId'],
+ 'AI system':['/team/ai-inventory','systemId'],
  Supplier:['/team/vendors',''],
  'Access review':['/team/access-reviews',''],
  Questionnaire:['/team/questionnaires','questionnaireId'],
@@ -32,6 +33,7 @@ export async function searchWorkspaceRecords(tx:Prisma.TransactionClient,org:str
  WITH records(kind,id,target,title,status,detail) AS (
   SELECT 'Control',id,"importId",title,'Enabled',description||' '||"testProcedure" FROM "ManagedControl" WHERE "organizationId"=${org}::uuid AND enabled
   UNION ALL SELECT 'Risk',id,id,title,status,description||' '||category FROM "RiskRecord" WHERE "organizationId"=${org}::uuid AND status<>'ARCHIVED'
+  UNION ALL SELECT 'AI system',id,id,name,'Inventory version '||version,kind||' AI governance '||coalesce(profile->>'purpose','') FROM "AiSystem" WHERE "organizationId"=${org}::uuid
   UNION ALL SELECT 'Supplier',id,id,name,criticality,service||' vendor' FROM "Vendor" WHERE "organizationId"=${org}::uuid AND active
   UNION ALL SELECT 'Access review',id,id,title,status,'access campaign' FROM "AccessCampaign" WHERE "organizationId"=${org}::uuid
   UNION ALL SELECT 'Questionnaire',id,id,title,status,scope FROM "AssuranceQuestionnaire" WHERE "organizationId"=${org}::uuid AND status<>'WITHDRAWN'

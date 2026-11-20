@@ -16,6 +16,7 @@ import {productKnowledgeCustomerJourney} from './product-knowledge-customer-jour
 import {runQuestionnaireFormatJourney} from './questionnaire-format-customer-journey.mjs';
 import {trainingCustomerJourney} from './training-customer-journey.mjs';
 import {customerApiCustomerJourney} from './customer-api-customer-journey.mjs';
+import {aiInventoryJourney} from './ai-inventory-customer-journey.mjs';
 import {evaluationCustomerJourney} from './evaluation-customer-journey.mjs';
 import {policyEffectivityCustomerJourney} from './policy-effectivity-customer-journey.mjs';
 import {integrationDeliveryCustomerJourney} from './integration-delivery-customer-journey.mjs';
@@ -480,6 +481,7 @@ try{
  };
  report.productKnowledgeJourney=await productKnowledgeCustomerJourney({upload,review,db,app,org,editor,reviewer,checkpoint,passed,bounded,artifactDir,evidenceId:rereviewed.id,withUnavailableEvidence});
 
+ report.aiInventoryJourney=await aiInventoryJourney({upload,review,app,org,db,evidenceId:rereviewed.id,checkpoint,passed});
  report.evaluationJourney=await evaluationCustomerJourney({upload,review,db,app,org,knowledgeSource:report.productKnowledgeJourney,checkpoint,passed,bounded,artifactDir});
 
  report.questionnaireFormatJourney=await runQuestionnaireFormatJourney({upload,review,app,org,editor,reviewer,db,evidenceId:rereviewed.id,artifactDir,checkpoint,passed,bounded});

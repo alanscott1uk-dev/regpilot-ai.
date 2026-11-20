@@ -142,6 +142,9 @@ enum ReviewStatus {
 }
 
 model User {
+ aiSystemsOwned AiSystem[] @relation("AiSystemOwner")
+ aiSystemsEdited AiSystem[] @relation("AiSystemEditor")
+ aiSystemDecisions AiSystemDecision[]
  horizonWatchlistsChanged HorizonWatchlist[]
  evaluationCasesCreated EvaluationCase[] @relation("EvaluationCaseCreator")
  evaluationCasesReviewed EvaluationCase[] @relation("EvaluationCaseReviewer")
@@ -251,6 +254,8 @@ model User {
 }
 
 model Organization {
+ aiSystems AiSystem[]
+ aiSystemDecisions AiSystemDecision[]
  horizonWatchlists HorizonWatchlist[]
  evaluationCases EvaluationCase[]
  evaluationRuns EvaluationRun[]
@@ -496,6 +501,7 @@ model Obligation {
 }
 
 model Evidence {
+ aiSystemDecisions AiSystemDecision[]
  productApplicability EvidenceApplicability?
  knowledgeIndexes KnowledgeIndexRun[]
  @@unique([id,organizationId])
@@ -773,6 +779,7 @@ model ProgrammeImport {
 }
 
 model ManagedControl {
+ aiSystems AiSystem[]
  integrationEndpointControls IntegrationEndpointControl[]
  customerApiGrants CustomerApiControlGrant[]
  customerApiObservations CustomerApiObservation[]
@@ -1231,6 +1238,7 @@ model PolicyAssignment {
  @@index([organizationId,userId,status,dueDate])
 }
 model Vendor {
+ aiSystems AiSystem[]
  signalConnectorId String? @db.Uuid
  signalConnector EvidenceConnector? @relation(fields:[signalConnectorId,organizationId],references:[id,organizationId],onDelete:Restrict)
  signalTasks Obligation[] @relation("VendorSignalTasks")
@@ -2474,4 +2482,54 @@ model HorizonWatchlist {
 
   @@id([organizationId, id])
   @@index([organizationId, archived, name])
+}
+
+model AiSystem {
+  id               String @id @default(uuid()) @db.Uuid
+  organizationId   String @db.Uuid
+  name             String @db.VarChar(160)
+  kind             String @db.VarChar(12)
+  ownerId          String @db.Uuid
+  updatedById      String @db.Uuid
+  profile          Json?
+  controlId        String? @db.Uuid
+  vendorId         String? @db.Uuid
+  originKey        String @db.VarChar(76)
+  bomSerial        String? @db.VarChar(45)
+  bomDocumentHash  String? @db.VarChar(64)
+  bomReference     String? @db.VarChar(240)
+  bomVersion       Int?
+  componentVersion String? @db.VarChar(120)
+  componentHash    String? @db.VarChar(64)
+  version          Int @default(1)
+  updatedAt        DateTime @updatedAt
+  organization     Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+  owner            User @relation("AiSystemOwner", fields:[ownerId],references:[id],onDelete:Restrict)
+  editor           User @relation("AiSystemEditor", fields:[updatedById],references:[id],onDelete:Restrict)
+  control          ManagedControl? @relation(fields:[controlId,organizationId],references:[id,organizationId],onDelete:Restrict)
+  vendor           Vendor? @relation(fields:[vendorId,organizationId],references:[id,organizationId],onDelete:Restrict)
+  decisions        AiSystemDecision[]
+  @@unique([id,organizationId])
+  @@unique([organizationId,originKey])
+}
+
+model AiSystemDecision {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  systemId       String @db.Uuid
+  systemVersion  Int
+  verdict        String @db.VarChar(12)
+  rationale      String @db.VarChar(1600)
+  validUntil     DateTime @db.Date
+  reviewerId     String @db.Uuid
+  evidenceId     String @db.Uuid
+  evidence       Evidence @relation(fields:[evidenceId,organizationId],references:[id,organizationId],onDelete:Restrict)
+  context        Json
+  contextHash    String @db.VarChar(64)
+  createdAt      DateTime @default(now())
+  organization   Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+  reviewer       User @relation(fields:[reviewerId],references:[id],onDelete:Restrict)
+  system         AiSystem @relation(fields:[systemId,organizationId],references:[id,organizationId],onDelete:Restrict)
+  @@unique([systemId,systemVersion])
+  @@index([organizationId,systemId,createdAt])
 }
