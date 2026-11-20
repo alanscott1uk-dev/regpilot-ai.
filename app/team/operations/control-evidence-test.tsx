@@ -27,8 +27,8 @@ export function ControlEvidenceTest({organizationId,controls,request}:Props){
  }
  return <section className={ui.review} aria-labelledby="connected-test-title"><h3 id="connected-test-title">Test a control’s connected evidence</h3>
   <p>Choose how many different providers must supply current, passing checks. An unresolved provider observation leaves the evidence incomplete.</p>
-  <form className={ui.formGrid} onSubmit={run}><label>Operating control <select required value={id} disabled={busy} onChange={e=>{setId(e.target.value);setResult(null);}}><option value="">Choose a control</option>{controls.filter(c=>c.enabled).map(c=><option value={c.id} key={c.id}>{c.title}</option>)}</select></label>{' '}
-  <label>Minimum providers <select value={minimum} disabled={busy} onChange={e=>{setMinimum(Number(e.target.value));setResult(null);}}>{[1,2,3,4,5].map(n=><option key={n}>{n}</option>)}</select></label>{' '}
+  <form className={ui.formGrid} onSubmit={run}><label>Operating control <select aria-label="Operating control" required value={id} disabled={busy} onChange={e=>{setId(e.target.value);setResult(null);}}><option value="">Choose a control</option>{controls.filter(c=>c.enabled).map(c=><option value={c.id} key={c.id}>{c.title}</option>)}</select></label>{' '}
+  <label>Minimum providers <select aria-label="Minimum providers" value={minimum} disabled={busy} onChange={e=>{setMinimum(Number(e.target.value));setResult(null);}}>{[1,2,3,4,5].map(n=><option key={n}>{n}</option>)}</select></label>{' '}
   <button disabled={!id||busy}>{busy?'Testing…':'Run evidence test'}</button></form>
   {error&&<p role="alert">{error}</p>}
   {result&&<div aria-live="polite"><h4>{labels[result.decision.state]}</h4><p>{result.decision.providers.length} qualifying provider types against a target of {minimum}. Tested {new Date(result.checkedAt).toLocaleString('en-GB')}.</p>
