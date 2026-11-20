@@ -20,7 +20,7 @@ export type QuestionnaireSource={
 export type QuestionnaireImportRow={reference:string;question:string;instructions:string;suppliedAnswer:string;source:QuestionnaireSource};
 export type QuestionnaireExport={
   title?:string;recipient?:string;scope?:string;approvedHash?:string|null;approvedAt?:string|Date|null;
-  questions:Array<{reference:string;question:string;answer:string;instructions?:string;suppliedAnswer?:string;source?:QuestionnaireSource;
+  questions:Array<{product?:{id:string;code:string;name:string;version:number}|null;reference:string;question:string;answer:string;instructions?:string;suppliedAnswer?:string;source?:QuestionnaireSource;
     evidence?:Array<{filename:string;sha256:string}>}>;
 };
 export function inspectQuestionnaireFile(bytes:Uint8Array,filename:string):Promise<QuestionnaireWorkbook>;

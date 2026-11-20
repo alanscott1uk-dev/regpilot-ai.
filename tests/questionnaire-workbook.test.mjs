@@ -87,3 +87,12 @@ test('multipart bounds apply to streaming bodies without trusted length and reje
   const request=new Request('https://example.invalid',{method:'POST',headers:{'content-type':'multipart/form-data; boundary=test'},body,duplex:'half'});
   await assert.rejects(()=>readQuestionnaireForm(request),error=>error.status===413);assert.equal(cancelled,true);
 });
+
+test('multi-product workbook preserves original references and coordinates while carrying product identity in both response and provenance sheets',async()=>{
+ const row={reference:'Q-1',question:'How do you protect customer backups?',answer:'Approved response with defined limitations.',source:{filename:'buyer.xlsx',sha256:'a'.repeat(64),format:'XLSX',sheet:'Security',row:4,questionCell:'B4',referenceCell:'A4'},evidence:[]};
+ const products=[{id:'00000000-0000-4000-8000-000000000001',code:'ALPHA',name:'Alpha service',version:1},{id:'00000000-0000-4000-8000-000000000002',code:'BETA',name:'Beta service',version:3}],value={scope:'UK systems',questions:products.map(product=>({...row,product}))};
+ const workbook=await inspect(writeQuestionnaireXlsx(value),'products.xlsx');
+ for(const sheet of workbook.sheets){assert.deepEqual(sheet.rows[0].cells.slice(-4),['Product code','Product name','Product ID','Product version']);assert.deepEqual(sheet.rows.slice(1).map(r=>r.cells[0]),['Q-1','Q-1']);assert.deepEqual(sheet.rows.slice(1).map(r=>r.cells.slice(-4)),products.map(p=>[p.code,p.name,p.id,String(p.version)]));}
+ assert.equal(workbook.sheets[1].rows[2].cells[6],'B4');assert.match(writeQuestionnaireCsv(value),/Alpha service/);assert.match(writeQuestionnaireCsv(value),/Beta service/);
+ assert.throws(()=>writeQuestionnaireXlsx({...value,questions:[value.questions[0],row]}),/Every product response/);
+});

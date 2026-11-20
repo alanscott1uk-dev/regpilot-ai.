@@ -1,5 +1,6 @@
 import {z} from 'zod';
 import {normalQuestion} from './assurance-operations';
+import {answerMatchesProduct} from './product-scope';
 
 export const QUESTIONNAIRE_AUTOMATION_VERSION='approved-answer-reuse-v1' as const;
 export const automationInput=z.discriminatedUnion('operation',[
@@ -8,16 +9,16 @@ export const automationInput=z.discriminatedUnion('operation',[
 ]);
 export type AutomationInput=z.infer<typeof automationInput>;
 export type Classification='SUPPORTED'|'AMBIGUOUS'|'UNANSWERED'|'CONFLICTING'|'EXPIRED';
-export type KnowledgeAnswer={id:string;question:string;scope:string;answer:string;version:number;contentHash:string;validUntil:string;status:string;current:boolean;reason:string};
+export type KnowledgeAnswer={productId?:string|null;productContext?:unknown;id:string;question:string;scope:string;answer:string;version:number;contentHash:string;validUntil:string;status:string;current:boolean;reason:string};
 export type Match<T extends KnowledgeAnswer>=T&{relevance:number;matchKind:'EXACT'|'RELATED';selectable:boolean};
 const STOP_WORDS=new Set('the and are for that this with your you how what does have has all our can which please provide describe explain about from into their there when will would should could these those any its also each only through within company business organisation organization'.split(' '));
 const terms=(value:string)=>new Set((normalQuestion(value).match(/[\p{L}\p{N}]{3,}/gu)||[]).filter(term=>!STOP_WORDS.has(term)));
 const overlap=(left:Set<string>,right:Set<string>)=>[...left].filter(term=>right.has(term)).length/Math.max(1,left.size);
 
 /** A deterministic retrieval score, never a probability or factual/AI confidence. */
-export function rankApprovedKnowledge<T extends KnowledgeAnswer>(question:{question:string;instructions?:string},answers:T[],limit=5):Match<T>[] {
+export function rankApprovedKnowledge<T extends KnowledgeAnswer>(question:{question:string;instructions?:string;productId?:string|null},answers:T[],limit=5):Match<T>[] {
  const prompt=terms(question.question),context=terms(question.instructions||'');
- return answers.map(answer=>{
+ return answers.filter(answer=>answerMatchesProduct(question,answer)).map(answer=>{
   const exact=normalQuestion(question.question)===normalQuestion(answer.question),wording=terms(answer.question),body=terms(answer.answer);
   const questionFit=overlap(prompt,wording),bodyFit=overlap(prompt,body),contextFit=context.size?overlap(context,new Set([...wording,...body])):0;
   const score=exact?1:Math.min(.99,questionFit*.7+bodyFit*.2+contextFit*.1);
@@ -26,7 +27,7 @@ export function rankApprovedKnowledge<T extends KnowledgeAnswer>(question:{quest
   .sort((a,b)=>Number(b.current)-Number(a.current)||b.relevance-a.relevance||a.id.localeCompare(b.id)).slice(0,Math.max(1,Math.min(300,limit)));
 }
 
-export function classifyQuestion<T extends KnowledgeAnswer>(question:{question:string;instructions?:string;answerId?:string|null;preferredAnswerId?:string|null},answers:T[]):{classification:Classification;reason:string;recommendedAnswerId:string|null;candidates:Match<T>[]} {
+export function classifyQuestion<T extends KnowledgeAnswer>(question:{question:string;instructions?:string;productId?:string|null;answerId?:string|null;preferredAnswerId?:string|null},answers:T[]):{classification:Classification;reason:string;recommendedAnswerId:string|null;candidates:Match<T>[]} {
  const ranked=rankApprovedKnowledge(question,answers,300),current=ranked.filter(answer=>answer.current),exact=current.filter(answer=>answer.matchKind==='EXACT');
  const conflicting=exact.length>1&&new Set(exact.map(answer=>normalQuestion(answer.answer))).size>1;
  const preferred=ranked.find(answer=>answer.id===question.preferredAnswerId&&answer.current),selected=ranked.find(answer=>answer.id===question.answerId),different=conflicting?exact.find(answer=>normalQuestion(answer.answer)!==normalQuestion(exact[0].answer)):undefined,expired=!current.length?ranked.find(answer=>answer.status==='APPROVED'&&answer.reason==='Answer has expired'):undefined;

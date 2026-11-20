@@ -142,6 +142,16 @@ enum ReviewStatus {
 }
 
 model User {
+ productsCreated CompanyProduct[] @relation("ProductCreator")
+ evidenceApplicabilitiesUpdated EvidenceApplicability[] @relation("EvidenceScopeUpdater")
+ qualityCasesCreated QualityCase[] @relation("QualityCreator")
+ qualityCasesOwned QualityCase[] @relation("QualityOwner")
+ qualityActionsCreated QualityAction[] @relation("QualityActionCreator")
+ qualityEffectivenessPrepared QualityEffectiveness[] @relation("QualityEffectivenessAuthor")
+ qualityEffectivenessDecided QualityEffectiveness[] @relation("QualityEffectivenessReviewer")
+ qualityOperations QualityOperation[] @relation("QualityOperationActor")
+ knowledgeIndexes KnowledgeIndexRun[]
+ knowledgeSearches KnowledgeSearchRun[]
  risksCreated RiskRecord[] @relation("RiskCreator")
  risksOwned RiskRecord[] @relation("RiskOwner")
  riskReviewsPrepared RiskReview[] @relation("RiskReviewAuthor")
@@ -214,6 +224,16 @@ model User {
 }
 
 model Organization {
+ products CompanyProduct[]
+ evidenceApplicabilities EvidenceApplicability[]
+ evidenceProductLinks EvidenceProductLink[]
+ qualityCases QualityCase[]
+ qualityActions QualityAction[]
+ qualityEffectiveness QualityEffectiveness[]
+ qualityOperations QualityOperation[]
+ knowledgeIndexes KnowledgeIndexRun[]
+ knowledgeChunks KnowledgeChunk[]
+ knowledgeSearches KnowledgeSearchRun[]
  risks RiskRecord[]
  riskControls RiskControl[]
  riskTreatments RiskTreatment[]
@@ -374,6 +394,7 @@ model Membership {
 }
 
 model Obligation {
+ qualityActions QualityAction[]
  riskTreatments RiskTreatment[]
  vendorSignalId String? @db.Uuid
  vendorSignal Vendor? @relation("VendorSignalTasks",fields:[vendorSignalId,organizationId],references:[id,organizationId],onDelete:Restrict)
@@ -418,6 +439,9 @@ model Obligation {
 }
 
 model Evidence {
+ productApplicability EvidenceApplicability?
+ knowledgeIndexes KnowledgeIndexRun[]
+ @@unique([id,organizationId])
   id             String       @id @default(uuid()) @db.Uuid
   organizationId String       @db.Uuid
   obligationId   String       @db.Uuid
@@ -1352,6 +1376,10 @@ model AccessReviewItem {
  @@index([campaignId,stage])
 }
 model AssuranceAnswer {
+ productId String? @db.Uuid
+ productContext Json?
+ product CompanyProduct? @relation(fields:[productId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ @@index([organizationId,productId,status])
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid
  createdById String @db.Uuid
@@ -1376,6 +1404,7 @@ model AssuranceAnswer {
  @@index([organizationId,status,scope])
 }
 model AssuranceQuestionnaire {
+ productContext Json?
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid
  createdById String @db.Uuid
@@ -1447,4 +1476,227 @@ model ConnectorControlLink {
  mappedBy User @relation(fields:[mappedById],references:[id],onDelete:Restrict)
  @@unique([connectorId,controlId])
  @@index([organizationId,controlId])
+}
+
+model QualityCase {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ createKey String @db.Uuid
+ createdById String @db.Uuid
+ ownerId String @db.Uuid
+ title String @db.VarChar(160)
+ kind String @db.VarChar(20)
+ classification String @db.VarChar(20)
+ description String @db.VarChar(2000)
+ impact String @db.VarChar(1600)
+ containment String @db.VarChar(1600)
+ occurredAt DateTime @db.Date
+ investigationNotes String @default("") @db.VarChar(3000)
+ rootCause String @default("") @db.VarChar(2000)
+ effectivenessCriteria String @default("") @db.VarChar(2000)
+ effectivenessDueAt DateTime? @db.Date
+ status String @default("INVESTIGATING") @db.VarChar(32)
+ version Int @default(1)
+ cycle Int @default(1)
+ recurrenceCount Int @default(0)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ createdBy User @relation("QualityCreator",fields:[createdById],references:[id],onDelete:Restrict)
+ owner User @relation("QualityOwner",fields:[ownerId],references:[id],onDelete:Restrict)
+ actions QualityAction[]
+ effectiveness QualityEffectiveness[]
+ operations QualityOperation[]
+ @@unique([id,organizationId])
+ @@unique([organizationId,createKey])
+ @@index([organizationId,status,effectivenessDueAt])
+}
+
+model QualityAction {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ caseId String @db.Uuid
+ cycle Int
+ obligationId String @db.Uuid
+ requestKey String @db.Uuid
+ kind String @db.VarChar(20)
+ purpose String @db.VarChar(1200)
+ createdById String @db.Uuid
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ qualityCase QualityCase @relation(fields:[caseId,organizationId],references:[id,organizationId],onDelete:Cascade)
+ obligation Obligation @relation(fields:[obligationId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ createdBy User @relation("QualityActionCreator",fields:[createdById],references:[id],onDelete:Restrict)
+ @@unique([caseId,requestKey])
+ @@unique([caseId,cycle,obligationId])
+ @@index([organizationId,obligationId])
+}
+
+model QualityEffectiveness {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ caseId String @db.Uuid
+ cycle Int
+ requestKey String @db.Uuid
+ authorId String @db.Uuid
+ reviewerId String? @db.Uuid
+ status String @default("PENDING") @db.VarChar(20)
+ version Int @default(1)
+ observedAt DateTime @db.Date
+ notes String @db.VarChar(2000)
+ evidenceManifest Json
+ context Json
+ contextHash String @db.VarChar(64)
+ proposalHash String @db.VarChar(64)
+ reviewNotes String @default("") @db.VarChar(1600)
+ reviewedAt DateTime?
+ decisionHash String? @db.VarChar(64)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ qualityCase QualityCase @relation(fields:[caseId,organizationId],references:[id,organizationId],onDelete:Cascade)
+ author User @relation("QualityEffectivenessAuthor",fields:[authorId],references:[id],onDelete:Restrict)
+ reviewer User? @relation("QualityEffectivenessReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+ @@unique([caseId,requestKey])
+ @@index([organizationId,caseId,createdAt])
+}
+
+model QualityOperation {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ actorId String @db.Uuid
+ requestKey String @db.Uuid
+ action String @db.VarChar(32)
+ caseId String @db.Uuid
+ requestHash String @db.VarChar(64)
+ result Json
+ resultHash String @db.VarChar(64)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ actor User @relation("QualityOperationActor",fields:[actorId],references:[id],onDelete:Restrict)
+ qualityCase QualityCase @relation(fields:[caseId,organizationId],references:[id,organizationId],onDelete:Cascade)
+ @@unique([organizationId,requestKey])
+ @@index([organizationId,caseId,createdAt])
+}
+
+model KnowledgeIndexRun {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ evidenceId String @db.Uuid
+ createdById String @db.Uuid
+ requestKey String @db.Uuid
+ requestHash String @db.VarChar(64)
+ inputHash String @db.VarChar(64)
+ engineVersion String @db.VarChar(80)
+ method String @db.VarChar(16)
+ model String? @db.VarChar(160)
+ status String @default("PROCESSING") @db.VarChar(16)
+ context Json
+ usage Json?
+ chunkCount Int @default(0)
+ chunksHash String? @db.VarChar(64)
+ dimensions Int?
+ failureCode String? @db.VarChar(80)
+ retryOfId String? @db.Uuid
+ expiresAt DateTime
+ createdAt DateTime @default(now())
+ updatedAt DateTime @default(now()) @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ evidence Evidence @relation(fields:[evidenceId,organizationId],references:[id,organizationId],onDelete:Cascade)
+ creator User @relation(fields:[createdById],references:[id],onDelete:Restrict)
+ chunks KnowledgeChunk[]
+ @@unique([id,organizationId])
+ @@unique([organizationId,requestKey])
+ @@index([organizationId,evidenceId,createdAt])
+ @@index([organizationId,inputHash,status])
+}
+model KnowledgeChunk {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ indexRunId String @db.Uuid
+ ordinal Int
+ unit Int
+ unitKind String @db.VarChar(8)
+ start Int
+ end Int
+ text String @db.Text
+ textHash String @db.VarChar(64)
+ vector Json?
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ indexRun KnowledgeIndexRun @relation(fields:[indexRunId,organizationId],references:[id,organizationId],onDelete:Cascade)
+ @@unique([organizationId,indexRunId,ordinal])
+}
+model KnowledgeSearchRun {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ createdById String @db.Uuid
+ requestKey String @db.Uuid
+ requestHash String @db.VarChar(64)
+ inputHash String @db.VarChar(64)
+ queryHash String @db.VarChar(64)
+ method String @db.VarChar(16)
+ model String? @db.VarChar(160)
+ status String @default("PROCESSING") @db.VarChar(16)
+ context Json
+ usage Json?
+ vector Json?
+ vectorHash String? @db.VarChar(64)
+ result Json?
+ resultHash String? @db.VarChar(64)
+ failureCode String? @db.VarChar(80)
+ expiresAt DateTime
+ createdAt DateTime @default(now())
+ updatedAt DateTime @default(now()) @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ creator User @relation(fields:[createdById],references:[id],onDelete:Restrict)
+ @@unique([organizationId,requestKey])
+ @@index([organizationId,inputHash,status])
+ @@index([organizationId,queryHash,model,status])
+ @@index([organizationId,createdAt])
+}
+
+model CompanyProduct {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ createdById String @db.Uuid
+ createKey String @db.Uuid
+ code String @db.VarChar(24)
+ name String @db.VarChar(100)
+ description String @default("") @db.VarChar(1200)
+ status String @default("ACTIVE") @db.VarChar(16)
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @default(now()) @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ creator User @relation("ProductCreator",fields:[createdById],references:[id],onDelete:Restrict)
+ evidenceLinks EvidenceProductLink[]
+ answers AssuranceAnswer[]
+ @@unique([id,organizationId])
+ @@unique([organizationId,code])
+ @@unique([organizationId,createKey])
+ @@index([organizationId,status,name])
+}
+model EvidenceApplicability {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ evidenceId String @db.Uuid
+ mode String @db.VarChar(16)
+ version Int @default(1)
+ updatedById String @db.Uuid
+ updatedAt DateTime @default(now()) @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ evidence Evidence @relation(fields:[evidenceId,organizationId],references:[id,organizationId],onDelete:Cascade)
+ updater User @relation("EvidenceScopeUpdater",fields:[updatedById],references:[id],onDelete:Restrict)
+ products EvidenceProductLink[]
+ @@unique([evidenceId,organizationId])
+ @@index([organizationId,mode])
+}
+model EvidenceProductLink {
+ organizationId String @db.Uuid
+ evidenceId String @db.Uuid
+ productId String @db.Uuid
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ applicability EvidenceApplicability @relation(fields:[evidenceId,organizationId],references:[evidenceId,organizationId],onDelete:Cascade)
+ product CompanyProduct @relation(fields:[productId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ @@id([evidenceId,productId])
+ @@index([organizationId,productId,evidenceId])
 }

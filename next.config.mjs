@@ -4,6 +4,9 @@ const pdfRuntime=["./lib/server/pdf-extraction-worker.mjs","./node_modules/pdfjs
 const config={
   serverExternalPackages:["pdfjs-dist"],
   outputFileTracingIncludes:{
+    "/api/workspace/knowledge":[...docxRuntime,...pdfRuntime],
+    "/api/workspace/knowledge/index":[...docxRuntime,...pdfRuntime],
+    "/api/workspace/knowledge/search":[...docxRuntime,...pdfRuntime],
     "/api/workspace/questionnaires/*/drafts":[...docxRuntime,...pdfRuntime],
     "/api/workspace/questionnaires/*/drafts/*":[...docxRuntime,...pdfRuntime],
     "/api/workspace/services":[...docxRuntime,...pdfRuntime],

@@ -1,9 +1,9 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
-import type {ImportMetadata,Mapping,Member,Request,Workbook,Write} from './types';
+import type {ImportMetadata,Mapping,Member,Product,Request,Workbook,Write} from './types';
 import css from './questionnaires.module.css';
 
-type Props={organizationId:string;members:Member[];request:Request;capture:()=>()=>boolean;write:Write;locked:boolean;onCreated:(id:string)=>Promise<void>};
+type Props={organizationId:string;members:Member[];products:Product[];request:Request;capture:()=>()=>boolean;write:Write;locked:boolean;onCreated:(id:string)=>Promise<void>};
 const letter=(number:number)=>{let text='';for(let n=number;n>0;n=Math.floor((n-1)/26))text=String.fromCharCode(65+(n-1)%26)+text;return text;};
 function suggestedMapping(sheet:Workbook['sheets'][number]):Mapping{
  const heading=sheet.rows.find(row=>row.number<=10&&row.cells.some(cell=>/^(question|question text|security question|requirement)$/i.test(cell.trim())))||sheet.rows[0];
@@ -18,12 +18,13 @@ function mappedRows(book:Workbook,mappings:Mapping[]){
   return sheet.rows.filter(row=>row.number!==mapping.headerRow&&row.number>=(mapping.firstRow||1)&&row.number<=(mapping.lastRow||Number.MAX_SAFE_INTEGER)&&!!row.cells[mapping.questionColumn-1]?.trim()).map(row=>({sheet:sheet.name,row:row.number,reference:mapping.referenceColumn?row.cells[mapping.referenceColumn-1]||'':'',question:row.cells[mapping.questionColumn-1].trim(),answer:mapping.answerColumn?row.cells[mapping.answerColumn-1]||'':'',context:mapping.contextColumns.map(column=>row.cells[column-1]||'').filter(Boolean).join(' · ')}));
  });
 }
-export function ImportPanel({organizationId,members,request,capture,write,locked,onCreated}:Props){
+export function ImportPanel({organizationId,members,products,request,capture,write,locked,onCreated}:Props){
  const [file,setFile]=useState<File|null>(null),[book,setBook]=useState<Workbook|null>(null),[mappings,setMappings]=useState<Mapping[]>([]),[inspecting,setInspecting]=useState(false),[error,setError]=useState(''),[confirmed,setConfirmed]=useState(false);
- const [metadata,setMetadata]=useState({title:'',recipient:'',scope:'UK business',ownerId:''});
+ const [metadata,setMetadata]=useState({title:'',recipient:'',scope:'UK business',ownerId:'',productIds:[] as string[]});
  const alive=useRef(true),sequence=useRef(0),key=useRef({payload:'',id:''});
  useEffect(()=>{alive.current=true;return()=>{alive.current=false;sequence.current++;};},[]);
  const rows=book?mappedRows(book,mappings):[];
+ const responseCount=rows.length*Math.max(1,metadata.productIds.length);
  const references=rows.map(row=>row.reference.trim()).filter(Boolean),duplicates=new Set(references).size!==references.length;
  const invalidRows=rows.some(row=>row.question.length<10||row.question.length>1200||row.reference.length>100||row.answer.length>6000||row.context.length>4000);
  const validMapping=mappings.every(mapping=>mapping.questionColumn>0&&(!mapping.referenceColumn||mapping.referenceColumn!==mapping.questionColumn)&&(!mapping.answerColumn||mapping.answerColumn!==mapping.questionColumn)&&(!mapping.firstRow||!mapping.lastRow||mapping.firstRow<=mapping.lastRow));
@@ -39,7 +40,7 @@ export function ImportPanel({organizationId,members,request,capture,write,locked
   finally{if(alive.current&&valid()&&serial===sequence.current)setInspecting(false);}
  }
  async function create(){
-  if(!file||!book||!confirmed||!rows.length||rows.length>100||duplicates||invalidRows||!validMapping)return;
+  if(!file||!book||!confirmed||!rows.length||responseCount>100||duplicates||invalidRows||!validMapping)return;
   const payload=JSON.stringify({metadata,mappings,sha256:book.sha256});if(key.current.payload!==payload)key.current={payload,id:crypto.randomUUID()};
   const requestKey=key.current.id,submitted:ImportMetadata={...metadata,requestKey,confirm:true},original=file,hash=book.sha256,savedMappings=mappings;
   await write({label:'Importing selected questions',run:async()=>{const body=new FormData();body.set('file',original);body.set('metadata',JSON.stringify(submitted));body.set('mapping',JSON.stringify(savedMappings));body.set('expectedSha256',hash);const response=await request('/api/workspace/questionnaires/import?'+new URLSearchParams({organizationId}),{method:'POST',body});if(!response?.id||!Number.isInteger(response.version))throw Error('The import acknowledgement was incomplete.');return response;},success:async result=>{setConfirmed(false);await onCreated(result.id);},message:'Your selected questions were imported. No answer has been confirmed or shared.',reconcile:async()=>{
@@ -64,9 +65,10 @@ export function ImportPanel({organizationId,members,request,capture,write,locked
    <div className={css.heading} style={{marginTop:24}}><h3>Preview selected questions</h3><span className={css.badge}>{rows.length} of 100 maximum</span></div>
    {!rows.length?<p className={css.empty}>Choose a sheet and the column containing its questions.</p>:<div className={css.tableWrap}><table className={css.table}><thead><tr><th>Source</th><th>Reference</th><th>Question</th><th>Customer context</th></tr></thead><tbody>{rows.slice(0,20).map((row,index)=><tr key={row.sheet+':'+row.row+':'+index}><td>{row.sheet}<br/>Row {row.row}</td><td>{row.reference||'Source row'}</td><td>{row.question}</td><td>{row.context||'—'}{row.answer&&<><br/><strong>Existing response:</strong> {row.answer}</>}</td></tr>)}</tbody></table></div>}
    {rows.length>20&&<p className={css.muted}>Showing the first 20 selected questions. All {rows.length} selected questions will be imported in sheet and row order.</p>}
-   {(rows.length>100||duplicates||invalidRows||!validMapping)&&<p className={css.warning} role="alert">{rows.length>100?'Select at most 100 questions. ':''}{duplicates?'The chosen references include duplicates. Choose a different reference column or narrow the range. ':''}{invalidRows?'Some selected values exceed the import limits: questions 10–1,200 characters, references up to 100, context up to 4,000 and existing responses up to 6,000. ':''}{!validMapping?'Check that the selected columns and row ranges are distinct and valid.':''}</p>}
+   {(responseCount>100||duplicates||invalidRows||!validMapping)&&<p className={css.warning} role="alert">{responseCount>100?'Select at most 100 responses across the chosen products. ':''}{duplicates?'The chosen references include duplicates. Choose a different reference column or narrow the range. ':''}{invalidRows?'Some selected values exceed the import limits: questions 10–1,200 characters, references up to 100, context up to 4,000 and existing responses up to 6,000. ':''}{!validMapping?'Check that the selected columns and row ranges are distinct and valid.':''}</p>}
    <div className={css.formGrid}><label>Questionnaire name<input required minLength={3} maxLength={160} value={metadata.title} onChange={event=>{setMetadata({...metadata,title:event.target.value});setConfirmed(false);}}/></label><label>Prepared for<input required minLength={2} maxLength={160} value={metadata.recipient} onChange={event=>{setMetadata({...metadata,recipient:event.target.value});setConfirmed(false);}} placeholder="Customer or reviewer"/></label><label>Response scope<input required minLength={2} maxLength={120} value={metadata.scope} onChange={event=>{setMetadata({...metadata,scope:event.target.value});setConfirmed(false);}}/></label><label>Initial question owner<select aria-label="Initial question owner" required value={metadata.ownerId} onChange={event=>{setMetadata({...metadata,ownerId:event.target.value});setConfirmed(false);}}><option value="">Choose a colleague</option>{members.map(member=><option key={member.user.id} value={member.user.id}>{member.user.email}</option>)}</select></label></div>
-   <label className={css.check}><input type="checkbox" required checked={confirmed} onChange={event=>setConfirmed(event.target.checked)}/>I checked the selected questions, customer context, recipient and response scope.</label><button disabled={!confirmed||!rows.length||rows.length>100||duplicates||invalidRows||!validMapping}>Import {rows.length} questions</button>
+   <fieldset className={css.fieldset}><legend>Products covered by this questionnaire</legend><p className={css.muted}>Select up to 10 products to prepare one distinct response per question and product. Leave all unchecked for a general questionnaire. Global answers must be deliberately approved for all products before reuse.</p>{products.map(product=><label className={css.check} key={product.id}><input type="checkbox" aria-label={'Questionnaire product '+product.name} checked={metadata.productIds.includes(product.id)} disabled={!metadata.productIds.includes(product.id)&&metadata.productIds.length>=10} onChange={event=>{setMetadata(previous=>({...previous,productIds:event.target.checked?[...previous.productIds,product.id]:previous.productIds.filter(id=>id!==product.id)}));setConfirmed(false);}}/>{product.name} · {product.code}</label>)}{!products.length&&<p className={css.muted}>Create company products in Products and evidence to prepare a product questionnaire.</p>}<p aria-live="polite">{rows.length} source questions · {metadata.productIds.length||1} response scope{metadata.productIds.length>1?'s':''} · {responseCount} of 100 response rows</p></fieldset>
+   <label className={css.check}><input type="checkbox" required checked={confirmed} onChange={event=>setConfirmed(event.target.checked)}/>I checked the selected questions, customer context, recipient and response scope.</label><button disabled={!confirmed||!rows.length||responseCount>100||duplicates||invalidRows||!validMapping}>Import {rows.length} questions</button>
   </fieldset></form>}
  </section>;
 }

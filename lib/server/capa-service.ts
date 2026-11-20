@@ -1,0 +1,200 @@
+import {Prisma,type QualityCase,type QualityEffectiveness} from '@prisma/client';
+import {z} from 'zod';
+import {db} from './db';
+import type {AuthorizedContext} from './authorization';
+import {IntelligenceError,transaction} from './intelligence-service';
+import {requireMember,ADMIN,WRITER} from './workspace-member';
+import {allowedEmail} from '../ai/security.mjs';
+import {hashValue} from '../regulatory/intelligence';
+import {reviewedFiles,reviewedFilesSchema,verifyReviewedBytes,futureDate,type ReviewedFile} from './reviewed-files';
+import type {EvidenceObjectStore} from './evidence-storage';
+import {completionTaskRecord,completionContext,savedCompletion,completionProofSnapshot,completionParticipants} from './work-completion-service';
+import {qualityCreateSchema,qualityInvestigationSchema,qualityActionSchema,qualityEffectivenessSchema,qualityDecisionSchema,qualityReopenSchema,qualityQuerySchema,qualityDue,qualityCanClose,QUALITY_LIMIT,QUALITY_PAGE_SIZE,QUALITY_SCOPE,type QualityQuery} from '../capa';
+
+type Tx=Prisma.TransactionClient;
+const json=(value:unknown)=>JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+const wire=<T>(value:T):T=>JSON.parse(JSON.stringify(value));
+const href=(path:string,org:string,values:Record<string,string>={})=>path+'?'+new URLSearchParams({organizationId:org,...values});
+const literal=(value:string)=>value.replace(/[\\%_]/g,'\\$&');
+const receiptSchema=z.object({id:z.uuid(),caseId:z.uuid(),version:z.number().int().positive(),caseVersion:z.number().int().positive(),status:z.string(),cycle:z.number().int().positive(),taskId:z.uuid().optional()}).strict();
+type Receipt=z.infer<typeof receiptSchema>;
+function parse<T>(schema:z.ZodType<T>,input:unknown):T{const result=schema.safeParse(input);if(!result.success)throw new IntelligenceError('Check the required quality case fields, dates and selected records');return result.data;}
+function identifier(value:string){if(!z.uuid().safeParse(value).success)throw new IntelligenceError('Invalid quality record identifier');}
+function pastDate(value:string){if(!z.iso.date().safeParse(value).success||value>'9999-12-31'||value< '1970-01-01'||value>new Date().toISOString().slice(0,10))throw new IntelligenceError('Choose a valid occurrence or observation date up to today');return new Date(value);}
+async function record(tx:Tx,ctx:AuthorizedContext,id:string){identifier(id);const row=await tx.qualityCase.findFirst({where:{id,organizationId:ctx.organizationId}});if(!row)throw new IntelligenceError('Quality case not found in this organisation',404);return row;}
+async function editor(tx:Tx,ctx:AuthorizedContext,row:QualityCase){const person=await requireMember(tx,ctx,WRITER);if(!ADMIN.includes(person.role)&&row.ownerId!==ctx.userId&&row.createdById!==ctx.userId)throw new IntelligenceError('The case owner or an administrator must make this change',403);return person;}
+async function owner(tx:Tx,ctx:AuthorizedContext,id:string){const people=await completionParticipants(tx,ctx,[id]);if(!people.some(p=>p.id===id&&p.approved&&WRITER.includes(p.role)))throw new IntelligenceError('Choose a current member who can own this work',409);return (await tx.user.findUniqueOrThrow({where:{id},select:{email:true}})).email;}
+function unchanged(row:QualityCase,version:number,closed=false){if(row.version!==version)throw new IntelligenceError('This case changed. Refresh its saved state before continuing.',409);if(!closed&&row.status==='CLOSED')throw new IntelligenceError('Reopen this case before changing its investigation or actions',409);}
+function result(row:QualityCase):Receipt{return {id:row.id,caseId:row.id,version:row.version,caseVersion:row.version,status:row.status,cycle:row.cycle};}
+const requestHash=(ctx:AuthorizedContext,action:string,caseId:string|null,data:unknown)=>hashValue({actorId:ctx.userId,organizationId:ctx.organizationId,action,caseId,data});
+async function replay(tx:Tx,ctx:AuthorizedContext,key:string,action:string,caseId:string|null,hash:string){
+ const prior=await tx.qualityOperation.findUnique({where:{organizationId_requestKey:{organizationId:ctx.organizationId,requestKey:key}}});
+ if(!prior)return null;
+ if(prior.actorId!==ctx.userId||prior.action!==action||caseId&&prior.caseId!==caseId||prior.requestHash!==hash)throw new IntelligenceError('This request identity was already used for different quality case details',409);
+ const parsed=receiptSchema.safeParse(prior.result);if(!parsed.success||hashValue(prior.result)!==prior.resultHash||parsed.data.caseId!==prior.caseId)throw new IntelligenceError('The saved operation receipt is unavailable',409);
+ return {...parsed.data,reused:true};
+}
+async function remember(tx:Tx,ctx:AuthorizedContext,key:string,action:string,hash:string,value:Receipt){await tx.qualityOperation.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,requestKey:key,action,caseId:value.caseId,requestHash:hash,result:json(value),resultHash:hashValue(value)}});return {...value,reused:false};}
+async function event(tx:Tx,ctx:AuthorizedContext,action:string,id:string,details:unknown){await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:'quality.'+action,entityType:'QualityCase',entityId:id,details:json(details)}});}
+async function supersede(tx:Tx,ctx:AuthorizedContext,id:string){await tx.qualityEffectiveness.updateMany({where:{organizationId:ctx.organizationId,caseId:id,status:'PENDING'},data:{status:'SUPERSEDED',version:{increment:1}}});}
+function caseBasis(row:QualityCase){return {id:row.id,createdById:row.createdById,ownerId:row.ownerId,title:row.title,kind:row.kind,classification:row.classification,description:row.description,impact:row.impact,containment:row.containment,occurredAt:row.occurredAt,investigationNotes:row.investigationNotes,rootCause:row.rootCause,effectivenessCriteria:row.effectivenessCriteria,effectivenessDueAt:row.effectivenessDueAt,cycle:row.cycle,recurrenceCount:row.recurrenceCount};}
+
+export async function createQualityCase(ctx:AuthorizedContext,input:unknown){
+ const data=parse(qualityCreateSchema,input),occurredAt=pastDate(data.occurredAt),hash=requestHash(ctx,'CREATE',null,data);
+ return transaction(ctx,async tx=>{await requireMember(tx,ctx,WRITER);const prior=await replay(tx,ctx,data.requestKey,'CREATE',null,hash);if(prior)return prior;
+  if(await tx.qualityCase.count({where:{organizationId:ctx.organizationId,status:{not:'CLOSED'}}})>=QUALITY_LIMIT)throw new IntelligenceError('This workspace has reached its 200-active-case quality pilot limit',409);
+  await owner(tx,ctx,data.ownerId);const {requestKey,...fields}=data;
+  const row=await tx.qualityCase.create({data:{...fields,occurredAt,organizationId:ctx.organizationId,createdById:ctx.userId,createKey:requestKey}});
+  await event(tx,ctx,'created',row.id,{case:caseBasis(row),version:row.version,scope:QUALITY_SCOPE});return remember(tx,ctx,requestKey,'CREATE',hash,result(row));
+ });
+}
+export async function investigateQualityCase(ctx:AuthorizedContext,id:string,input:unknown){
+ const data=parse(qualityInvestigationSchema,input),hash=requestHash(ctx,'INVESTIGATE',id,data);
+ return transaction(ctx,async tx=>{const row=await record(tx,ctx,id);await editor(tx,ctx,row);const prior=await replay(tx,ctx,data.requestKey,'INVESTIGATE',id,hash);if(prior)return prior;unchanged(row,data.version);await owner(tx,ctx,data.ownerId);
+  const {requestKey,version,...fields}=data,effectivenessDueAt=futureDate(data.effectivenessDueAt);await supersede(tx,ctx,id);const saved=await tx.qualityCase.update({where:{id,organizationId:ctx.organizationId},data:{...fields,effectivenessDueAt,status:'ACTIONS_OPEN',version:{increment:1}}});
+  await event(tx,ctx,'investigated',id,{previous:caseBasis(row),current:caseBasis(saved),version:saved.version});return remember(tx,ctx,requestKey,'INVESTIGATE',hash,result(saved));
+ });
+}
+export async function addQualityAction(ctx:AuthorizedContext,id:string,input:unknown){
+ const data=parse(qualityActionSchema,input),hash=requestHash(ctx,'ADD_ACTION',id,data);
+ return transaction(ctx,async tx=>{const row=await record(tx,ctx,id);await editor(tx,ctx,row);const prior=await replay(tx,ctx,data.requestKey,'ADD_ACTION',id,hash);if(prior)return prior;unchanged(row,data.version);
+  if(await tx.qualityAction.count({where:{organizationId:ctx.organizationId,caseId:id,cycle:row.cycle}})>=10)throw new IntelligenceError('Keep each quality cycle to at most ten owned actions',409);
+  const dueDate=data.dueDate?futureDate(data.dueDate):null;let task;
+  if(data.taskId){task=await completionTaskRecord(tx,ctx,data.taskId);if(task.changeAction||task.auditRequest||task.accessItem||task.completionException)throw new IntelligenceError('Choose an ordinary task with the standard reviewed-evidence completion workflow',409);if(!task.assigneeId)throw new IntelligenceError('Assign a current task owner before linking an action',409);await owner(tx,ctx,task.assigneeId);}
+  else{const ownerName=await owner(tx,ctx,data.ownerId!);task=await tx.obligation.create({data:{organizationId:ctx.organizationId,title:data.title!,category:'Quality '+data.kind.toLowerCase(),ownerName,assigneeId:data.ownerId!,dueDate:dueDate!,notes:data.purpose,automationKey:hashValue({kind:'quality-action',caseId:id,requestKey:data.requestKey})}});}
+  if(await tx.qualityAction.findFirst({where:{organizationId:ctx.organizationId,caseId:id,cycle:row.cycle,obligationId:task.id}}))throw new IntelligenceError('This task is already linked in the current investigation cycle',409);
+  const action=await tx.qualityAction.create({data:{organizationId:ctx.organizationId,caseId:id,cycle:row.cycle,obligationId:task.id,requestKey:data.requestKey,kind:data.kind,purpose:data.purpose,createdById:ctx.userId}});
+  await supersede(tx,ctx,id);const saved=await tx.qualityCase.update({where:{id,organizationId:ctx.organizationId},data:{status:row.rootCause?'ACTIONS_OPEN':row.status,version:{increment:1}}});
+  await event(tx,ctx,'action_added',id,{cycle:row.cycle,actionId:action.id,taskId:task.id,kind:data.kind,purpose:data.purpose,version:saved.version});return remember(tx,ctx,data.requestKey,'ADD_ACTION',hash,{...result(saved),id:action.id,taskId:task.id});
+ });
+}
+
+function stableProof(proof:{source:unknown;control:unknown;assessment:unknown;evidence:unknown}){const source=proof.source as Record<string,unknown>|null;return wire({source:source?{...source,lastCheckedAt:undefined}:null,control:proof.control,assessment:proof.assessment,evidence:proof.evidence});}
+async function basis(tx:Tx,ctx:AuthorizedContext,row:QualityCase,evidenceIds:string[],authorId=row.ownerId){
+ const blockers:string[]=[],actions=await tx.qualityAction.findMany({where:{organizationId:ctx.organizationId,caseId:row.id,cycle:row.cycle},orderBy:{id:'asc'}});
+ if(actions.length>10)throw new IntelligenceError('This cycle exceeds the reviewed action limit',409);
+ if(!row.rootCause||!row.investigationNotes||!row.effectivenessCriteria||!row.effectivenessDueAt)blockers.push('Complete the investigation, root cause and measurable effectiveness plan first.');
+ if(!actions.some(action=>action.kind!=='CONTAINMENT'))blockers.push('Record at least one corrective or preventive action for this cycle.');
+ const participants=await completionParticipants(tx,ctx,[row.ownerId,row.createdById,authorId,...actions.map(action=>action.createdById)]);
+ if(!participants.some(person=>person.id===row.ownerId&&person.approved&&WRITER.includes(person.role)))blockers.push('The case needs a current owner who can carry out this work.');
+ if(!participants.some(person=>person.id===authorId&&person.approved&&WRITER.includes(person.role)))blockers.push('The effectiveness author no longer has the required access.');
+ const tasks=[],verification=new Map<string,ReviewedFile>();
+ for(const action of actions){
+  const task=await completionTaskRecord(tx,ctx,action.obligationId),saved=await savedCompletion(tx,ctx,task),current=await completionContext(tx,ctx,task,'EDITOR',true);
+  let reason=task.status!=='COMPLETE'?'Complete this action with reviewed evidence.':task.completionException?'An exception cannot serve as completed corrective or preventive action.':!saved?'This task has no verified completion receipt.':current.blockers[0]?.message||'';
+  const files=saved?current.evidence.filter(file=>saved.receipt.evidence.some(proof=>proof.id===file.id&&proof.sha256===file.sha256&&proof.reviewVersion===file.reviewVersion)):[];
+  if(saved&&!reason&&files.length!==saved.receipt.evidence.length)reason='The action evidence no longer matches its completion receipt.';
+  const proof=saved&&!reason?completionProofSnapshot(current,files):null;
+  if(saved&&proof&&!reason){const recorded=saved.receipt,currentTask={id:task.id,title:task.title,category:task.category,ownerName:task.ownerName,assigneeId:task.assigneeId,dueDate:task.dueDate.toISOString().slice(0,10)},recordedTask={id:recorded.task.id,title:recorded.task.title,category:recorded.task.category,ownerName:recorded.task.ownerName,assigneeId:recorded.task.assigneeId,dueDate:recorded.task.dueDate};if(hashValue(currentTask)!==hashValue(recordedTask)||hashValue(stableProof(proof))!==hashValue(stableProof(recorded)))reason='The action or reviewed basis changed after completion. Reopen and complete it against current evidence.';}
+  if(!task.assigneeId||!(await completionParticipants(tx,ctx,[task.assigneeId])).some(person=>person.id===task.assigneeId&&person.approved&&WRITER.includes(person.role)))reason='The action needs a current eligible owner.';
+  if(reason)blockers.push(task.title+': '+reason);else for(const file of await reviewedFiles(tx,ctx.organizationId,files.map(file=>file.id)))verification.set(file.id,file);
+  tasks.push({id:action.id,kind:action.kind,purpose:action.purpose,cycle:action.cycle,createdById:action.createdById,task:{id:task.id,title:task.title,status:task.status,ownerName:task.ownerName,assigneeId:task.assigneeId,dueDate:task.dueDate,completedAt:task.completedAt,updatedAt:task.updatedAt,href:href('/team/work',ctx.organizationId,{taskId:task.id})},completion:{recorded:!!saved,current:!reason,reason:reason||null,eventId:saved?.eventId||null},proof:proof&&!reason?{...stableProof(proof),participants:current.participants}:null});
+ }
+ let files:ReviewedFile[]=[];try{files=await reviewedFiles(tx,ctx.organizationId,evidenceIds);}catch(error){blockers.push(error instanceof IntelligenceError?error.message:'Selected evidence is unavailable.');}
+ for(const file of files)verification.set(file.id,file);
+ const filePeople=await completionParticipants(tx,ctx,[...verification.values()].flatMap(file=>[file.uploadedById,file.reviewerId]));
+ if([...verification.values()].some(file=>!filePeople.some(p=>p.id===file.uploadedById&&p.approved&&WRITER.includes(p.role))||!filePeople.some(p=>p.id===file.reviewerId&&p.approved&&ADMIN.includes(p.role))))blockers.push('A supporting file uploader or reviewer no longer has the required access.');
+ if(verification.size>30)blockers.push('This cycle exceeds thirty unique supporting files. Split the action scope before reviewing.');
+ const snapshot=wire({format:'regpilot-quality-effectiveness-context',version:1,case:caseBasis(row),actions:tasks,evidence:files,participants,fileParticipants:filePeople});
+ return {blockers,actions:tasks,files,verification:[...verification.values()],snapshot,hash:hashValue(snapshot)};
+}
+function proposalHash(row:QualityEffectiveness){return hashValue({id:row.id,organizationId:row.organizationId,caseId:row.caseId,cycle:row.cycle,requestKey:row.requestKey,authorId:row.authorId,observedAt:row.observedAt.toISOString().slice(0,10),notes:row.notes,evidence:row.evidenceManifest,contextHash:row.contextHash});}
+function decisionHash(row:QualityEffectiveness){return hashValue({id:row.id,proposalHash:row.proposalHash,reviewerId:row.reviewerId,status:row.status,reviewNotes:row.reviewNotes,reviewedAt:row.reviewedAt?.toISOString()});}
+async function reviewState(tx:Tx,ctx:AuthorizedContext,row:QualityCase,review:QualityEffectiveness){
+ const no=(reason:string)=>({current:false,reason});
+ if(review.cycle!==row.cycle||review.status==='SUPERSEDED'||review.status==='FAILED')return no('Historical cycle or superseded assessment. A fresh investigation and effectiveness decision are required.');
+ if(review.status==='PASSED'&&row.status!=='CLOSED')return no('The case has reopened since this decision.');
+ const files=reviewedFilesSchema.safeParse(review.evidenceManifest);if(!files.success||!files.data.length||proposalHash(review)!==review.proposalHash||hashValue(review.context)!==review.contextHash)return no('The recorded assessment did not pass its integrity check.');
+ if(review.status==='PASSED'){
+  const reviewers=review.reviewerId?await completionParticipants(tx,ctx,[review.reviewerId]):[];
+  if(!review.reviewerId||review.reviewerId===review.authorId||!reviewers.some(p=>p.id===review.reviewerId&&p.approved&&ADMIN.includes(p.role))||decisionHash(review)!==review.decisionHash)return no('The recorded decision or the independent reviewer’s current access is unavailable.');
+ }
+ const current=await basis(tx,ctx,row,files.data.map(file=>file.id),review.authorId);
+ if(current.blockers.length)return no(current.blockers[0]);if(current.hash!==review.contextHash)return no('The investigation, action evidence or responsible people changed after this assessment.');
+ return {current:true,reason:'The recorded assessment matches the current investigation, actions and reviewed evidence metadata.'};
+}
+function independent(ctx:AuthorizedContext,row:QualityCase,review:QualityEffectiveness,current:Awaited<ReturnType<typeof basis>>){
+ if([row.ownerId,row.createdById,review.authorId,...current.actions.flatMap(action=>[action.createdById,action.task.assigneeId])].includes(ctx.userId)||current.verification.some(file=>file.uploadedById===ctx.userId))throw new IntelligenceError('A different administrator who did not own or prepare this case, its actions or supporting files must decide effectiveness',403);
+}
+
+export async function prepareQualityEffectiveness(ctx:AuthorizedContext,id:string,input:unknown,deps:{storage?:EvidenceObjectStore}={}){
+ const data=parse(qualityEffectivenessSchema,input),observedAt=pastDate(data.observedAt),hash=requestHash(ctx,'PREPARE_EFFECTIVENESS',id,data);
+ async function inspect(tx:Tx){const row=await record(tx,ctx,id);await editor(tx,ctx,row);const prior=await replay(tx,ctx,data.requestKey,'PREPARE_EFFECTIVENESS',id,hash);if(prior)return {row,prior,current:null};unchanged(row,data.version);
+  if(await tx.qualityEffectiveness.count({where:{organizationId:ctx.organizationId,caseId:id}})>=40)throw new IntelligenceError('This case reached its forty-assessment history limit',409);
+  if(observedAt<row.occurredAt)throw new IntelligenceError('The effectiveness observation cannot precede the occurrence',409);
+  const current=await basis(tx,ctx,row,data.evidenceIds,ctx.userId);if(current.blockers.length)throw new IntelligenceError(current.blockers[0],409);
+  if(current.actions.some(action=>action.task.completedAt&&data.observedAt<action.task.completedAt.toISOString().slice(0,10)))throw new IntelligenceError('Observe effectiveness after all action completion dates',409);
+  return {row,prior:null,current};
+ }
+ const before=await transaction(ctx,inspect);if(before.prior)return before.prior;await verifyReviewedBytes(ctx,before.current!.verification,deps.storage);
+ return transaction(ctx,async tx=>{const fresh=await inspect(tx);if(fresh.prior)return fresh.prior;if(fresh.current!.hash!==before.current!.hash)throw new IntelligenceError('The case evidence changed during verification. Refresh before submitting.',409);
+  await supersede(tx,ctx,id);let review=await tx.qualityEffectiveness.create({data:{organizationId:ctx.organizationId,caseId:id,cycle:fresh.row.cycle,requestKey:data.requestKey,authorId:ctx.userId,observedAt,notes:data.notes,evidenceManifest:json(fresh.current!.files),context:json(fresh.current!.snapshot),contextHash:fresh.current!.hash,proposalHash:'0'.repeat(64)}});
+  review=await tx.qualityEffectiveness.update({where:{id:review.id,organizationId:ctx.organizationId},data:{proposalHash:proposalHash(review)}});
+  const saved=await tx.qualityCase.update({where:{id,organizationId:ctx.organizationId},data:{status:'EFFECTIVENESS_DUE',version:{increment:1}}});
+  await event(tx,ctx,'effectiveness_prepared',id,{cycle:saved.cycle,reviewId:review.id,observedAt:data.observedAt,notes:data.notes,evidenceIds:data.evidenceIds,version:saved.version});
+  return remember(tx,ctx,data.requestKey,'PREPARE_EFFECTIVENESS',hash,{...result(saved),id:review.id,version:review.version,status:review.status});
+ });
+}
+export async function decideQualityEffectiveness(ctx:AuthorizedContext,id:string,input:unknown,deps:{storage?:EvidenceObjectStore}={}){
+ identifier(id);const data=parse(qualityDecisionSchema,input);
+ async function inspect(tx:Tx){await requireMember(tx,ctx,ADMIN);const review=await tx.qualityEffectiveness.findFirst({where:{id,organizationId:ctx.organizationId}});if(!review)throw new IntelligenceError('Effectiveness assessment not found in this organisation',404);
+  const row=await record(tx,ctx,review.caseId),hash=requestHash(ctx,'DECIDE_EFFECTIVENESS',row.id,{...data,reviewId:id}),prior=await replay(tx,ctx,data.requestKey,'DECIDE_EFFECTIVENESS',row.id,hash);if(prior)return {row,review,hash,prior,current:null};
+  unchanged(row,data.caseVersion);if(review.status!=='PENDING'||review.version!==data.version||review.cycle!==row.cycle)throw new IntelligenceError('The effectiveness assessment changed or was already decided',409);
+  const state=await reviewState(tx,ctx,row,review);if(!state.current)throw new IntelligenceError(state.reason,409);
+  const files=reviewedFilesSchema.parse(review.evidenceManifest),current=await basis(tx,ctx,row,files.map(file=>file.id),review.authorId);independent(ctx,row,review,current);
+  if(data.decision==='PASSED'&&!qualityCanClose(review.observedAt.toISOString().slice(0,10),row.effectivenessDueAt?.toISOString()||null))throw new IntelligenceError('The planned effectiveness observation date has not been met. Record a later observation before closing.',409);
+  return {row,review,hash,prior:null,current};
+ }
+ const before=await transaction(ctx,inspect);if(before.prior)return before.prior;await verifyReviewedBytes(ctx,before.current!.verification,deps.storage);
+ return transaction(ctx,async tx=>{const fresh=await inspect(tx);if(fresh.prior)return fresh.prior;if(fresh.current!.hash!==before.current!.hash)throw new IntelligenceError('Case evidence changed during the decision. Refresh before deciding.',409);
+  let review=await tx.qualityEffectiveness.update({where:{id,organizationId:ctx.organizationId},data:{status:data.decision,reviewerId:ctx.userId,reviewedAt:new Date(),reviewNotes:data.notes,version:{increment:1}}});
+  review=await tx.qualityEffectiveness.update({where:{id,organizationId:ctx.organizationId},data:{decisionHash:decisionHash(review)}});
+  const failed=data.decision==='FAILED',saved=await tx.qualityCase.update({where:{id:fresh.row.id,organizationId:ctx.organizationId},data:{status:failed?'REOPENED':'CLOSED',...(failed?{cycle:{increment:1},investigationNotes:'',rootCause:'',effectivenessCriteria:'',effectivenessDueAt:null}:{}),version:{increment:1}}});
+  await event(tx,ctx,'effectiveness_decided',saved.id,{reviewId:id,cycle:review.cycle,nextCycle:saved.cycle,decision:data.decision,notes:data.notes,reviewerId:ctx.userId,previous:caseBasis(fresh.row),version:saved.version});
+  return remember(tx,ctx,data.requestKey,'DECIDE_EFFECTIVENESS',fresh.hash,{...result(saved),id,version:review.version,status:review.status});
+ });
+}
+export async function reopenQualityCase(ctx:AuthorizedContext,id:string,input:unknown){
+ const data=parse(qualityReopenSchema,input),occurredAt=pastDate(data.occurredAt),hash=requestHash(ctx,'REOPEN',id,data);
+ return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const row=await record(tx,ctx,id),prior=await replay(tx,ctx,data.requestKey,'REOPEN',id,hash);if(prior)return prior;unchanged(row,data.version,true);
+  if(row.status!=='CLOSED'&&data.reason==='REASSESSMENT')throw new IntelligenceError('Only a closed case can be reopened for reassessment',409);
+  if(row.status==='CLOSED'&&await tx.qualityCase.count({where:{organizationId:ctx.organizationId,status:{not:'CLOSED'}}})>=QUALITY_LIMIT)throw new IntelligenceError('This workspace has reached its 200-active-case quality pilot limit',409);
+  if(occurredAt<row.occurredAt)throw new IntelligenceError('The new occurrence cannot precede the recorded occurrence',409);
+  if(row.cycle>=40)throw new IntelligenceError('This case reached its forty-cycle history limit',409);
+  await supersede(tx,ctx,id);const saved=await tx.qualityCase.update({where:{id,organizationId:ctx.organizationId},data:{status:'REOPENED',cycle:{increment:1},recurrenceCount:{increment:data.reason==='RECURRENCE'?1:0},occurredAt,impact:data.impact,containment:data.containment,investigationNotes:'',rootCause:'',effectivenessCriteria:'',effectivenessDueAt:null,version:{increment:1}}});
+  await event(tx,ctx,'reopened',id,{reason:data.reason,notes:data.notes,previous:caseBasis(row),current:caseBasis(saved),version:saved.version});return remember(tx,ctx,data.requestKey,'REOPEN',hash,result(saved));
+ });
+}
+
+export async function qualityWorkspace(ctx:AuthorizedContext,input:Partial<QualityQuery>={}){
+ const query=parse(qualityQuerySchema,input);
+ const output=await transaction(ctx,async tx=>{
+  const actor=await requireMember(tx,ctx),base={organizationId:ctx.organizationId},today=new Date(new Date().toISOString().slice(0,10)),where:Prisma.QualityCaseWhereInput={...base};
+  if(query.status==='closed')where.status='CLOSED';else if(query.status==='reopened')where.status='REOPENED';else if(query.status!=='all'){where.status={not:'CLOSED'};if(query.status==='due')where.effectivenessDueAt={lte:today};if(query.status==='overdue')where.effectivenessDueAt={lt:today};}
+  if(query.q)where.OR=[{title:{contains:literal(query.q),mode:'insensitive'}},{description:{contains:literal(query.q),mode:'insensitive'}},{rootCause:{contains:literal(query.q),mode:'insensitive'}}];
+  let recovery:null|{requestKey:string;found:boolean;receipt:Receipt|null;action:string|null}=null;
+  if(query.requestKey){const operation=await tx.qualityOperation.findUnique({where:{organizationId_requestKey:{organizationId:ctx.organizationId,requestKey:query.requestKey}}});
+   if(operation){if(operation.actorId!==ctx.userId)throw new IntelligenceError('This operation receipt belongs to another member',403);if(query.caseId&&query.caseId!==operation.caseId)throw new IntelligenceError('The operation does not match the linked case',409);const row=await record(tx,ctx,operation.caseId);if(['DECIDE_EFFECTIVENESS','REOPEN'].includes(operation.action))await requireMember(tx,ctx,ADMIN);else if(operation.action==='CREATE')await requireMember(tx,ctx,WRITER);else await editor(tx,ctx,row);const receipt=receiptSchema.safeParse(operation.result);if(!receipt.success||receipt.data.caseId!==operation.caseId||hashValue(operation.result)!==operation.resultHash)throw new IntelligenceError('The exact saved receipt could not be verified',409);recovery={requestKey:query.requestKey,found:true,receipt:receipt.data,action:operation.action};}
+   else recovery={requestKey:query.requestKey,found:false,receipt:null,action:null};
+  }
+  const [total,groups,due,overdue,recurrences,memberRows,fileRows]=await Promise.all([tx.qualityCase.count({where}),tx.qualityCase.groupBy({by:['status'],where:base,_count:{_all:true}}),tx.qualityCase.count({where:{...base,status:{not:'CLOSED'},effectivenessDueAt:{lte:today}}}),tx.qualityCase.count({where:{...base,status:{not:'CLOSED'},effectivenessDueAt:{lt:today}}}),tx.qualityCase.count({where:{...base,recurrenceCount:{gt:0}}}),tx.membership.findMany({where:{...base,role:{in:['OWNER','ADMIN','EDITOR']}},orderBy:{userId:'asc'},take:201,select:{role:true,user:{select:{id:true,email:true}}}}),tx.evidence.findMany({where:{...base,scanStatus:'CLEAN',reviewStatus:'APPROVED'},orderBy:[{createdAt:'desc'},{id:'desc'}],take:121,select:{id:true,filename:true,sha256:true,reviewVersion:true}})]);
+  const pages=Math.max(1,Math.ceil(total/QUALITY_PAGE_SIZE)),page=Math.min(query.page,pages),rows=await tx.qualityCase.findMany({where,orderBy:[{effectivenessDueAt:'asc'},{updatedAt:'desc'},{id:'asc'}],skip:(page-1)*QUALITY_PAGE_SIZE,take:QUALITY_PAGE_SIZE,include:{owner:{select:{email:true}},_count:{select:{actions:true}}}}),summary={all:0,open:0,closed:0,reopened:0,due,overdue,recurrences};
+  for(const group of groups){summary.all+=group._count._all;if(group.status==='CLOSED')summary.closed+=group._count._all;else summary.open+=group._count._all;if(group.status==='REOPENED')summary.reopened+=group._count._all;}
+  const selectedId=query.caseId||recovery?.receipt?.caseId;let selected=null;
+  if(selectedId){
+   const row=await record(tx,ctx,selectedId),current=await basis(tx,ctx,row,[]),reviews=await tx.qualityEffectiveness.findMany({where:{...base,caseId:selectedId},orderBy:[{createdAt:'desc'},{id:'desc'}],take:40}),reviewViews=[];
+   for(const [index,review] of reviews.entries()){const state=index===0?await reviewState(tx,ctx,row,review):{current:false,reason:'Historical assessment; a newer assessment is recorded.'},files=reviewedFilesSchema.safeParse(review.evidenceManifest);reviewViews.push({id:review.id,cycle:review.cycle,version:review.version,status:review.status,authorId:review.authorId,reviewerId:review.reviewerId,reviewedAt:review.reviewedAt,reviewNotes:review.reviewNotes,observedAt:review.observedAt,notes:review.notes,createdAt:review.createdAt,evidence:files.success?files.data:[],...state});}
+   const latest=reviewViews[0],canEdit=WRITER.includes(actor.role)&&(ADMIN.includes(actor.role)||row.ownerId===ctx.userId||row.createdById===ctx.userId);let canReview=false;
+   if(latest?.status==='PENDING'&&latest.current&&ADMIN.includes(actor.role)){try{const candidate=await basis(tx,ctx,row,latest.evidence.map(file=>file.id),latest.authorId);independent(ctx,row,reviews[0],candidate);canReview=true;}catch{canReview=false;}}
+   const previousActions=await tx.qualityAction.findMany({where:{...base,caseId:row.id,cycle:{lt:row.cycle}},orderBy:[{cycle:'desc'},{createdAt:'asc'}],take:400,select:{id:true,cycle:true,kind:true,purpose:true,obligation:{select:{id:true,title:true,status:true,ownerName:true}}}});
+   const history=await tx.auditEvent.findMany({where:{...base,entityType:'QualityCase',entityId:row.id},orderBy:[{createdAt:'asc'},{id:'asc'}],take:1000,select:{id:true,action:true,actorId:true,createdAt:true,details:true}});
+   selected={case:{...row,ownerName:(await tx.user.findUnique({where:{id:row.ownerId},select:{email:true}}))?.email||'Owner unavailable',href:href('/team/quality',ctx.organizationId,{caseId:row.id}),due:qualityDue(row.effectivenessDueAt?.toISOString()||null,row.status)},actions:current.actions.map(({proof,...action})=>action),previousActions:previousActions.map(({obligation,...action})=>({...action,task:{...obligation,href:href('/team/work',ctx.organizationId,{taskId:obligation.id})}})),reviews:reviewViews,latestReview:latest||null,canEdit:canEdit&&row.status!=='CLOSED',canReview,canReopen:ADMIN.includes(actor.role),closureCurrent:row.status==='CLOSED'&&latest?.status==='PASSED'&&latest.current,blockers:current.blockers,history};
+  }
+  const taskWhere:Prisma.ObligationWhereInput={...base,completionException:false,changeAction:null,auditRequest:null,accessItem:null};if(query.taskQ)taskWhere.OR=[{title:{contains:literal(query.taskQ),mode:'insensitive'}},{ownerName:{contains:literal(query.taskQ),mode:'insensitive'}}];
+  if(selectedId&&selected)taskWhere.qualityActions={none:{caseId:selectedId,cycle:selected.case.cycle,organizationId:ctx.organizationId}};
+  const taskTotal=await tx.obligation.count({where:taskWhere}),taskPages=Math.max(1,Math.ceil(taskTotal/QUALITY_PAGE_SIZE)),taskPage=Math.min(query.taskPage,taskPages),tasks=await tx.obligation.findMany({where:taskWhere,orderBy:[{updatedAt:'desc'},{id:'asc'}],skip:(taskPage-1)*QUALITY_PAGE_SIZE,take:QUALITY_PAGE_SIZE,select:{id:true,title:true,status:true,ownerName:true}});
+  return {organizationId:ctx.organizationId,role:actor.role,canWrite:WRITER.includes(actor.role),members:memberRows.slice(0,200).filter(member=>allowedEmail(member.user.email,process.env.REGPILOT_AI_ALLOWED_EMAILS)).map(member=>({...member.user,role:member.role})),membersLimited:memberRows.length>200,evidence:fileRows.slice(0,120),evidenceLimited:fileRows.length>120,items:rows.map(({owner,_count,...row})=>({...row,ownerName:owner.email,actionCount:_count.actions,href:href('/team/quality',ctx.organizationId,{caseId:row.id}),due:qualityDue(row.effectivenessDueAt?.toISOString()||null,row.status)})),total,page,pages,summary,selected,tasks:{items:tasks,total:taskTotal,page:taskPage,pages:taskPages},operationLookup:recovery,scope:QUALITY_SCOPE};
+ });
+ const latest=await db.$transaction(tx=>requireMember(tx,ctx));if(latest.role!==output.role)throw new IntelligenceError('Your workspace access changed. Reload the quality queue.',409);return output;
+}
+export async function exportQualityCase(ctx:AuthorizedContext,id:string){identifier(id);const workspace=await qualityWorkspace(ctx,{caseId:id});return {format:'regpilot-quality-case',version:1,exportedAt:new Date().toISOString(),organizationId:ctx.organizationId,scope:QUALITY_SCOPE,...workspace.selected};}

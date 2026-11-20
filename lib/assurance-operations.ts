@@ -29,7 +29,7 @@ export const accessAction=z.discriminatedUnion("action",[
  z.object({action:z.literal("ASSIGN"),version,reviewerId:z.uuid(),notes,confirm:z.literal(true)})
 ]);
 export const campaignAction=z.object({action:z.enum(["CLOSE","CANCEL"]),version,contextHash:z.string().length(64).optional(),notes,confirm:z.literal(true)});
-export const answerInput=z.object({question:z.string().trim().min(10).max(1200),scope:z.string().trim().min(2).max(120),answer:z.string().trim().min(40).max(6000),evidenceIds:ids,validUntil:z.iso.date(),requestKey:z.uuid().optional(),confirm:z.literal(true)});
+export const answerInput=z.object({question:z.string().trim().min(10).max(1200),scope:z.string().trim().min(2).max(120),answer:z.string().trim().min(40).max(6000),evidenceIds:ids,validUntil:z.iso.date(),productId:z.uuid().nullable().optional(),globalForProducts:z.boolean().optional(),requestKey:z.uuid().optional(),confirm:z.literal(true)});
 export const answerAction=z.discriminatedUnion("action",[
  answerInput.extend({action:z.literal("REVISE"),version}),
  z.object({action:z.enum(["APPROVE","WITHDRAW"]),version,notes,confirm:z.literal(true)})
@@ -37,14 +37,14 @@ export const answerAction=z.discriminatedUnion("action",[
 const cellReference=z.string().regex(/^[A-Z]{1,3}[1-9][0-9]{0,6}$/);
 export const questionSourceSchema=z.object({filename:z.string().min(1).max(240),sha256:z.string().regex(/^[a-f0-9]{64}$/),format:z.enum(["CSV","XLSX"]),sheet:z.string().min(1).max(120),row:z.number().int().positive().max(1000000),questionCell:cellReference,referenceCell:cellReference.optional(),answerCell:cellReference.optional(),contextCells:z.array(cellReference).max(40).optional()});
 export const questionImportRowSchema=z.object({reference:z.string().trim().min(1).max(100),question:z.string().trim().min(10).max(1200),instructions:z.string().trim().max(4000).optional(),suppliedAnswer:z.string().trim().max(6000).optional(),source:questionSourceSchema.optional()});
-const questionnaireBase=z.object({title:z.string().trim().min(3).max(160),recipient:z.string().trim().min(2).max(160),scope:z.string().trim().min(2).max(120),ownerId:z.uuid(),requestKey:z.uuid().optional(),confirm:z.literal(true)});
+const questionnaireBase=z.object({title:z.string().trim().min(3).max(160),recipient:z.string().trim().min(2).max(160),scope:z.string().trim().min(2).max(120),ownerId:z.uuid(),productIds:z.array(z.uuid()).max(10).refine(ids=>new Set(ids).size===ids.length).optional(),requestKey:z.uuid().optional(),confirm:z.literal(true)});
 export const questionnaireInput=z.union([questionnaireBase.extend({csv:z.string().max(200000)}),questionnaireBase.extend({rows:z.array(questionImportRowSchema).min(1).max(OPS_LIMITS.questions)})]);
-export const questionSchema=questionImportRowSchema.extend({id:z.uuid(),ownerId:z.uuid(),answerId:z.uuid().nullable(),answerVersion:z.number().int().nullable(),answerHash:z.string().nullable(),status:z.enum(["EMPTY","SUGGESTED","READY"]),changedById:z.uuid().nullable()});
+export const questionSchema=questionImportRowSchema.extend({id:z.uuid(),productId:z.uuid().optional(),productName:z.string().min(2).max(100).optional(),ownerId:z.uuid(),answerId:z.uuid().nullable(),answerVersion:z.number().int().nullable(),answerHash:z.string().nullable(),status:z.enum(["EMPTY","SUGGESTED","READY"]),changedById:z.uuid().nullable()});
 export const questionsSchema=z.array(questionSchema).min(1).max(OPS_LIMITS.questions);
 export const questionnaireAction=z.discriminatedUnion("action",[
  z.object({action:z.literal("ANSWER"),version,questionId:z.uuid(),answerId:z.uuid(),confirm:z.literal(true)}),
  z.object({action:z.literal("ASSIGN"),version,questionId:z.uuid(),ownerId:z.uuid()}),
- z.object({action:z.enum(["APPROVE","REOPEN","WITHDRAW"]),version,notes,confirm:z.literal(true)})
+ z.object({action:z.enum(["APPROVE","REOPEN","WITHDRAW","REFRESH_PRODUCTS"]),version,notes,confirm:z.literal(true)})
 ]);
 export function normalQuestion(value:string){return value.trim().toLowerCase().replace(/\s+/g," ");}
 export function answerMatches(question:string,answers:Array<{id:string;question:string}>){const q=normalQuestion(question),terms=new Set(q.match(/[\p{L}\p{N}]{3,}/gu)||[]);return answers.map(a=>{const v=normalQuestion(a.question),t=new Set(v.match(/[\p{L}\p{N}]{3,}/gu)||[]);return {...a,exact:q===v,score:q===v?1:[...terms].filter(x=>t.has(x)).length/Math.max(1,new Set([...terms,...t]).size)};}).filter(a=>a.score>=0.2).sort((a,b)=>b.score-a.score||a.id.localeCompare(b.id)).slice(0,5);}

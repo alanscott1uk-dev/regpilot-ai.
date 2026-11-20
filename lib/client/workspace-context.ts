@@ -17,7 +17,7 @@ export function workspaceHref(path:string,organizationId:string,values:Record<st
 function recordOrganization(id:string,clearLinkedRecords=false){
  const url=new URL(window.location.href);
  if(id)url.searchParams.set('organizationId',id);else url.searchParams.delete('organizationId');
- if(clearLinkedRecords)for(const key of ['taskId','sourceId','snapshotId','assessmentId','importId','evidenceId','programmeId','riskId','questionnaireId','questionId','answerId'])url.searchParams.delete(key);
+ if(clearLinkedRecords)for(const key of ['taskId','sourceId','snapshotId','assessmentId','importId','evidenceId','programmeId','riskId','questionnaireId','questionId','answerId','productId','caseId','indexId','searchId'])url.searchParams.delete(key);
  window.history.replaceState(window.history.state,'',url.pathname+url.search+url.hash);
  window.dispatchEvent(new Event('regpilot-workspace-navigation'));
 }

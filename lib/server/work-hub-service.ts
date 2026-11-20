@@ -122,6 +122,9 @@ export async function workTask(ctx:AuthorizedContext,id:string) {
   const riskLinks=await tx.riskTreatment.findMany({where:{organizationId:ctx.organizationId,obligationId:id,risk:{organizationId:ctx.organizationId}},orderBy:[{createdAt:'desc'},{id:'desc'}],take:11,
    select:{risk:{select:{id:true,title:true,status:true}}}});
   const relatedRisks=riskLinks.slice(0,10).map(({risk})=>({...risk,href:'/team/risks?'+new URLSearchParams({organizationId:ctx.organizationId,riskId:risk.id})}));
+  const qualityLinks=await tx.qualityAction.findMany({where:{organizationId:ctx.organizationId,obligationId:id,qualityCase:{organizationId:ctx.organizationId}},orderBy:[{createdAt:'desc'},{id:'desc'}],take:11,
+   select:{id:true,cycle:true,kind:true,qualityCase:{select:{id:true,title:true,status:true,cycle:true}}}});
+  const relatedQualityCases=qualityLinks.slice(0,10).map(({id:actionId,cycle,kind,qualityCase})=>({id:qualityCase.id,title:qualityCase.title,status:qualityCase.status,actionId,actionKind:kind,actionCycle:cycle,currentCycle:qualityCase.cycle,href:'/team/quality?'+new URLSearchParams({organizationId:ctx.organizationId,caseId:qualityCase.id})}));
   const isAdmin=ADMIN.includes(actor.role),{evidence,...task}=record;
   const safeTask={...task,changeAction:isAdmin||task.assigneeId===ctx.userId?task.changeAction:null};
   const observed=(await progressRows(tx,ctx,[id],isAdmin)).get(id)!,progress=progressFor(task,observed,actor.role);
@@ -138,6 +141,7 @@ export async function workTask(ctx:AuthorizedContext,id:string) {
   }
   return {organizationId:ctx.organizationId,task:{...safeTask,evidence:evidence.slice(0,50)},evidenceLimited:evidence.length>50,history:history.slice(0,30),historyLimited:history.length>30,
    relatedRisks,relatedRisksLimited:riskLinks.length>10,
+   relatedQualityCases,relatedQualityCasesLimited:qualityLinks.length>10,
    reviewKinds:{files:observed.reviewableFiles,assessments:!!observed.reviewId},planningBlocked:planningBlock(task),canPlan:isAdmin&&!planningBlock(task),canStart:WRITER.includes(actor.role)&&task.status==='OPEN'&&!planningBlock(task),workflow:taskWorkflow(safeTask,ctx.organizationId,progress)};
  },{isolationLevel:'RepeatableRead',timeout:12000});
 }

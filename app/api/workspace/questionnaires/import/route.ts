@@ -20,7 +20,7 @@ export async function POST(request:Request){
     const form=await readQuestionnaireForm(request);
     if([...form.keys()].some(key=>!['file','metadata','mapping','expectedSha256'].includes(key)))return reply({error:'The import contains an unsupported field'},400);
     const file=questionnaireFormFile(form),metadata=json(field(form,'metadata',4000)),mapping=json(field(form,'mapping',30000)),expected=field(form,'expectedSha256',64);
-    if(!metadata||typeof metadata!=='object'||Array.isArray(metadata)||Object.keys(metadata).some(key=>!['title','recipient','scope','ownerId','requestKey','confirm'].includes(key)))return reply({error:'Check the questionnaire details'},400);
+    if(!metadata||typeof metadata!=='object'||Array.isArray(metadata)||Object.keys(metadata).some(key=>!['title','recipient','scope','ownerId','productIds','requestKey','confirm'].includes(key)))return reply({error:'Check the questionnaire details'},400);
     if(!/^[a-f0-9]{64}$/.test(expected))return reply({error:'Inspect the questionnaire file before importing'},400);
     const workbook=await inspectQuestionnaireFile(new Uint8Array(await file.arrayBuffer()),file.name);
     if(workbook.sha256!==expected)return reply({error:'The file changed after inspection. Inspect the selected file again.'},409);

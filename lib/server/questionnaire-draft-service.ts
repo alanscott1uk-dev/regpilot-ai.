@@ -4,6 +4,8 @@ import type {AuthorizedContext} from "./authorization";
 import {transaction,IntelligenceError} from "./intelligence-service";
 import {requireMember,WRITER,ADMIN} from "./workspace-member";
 import {questionsSchema} from "../assurance-operations";
+import {questionProductContextSchema} from "../product-scope";
+import {captureQuestionProductContext,captureQuestionProductContextFromState,loadProductScopeState} from "./product-service";
 import {hashValue} from "../regulatory/intelligence";
 import {reviewedFiles,reviewedFileSchema,reviewedFilesSchema,type ReviewedFile} from "./reviewed-files";
 import {assertAssuranceParticipants,createAssuranceAnswerRecord} from "./customer-assurance-service";
@@ -21,7 +23,7 @@ type Tx=Prisma.TransactionClient;
 type Dependencies={storage?:EvidenceObjectStore;generate?:(input:QuestionnaireDraftModelInput)=>Promise<unknown>};
 const json=(value:unknown)=>JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 export function questionnaireAiReady(){return assuranceAiConfigured()&&process.env.REGPILOT_QUESTIONNAIRE_AI_ENABLED==="true";}
-const stateSchema=z.object({engine:z.literal(QUESTIONNAIRE_DRAFT_ENGINE),questionnaireId:z.uuid(),title:z.string(),recipient:z.string(),scope:z.string(),createdById:z.uuid(),question:z.object({id:z.uuid(),reference:z.string(),question:z.string(),instructions:z.string(),ownerId:z.uuid()}),files:reviewedFilesSchema,participants:z.array(z.object({id:z.uuid(),role:z.string(),approved:z.boolean()})),model:z.string().nullable()});
+const stateSchema=z.object({engine:z.literal(QUESTIONNAIRE_DRAFT_ENGINE),questionnaireId:z.uuid(),title:z.string(),recipient:z.string(),scope:z.string(),createdById:z.uuid(),question:z.object({id:z.uuid(),reference:z.string(),question:z.string(),instructions:z.string(),ownerId:z.uuid()}),files:reviewedFilesSchema,participants:z.array(z.object({id:z.uuid(),role:z.string(),approved:z.boolean()})),model:z.string().nullable(),productContext:questionProductContextSchema.optional()});
 async function questionnaire(tx:Tx,c:AuthorizedContext,id:string){
  const actor=await requireMember(tx,c,WRITER),row=await tx.assuranceQuestionnaire.findFirst({where:{id,organizationId:c.organizationId}});
  if(!row)throw new IntelligenceError("Questionnaire not found",404);
@@ -33,10 +35,11 @@ async function capture(tx:Tx,c:AuthorizedContext,id:string,questionId:string,evi
  const q=await questionnaire(tx,c,id),question=q.questions.find(v=>v.id===questionId);
  if(!question||!q.admin&&question.ownerId!==c.userId)throw new IntelligenceError("Question not found",404);
  const files=await reviewedFiles(tx,c.organizationId,evidenceIds),participants=await assertAssuranceParticipants(tx,c.organizationId,files,[creator,question.ownerId]);
- return captured(q,question,files,participants,creator,method);
+ const productContext=await captureQuestionProductContext(tx,c.organizationId,q.row,question,evidenceIds);
+ return captured(q,question,files,participants,creator,method,productContext);
 }
-function captured(q:Awaited<ReturnType<typeof questionnaire>>,question:z.infer<typeof questionsSchema>[number],files:ReviewedFile[],participants:Awaited<ReturnType<typeof completionParticipants>>,creator:string,method:string){
- const context=stateSchema.parse({engine:QUESTIONNAIRE_DRAFT_ENGINE,questionnaireId:q.row.id,title:q.row.title,recipient:q.row.recipient,scope:q.row.scope,createdById:creator,question:{id:question.id,reference:question.reference,question:question.question,instructions:question.instructions||"",ownerId:question.ownerId},files,participants,model:method==="AI"?process.env.REGPILOT_AI_MODEL||"":null});
+function captured(q:Awaited<ReturnType<typeof questionnaire>>,question:z.infer<typeof questionsSchema>[number],files:ReviewedFile[],participants:Awaited<ReturnType<typeof completionParticipants>>,creator:string,method:string,productContext:z.infer<typeof questionProductContextSchema>|null=null){
+ const context=stateSchema.parse({engine:QUESTIONNAIRE_DRAFT_ENGINE,questionnaireId:q.row.id,title:q.row.title,recipient:q.row.recipient,scope:q.row.scope,createdById:creator,question:{id:question.id,reference:question.reference,question:question.question,instructions:question.instructions||"",ownerId:question.ownerId},files,participants,model:method==="AI"?process.env.REGPILOT_AI_MODEL||"":null,...(productContext?{productContext}:{})});
  return {...q,question,context,files,inputHash:hashValue(context)};
 }
 function stored(run:QuestionnaireDraftRun){
@@ -54,7 +57,7 @@ export function savedQuestionnaireAnswerOrigin(run:QuestionnaireDraftRun){
  if(run.status!=="SAVED"||!run.answerId||!run.saveHash||!/^[a-f0-9]{64}$/.test(run.saveHash))throw new IntelligenceError("Saved answer origin unavailable",409);
  const {context,files}=stored(run),result=resultOf(run);
  if(!result.citations.length||result.citations.some(citation=>!files.some(file=>file.id===citation.evidenceId&&file.filename===citation.filename)))throw new IntelligenceError("Saved answer origin evidence failed its integrity check",409);
- return {id:run.id,organizationId:run.organizationId,questionnaireId:run.questionnaireId,questionId:run.questionId,answerId:run.answerId,version:run.version,savedAt:run.updatedAt.toISOString(),inputHash:run.inputHash,resultHash:run.resultHash!,saveHash:run.saveHash,question:context.question.question,instructions:context.question.instructions,scope:context.scope,files};
+ return {id:run.id,organizationId:run.organizationId,questionnaireId:run.questionnaireId,questionId:run.questionId,answerId:run.answerId,version:run.version,savedAt:run.updatedAt.toISOString(),inputHash:run.inputHash,resultHash:run.resultHash!,saveHash:run.saveHash,question:context.question.question,instructions:context.question.instructions,scope:context.scope,files,...(context.productContext?{productId:context.productContext.product.id,productContext:context.productContext}:{})};
 }
 async function current(tx:Tx,c:AuthorizedContext,run:QuestionnaireDraftRun){
  const original=stored(run),now=await capture(tx,c,run.questionnaireId,run.questionId,original.files.map(f=>f.id),run.createdById,run.method);
@@ -90,7 +93,7 @@ export async function prepareQuestionnaireDraft(c:AuthorizedContext,id:string,in
   let result;
   if(d.method==="AI"){
    await reserveAiRequest(c,"QUESTIONNAIRE_DRAFT",{purpose:"Draft a customer assurance response from selected evidence",dataCategory:"Private reviewed business evidence",recordPurpose:"Independent review before customer disclosure",humanReviewRequired:true});
-   result=groundedQuestionnaireDraft(await (dependencies.generate||generateQuestionnaireDraft)({question:state.question.question,instructions:state.question.instructions||"",scope:state.row.scope,documents:extracted}),extracted);
+   result=groundedQuestionnaireDraft(await (dependencies.generate||generateQuestionnaireDraft)({question:state.question.question,instructions:state.question.instructions||"",scope:state.row.scope,...(state.context.productContext?{product:state.context.productContext.product}:{}),documents:extracted}),extracted);
   }else result=searchedQuestionnaireDraft(state.question.question+" "+(state.question.instructions||""),extracted);
   await transaction(c,async tx=>{const now=await current(tx,c,run);if(now.row.status!=="DRAFT")throw new IntelligenceError("Questionnaire is no longer a draft",409);if(!assuranceConfigured()||d.method==="AI"&&!questionnaireAiReady())throw new IntelligenceError("Document processing was deactivated",503);const changed=await tx.questionnaireDraftRun.updateMany({where:{id:run.id,organizationId:c.organizationId,status:"PROCESSING",version:1},data:{status:"DRAFT",result:json(result),resultHash:hashValue(result),version:{increment:1}}});if(changed.count!==1)throw new IntelligenceError("This preparation is no longer pending",409);await event(tx,c,run.id,"prepared",{method:d.method,resultHash:hashValue(result),citations:result.citations.length});});
   return {id:run.id,reused:false,status:"DRAFT"};
@@ -120,6 +123,8 @@ export async function questionnaireDrafts(c:AuthorizedContext,id:string,filter:{
    if(file.scanStatus!=="CLEAN"||file.reviewStatus!=="APPROVED"||!file.reviewedAt||!file.uploadedById||!file.reviewerId||file.uploadedById===file.reviewerId)continue;
    const parsed=reviewedFileSchema.safeParse(file);if(parsed.success)usableFiles.set(file.id,parsed.data);
   }
+  const evidence=await tx.evidence.findMany({where:{organizationId:c.organizationId,scanStatus:"CLEAN",reviewStatus:"APPROVED"},select:{id:true,filename:true},orderBy:{createdAt:"desc"},take:100});
+  const productState=await loadProductScopeState(tx,c.organizationId,[...new Set([...fileIds,...evidence.map(file=>file.id)])]);
   const people=runs.length?await completionParticipants(tx,c,[...runs.map(run=>run.createdById),...q.questions.map(question=>question.ownerId),...[...usableFiles.values()].flatMap(file=>[file.uploadedById,file.reviewerId])]):[];
   for(const run of runs){
    let isCurrent=false,reason="",result=null;
@@ -133,13 +138,14 @@ export async function questionnaireDrafts(c:AuthorizedContext,id:string,filter:{
     const participantIds=new Set([run.createdById,question.ownerId,...files.flatMap(file=>[file.uploadedById,file.reviewerId])]),participants=people.filter(person=>participantIds.has(person.id));
     const allowed=(id:string,roles:string[])=>participants.some(person=>person.id===id&&person.approved&&roles.includes(person.role));
     if(!allowed(run.createdById,WRITER)||!allowed(question.ownerId,WRITER)||files.some(file=>!allowed(file.uploadedById,WRITER)||!allowed(file.reviewerId,ADMIN)))throw new IntelligenceError("An answer, evidence author or independent reviewer no longer has current company permission",409);
-    if(captured(q,question,files,participants,run.createdById,run.method).inputHash!==run.inputHash)throw new IntelligenceError("The question, business scope, selected evidence or participant permissions changed. Prepare a new draft.",409);
+    const productContext=captureQuestionProductContextFromState(productState,q.row,question,files.map(file=>file.id));
+    if(captured(q,question,files,participants,run.createdById,run.method,productContext).inputHash!==run.inputHash)throw new IntelligenceError("The question, business scope, selected evidence or participant permissions changed. Prepare a new draft.",409);
     isCurrent=true;
    }catch(e){if(!(e instanceof IntelligenceError)&&!(e instanceof z.ZodError))throw e;reason=e instanceof IntelligenceError?e.message:"Stored draft could not be verified";}
    drafts.push({id:run.id,questionId:run.questionId,createdById:run.createdById,method:run.method,status:run.status,version:run.version,current:isCurrent,reason,failureCode:run.failureCode,answerId:run.answerId,result,canSave:isCurrent&&run.status==="DRAFT"&&run.createdById===c.userId&&owned.includes(run.questionId)&&q.row.status==="DRAFT"});
   }
-  const evidence=await tx.evidence.findMany({where:{organizationId:c.organizationId,scanStatus:"CLEAN",reviewStatus:"APPROVED"},select:{id:true,filename:true},orderBy:{createdAt:"desc"},take:100});
-  return {drafts,evidence,evidenceReady:assuranceConfigured(),aiReady:questionnaireAiReady(),canPrepareQuestionIds:q.row.status==="DRAFT"?owned:[],limits:QUESTIONNAIRE_DRAFT_LIMITS};
+  const evidenceByQuestion=Object.fromEntries(q.questions.filter(question=>questionIds.includes(question.id)).map(question=>[question.id,evidence.filter(file=>{try{captureQuestionProductContextFromState(productState,q.row,question,[file.id]);return true;}catch(error){if(error instanceof IntelligenceError)return false;throw error;}})]));
+  return {drafts,evidence,evidenceByQuestion,evidenceReady:assuranceConfigured(),aiReady:questionnaireAiReady(),canPrepareQuestionIds:q.row.status==="DRAFT"?owned:[],limits:QUESTIONNAIRE_DRAFT_LIMITS};
  });
 }
 
@@ -162,7 +168,7 @@ export async function saveQuestionnaireDraft(c:AuthorizedContext,id:string,runId
  return transaction(c,async tx=>{
   const after=await check(tx);if(after.reused)return {id:runId,answerId:after.run.answerId,reused:true};
   if(after.run.inputHash!==before.run.inputHash||after.run.resultHash!==before.run.resultHash)throw new IntelligenceError("Draft changed during evidence verification",409);
-  const answer=await createAssuranceAnswerRecord(tx,c,{question:after.now.question.question,scope:after.now.row.scope,answer:d.answer,evidenceIds:after.now.files.map(f=>f.id),validUntil:d.validUntil,confirm:true});
+  const answer=await createAssuranceAnswerRecord(tx,c,{question:after.now.question.question,scope:after.now.row.scope,...(after.now.question.productId?{productId:after.now.question.productId}:{}),answer:d.answer,evidenceIds:after.now.files.map(f=>f.id),validUntil:d.validUntil,confirm:true});
   await tx.questionnaireDraftRun.update({where:{id:runId},data:{status:"SAVED",answerId:answer.id,saveHash,version:{increment:1}}});await event(tx,c,runId,"answer_saved",{answerId:answer.id,saveHash,resultHash:after.run.resultHash});
   return {id:runId,answerId:answer.id,reused:false};
  });

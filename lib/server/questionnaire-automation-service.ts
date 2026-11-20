@@ -1,6 +1,8 @@
 import {Prisma} from '@prisma/client';
 import {normalQuestion,questionsSchema} from '../assurance-operations';
 import {automationInput,classifyQuestion,knowledgeHealth,QUESTIONNAIRE_AUTOMATION_VERSION,type AutomationInput,type KnowledgeAnswer} from '../questionnaire-automation';
+import {answerMatchesProduct} from '../product-scope';
+import {loadProductScopeState,captureQuestionProductContextFromState} from './product-service';
 import {hashValue} from '../regulatory/intelligence';
 import {transaction,IntelligenceError} from './intelligence-service';
 import {requireMember,ADMIN,WRITER} from './workspace-member';
@@ -19,7 +21,7 @@ const json=(value:unknown)=>value as Prisma.InputJsonValue;
 
 async function scopedKnowledge(tx:Tx,c:AuthorizedContext,scope:string):Promise<Knowledge[]>{
  const answers=await tx.assuranceAnswer.findMany({where:{...org(c),scope},orderBy:{id:'asc'},take:300});
- return (await checkedAssuranceAnswers(tx,c.organizationId,answers)).map(({a:answer,current,reason,content,participants})=>({id:answer.id,question:answer.question,scope:answer.scope,answer:answer.answer,version:answer.version,contentHash:answer.contentHash,validUntil:answer.validUntil.toISOString(),status:answer.status,current,reason,files:current?content!.files:[],participants}));
+ return (await checkedAssuranceAnswers(tx,c.organizationId,answers)).map(({a:answer,current,reason,content,participants})=>({id:answer.id,productId:answer.productId,productContext:answer.productContext,question:answer.question,scope:answer.scope,answer:answer.answer,version:answer.version,contentHash:answer.contentHash,validUntil:answer.validUntil.toISOString(),status:answer.status,current,reason,files:current?content!.files:[],participants}));
 }
 
 async function automationState(tx:Tx,c:AuthorizedContext,id:string){
@@ -29,6 +31,9 @@ async function automationState(tx:Tx,c:AuthorizedContext,id:string){
  const all=questionsSchema.parse(row.questions),visible=admin?all:all.filter(question=>question.ownerId===c.userId);
  if(!admin&&!visible.length)throw new IntelligenceError('Questionnaire not found',404);
  const knowledge=await scopedKnowledge(tx,c,row.scope);
+ const productState=await loadProductScopeState(tx,c.organizationId,knowledge.flatMap(answer=>answer.files.map(f=>f.id)));
+ const productProblems=new Map<string,string>();
+ const productContexts=all.map(question=>{try{return {questionId:question.id,context:captureQuestionProductContextFromState(productState,row,question,[])};}catch(error){if(!(error instanceof IntelligenceError))throw error;productProblems.set(question.id,error.message);return {questionId:question.id,error:error.message};}});
  const approvedIds=knowledge.filter(answer=>answer.current).map(answer=>answer.id);
  // Each successful preparation creates its own canonical answer, so the 300-answer
  // library cap also bounds eligible saved origins. No history text enters the response.
@@ -38,17 +43,18 @@ async function automationState(tx:Tx,c:AuthorizedContext,id:string){
   if(preferredOrigins.has(run.questionId))continue;
   try{
    const origin=savedQuestionnaireAnswerOrigin(run),question=all.find(question=>question.id===origin.questionId),answer=knowledge.find(answer=>answer.id===origin.answerId&&answer.current);
-   if(origin.organizationId!==c.organizationId||origin.questionnaireId!==id||!question||!answer||origin.scope!==row.scope||answer.scope!==origin.scope||normalQuestion(origin.question)!==normalQuestion(question.question)||normalQuestion(answer.question)!==normalQuestion(origin.question)||origin.instructions!==(question.instructions||'')||hashValue(origin.files)!==hashValue(answer.files))continue;
+   if(origin.organizationId!==c.organizationId||origin.questionnaireId!==id||!question||!answer||origin.scope!==row.scope||answer.scope!==origin.scope||normalQuestion(origin.question)!==normalQuestion(question.question)||normalQuestion(answer.question)!==normalQuestion(origin.question)||origin.instructions!==(question.instructions||'')||hashValue(origin.files)!==hashValue(answer.files)||!answerMatchesProduct(question,answer)||(origin.productId||null)!==(question.productId||null))continue;
    preferredOrigins.set(question.id,origin);
   }catch(error){if(!(error instanceof IntelligenceError))throw error;}
  }
  const people=await completionParticipants(tx,c,[c.userId,row.createdById,...all.flatMap(question=>[question.ownerId,question.changedById])]);
  const questions=visible.map(question=>{
   const {candidates,...insight}=classifyQuestion({...question,preferredAnswerId:preferredOrigins.get(question.id)?.answerId},knowledge);
-  return {...question,instructions:question.instructions||'',suppliedAnswer:question.suppliedAnswer||'',...insight,candidates:candidates.map(({participants:_participants,...candidate})=>candidate)};
+  const productProblem=productProblems.get(question.id);
+  return {...question,instructions:question.instructions||'',suppliedAnswer:question.suppliedAnswer||'',...insight,...(productProblem?{classification:'UNANSWERED' as const,reason:productProblem,recommendedAnswerId:null}:{}),candidates:candidates.map(({participants:_participants,...candidate})=>productProblem?{...candidate,selectable:false,reason:productProblem}:candidate)};
  });
- const token=hashValue({engine:QUESTIONNAIRE_AUTOMATION_VERSION,organizationId:c.organizationId,actorId:c.userId,role:actor.role,questionnaire:{id:row.id,version:row.version,title:row.title,recipient:row.recipient,scope:row.scope,status:row.status,questions:row.questions},people,knowledge,preferredOrigins:[...preferredOrigins.values()].sort((a,b)=>a.questionId.localeCompare(b.questionId))});
- return {row,all,knowledge,people,token,view:{questionnaireId:row.id,version:row.version,canPrepare:admin&&row.status==='DRAFT',summary:{total:questions.length,supported:questions.filter(question=>question.classification==='SUPPORTED').length,ambiguous:questions.filter(question=>question.classification==='AMBIGUOUS').length,unanswered:questions.filter(question=>question.classification==='UNANSWERED').length,conflicting:questions.filter(question=>question.classification==='CONFLICTING').length,expired:questions.filter(question=>question.classification==='EXPIRED').length,ready:questions.filter(question=>question.status==='READY').length},questions,knowledgeHealth:knowledgeHealth(knowledge)}};
+ const token=hashValue({productContexts,engine:QUESTIONNAIRE_AUTOMATION_VERSION,organizationId:c.organizationId,actorId:c.userId,role:actor.role,questionnaire:{id:row.id,version:row.version,title:row.title,recipient:row.recipient,scope:row.scope,status:row.status,questions:row.questions},people,knowledge,preferredOrigins:[...preferredOrigins.values()].sort((a,b)=>a.questionId.localeCompare(b.questionId))});
+ return {row,all,knowledge,people,productState,token,view:{questionnaireId:row.id,version:row.version,canPrepare:admin&&row.status==='DRAFT',summary:{total:questions.length,supported:questions.filter(question=>question.classification==='SUPPORTED').length,ambiguous:questions.filter(question=>question.classification==='AMBIGUOUS').length,unanswered:questions.filter(question=>question.classification==='UNANSWERED').length,conflicting:questions.filter(question=>question.classification==='CONFLICTING').length,expired:questions.filter(question=>question.classification==='EXPIRED').length,ready:questions.filter(question=>question.status==='READY').length},questions,knowledgeHealth:knowledgeHealth(knowledge)}};
 }
 
 const operationView=(record:NonNullable<Awaited<ReturnType<typeof questionnaireOperationRecord>>>)=>({requestKey:record.requestKey,questionnaireId:record.questionnaireId,version:record.version,applied:record.applied});
@@ -78,6 +84,8 @@ async function prepareApply(tx:Tx,c:AuthorizedContext,id:string,input:Apply){
   if(!state.people.some(person=>person.id===question.ownerId&&person.approved&&WRITER.includes(person.role)))throw new IntelligenceError('Every selected question needs a current editor or administrator as its owner',409);
   const candidate=insight.candidates.find(answer=>answer.id===choice.answerId&&answer.selectable),answer=state.knowledge.find(answer=>answer.id===choice.answerId&&answer.current);
   if(!candidate||!answer)throw new IntelligenceError('Choose a current approved answer from the preview for every selected question',409);
+  if(!answerMatchesProduct(question,answer))throw new IntelligenceError("Answer belongs to another product",409);
+  captureQuestionProductContextFromState(state.productState,state.row,question,answer.files.map(f=>f.id));
   selected.set(question.id,answer);
  }
  const files=new Map<string,ReviewedFile>();
