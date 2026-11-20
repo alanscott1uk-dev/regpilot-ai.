@@ -30,6 +30,10 @@ export async function questionnaireCustomerJourney({upload,review,db,app,org,edi
  const row=await db.assuranceQuestionnaire.findUniqueOrThrow({where:{id:imported.id}}),questions=row.questions;assert.equal(row.createdById,editor.id);assert.equal(questions.length,2);assert.equal(questions[0].source.row,2);assert.equal(questions[1].source.row,3);assert.match(questions[0].instructions,/state limitations/);assert.equal(questions[0].status,'EMPTY');
  const recordPath=app+'/team/questionnaires'+query+'&questionnaireId='+row.id,endpoint='/api/workspace/questionnaires/'+row.id;
  await upload.getByRole('button',{name:'Open question Q1',exact:true}).click();
+ await upload.getByText('Answer coverage by product',{exact:true}).click();
+ await upload.getByRole('button',{name:'View questions for Company-wide',exact:true}).click();
+ await upload.getByText('Showing Company-wide questions.',{exact:false}).waitFor();
+ await upload.getByRole('button',{name:'Show all products',exact:true}).click();
  await upload.screenshot({path:artifactDir+'/mobile-questionnaire-import.png',fullPage:true});
  passed('A real XLSX upload was inspected, mapped and imported through the authenticated mobile interface. Selected questions retained original sheet/row coordinates and customer instructions, with no invented approved answer.');
 

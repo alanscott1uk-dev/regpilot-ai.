@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {automationInput,classifyQuestion,rankApprovedKnowledge,knowledgeHealth,type KnowledgeAnswer} from '../lib/questionnaire-automation';
+import {automationInput,classifyQuestion,rankApprovedKnowledge,knowledgeHealth,questionnaireCoverageByProduct,type KnowledgeAnswer} from '../lib/questionnaire-automation';
 import {questionnaireInput,questionsSchema} from '../lib/assurance-operations';
 
 const question='How do you encrypt and restore customer backups?';
@@ -73,4 +73,21 @@ test('batch application requires explicit consent, a bounded unique selection an
  assert.equal(automationInput.safeParse(input).success,true);
  for(const bad of [{...input,confirm:false},{...input,selections:[]},{...input,selections:[selection,selection]},{...input,previewToken:'stale'},{...input,selections:Array.from({length:101},()=>({questionId:randomUUID(),answerId:randomUUID()}))}])assert.equal(automationInput.safeParse(bad).success,false);
  assert.equal(automationInput.safeParse({operation:'PREVIEW',version:1}).success,true);
+});
+
+test('product coverage preserves scope, counts ambiguous answers and prioritises unfinished gaps', () => {
+  const groups = questionnaireCoverageByProduct([
+    {productId:'a',productName:'Same name',status:'READY',classification:'EXPIRED'},
+    {productId:'a',productName:'Same name',status:'SUGGESTED',classification:'SUPPORTED'},
+    {productId:'b',productName:'Same name',status:'EMPTY',classification:'AMBIGUOUS'},
+    {productId:'b',productName:'Same name',status:'EMPTY',classification:'CONFLICTING'},
+    {status:'EMPTY',classification:'UNANSWERED'},
+  ]);
+  assert.deepEqual(groups.map(group=>[group.id,group.total,group.unresolved]),[['b',2,2],['',1,1],['a',2,0]]);
+  assert.equal(groups[0].ambiguous,1);
+  assert.equal(groups[0].conflicting,1);
+  assert.equal(groups[2].supported,1);
+  assert.equal(groups[2].confirmed,1);
+  assert.equal(groups[2].expired,1);
+  assert.deepEqual(questionnaireCoverageByProduct([]),[]);
 });

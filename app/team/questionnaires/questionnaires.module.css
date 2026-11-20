@@ -3,3 +3,24 @@
 .desk>*{min-width:0}
 @media(max-width:800px){.desk{grid-template-columns:minmax(0,1fr)}.queue{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));max-height:320px;gap:8px}.formGrid{gap:14px}.hero h1{font-size:36px}.files{grid-template-columns:1fr}.toolbar select{min-width:200px}.statGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:520px){.topline{font-size:10px;margin-bottom:22px}.topline span:last-child{display:none}.hero{margin-bottom:20px}.hero h1{font-size:31px}.hero p{font-size:13px}.panel{padding:17px;border-radius:12px}.formGrid,.records,.queue{grid-template-columns:1fr}.queue{max-height:310px}.toolbar{align-items:flex-start}.toolbar label{width:100%}.toolbar select{width:100%;min-width:0}.full{grid-column:auto}.heading{align-items:flex-start;gap:12px}.heading h2{font-size:18px}.editor{padding:14px}.editor>h3{font-size:17px}.candidate{padding:13px}.batch{padding:15px}.stat strong{font-size:23px}.actions{gap:8px}.actions button{font-size:11px;padding:10px 12px}.table th,.table td{padding:10px}.metadata{gap:7px;font-size:10px}.notice,.error{padding:14px}.support header{align-items:flex-start}.support .actions button{flex:1}.heroAside{display:none}}
+
+.coverage {
+  margin: 18px 0;
+}
+.coverageGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 12px;
+}
+.coverageGrid article {
+  border: 1px solid #dbe3ec;
+  border-radius: 12px;
+  padding: 16px;
+  overflow-wrap: anywhere;
+}
+.coverageGrid h3 {
+  margin-top: 0;
+}
+.coverageGrid button {
+  white-space: normal;
+}

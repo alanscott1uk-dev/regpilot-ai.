@@ -48,3 +48,44 @@ export function knowledgeHealth(answers:KnowledgeAnswer[]){return {
  draft:answers.filter(answer=>answer.status==='DRAFT').length,
  withdrawn:answers.filter(answer=>answer.status==='WITHDRAWN').length
 };}
+
+export function questionnaireCoverageByProduct(rows: readonly {
+  productId?: string | null;
+  productName?: string;
+  status: string;
+  classification: Classification;
+}[]) {
+  const groups = new Map<string, {
+    id: string;
+    name: string;
+    total: number;
+    supported: number;
+    ambiguous: number;
+    conflicting: number;
+    unanswered: number;
+    expired: number;
+    confirmed: number;
+    unresolved: number;
+  }>();
+  for (const row of rows) {
+    const id = row.productId ?? '';
+    const group = groups.get(id) ?? {
+      id, name: row.productName || (id ? 'Unnamed product' : 'Company-wide'),
+      total: 0, supported: 0, ambiguous: 0, conflicting: 0,
+      unanswered: 0, expired: 0, confirmed: 0, unresolved: 0,
+    };
+    group.total++;
+    switch (row.classification) {
+      case 'SUPPORTED': group.supported++; break;
+      case 'AMBIGUOUS': group.ambiguous++; break;
+      case 'CONFLICTING': group.conflicting++; break;
+      case 'UNANSWERED': group.unanswered++; break;
+      case 'EXPIRED': group.expired++; break;
+    }
+    if (row.status === 'READY') group.confirmed++;
+    else if (row.classification !== 'SUPPORTED') group.unresolved++;
+    groups.set(id, group);
+  }
+  return [...groups.values()].sort((a, b) =>
+    b.unresolved - a.unresolved || a.name.localeCompare(b.name, 'en-GB') || a.id.localeCompare(b.id));
+}
