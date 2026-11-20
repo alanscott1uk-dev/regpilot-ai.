@@ -1,3 +1,4 @@
+import {licenceScope,licenceImport} from "./supplier-licence";
 import {z} from "zod";
 export const WORKFLOW_LIMITS={policies:100,revisions:50,audience:100,vendors:200,reviews:50,files:10} as const;
 const ids=z.array(z.uuid()).min(1).max(100).refine(v=>new Set(v).size===v.length,"Choose each person once");
@@ -23,6 +24,8 @@ export const assessmentSchema=z.array(criterionSchema).length(6).refine(v=>new S
 export const vendorReviewSchema=z.object({signalRunId:z.uuid().optional(),signalReviewed:z.literal(true).optional(),version:z.number().int().positive(),evidenceIds:z.array(z.uuid()).max(WORKFLOW_LIMITS.files).refine(v=>new Set(v).size===v.length),assessment:assessmentSchema,recommendation:z.enum(["APPROVE","CONDITIONAL","REJECT"]),rationale:z.string().trim().min(40).max(2000),followUpDue:z.iso.date(),validUntil:z.iso.date()});
 export const vendorActionSchema=z.discriminatedUnion("action",[
  z.object({action:z.literal("FOLLOW_UP"),version:z.number().int().positive()}),
+ z.object({action:z.literal("SET_LICENCE_SCOPE"),version:z.number().int().positive(),scope:licenceScope}),
+ z.object({action:z.literal("IMPORT_LICENCE"),version:z.number().int().positive(),record:licenceImport}),
  z.object({action:z.literal("LINK_SIGNAL"),version:z.number().int().positive(),connectorId:z.uuid().nullable(),connectorVersion:z.number().int().positive().optional(),notes:z.string().trim().min(40).max(1600),confirm:z.literal(true)}),
  z.object({action:z.literal("UPDATE"),version:z.number().int().positive(),vendor:vendorSchema}),
  z.object({action:z.literal("ARCHIVE"),version:z.number().int().positive()}),

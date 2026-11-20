@@ -1,6 +1,7 @@
 "use client";
 import {useEffect,useRef,useState} from "react";
 import WorkspaceNav from "../components/workspace-nav";
+import {researchHandoff} from "../../lib/operator-answer";
 import {helpArticles,searchHelp} from "../../lib/help-centre";
 import {workUuid} from "../../lib/work-hub.mjs";
 import shell from "../workbench/workbench.module.css";
@@ -30,6 +31,7 @@ export default function HelpCentre(){
   return <div className={shell.app}><WorkspaceNav/><main className={shell.main}><div className={ui.body}><header className={ui.intro}><div><h1>Help Centre</h1><p>Find instructions for your next task or troubleshoot a result in RegPilot.</p></div></header>
     <section className={ui.card} aria-label="Find help"><div className={ui.grid}><label>Search help<input ref={search} value={query} maxLength={160} placeholder="e.g. write an SOP, missing guidance or stale connection" onChange={e=>{setQuery(e.target.value);setActive("");}}/></label>
     <label>Topic<select value={category} onChange={e=>{setCategory(e.target.value);setActive("");}}><option value="">All topics</option>{categories.map(c=><option key={c}>{c}</option>)}</select></label></div>
+    <p>{query.trim().length>=3&&<a href={researchHandoff(query,org)}>Ask this question across procedures, UK guidance and connected evidence</a>}</p>
     <p role="status">{hits.length} {hits.length===1?"guide":"guides"}</p></section>
     {!hits.length&&<section className={ui.card}><h2>No matching guide</h2><p>Try a task name such as “SOP”, “supplier” or “sign in”.</p><button onClick={()=>{setQuery("");setCategory("");search.current?.focus();}}>Show all guides</button></section>}
     {hits.map(a=><article className={ui.card} id={a.id} key={a.id}><h2><button type="button" aria-controls={"guide-"+a.id} aria-expanded={active===a.id} onClick={()=>choose(a.id)}>{a.title}</button></h2><p>{a.summary}</p>

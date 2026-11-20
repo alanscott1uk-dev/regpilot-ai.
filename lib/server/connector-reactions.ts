@@ -1,3 +1,4 @@
+import {settleLeaverFollowUp} from "./leaver-follow-up";
 import {verifiedObservation} from './connector-observation';
 import {connectorControlIds} from './connector-scope';
 import {Prisma,type EvidenceConnector,type AutomationEvent} from '@prisma/client';
@@ -36,7 +37,12 @@ export async function applyConnectorReaction(tx:Prisma.TransactionClient,event:A
   const observation=verifiedObservation(run);
   if(!observation||!Array.isArray(observation.checks)||hashValue({engine:observation.engine,checks:observation.checks})!==run.signalHash)throw new ReactionInvalid('INPUT_INTEGRITY_FAILED');
   if(observationOutcome(observation)!==run.outcome)throw new ReactionInvalid('INPUT_INTEGRITY_FAILED');
-  if(run.outcome!=='OBSERVED'||event.changed)await followUpConnectorControls(tx,job,event.changed?'Observed signals changed since the last collection. Check the before/after values and remaining gaps.':'The collection contains failing or unknown signals requiring investigation.');
+  if(job.provider==="WORKFORCE_LEAVER"){
+   const settlement=await settleLeaverFollowUp(tx,job,run,observation);
+   if(settlement==="SUPERSEDED")return "CANCELLED";
+   if(settlement==="VERIFIED")return "DONE";
+   await followUpConnectorControls(tx,job,"Verify the effective BambooHR termination, linked Jira issue and disabled Microsoft identity.");
+  }else if(run.outcome!=='OBSERVED'||event.changed)await followUpConnectorControls(tx,job,event.changed?'Observed signals changed since the last collection. Check the before/after values and remaining gaps.':'The collection contains failing or unknown signals requiring investigation.');
   await followUpVendorSignals(tx,ctx,job,event.fingerprint);
  }else if(event.kind==='CONNECTOR_FAILED'){
   // Recovered collections supersede old failures; do not create stale failure tasks.

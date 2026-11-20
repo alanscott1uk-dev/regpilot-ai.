@@ -1,8 +1,10 @@
+import {workforceTarget,workforceCredentials,workforceKeys,readWorkforceKeys} from "../connectors/workforce-target";
+import {collectWorkforce} from "../connectors/workforce";
 import {collectIntune} from "../connectors/intune";
 import {collectScorecard,scorecardTarget} from "../connectors/scorecard";
 import {collectOkta,oktaTarget,oktaConnections,nangoConfig} from "../connectors/nango-okta";
 import {registerProviders} from "./vendor-signals";
-import {awsTarget} from "../connectors/aws-target";
+import {awsTarget,awsOrganizationTarget} from "../connectors/aws-target";
 import {collectGleif,gleifTarget} from "../connectors/gleif";
 import {PROVIDERS,requiresStoredSecret} from "../connectors/capacity";
 import {verifiedObservation} from './connector-observation';
@@ -18,7 +20,7 @@ import {randomUUID} from "node:crypto";
 import {z} from "zod";
 import {db} from "./db";
 import {connectorsEnabled,microsoft365Enabled,googleWorkspaceEnabled,gitlabEnabled,cloudflareEnabled,companiesHouseEnabled,vercelEnabled,supabaseEnabled,connectorProviderEnabled} from "./connector-flags";
-export {connectorsEnabled,microsoft365Enabled,googleWorkspaceEnabled,gitlabEnabled,cloudflareEnabled,companiesHouseEnabled,vercelEnabled,supabaseEnabled,oktaEnabled,intuneEnabled,scorecardEnabled,awsEnabled,gleifEnabled} from "./connector-flags";
+export {connectorsEnabled,microsoft365Enabled,googleWorkspaceEnabled,gitlabEnabled,cloudflareEnabled,companiesHouseEnabled,vercelEnabled,supabaseEnabled,oktaEnabled,intuneEnabled,scorecardEnabled,awsEnabled,gleifEnabled,workforceEnabled,awsOrganizationEnabled} from "./connector-flags";
 import {collectGitlab,gitlabTarget} from "../connectors/gitlab";
 import {collectCloudflare,cloudflareTarget} from "../connectors/cloudflare";
 import {collectCompaniesHouse,companiesHouseTarget} from "../connectors/companies-house";
@@ -41,6 +43,8 @@ const googleSchema=googleTarget.extend({provider:z.literal("GOOGLE_WORKSPACE"),c
 const microsoftSchema=microsoftTarget.extend({provider:z.enum(["MICROSOFT365","INTUNE"]),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:z.string().min(16).max(512).regex(/^[^\r\n\0]+$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)});
 const extraFields={controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().refine(validCredential).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)};
 const extraSchema=z.discriminatedUnion("provider",[
+ workforceTarget.extend({...extraFields,provider:z.literal("WORKFORCE_LEAVER"),credentials:workforceCredentials.optional()}).omit({token:true}).strict(),
+ awsOrganizationTarget.extend({...extraFields,provider:z.literal("AWS_ORGANIZATIONS")}).omit({token:true}).strict(),
  awsTarget.extend({...extraFields,provider:z.literal("AWS")}).omit({token:true}).strict(),
  gleifTarget.extend({...extraFields,provider:z.literal("GLEIF")}).omit({token:true}).strict(),
  scorecardTarget.extend({...extraFields,provider:z.literal("OPENSSF_SCORECARD")}).omit({token:true}).strict(),
@@ -66,6 +70,8 @@ function storedTarget(settings:ConnectorSettings):{repository:string;branch:stri
   case "VERCEL":return {repository:"vercel:"+settings.projectId,branch:settings.teamId,token:settings.token};
   case "SUPABASE":return {repository:"supabase:"+settings.projectRef.toLowerCase(),branch:settings.providerOrganizationId,token:settings.token};
   case "OKTA":return {repository:"okta:"+settings.connectionId,branch:[settings.groupId,settings.removedUserId].filter(Boolean).join(":"),token:settings.connectionId};
+  case "WORKFORCE_LEAVER":return {...workforceKeys(settings),token:settings.credentials?JSON.stringify(settings.credentials):undefined};
+  case "AWS_ORGANIZATIONS":return {repository:"awsorg:"+settings.awsOrganizationId+":"+settings.accountId,branch:settings.region};
   case "AWS":return {repository:"aws:"+settings.accountId,branch:settings.region};
   case "GLEIF":return {repository:"gleif:"+settings.lei,branch:settings.companyNumber};
   case "OPENSSF_SCORECARD":return {repository:"scorecard:"+settings.repository,branch:settings.deployedCommit??"published"};
@@ -74,8 +80,18 @@ function storedTarget(settings:ConnectorSettings):{repository:string;branch:stri
 type Collector=(target:{provider?:string;organizationId?:string;repository:string;branch:string},secret:string)=>Promise<Observation>;
 export const collectConfiguredConnector:Collector=async(target,secret)=>{
  if(!connectorProviderEnabled(target.provider||"GITHUB"))throw new CollectionError("PROVIDER_DISABLED");
+ if(target.provider==="WORKFORCE_LEAVER"){
+  const scope=readWorkforceKeys(target.repository,target.branch);
+  if(!scope)throw new CollectionError("INVALID_TARGET");
+  return collectWorkforce(scope,JSON.parse(secret));
+ }
  if(target.provider==="INTUNE" && target.repository.startsWith("intune:")){
   return collectIntune({tenantId:target.repository.slice(7),clientId:target.branch},secret);
+ }
+ if(target.provider==="AWS_ORGANIZATIONS"&&target.organizationId&&target.repository.startsWith("awsorg:")){
+  const [,awsOrganizationId,accountId]=target.repository.split(":");
+  const {collectAwsOrganization}=await import("../connectors/aws-organization");
+  return collectAwsOrganization(awsOrganizationTarget.parse({awsOrganizationId,accountId,region:target.branch}),target.organizationId);
  }
  if(target.provider==="AWS"&&target.repository.startsWith("aws:")&&target.organizationId){
   const {collectAws}=await import("../connectors/aws");
@@ -110,7 +126,7 @@ export const collectConfiguredConnector:Collector=async(target,secret)=>{
 };
 export async function saveConnector(ctx:AuthorizedContext,input:unknown){
  if(!connectorsEnabled())throw new IntelligenceError("Evidence connectors await activation",503);
- const provider=(input as {provider?:string})?.provider,microsoft=provider==="MICROSOFT365"||provider==="INTUNE",google=provider==="GOOGLE_WORKSPACE",extra=["GITLAB","CLOUDFLARE","COMPANIES_HOUSE","VERCEL","SUPABASE","OKTA","OPENSSF_SCORECARD","AWS","GLEIF"].includes(provider||"");
+ const provider=(input as {provider?:string})?.provider,microsoft=provider==="MICROSOFT365"||provider==="INTUNE",google=provider==="GOOGLE_WORKSPACE",extra=["GITLAB","CLOUDFLARE","COMPANIES_HOUSE","VERCEL","SUPABASE","OKTA","OPENSSF_SCORECARD","AWS","GLEIF","WORKFORCE_LEAVER","AWS_ORGANIZATIONS"].includes(provider||"");
  const parsed=(extra?extraSchema:google?googleSchema:microsoft?microsoftSchema:schema).safeParse(input);if(!parsed.success)throw new IntelligenceError("Check the provider, target, credentials, control and version");
  if(microsoft&&!connectorProviderEnabled(provider!))throw new IntelligenceError("This Microsoft provider awaits activation",503);
  if(google&&!googleWorkspaceEnabled())throw new IntelligenceError("Google Workspace collection awaits activation",503);
@@ -131,6 +147,8 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
   if((old?.version||0)!==v.version)throw new IntelligenceError("Connector settings changed",409);
   if(credentialRequired&&!v.token&&!old?.encryptedSecret)throw new IntelligenceError("A restricted provider credential is required");
   const targetChanged=old&&(old.repository!==repository||old.branch!==v.branch);
+  const addingBambooCompany=old&&raw.provider==="WORKFORCE_LEAVER"&&raw.bambooCompanyId&&old.branch===v.branch&&repository===old.repository+":"+raw.bambooCompanyId&&!readWorkforceKeys(old.repository,old.branch)?.bambooCompanyId;
+  if(targetChanged&&v.provider==="WORKFORCE_LEAVER"&&!addingBambooCompany)throw new IntelligenceError("Create a separate connection for a different leaver, ticket or directory identity",409);
   if(targetChanged&&registerProviders.includes(v.provider)&&await tx.vendor.findFirst({where:{organizationId:ctx.organizationId,signalConnectorId:old.id},select:{id:true}}))throw new IntelligenceError("This register is linked to a supplier. Create a connection for the new legal entity and select it in the supplier review.",409);
   if(targetChanged&&credentialRequired&&!v.token)throw new IntelligenceError("Supply a newly scoped credential when changing target");
   if(!old&&await tx.evidenceConnector.count({where:{organizationId:ctx.organizationId}})>=20)throw new IntelligenceError("Connector limit reached",429);

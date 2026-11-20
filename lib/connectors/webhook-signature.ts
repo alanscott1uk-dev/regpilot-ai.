@@ -1,13 +1,23 @@
 import {createHmac,timingSafeEqual,createHash} from 'node:crypto';
 
-export type WebhookProvider='GITHUB'|'GITLAB';
+import {readWorkforceKeys} from "./workforce-target";
+
+export type WebhookProvider='GITHUB'|'GITLAB'|'WORKFORCE_LEAVER';
 export class WebhookError extends Error{constructor(public status:number,message='Webhook rejected'){super(message);}}
 const same=(a:string,b:string)=>a.length===b.length&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
 export function validWebhookSecret(provider:WebhookProvider,secret:string){
+ if(provider==="WORKFORCE_LEAVER")return /^[!-~]{16,128}$/.test(secret);
  return provider==='GITHUB'?/^[A-Za-z0-9_-]{32,128}$/.test(secret):/^whsec_[A-Za-z0-9+/]{43}=$/.test(secret)&&Buffer.from(secret.slice(6),'base64').length===32;
 }
 export function verifyWebhook(provider:WebhookProvider,secret:string,headers:Headers,body:Uint8Array,now=Date.now()){
  if(!validWebhookSecret(provider,secret))throw new WebhookError(401);
+ if(provider==="WORKFORCE_LEAVER"){
+  const stamp=headers.get("x-bamboohr-timestamp")||"",signature=headers.get("x-bamboohr-signature")||"";
+  const time=/^\d{10}$/.test(stamp)?Number(stamp)*1000:/^\d{13}$/.test(stamp)?Number(stamp):/^\d{4}-\d{2}-\d{2}T.{8,30}(?:Z|[+-]\d{2}:?\d{2})$/.test(stamp)?Date.parse(stamp):NaN;
+  if(!Number.isFinite(time)||Math.abs(now-time)>300000||!/^[a-f0-9]{64}$/.test(signature))throw new WebhookError(401);
+  if(!same(signature,createHmac("sha256",secret).update(body).update(stamp).digest("hex")))throw new WebhookError(401);
+  const payloadHash=createHash("sha256").update(body).digest("hex");return {deliveryId:payloadHash,payloadHash};
+ }
  const deliveryId=headers.get(provider==='GITHUB'?'x-github-delivery':'webhook-id')||'';
  if(!/^[A-Za-z0-9_-]{8,128}$/.test(deliveryId))throw new WebhookError(401);
  let valid=false;
@@ -27,6 +37,12 @@ export function verifyWebhook(provider:WebhookProvider,secret:string,headers:Hea
 export function webhookEvent(provider:WebhookProvider,headers:Headers,body:Uint8Array,target:{repository:string;branch:string}){
  let payload:any;try{payload=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(body));}catch{throw new WebhookError(400,'Invalid webhook JSON');}
  if(!payload||typeof payload!=='object'||Array.isArray(payload))throw new WebhookError(400);
+ if(provider==="WORKFORCE_LEAVER"){
+  const scope=readWorkforceKeys(target.repository,target.branch);
+  if(!scope?.bambooCompanyId||String(payload.data?.companyId)!==scope.bambooCompanyId)throw new WebhookError(403,"Webhook company differs from the configured target");
+  if(String(payload.data?.employeeId)!==scope.employeeId)return null;
+  return ["employee.updated","employee.deleted","employee.created"].includes(payload.type)?payload.type:null;
+ }
  if(provider==='GITHUB'){
   const event=headers.get('x-github-event')||'';
   if(typeof payload.repository?.full_name!=='string'||payload.repository.full_name.toLowerCase()!==target.repository.toLowerCase())throw new WebhookError(403,'Webhook target mismatch');

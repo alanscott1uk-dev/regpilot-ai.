@@ -5,8 +5,8 @@ export const runtime='nodejs';export const dynamic='force-dynamic';export const 
 export async function POST(request:Request,{params}:{params:Promise<{provider:string;id:string}>}){
  try{
   const {provider,id}=await params;
-  if(provider!=='github'&&provider!=='gitlab')return reply({error:'Webhook rejected'},404);
-  const result=await receiveConnectorWebhook(request,provider==='github'?'GITHUB':'GITLAB',id);
+  if(provider!=='github'&&provider!=='gitlab'&&provider!=='bamboohr')return reply({error:'Webhook rejected'},404);
+  const result=await receiveConnectorWebhook(request,provider==='github'?'GITHUB':provider==='bamboohr'?'WORKFORCE_LEAVER':'GITLAB',id);
   return reply(result,202);
  }catch(error){return reply({error:error instanceof WebhookError?error.message:'Webhook unavailable'},error instanceof WebhookError?error.status:503);}
 }

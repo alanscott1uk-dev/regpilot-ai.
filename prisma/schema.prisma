@@ -1248,6 +1248,8 @@ model PolicyAssignment {
  @@index([organizationId,userId,status,dueDate])
 }
 model Vendor {
+ licenceScope Json?
+ licenceRecord Json?
  aiSystems AiSystem[]
  signalConnectorId String? @db.Uuid
  signalConnector EvidenceConnector? @relation(fields:[signalConnectorId,organizationId],references:[id,organizationId],onDelete:Restrict)

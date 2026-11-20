@@ -3,6 +3,7 @@ import {useEffect,useRef,useState} from "react";
 import WorkspaceNav from "../components/workspace-nav";
 import {useWorkspaceContext} from "../../lib/client/workspace-context";
 import {inferSopStarter,newSopDraft,sopDraftSchema,sopNations,sopOpenItems,sopStarterNames,type SopDraft,type SopStarter} from "../../lib/sop-draft";
+import {researchHandoff} from "../../lib/operator-answer";
 import {SourcePassages} from "./source-passages";
 import {ReviewHandoff,type ExportedSop} from "./review-handoff";
 import shell from "../workbench/workbench.module.css";
@@ -55,7 +56,7 @@ function Editor({workspace}:{workspace:ReturnType<typeof useWorkspaceContext>}){
       <label>What procedure are you writing?<input maxLength={160} placeholder="e.g. temperature mapping or staff offboarding" value={topic} onChange={e=>{setTopic(e.target.value);setStarter(inferSopStarter(e.target.value));}}/></label>
       <div className={css.grid}><label>Starting point<select value={starter} onChange={e=>setStarter(e.target.value as SopStarter)}>{Object.entries(sopStarterNames).map(([id,n])=><option key={id} value={id}>{n}</option>)}</select></label>
       <label>UK nation<select value={nation} onChange={e=>setNation(e.target.value as SopDraft["nation"])}><option value="">Choose later</option>{sopNations.map(n=><option key={n}>{n}</option>)}</select></label></div>
-      <button type="submit">Create SOP draft</button></form><div className={css.resume}><label>Resume a saved RegPilot draft<input type="file" accept=".json,application/json" onChange={e=>void openFile(e.target.files?.[0])}/></label></div></section>:
+      <button type="submit">Create SOP draft</button></form>{topic.trim().length>=3&&<p><a href={researchHandoff(topic,workspace.organizationId)}>Find current procedures and evidence for this topic</a></p>}<div className={css.resume}><label>Resume a saved RegPilot draft<input type="file" accept=".json,application/json" onChange={e=>void openFile(e.target.files?.[0])}/></label></div></section>:
     <><section className={css.card}><div className={css.heading}><h2>Draft details</h2><button type="button" onClick={()=>{if(confirm("Start another procedure? Save this editable draft first to keep your changes.")){revision.current++;setDraft(null);setTopic("");setStarter("general");setExported(null);setMessage("");}}}>Start another</button></div>
       <div className={css.grid}>{fields.map(([key,label,max])=><label key={key}>{label}{max>700?<textarea rows={3} maxLength={max} value={draft[key]} onChange={e=>change({...draft,[key]:e.target.value})}/>:<input maxLength={max} value={draft[key]} onChange={e=>change({...draft,[key]:e.target.value})}/>}</label>)}
       <label>UK nation<select value={draft.nation} onChange={e=>change({...draft,nation:e.target.value as SopDraft["nation"]})}><option value="">Choose later</option>{sopNations.map(n=><option key={n}>{n}</option>)}</select></label></div></section>

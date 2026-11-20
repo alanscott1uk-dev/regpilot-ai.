@@ -33,7 +33,7 @@ test("technical failure, expired observation, disabled provider and mismatched h
 test("failed and unknown checks remain actionable, not a passing compliance assessment",()=>{
  const result=connectorHealth([row({lastOutcome:"FOLLOW_UP",checksFailed:2}),row({id:"b",lastOutcome:"INCOMPLETE",checksUnknown:1})],now);
  assert.equal(result.observed,0);assert.equal(result.needsAttention,2);
- assert.deepEqual(result.items.map(x=>x.status),["attention","attention"]);
+ assert.deepEqual(result.items.map(x=>x.status),["attention","incomplete"]);
 });
 test("empty inventory never indicates verified integration",()=>{
  const result=connectorHealth([],now);

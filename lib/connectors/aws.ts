@@ -6,7 +6,7 @@ import {awsBinding,awsTarget,brokerRole} from "./aws-target";
 import {awsPosture} from "./aws-posture";
 import {CollectionError} from "./collection-error";
 
-type Runtime={token?:()=>Promise<string>;requestHandler?:STSClientConfig["requestHandler"]};
+export type AwsRuntime={signal?:AbortSignal;token?:()=>Promise<string>;requestHandler?:STSClientConfig["requestHandler"]};
 const denied=new Set(["AccessDenied","AccessDeniedException","InsufficientPermissionsException","InsufficientIAMPolicyException"]);
 function code(e:unknown){return e instanceof Error?e.name:"";}
 function temporary(c:Credentials|undefined){
@@ -19,12 +19,13 @@ async function optional<T>(read:()=>Promise<T>,missingTrail=false):Promise<T|nul
 }
 
 /** The web identity only obtains the broker session. Every evidence read signs with the customer session. */
-export async function collectAws(input:{accountId:string;region:string},organizationId:string,runtime:Runtime={}){
+export async function withAwsAccount<T>(input:{accountId:string;region:string},organizationId:string,runtime:AwsRuntime,read:(options:{region:string;maxAttempts:number;ignoreConfiguredEndpointUrls:boolean;requestHandler?:AwsRuntime["requestHandler"];credentials:ReturnType<typeof temporary>},signal:AbortSignal)=>Promise<T>){
   const target=awsTarget.parse(input),binding=awsBinding(organizationId);
   const broker=brokerRole.safeParse(process.env.REGPILOT_AWS_BROKER_ROLE_ARN);
   if(!broker.success)throw new CollectionError("AWS_WORKLOAD_UNAVAILABLE");
   const opts={region:target.region,maxAttempts:1,ignoreConfiguredEndpointUrls:true,requestHandler:runtime.requestHandler};
-  const signal=AbortSignal.timeout(25000),sendOptions={abortSignal:signal};
+  const signal=runtime.signal??AbortSignal.timeout(25000),sendOptions={abortSignal:signal};
+  signal.throwIfAborted();
   const clients:Array<{destroy():void}>=[];
   function own<T extends {destroy():void}>(client:T){clients.push(client);return client;}
   try{
@@ -51,6 +52,23 @@ export async function collectAws(input:{accountId:string;region:string},organiza
     const sts=own(new STSClient(options));
     const who=await sts.send(new GetCallerIdentityCommand({}),sendOptions);
     if(who.Account!==target.accountId||who.Arn!=="arn:aws:sts::"+target.accountId+":assumed-role/"+binding.roleName+"/regpilot-evidence")throw new CollectionError("TARGET_MISMATCH");
+    return await read(options,signal);
+  }catch(e){
+    if(e instanceof CollectionError)throw e;
+    const reason=code(e);
+    if(signal.aborted||["AbortError","TimeoutError"].includes(reason))throw new CollectionError("PROVIDER_TIMEOUT");
+    if(["Throttling","ThrottlingException","TooManyRequestsException","SlowDown","RequestLimitExceeded"].includes(reason))throw new CollectionError("RATE_LIMITED",60);
+    if(denied.has(reason)||["InvalidIdentityToken","ExpiredToken","ExpiredTokenException","IDPRejectedClaim"].includes(reason))throw new CollectionError("AWS_ROLE_ACCESS");
+    throw new CollectionError("PROVIDER_UNAVAILABLE");
+  }finally{for(const client of clients)client.destroy();}
+}
+
+export async function collectAws(input:{accountId:string;region:string},organizationId:string,runtime:AwsRuntime={}){
+  const target=awsTarget.parse(input);
+  return withAwsAccount(target,organizationId,runtime,async(options,signal)=>{
+    const sendOptions={abortSignal:signal},clients:Array<{destroy():void}>=[];
+    function own<T extends {destroy():void}>(client:T){clients.push(client);return client;}
+    try{
     const s3=own(new S3ControlClient(options));
     const regionalClients=new Map<string,CloudTrailClient>();
     function trailClient(region:string){
@@ -82,12 +100,6 @@ export async function collectAws(input:{accountId:string;region:string},organiza
         return {EventSelectors:out.EventSelectors,AdvancedEventSelectors:out.AdvancedEventSelectors};
       },true)
     });
-  }catch(e){
-    if(e instanceof CollectionError)throw e;
-    const reason=code(e);
-    if(signal.aborted||["AbortError","TimeoutError"].includes(reason))throw new CollectionError("PROVIDER_TIMEOUT");
-    if(["Throttling","ThrottlingException","TooManyRequestsException","SlowDown","RequestLimitExceeded"].includes(reason))throw new CollectionError("RATE_LIMITED",60);
-    if(denied.has(reason)||["InvalidIdentityToken","ExpiredToken","ExpiredTokenException","IDPRejectedClaim"].includes(reason))throw new CollectionError("AWS_ROLE_ACCESS");
-    throw new CollectionError("PROVIDER_UNAVAILABLE");
-  }finally{for(const client of clients)client.destroy();}
+    }finally{for(const client of clients)client.destroy();}
+  });
 }

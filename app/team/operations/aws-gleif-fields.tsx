@@ -4,19 +4,20 @@ import {browserAuth} from "../../../lib/client/supabase-auth";
 import {awsRegions,awsRoleTemplate} from "../../../lib/connectors/aws-target";
 import ui from "./operations.module.css";
 
-export function AwsFields({organizationId,broker,accountId,region}:{organizationId:string;broker?:string|null;accountId?:string;region?:string}){
+export function AwsFields({organizationId,broker,accountId,region,inventory=false,awsOrganizationId}:{organizationId:string;broker?:string|null;accountId?:string;region?:string;inventory?:boolean;awsOrganizationId?:string}){
   function download(){
     if(!broker)return;
-    const file=new Blob([JSON.stringify(awsRoleTemplate(organizationId,broker),null,2)+"\n"],{type:"application/json"});
+    const file=new Blob([JSON.stringify(awsRoleTemplate(organizationId,broker,inventory),null,2)+"\n"],{type:"application/json"});
     const href=URL.createObjectURL(file),link=document.createElement("a");
     link.href=href;link.download="regpilot-aws-evidence-role.json";link.click();
     setTimeout(()=>URL.revokeObjectURL(href),1000);
   }
   return <>
-    <label>AWS account ID<input name="accountId" defaultValue={accountId} required inputMode="numeric" pattern="[0-9]{12}" maxLength={12} placeholder="12-digit account number"/></label>
+    {inventory&&<label>AWS organization ID<input name="awsOrganizationId" required pattern="o-[a-z0-9]{10,32}" defaultValue={awsOrganizationId}/></label>}
+    <label>{inventory?"AWS management account ID":"AWS account ID"}<input name="accountId" defaultValue={accountId} required inputMode="numeric" pattern="[0-9]{12}" maxLength={12} placeholder="12-digit account number"/></label>
     <label>AWS region<select aria-label="AWS region" name="region" defaultValue={region??"eu-west-2"}>{Object.entries(awsRegions).map(([id,city])=><option key={id} value={id}>{city} ({id})</option>)}</select></label>
     {broker&&<div className={ui.full}><button type="button" onClick={download}>Download AWS role template</button>
-      <p className={ui.hint}>Give this CloudFormation file to your AWS administrator to review and apply in the selected account. It grants this workspace four read permissions.</p></div>}
+      <p className={ui.hint}>Give this CloudFormation file to your AWS administrator to review and apply in the selected account. {inventory?"Use the inventory role in the management account and the account evidence role in participating members.":"It grants this workspace four read permissions."}</p></div>}
   </>;
 }
 

@@ -100,6 +100,10 @@ async function basis(tx:Tx,ctx:AuthorizedContext,row:QualityCase,evidenceIds:str
 }
 function proposalHash(row:QualityEffectiveness){return hashValue({id:row.id,organizationId:row.organizationId,caseId:row.caseId,cycle:row.cycle,requestKey:row.requestKey,authorId:row.authorId,observedAt:row.observedAt.toISOString().slice(0,10),notes:row.notes,evidence:row.evidenceManifest,contextHash:row.contextHash});}
 function decisionHash(row:QualityEffectiveness){return hashValue({id:row.id,proposalHash:row.proposalHash,reviewerId:row.reviewerId,status:row.status,reviewNotes:row.reviewNotes,reviewedAt:row.reviewedAt?.toISOString()});}
+export function verifiedEffectivenessDecision(row:QualityEffectiveness){
+ return ["PASSED","FAILED"].includes(row.status)&&!!row.reviewerId&&row.reviewerId!==row.authorId&&!!row.reviewedAt&&
+  hashValue(row.context)===row.contextHash&&proposalHash(row)===row.proposalHash&&decisionHash(row)===row.decisionHash;
+}
 async function reviewState(tx:Tx,ctx:AuthorizedContext,row:QualityCase,review:QualityEffectiveness){
  const no=(reason:string)=>({current:false,reason});
  if(review.cycle!==row.cycle||review.status==='SUPERSEDED'||review.status==='FAILED')return no('Historical cycle or superseded assessment. A fresh investigation and effectiveness decision are required.');

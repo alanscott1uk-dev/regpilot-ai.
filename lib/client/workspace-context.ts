@@ -8,11 +8,12 @@ type Context={organisations:WorkspaceOrganization[];organizationId:string;userId
 const empty:Context={organisations:[],organizationId:'',userId:'',email:'',loading:true,error:'',revision:0};
 
 export function workspaceHref(path:string,organizationId:string,values:Record<string,string>={}){
- const [pathname,query='']=path.split('?');
+ const hash=path.indexOf('#'),fragment=hash<0?'':path.slice(hash);
+ const [pathname,query='']=(hash<0?path:path.slice(0,hash)).split('?');
  const params=new URLSearchParams(query);
  if(organizationId)params.set('organizationId',organizationId);
  for(const [key,value] of Object.entries(values))if(value)params.set(key,value);
- return pathname+(params.size?'?'+params.toString():'');
+ return pathname+(params.size?'?'+params.toString():'')+fragment;
 }
 function recordOrganization(id:string,clearLinkedRecords=false){
  const url=new URL(window.location.href);

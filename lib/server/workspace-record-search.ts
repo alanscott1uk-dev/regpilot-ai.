@@ -7,7 +7,7 @@ const destinations={
  Control:['/team/operations',''],
  Risk:['/team/risks','riskId'],
  'AI system':['/team/ai-inventory','systemId'],
- Supplier:['/team/vendors',''],
+ Supplier:['/team/vendors','vendorId'],
  'Access review':['/team/access-reviews',''],
  Questionnaire:['/team/questionnaires','questionnaireId'],
  'Audit room':['/team/audits',''],
@@ -34,7 +34,7 @@ export async function searchWorkspaceRecords(tx:Prisma.TransactionClient,org:str
   SELECT 'Control',id,"importId",title,'Enabled',description||' '||"testProcedure" FROM "ManagedControl" WHERE "organizationId"=${org}::uuid AND enabled
   UNION ALL SELECT 'Risk',id,id,title,status,description||' '||category FROM "RiskRecord" WHERE "organizationId"=${org}::uuid AND status<>'ARCHIVED'
   UNION ALL SELECT 'AI system',id,id,name,'Inventory version '||version,kind||' AI governance '||coalesce(profile->>'purpose','') FROM "AiSystem" WHERE "organizationId"=${org}::uuid
-  UNION ALL SELECT 'Supplier',id,id,name,criticality,service||' vendor' FROM "Vendor" WHERE "organizationId"=${org}::uuid AND active
+  UNION ALL SELECT 'Supplier',id,id,name,criticality,service||' vendor '||CASE WHEN "licenceScope" IS NULL THEN '' ELSE ' MHRA WDA wholesale licence authorisation supplier site '||coalesce("licenceScope"->>'premises','')||' '||coalesce("licenceScope"->>'number','')||' '||coalesce("licenceScope"->>'companyNumber','')||' '||coalesce("licenceScope"->>'activity','') END FROM "Vendor" WHERE "organizationId"=${org}::uuid AND active
   UNION ALL SELECT 'Access review',id,id,title,status,'access campaign' FROM "AccessCampaign" WHERE "organizationId"=${org}::uuid
   UNION ALL SELECT 'Questionnaire',id,id,title,status,scope FROM "AssuranceQuestionnaire" WHERE "organizationId"=${org}::uuid AND status<>'WITHDRAWN'
   UNION ALL SELECT 'Audit room',id,id,title,status,purpose FROM "AuditRoom" WHERE "organizationId"=${org}::uuid AND status<>'CLOSED'

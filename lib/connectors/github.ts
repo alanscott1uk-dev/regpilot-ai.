@@ -3,7 +3,7 @@ import {CollectionError} from './collection-error';
 export {CollectionError} from './collection-error';
 import {z} from "zod";
 export const githubTarget=z.object({repository:z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_.-]{1,100}$/).refine(s=>![".",".."].includes(s.split("/")[1])),branch:z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/).refine(s=>!s.includes(".."))});
-export type ConnectorCheck={id:string;label:string;status:"PASS"|"FAIL"|"UNKNOWN";observed:string;nextStep:string};
+export type ConnectorCheck={id:string;label:string;status:"PASS"|"FAIL"|"UNKNOWN";observed:string;nextStep:string;sourceUrl?:string};
 export type GithubObservation={engine:"github-branch-2.0.0";repository:string;branch:string;sourceUrl:string;capturedAt:string;checks:ConnectorCheck[];limitations:string[]};
 async function boundedJson(response:Response){
  if(!response.headers.get("content-type")?.includes("json"))throw new CollectionError("INVALID_RESPONSE");

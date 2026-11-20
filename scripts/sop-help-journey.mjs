@@ -10,6 +10,10 @@ export async function sopHelpJourney(browser,base,viewport,name){
     page.on("pageerror",e=>errors.push(String(e)));
     await page.goto(base+"/help");
     await page.getByLabel("Search help").fill("temperature mappping");
+    const helpLink=await page.getByRole("link",{name:"Ask this question across procedures, UK guidance and connected evidence"}).getAttribute("href");
+    const handoff=new URL(helpLink,base);
+    assert.equal(handoff.pathname,"/team/knowledge");assert.equal(handoff.searchParams.has("q"),false);
+    assert.equal(new URLSearchParams(handoff.hash.split("?")[1]).get("q"),"temperature mappping");
     await page.getByRole("button",{name:"Start a temperature-mapping procedure"}).click();
     await checkAccessibility(page,"artifacts/usability/"+name+"-help-axe.json","main");
     await page.getByRole("link",{name:"Open temperature-mapping starter"}).click();

@@ -55,6 +55,23 @@ test("unsupported questions make no publisher requests and geographic terms cann
   assert.deepEqual(researchCandidates({question:"What records must we keep when we charge or reclaim VAT?"}).sources.map(s=>s.id),["vat-records"]);
 });
 
+test("MHRA passage retrieval distinguishes the two device markets and asks when a selected nation conflicts",async()=>{
+  // Short extracts from the two named publisher pages, checked on 20 November 2026.
+  const extracts:Record<string,string>={
+    "mhra-device-markets":"Failure to register your devices will mean that you are unable to lawfully place your device on the Great Britain market.",
+    "mhra-device-ni":"CE marking is required for the Northern Ireland market, and manufacturers based in Northern Ireland do not require an authorised representative established in the EU."
+  };
+  const catalogue=REGULATORY_SOURCES.filter(s=>Object.hasOwn(extracts,s.id));
+  const read:ResearchReader=async s=>({id:s.id,title:s.title,url:officialSourceUrl(s),text:extracts[s.id],revisionAt:null,updatedAt:null,checkedAt:"2026-11-20T00:00:00.000Z"});
+  const scotland=await researchPublications({question:"Which medical devices must register for the Great Britain market?",nation:"Scotland"},read,catalogue);
+  const ni=await researchPublications({question:"Which medical device market requires CE marking in Northern Ireland?",nation:"Northern Ireland"},read,catalogue);
+  assert.deepEqual(new Set(scotland.citations.map(c=>c.sourceId)),new Set(["mhra-device-markets"]));
+  assert.deepEqual(new Set(ni.citations.map(c=>c.sourceId)),new Set(["mhra-device-ni"]));
+  for(const result of [scotland,ni])for(const c of result.citations)assert.equal(c.quote,extracts[c.sourceId].slice(c.start,c.end));
+  const conflict=await researchPublications({question:"What medical device requirements apply in Northern Ireland?",nation:"Scotland"},async()=>assert.fail("conflicting territory must be clarified first"),catalogue);
+  assert.match(conflict.scopeQuestion||"",/Which territory/);assert.equal(conflict.citations.length,0);assert.equal(conflict.checked.length,0);
+});
+
 const query={question:"Which publications cover GMP and wholesale dealer licensing for medicines?"};
 const sources=REGULATORY_SOURCES.filter(s=>["mhra-gmp-gdp","mhra-manufacturer-wholesale"].includes(s.id));
 const bodies:Record<string,string>={

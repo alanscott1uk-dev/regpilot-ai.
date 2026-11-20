@@ -1,5 +1,8 @@
+import {matchesNamedScope} from "../operator-answer";
+import {licenceFinding,setLicenceScope,importLicence} from "./vendor-licence";
+import {licenceScope,savedLicence} from "../supplier-licence";
 import {vendorAttention,compareVendorSignals} from "../vendor-attention";
-import {registerProviders,vendorSignal,vendorSignalSchema,sameVendorSignal} from "./vendor-signals";
+import {registerProviders,vendorSignal,vendorSignalSchema,sameVendorSignal,siteInvestigation,siteTaskCategory} from "./vendor-signals";
 import {Prisma,type Vendor,type VendorReview} from "@prisma/client";
 import {z} from "zod";
 import type {AuthorizedContext} from "./authorization";
@@ -19,7 +22,7 @@ async function owner(tx:Prisma.TransactionClient,ctx:AuthorizedContext,id:string
  if(!m||m.role==="VIEWER"||!allowedEmail(m.user.email,process.env.REGPILOT_AI_ALLOWED_EMAILS))throw new IntelligenceError("Choose a current colleague who can own follow-up work",409);
  return m.user.email;
 }
-function snapshot(v:Vendor){return {id:v.id,name:v.name,service:v.service,ownerId:v.ownerId,criticality:v.criticality,dataAccess:v.dataAccess,systemAccess:v.systemAccess,version:v.version,...(v.signalConnectorId?{signalConnectorId:v.signalConnectorId}:{})};}
+function snapshot(v:Vendor){return {id:v.id,name:v.name,service:v.service,ownerId:v.ownerId,criticality:v.criticality,dataAccess:v.dataAccess,systemAccess:v.systemAccess,version:v.version,...(v.licenceScope?{licenceScope:licenceScope.parse(v.licenceScope),licenceRecord:v.licenceRecord?savedLicence.parse(v.licenceRecord):null}:{}),...(v.signalConnectorId?{signalConnectorId:v.signalConnectorId}:{})};}
 function reviewHash(r:Pick<VendorReview,"signalSnapshot"|"baselineReviewId"|"vendorSnapshot"|"evidenceManifest"|"assessment"|"recommendation"|"rationale"|"followUpDue"|"validUntil">){
  return hashValue({...(r.signalSnapshot?{signalSnapshot:r.signalSnapshot}:{}),baselineReviewId:r.baselineReviewId,vendorSnapshot:r.vendorSnapshot,evidenceManifest:r.evidenceManifest,assessment:r.assessment,recommendation:r.recommendation,rationale:r.rationale,followUpDue:r.followUpDue.toISOString().slice(0,10),validUntil:r.validUntil.toISOString().slice(0,10)});
 }
@@ -35,11 +38,31 @@ async function reviewState(tx:Prisma.TransactionClient,ctx:AuthorizedContext,v:V
  if(r.vendorVersion!==v.version||hashValue(r.vendorSnapshot)!==hashValue(snapshot(v)))return "STALE";
  if(expired(r.validUntil))return "EXPIRED";
  if(v.signalConnectorId){const current=await vendorSignal(tx,ctx.organizationId,v.signalConnectorId);if(!current.current||!current.snapshot||!parsed.signal||!sameVendorSignal(current.snapshot,parsed.signal))return "STALE";}
+ if(v.licenceScope&&r.recommendation==="APPROVE"){
+  const signal=v.signalConnectorId?await vendorSignal(tx,ctx.organizationId,v.signalConnectorId):null;
+  if((await licenceFinding(tx,v,signal))?.reasons.length)return "STALE";
+ }
  if(r.status==="DRAFT"){
   const current=await tx.vendorReview.findFirst({where:{...org(ctx),vendorId:v.id,status:"ACCEPTED"},select:{id:true}});
   if((current?.id||null)!==r.baselineReviewId)return "STALE";
  }
  try{await assertReviewedFiles(tx,ctx.organizationId,parsed.files);}catch(e){if(e instanceof IntelligenceError)return "STALE";throw e;}return "CURRENT";
+}
+export async function supplierResearch(tx:Prisma.TransactionClient,ctx:AuthorizedContext,ids:string[],asset:string){
+ if(!ids.length)return [];
+ const vendors=await tx.vendor.findMany({where:{...org(ctx),id:{in:ids.slice(0,3)},active:true,licenceScope:{not:Prisma.DbNull}},include:{owner:{select:{email:true}},reviews:{where:{status:"ACCEPTED"},orderBy:{createdAt:"desc"},take:1}}});
+ const output=[];
+ for(const v of vendors){
+  const scope=licenceScope.parse(v.licenceScope);
+  if(!matchesNamedScope(scope.premises,asset))continue;
+  const signal=v.signalConnectorId?await vendorSignal(tx,ctx.organizationId,v.signalConnectorId):null;
+  const finding=await licenceFinding(tx,v,signal);if(!finding)continue;
+  const openTasks=await tx.obligation.findMany({where:{...org(ctx),vendorSignalId:v.id,status:{not:"COMPLETE"}},orderBy:[{dueDate:"asc"},{id:"asc"}],take:5,select:{id:true,title:true}});
+  const latest=v.reviews[0],reviewStateValue=await reviewState(tx,ctx,v,latest);
+  output.push({id:v.id,name:v.name,owner:v.owner.email,premises:scope.premises,activity:scope.activity,number:scope.number,
+   openTasks,reviewState:reviewStateValue,recommendation:latest?.recommendation||null,findings:finding.reasons,source:finding.saved?.record.source||null,checkedOn:finding.saved?.record.checkedOn||null});
+ }
+ return output;
 }
 export async function vendorWorkspace(ctx:AuthorizedContext){return transaction(ctx,async tx=>{
  await requireMember(tx,ctx,ADMIN);
@@ -67,12 +90,14 @@ export async function vendorDetail(ctx:AuthorizedContext,id:string){return trans
  if(!v)throw new IntelligenceError("Supplier not found",404);
  const rows=await tx.vendorReview.findMany({where:{...org(ctx),vendorId:id},orderBy:{createdAt:"desc"},take:WORKFLOW_LIMITS.reviews});
  const reviews=await Promise.all(rows.map(async r=>{
-  const parsed=content(r),ids=z.array(z.uuid()).max(7).parse(r.followUpTasks);
+  const parsed=content(r),ids=z.array(z.uuid()).max(9).parse(r.followUpTasks);
   const tasks=await tx.obligation.findMany({where:{...org(ctx),id:{in:ids}},select:{id:true,title:true,status:true,assigneeId:true,ownerName:true,dueDate:true,completionException:true}});
   return {id:r.id,version:r.version,status:r.status,createdById:r.createdById,reviewerId:r.reviewerId,createdAt:r.createdAt,reviewedAt:r.reviewedAt,reviewNotes:r.reviewNotes,recommendation:r.recommendation,rationale:r.rationale,followUpDue:r.followUpDue,validUntil:r.validUntil,vendorSnapshot:r.vendorSnapshot,...parsed,tasks,contextCurrent:(await reviewState(tx,ctx,v,r))==="CURRENT"};
  }));
  const signal=v.signalConnectorId?await vendorSignal(tx,ctx.organizationId,v.signalConnectorId):null;const signalTasks=await tx.obligation.findMany({where:{...org(ctx),vendorSignalId:id},select:{id:true,title:true,status:true,ownerName:true,dueDate:true},orderBy:{createdAt:"desc"},take:20});const accepted=rows.find(r=>r.status==="ACCEPTED"),state=await reviewState(tx,ctx,v,accepted);
- return {vendor:v,reviews,signal,signalTasks,reviewState:state,attention:vendorAttention({...v,reviewState:state,recommendation:accepted?.recommendation||null}),signalChanges:compareVendorSignals(signal?.snapshot?.observation||null,accepted?content(accepted).signal?.observation||null:null)};
+ const licence=await licenceFinding(tx,v,signal);
+ const licenceHistory=await tx.auditEvent.findMany({where:{...org(ctx),entityType:"Vendor",entityId:id,action:{in:["vendor.licence_scope","vendor.licence_import"]}},orderBy:[{createdAt:"desc"},{id:"desc"}],take:25,select:{id:true,action:true,createdAt:true,actor:{select:{email:true}},details:true}});
+ return {vendor:v,reviews,signal,licence,licenceHistory,signalTasks,reviewState:state,attention:vendorAttention({...v,reviewState:state,recommendation:accepted?.recommendation||null}),signalChanges:compareVendorSignals(signal?.snapshot?.observation||null,accepted?content(accepted).signal?.observation||null:null)};
 });}
 export async function prepareVendorReview(ctx:AuthorizedContext,id:string,input:unknown){
  const d=vendorReviewSchema.parse(input),followUpDue=futureDate(d.followUpDue),validUntil=futureDate(d.validUntil);
@@ -89,6 +114,12 @@ export async function prepareVendorReview(ctx:AuthorizedContext,id:string,input:
   const signal=v.signalConnectorId?await vendorSignal(tx,ctx.organizationId,v.signalConnectorId):null;
   if(signal&&(!signal.current||!signal.snapshot||d.signalRunId!==signal.snapshot.runId||d.signalReviewed!==true))throw new IntelligenceError("Refresh and explicitly review the current company-register observation",409);
   if(signal?.snapshot?.observation.checks.some(c=>c.status!=="PASS")&&d.recommendation==="APPROVE")throw new IntelligenceError("Address the register warnings or unknowns in a conditional/reject recommendation",409);
+  const licence=await licenceFinding(tx,v,signal);
+  if(licence){
+   if(licence.reasons.length&&d.recommendation==="APPROVE")throw new IntelligenceError(licence.reasons.join(" "),409);
+   const record=licence.saved?.record;
+   if(record&&record.state!=="UNAVAILABLE"&&!files.some(f=>f.id===record.evidenceId))throw new IntelligenceError("Include the reviewed MHRA source file in this decision",409);
+  }
   const record={signalSnapshot:signal?.snapshot||null,baselineReviewId:previous?.id||null,vendorSnapshot:snapshot(v),evidenceManifest:files,assessment:d.assessment,recommendation:d.recommendation,rationale:d.rationale,followUpDue,validUntil};
   const saved=await tx.vendorReview.create({data:{...org(ctx),vendorId:id,vendorVersion:v.version,createdById:ctx.userId,...record,signalSnapshot:record.signalSnapshot||Prisma.DbNull,inputHash:reviewHash(record)}});
   await event(tx,ctx,"review_prepared",id,{reviewId:saved.id,recommendation:d.recommendation});return {id:saved.id,vendorId:id};
@@ -101,6 +132,10 @@ async function canAccept(tx:Prisma.TransactionClient,ctx:AuthorizedContext,id:st
  const r=await tx.vendorReview.findFirst({where:{id:d.reviewId,...org(ctx),vendorId:id}});
  if(!v||!v.active||!r||r.status!=="DRAFT"||r.version!==d.version||await reviewState(tx,ctx,v,r)!=="CURRENT"||expired(r.followUpDue))throw new IntelligenceError("Review or supplier context changed; prepare a new review",409);
  const parsed=content(r);
+ if(v.licenceScope){
+  const scope=licenceScope.parse(v.licenceScope);
+  if(scope.reviewerId!==ctx.userId||(v.licenceRecord&&savedLicence.parse(v.licenceRecord).importedBy===ctx.userId))throw new IntelligenceError("The nominated independent quality reviewer must sign this site decision",403);
+ }
  if(r.createdById===ctx.userId||parsed.files.some(f=>f.uploadedById===ctx.userId))throw new IntelligenceError("A different administrator must sign off this supplier review",403);
  const email=await owner(tx,ctx,v.ownerId);return {v,r,...parsed,email};
 }
@@ -113,9 +148,19 @@ export async function changeVendor(ctx:AuthorizedContext,id:string,input:unknown
    if(r.inputHash!==before.r.inputHash)throw new IntelligenceError("Review changed during verification",409);
    const work:Array<{key:string;title:string;notes:string}>=assessment.filter(c=>c.outcome==="GAP").map(c=>({key:c.id,title:VENDOR_CRITERIA.find(x=>x.id===c.id)!.label,notes:c.rationale}));
    if(r.recommendation==="CONDITIONAL"&&signal?.observation.checks.some(c=>c.status!=="PASS"))work.push({key:"register-conditions",title:"Resolve company-register review conditions",notes:r.rationale});
+   if(r.recommendation==="CONDITIONAL"&&v.licenceScope){
+    const finding=await licenceFinding(tx,v,v.signalConnectorId?await vendorSignal(tx,ctx.organizationId,v.signalConnectorId):null);
+    if(finding?.reasons.length)work.push({key:"licence",title:"Resolve site authorisation findings",notes:finding.reasons.join(" ")});
+   }
    if(r.recommendation==="REJECT")work.push({key:"decision",title:"Decide next steps after rejected supplier review",notes:r.rationale});
    const tasks:string[]=[];
    for(const item of work){
+    if(item.key==="licence"){
+     const task=await siteInvestigation(tx,ctx,v,item.notes,r.id);
+     if(!task)throw new IntelligenceError("Choose a current owner for supplier site follow-up",409);
+     await tx.obligation.update({where:{id:task.id},data:{dueDate:r.followUpDue,notes:item.notes.slice(0,500)}});
+     tasks.push(task.id);continue;
+    }
     const automationKey=hashValue({kind:"vendor-review-gap",reviewId:r.id,criterion:item.key});
     const existing=await tx.obligation.findFirst({where:{...org(ctx),automationKey},select:{id:true}});
     const task=existing||await tx.obligation.create({data:{...org(ctx),automationKey,title:(v.name+": "+item.title).slice(0,160),notes:item.notes.slice(0,500),category:"Vendor assurance",ownerName:email,assigneeId:v.ownerId,dueDate:r.followUpDue}});
@@ -124,7 +169,7 @@ export async function changeVendor(ctx:AuthorizedContext,id:string,input:unknown
    await tx.vendorReview.updateMany({where:{...org(ctx),vendorId:id,status:"ACCEPTED"},data:{status:"SUPERSEDED",version:{increment:1}}});
    await tx.vendorReview.update({where:{id:r.id},data:{status:"ACCEPTED",reviewerId:ctx.userId,reviewNotes:d.notes,reviewedAt:new Date(),followUpTasks:tasks,version:{increment:1}}});
    await tx.vendor.update({where:{id},data:{nextReviewAt:r.validUntil}});
-   if(v.signalConnectorId)await tx.obligation.updateMany({where:{...org(ctx),vendorSignalId:id,status:{not:"COMPLETE"}},data:{status:"COMPLETE",completedAt:new Date(),completionException:false,completionRationale:"Public register observation independently considered in supplier review "+r.id+"; the accepted recommendation and any follow-up remain recorded."}});
+   if(v.signalConnectorId)await tx.obligation.updateMany({where:{...org(ctx),vendorSignalId:id,status:{not:"COMPLETE"},...(work.some(item=>item.key==="licence")?{category:{not:siteTaskCategory}}:{})},data:{status:"COMPLETE",completedAt:new Date(),completionException:false,completionRationale:"Public register observation independently considered in supplier review "+r.id+"; the accepted recommendation and any follow-up remain recorded."}});
    await event(tx,ctx,"review_accepted",id,{reviewId:r.id,recommendation:r.recommendation,tasks});return {id,reviewId:r.id,tasks};
   });
  }
@@ -140,6 +185,17 @@ export async function changeVendor(ctx:AuthorizedContext,id:string,input:unknown
    await event(tx,ctx,"review_returned",id,{reviewId:r.id});return {id};
   }
   if(v.version!==d.version)throw new IntelligenceError("Supplier changed; refresh before continuing",409);
+  if(d.action==="SET_LICENCE_SCOPE"){
+   await setLicenceScope(tx,ctx,v,d.scope);await event(tx,ctx,"licence_scope",id,{version:v.version+1,scope:d.scope});return {id};
+  }
+  if(d.action==="IMPORT_LICENCE"){
+   const record=await importLicence(tx,ctx,v,d.record);
+   const updated=await tx.vendor.findUniqueOrThrow({where:{id}});
+   const signal=updated.signalConnectorId?await vendorSignal(tx,ctx.organizationId,updated.signalConnectorId):null;
+   const finding=await licenceFinding(tx,updated,signal);
+   if(finding?.reasons.length)await siteInvestigation(tx,ctx,updated,finding.reasons.join(" "),record.importedAt);
+   await event(tx,ctx,"licence_import",id,{version:v.version+1,record});return {id};
+  }
   if(d.action==="FOLLOW_UP"){
    if(!v.signalConnectorId)throw new IntelligenceError("Link a register connection before requesting connected follow-up",409);
    const previous=await tx.vendorReview.findFirst({where:{...org(ctx),vendorId:id,status:"ACCEPTED"}});
@@ -168,7 +224,7 @@ export async function changeVendor(ctx:AuthorizedContext,id:string,input:unknown
   const email=await owner(tx,ctx,d.vendor.ownerId),nextReviewAt=futureDate(d.vendor.nextReview),{nextReview,...fields}=d.vendor;
   if(v.ownerId!==fields.ownerId){
    const reviews=await tx.vendorReview.findMany({where:{...org(ctx),vendorId:id},select:{followUpTasks:true}});
-   const ids=reviews.flatMap(r=>z.array(z.uuid()).max(7).parse(r.followUpTasks));
+   const ids=reviews.flatMap(r=>z.array(z.uuid()).max(9).parse(r.followUpTasks));
    await tx.obligation.updateMany({where:{...org(ctx),OR:[{id:{in:ids}},{vendorSignalId:id}],status:{not:"COMPLETE"}},data:{assigneeId:fields.ownerId,ownerName:email}});
   }
   await tx.vendor.update({where:{id},data:{...fields,nextReviewAt,version:{increment:1}}});await event(tx,ctx,"updated",id);return {id};
@@ -190,7 +246,7 @@ export async function exportVendorReview(ctx:AuthorizedContext,id:string,store?:
  return transaction(ctx,async tx=>{
   const after=await gather(tx);
   if(after.review.id!==before.review.id||after.review.version!==before.review.version||after.review.inputHash!==before.review.inputHash)throw new IntelligenceError("Supplier review changed during export; refresh and retry",409);
-  const ids=z.array(z.uuid()).max(7).parse(after.review.followUpTasks);
+  const ids=z.array(z.uuid()).max(9).parse(after.review.followUpTasks);
   const tasks=await tx.obligation.findMany({where:{...org(ctx),id:{in:ids}},orderBy:{id:"asc"},select:{id:true,title:true,status:true,dueDate:true,completedAt:true,completionException:true,completionRationale:true}});
   if(tasks.length!==ids.length)throw new IntelligenceError("Supplier follow-up history is incomplete",409);
   const record={format:"regpilot-supplier-review-v1",exportedAt:new Date().toISOString(),currentAtExport:true,reviewId:after.review.id,reviewVersion:after.review.version,vendor:after.review.vendorSnapshot,recommendation:after.review.recommendation,rationale:after.review.rationale,assessment:after.assessment,reviewedAt:after.review.reviewedAt?.toISOString()||null,reviewNotes:after.review.reviewNotes,validUntil:after.review.validUntil.toISOString(),evidence:after.files.map(({uploadedById,reviewerId,...f})=>f),registerObservation:after.signal,followUp:tasks.map(t=>({...t,dueDate:t.dueDate.toISOString(),completedAt:t.completedAt?.toISOString()||null})),limitations:["Internal supplier assessment, not certification, a credit opinion or a compliance verdict.","Evidence bytes were checked during export but are not embedded. Referenced files remain private in the evidence vault.","Currentness is established only at the export time; subsequent changes can invalidate this decision. Conditional/rejected outcomes are not upgraded by task completion.","Integrity hash detects content changes; it is not a digital signature."]};

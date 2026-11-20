@@ -66,12 +66,22 @@ function mentionedNations(text:string) {
   return JURISDICTIONS.filter(n=>regions[n].test(text) || (greatBritain && n!=="Northern Ireland"));
 }
 
+function researchNationScope(input:ResearchInput){
+  const mentioned=mentionedNations(input.question);
+  const nations=input.nation?[input.nation]:mentioned;
+  const scopeQuestion=input.nation&&mentioned.length&&!mentioned.includes(input.nation)
+    ?"Your question mentions "+mentioned.join(", ")+" and your selected nation is "+input.nation+". Which territory should the sources cover?"
+    :undefined;
+  return {nations,scopeQuestion};
+}
+
 function localSource(source:RegulatorySource, nations:readonly Nation[]) {
   return source.jurisdictions?.length===1 && nations.some(n=>source.jurisdictions!.includes(n));
 }
 
 export function researchCandidates(input: ResearchInput, catalogue: readonly RegulatorySource[] = REGULATORY_SOURCES, semanticScores?:Map<string,number>) {
-  const nations = input.nation ? [input.nation] : mentionedNations(input.question);
+  const {nations,scopeQuestion}=researchNationScope(input);
+  if(scopeQuestion)return {nations,anchors:[] as string[],semanticSources:new Set<string>(),sources:[] as RegulatorySource[]};
   const eligible = catalogue.filter(source => !nations.length || !source.jurisdictions?.length ||
     nations.some(n => source.jurisdictions!.includes(n)));
   const query = [...new Set(terms(input.question))].slice(0,64);
@@ -232,7 +242,8 @@ async function extractAnswer(question:string, citations:AnswerReference[], docs:
 }
 
 export async function researchPublications(input: ResearchInput, read: ResearchReader, catalogue: readonly RegulatorySource[] = REGULATORY_SOURCES) {
-  const semantics = await semanticPublicationSearch(input.question,catalogue).catch(()=>null);
+  const {scopeQuestion}=researchNationScope(input);
+  const semantics = scopeQuestion?null:await semanticPublicationSearch(input.question,catalogue).catch(()=>null);
   const {sources,nations,anchors,semanticSources} = researchCandidates(input, catalogue, semantics?.sourceScores);
   const loaded = await Promise.all(sources.map(async source => {
     try {
@@ -296,5 +307,5 @@ export async function researchPublications(input: ResearchInput, read: ResearchR
     status: !loaded[i] ? "unavailable" as const : perSource.has(source.id) ? "matched" as const : "no_passage" as const}));
   const unavailable = checked.filter(row=>row.status==="unavailable").length;
   const status = citations.length ? "matched" as const : unavailable ? "incomplete" as const : "no_match" as const;
-  return {status, catalogueSize:catalogue.length, nations, checked, unavailable, citations, answer};
+  return {status, catalogueSize:catalogue.length, nations, checked, unavailable, citations, answer,...(scopeQuestion?{scopeQuestion}:{})};
 }

@@ -40,7 +40,7 @@ export async function testConnectedControl(ctx:AuthorizedContext,input:unknown){
   if(!control)throw new IntelligenceError('Active control unavailable in this organisation',404);
   const checkedAt=new Date();
   const connections=await tx.evidenceConnector.findMany({
-   where:{organizationId:ctx.organizationId,enabled:true,OR:[{controlId},{controlLinks:{some:{organizationId:ctx.organizationId,controlId}}}]},
+   where:{organizationId:ctx.organizationId,OR:[{controlId},{controlLinks:{some:{organizationId:ctx.organizationId,controlId}}}]},
    orderBy:{id:'asc'},take:rowLimit+1,select:{
     id:true,provider:true,version:true,enabled:true,intervalHours:true,failureCode:true,eventRevision:true,collectedEventRevision:true,
     runs:{orderBy:[{capturedAt:'desc'},{id:'desc'}],take:1,select:{id:true,configVersion:true,capturedAt:true,result:true,resultHash:true,signalHash:true,outcome:true}}
@@ -49,7 +49,8 @@ export async function testConnectedControl(ctx:AuthorizedContext,input:unknown){
   const observations=connections.slice(0,rowLimit).map(connection=>{
    const run=connection.runs[0],valid=run&&verifiedObservation(run);
    let status:Status='UNKNOWN',reason='No verified current collection';
-   if(!connectorProviderEnabled(connection.provider))reason='Provider inactive';
+   if(!connection.enabled)reason=connection.failureCode?'Collection paused after failure':'Connection paused';
+   else if(!connectorProviderEnabled(connection.provider))reason='Provider inactive';
    else if(connection.failureCode)reason='Collection failed';
    else if(connection.eventRevision!==connection.collectedEventRevision)reason='New provider event awaiting collection';
    else if(run&&!valid)reason='Observation integrity check failed';
@@ -63,7 +64,7 @@ export async function testConnectedControl(ctx:AuthorizedContext,input:unknown){
   });
   return {organizationId:ctx.organizationId,control,checkedAt:checkedAt.toISOString(),minimumProviders,observations,limited:connections.length>rowLimit};
  },{isolationLevel:'RepeatableRead',timeout:12000});
- const decision=await evaluateControlPolicy({minimumProviders,limited:snapshot.limited,observations:snapshot.observations.map(({connectorId,provider,status})=>({connectorId,provider,status}))});
+ const decision=await evaluateControlPolicy({minimumProviders,limited:snapshot.limited,observations:snapshot.observations.map(({connectorId,provider,status})=>({connectorId,provider:provider==="AWS_ORGANIZATIONS"?"AWS":provider,status}))});
  const receipt={...snapshot,policy:manifest,decision};
  return {...receipt,receiptHash:hashValue(receipt)};
 }

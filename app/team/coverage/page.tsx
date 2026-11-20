@@ -141,8 +141,12 @@ export default function Coverage(){
     {connections&&<><div className={css.connectMetrics}><span><b>{connections.total}</b> connections configured</span><span><b>{connections.observed}</b> recent clean observations</span><span><b>{connections.needsAttention}</b> require investigation or verification</span></div>
      {connections.items.length===0?<p className={css.empty}>No evidence connections configured. Set up a read-only provider in Operations.</p>:
       <div className={css.connectionGrid}>{connections.items.map(c=><article key={c.id} className={css.connection}>
-       <div className={css.sourceTop}><span>{c.provider}</span><span className={css.state} data-state={c.status==="observed"?"current":c.status==="failed"?"failed":"stale"}>{c.status.replaceAll("-"," ")}</span></div>
+       <div className={css.sourceTop}><span>{c.provider}</span><span className={css.state} data-state={c.status==="observed"?"current":["failed","revoked"].includes(c.status)?"failed":"stale"}>{c.status.replaceAll("-"," ")}</span></div>
        <h3>{c.target}</h3><p>{c.reason}</p>
+       <p>Owner {c.owner||"unassigned"} · {c.checksSeen} checks · expires {format(c.expiresAt)}</p>
+       {c.sourceUrl&&<p><a href={c.sourceUrl} rel="noreferrer" target="_blank">Provider source</a> · captured {format(c.sourceCapturedAt)}</p>}
+       {c.openTasks?.map(task=><p key={task.id}><a href={href("/team/work",{taskId:task.id})}>{task.title}</a> · {task.ownerName}</p>)}
+       {c.history?.length>0&&<details><summary>Recent collection and recovery history</summary><ol>{c.history.map(e=><li key={e.id}>{format(e.at)} · {e.action.replace("connector.","").replaceAll("_"," ")} {e.code||e.outcome||""}</li>)}</ol></details>}
        <small>{c.checksFailed} failing observations · {c.checksUnknown} unknown · last retrieved {format(c.lastSuccessAt)}</small>
        {c.controls?.length>0&&<p>Used by {c.controls.length} active control{c.controls.length===1?'':'s'}: {c.controls.map(control=>control.title).join(', ')}. {c.status!=='observed'&&'Review these controls before relying on this connection.'}</p>}
        <a href={href(c.href)}>Inspect connection and actual signals →</a>

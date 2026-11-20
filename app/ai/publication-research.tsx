@@ -70,6 +70,7 @@ export function PublicationResults({result}:{result:ResearchResult}) {
       {p.scopeNote&&<small>{p.scopeNote}</small>}
       <RecheckCitation passage={p}/>
     </article>)}
+    {result.scopeQuestion&&<p role="status">{result.scopeQuestion}</p>}
     {!!result.unavailable&&<p role="note">{result.unavailable} shortlisted publication(s) could not be checked.</p>}
     <details><summary>Search coverage</summary>
       <p>Ranked a catalogue of {result.catalogueSize} publications and selected {result.checked.length} for passage matching. {result.nations.length ? "Territorial filter: "+result.nations.join(", ")+". " : ""}Results cover extracted page text. Linked files and legal applicability require separate review.</p>

@@ -1,3 +1,4 @@
+import {readWorkforceKeys} from "../connectors/workforce-target";
 import {randomBytes} from 'node:crypto';
 import {z} from 'zod';
 import {db} from './db';
@@ -17,15 +18,16 @@ export async function configureConnectorWebhook(ctx:AuthorizedContext,id:string,
   await requireMember(tx,ctx,ADMIN);
   const row=await tx.evidenceConnector.findFirst({where:{id,organizationId:ctx.organizationId,version:v.version}});
   if(!row)throw new IntelligenceError('Connection not found or changed',409);
-  if(!['GITHUB','GITLAB'].includes(row.provider))throw new IntelligenceError('This provider has no event receiver',400);
+  if(!['GITHUB','GITLAB','WORKFORCE_LEAVER'].includes(row.provider))throw new IntelligenceError('This provider has no event receiver',400);
   if(v.enabled&&(!row.enabled||!connectorProviderEnabled(row.provider)))throw new IntelligenceError('Enable the connection first',409);
   const provider=row.provider as WebhookProvider;
+  if(v.enabled&&provider==="WORKFORCE_LEAVER"&&(!v.secret||!readWorkforceKeys(row.repository,row.branch)?.bambooCompanyId))throw new IntelligenceError("Configure the BambooHR company ID and its issued webhook signing key",400);
   const secret=v.enabled?(v.secret||(provider==='GITHUB'?randomBytes(32).toString('hex'):'whsec_'+randomBytes(32).toString('base64'))):null;
   if(secret&&!validWebhookSecret(provider,secret))throw new IntelligenceError('Invalid signing secret',400);
   const changed=await tx.evidenceConnector.updateMany({where:{id,organizationId:ctx.organizationId,version:v.version},data:{encryptedWebhookSecret:secret?encryptConnectorSecret(secret,ctx.organizationId,id+':webhook'):null,webhookVersion:{increment:1},version:{increment:1},leaseToken:null,leaseUntil:null}});
   if(!changed.count)throw new IntelligenceError('Connection changed',409);
   await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:'connector.webhook_configured',entityType:'EvidenceConnector',entityId:id,details:{enabled:v.enabled,webhookVersion:row.webhookVersion+1}}});
-  return {id,version:v.version+1,webhookVersion:row.webhookVersion+1,enabled:v.enabled,secret,callbackPath:'/api/integrations/webhooks/'+provider.toLowerCase()+'/'+id};
+  return {id,version:v.version+1,webhookVersion:row.webhookVersion+1,enabled:v.enabled,secret:provider==='WORKFORCE_LEAVER'?null:secret,callbackPath:'/api/integrations/webhooks/'+(provider==='WORKFORCE_LEAVER'?'bamboohr':provider.toLowerCase())+'/'+id};
  });
 }
 

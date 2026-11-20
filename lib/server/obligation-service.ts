@@ -1,3 +1,4 @@
+import {leaverTask} from "./leaver-follow-up";
 import { can } from "../permissions.mjs";
 import { db } from "./db";
 import {requireMember,WRITER} from "./workspace-member";
@@ -63,6 +64,7 @@ export async function changeObligationStatus(ctx: AuthorizedContext, id: string,
     await requireMember(tx,ctx,WRITER);
     const existing = await tx.obligation.findFirst({ where: { id, organizationId: ctx.organizationId },include:{changeAction:{select:{id:true}},auditRequest:{select:{id:true}},accessItem:{select:{id:true}}} });
     if (!existing) return null;
+    if(status==="COMPLETE"&&await leaverTask(tx,ctx.organizationId,existing.connectorId))throw new IntelligenceError("Recheck the leaver connection to verify account removal and close its follow-up",409);
     // Specialist submissions and decisions must stay in sync with their task. A general status
     // change must neither bypass independent acceptance nor reopen a still-accepted decision.
     if(existing.changeAction||existing.auditRequest||existing.accessItem)throw new IntelligenceError("Use the linked change response, audit request or access review workflow to change this task's status.",409);

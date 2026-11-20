@@ -1,3 +1,4 @@
+import {leaverTask} from "./leaver-follow-up";
 import {Prisma,type AssuranceAssessment} from '@prisma/client';
 import {z} from 'zod';
 import {db} from './db';
@@ -112,6 +113,7 @@ export async function completionContext(tx:Prisma.TransactionClient,ctx:Authoriz
   const canView=ADMIN.includes(actorRole)||task.assigneeId===ctx.userId;
   block('SPECIALIST_WORKFLOW','Complete and review this action in its change response so its independent decision is preserved.',link(ctx,'/team/changes')+(canView?'&responseId='+encodeURIComponent(task.changeAction.responseId):''),'Open change response');
  }
+ if(await leaverTask(tx,ctx.organizationId,task.connectorId))block("SPECIALIST_WORKFLOW","A fresh leaver connection check verifies account removal and closes this follow-up.",link(ctx,"/team/operations")+"&view=connections","Open connections");
  if(task.auditRequest)block('SPECIALIST_WORKFLOW','Submit and independently review this request in the audit request workflow.',link(ctx,'/team/audit-requests'),'Open audit requests');
  if(task.accessItem)block('SPECIALIST_WORKFLOW','Complete the access decision, remediation and verification in the access review workflow.',link(ctx,'/team/access-reviews'),'Open access reviews');
 

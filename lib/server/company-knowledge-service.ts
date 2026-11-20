@@ -1,3 +1,6 @@
+import {supplierResearch} from "./vendor-service";
+import {connectionEvidence} from "./connector-health-service";
+import {relevantConnections,operatorQuestions} from "../operator-answer";
 import {Prisma,type KnowledgeIndexRun,type KnowledgeSearchRun} from "@prisma/client";
 import {z} from "zod";
 import {hashValue} from "../regulatory/intelligence";
@@ -222,11 +225,11 @@ export async function searchKnowledge(c:AuthorizedContext,input:unknown,dependen
 }
 
 export async function researchWorkspaceQuestion(c:AuthorizedContext,input:unknown,readOfficial:typeof searchOfficialPublications){
- const {question,asset,productId}=workspaceResearchInput.parse(input);
+ const {question,asset,productId,nation}=workspaceResearchInput.parse(input);
  configured('CONTENT');
  await transaction(c,tx=>requireMember(tx,c,ADMIN));
  // Only fixed register URLs are fetched by the public reader. Do not hold a database lock during that read.
- const official=await readOfficial({question});
+ const official=await readOfficial({question,...(nation?{nation}:{})});
  return transaction(c,async tx=>{
   await requireMember(tx,c,ADMIN);
   const current=await corpus(tx,c,productId,'CONTENT');
@@ -251,7 +254,10 @@ export async function researchWorkspaceQuestion(c:AuthorizedContext,input:unknow
    }
   }
   const records=productId?[]:await searchWorkspaceRecords(tx,c.organizationId,question);
-  return {organizationId:c.organizationId,productId,asset,question,records,documents:current.documents,official,
-   ...supportingPassages(question,asset,current.chunks,policies)};
+  const passages=supportingPassages(question,asset,current.chunks,policies);
+  const connections=productId?[]:relevantConnections(question,asset,(await connectionEvidence(tx,c.organizationId,true)).items);
+  const suppliers=await supplierResearch(tx,c,records.filter(r=>r.kind==="Supplier").map(r=>r.id),asset);
+  const clarifications=operatorQuestions(question,asset,!!passages.procedures.length,!!passages.evidence.length,connections);
+  return {organizationId:c.organizationId,productId,asset,question,nation:nation||null,records,documents:current.documents,official,connections,suppliers,clarifications,...passages};
  });
 }
