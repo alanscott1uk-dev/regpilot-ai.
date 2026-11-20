@@ -6,22 +6,28 @@ import {observationCurrent} from "../connectors/observation";
 import {connectorProviderEnabled} from "./connector-flags";
 import {allowedEmail} from "../ai/security.mjs";
 import type {AuthorizedContext} from "./authorization";
-const observationSchema=z.object({engine:z.literal("companies-house-profile-1.0.0"),sourceUrl:z.url(),capturedAt:z.iso.datetime(),checks:z.array(z.object({id:z.string().max(80),label:z.string().max(200),status:z.enum(["PASS","FAIL","UNKNOWN"]),observed:z.string().max(500),nextStep:z.string().max(1000)})).min(1).max(20),limitations:z.array(z.string().max(1500)).max(10)});
+export const registerProviders=["COMPANIES_HOUSE","GLEIF"];
+const observationSchema=z.object({engine:z.enum(["companies-house-profile-1.0.0","gleif-uk-identity-1.0.0"]),sourceUrl:z.url(),capturedAt:z.iso.datetime(),checks:z.array(z.object({id:z.string().max(80),label:z.string().max(200),status:z.enum(["PASS","FAIL","UNKNOWN"]),observed:z.string().max(500),nextStep:z.string().max(1000)})).min(1).max(20),limitations:z.array(z.string().max(1500)).max(10)});
 export const vendorSignalSchema=z.object({connectorId:z.uuid(),configVersion:z.number().int().positive(),signalHash:z.string().length(64),runId:z.uuid(),capturedAt:z.iso.datetime(),resultHash:z.string().length(64),observation:observationSchema});
 export async function vendorSignal(tx:Prisma.TransactionClient,organizationId:string,id:string){
- const c=await tx.evidenceConnector.findFirst({where:{id,organizationId,provider:"COMPANIES_HOUSE"},include:{runs:{orderBy:[{capturedAt:"desc"},{id:"desc"}],take:1}}});
- if(!c)throw new IntelligenceError("Linked Companies House connection is unavailable",409);
- const run=c.runs[0];if(!run)return {current:false,reason:"Waiting for the first successful collection",snapshot:null,companyNumber:c.repository.slice(15)};
+ const c=await tx.evidenceConnector.findFirst({where:{id,organizationId,provider:{in:registerProviders}},include:{runs:{orderBy:[{capturedAt:"desc"},{id:"desc"}],take:1}}});
+ if(!c)throw new IntelligenceError("Linked supplier register connection is unavailable",409);
+ const gleif=c.provider==="GLEIF",companyNumber=gleif?c.branch:c.repository.slice(15);
+ const run=c.runs[0];if(!run)return {current:false,reason:"Waiting for the first successful collection",snapshot:null,companyNumber};
  if(hashValue(run.result)!==run.resultHash)throw new IntelligenceError("Supplier signal integrity check failed",409);
  const o=observationSchema.parse(run.result);
- if(o.sourceUrl!=="https://find-and-update.company-information.service.gov.uk/company/"+c.repository.slice(15)||hashValue({engine:o.engine,checks:o.checks})!==run.signalHash)throw new IntelligenceError("Supplier signal identity or integrity changed",409);
+ const observedNumber=gleif?o.checks.find(check=>check.id==="uk-entity-match"&&check.status==="PASS")?.observed.match(/^(?:[A-Z]{2}\d{6}|\d{8})$/)?.[0]:o.sourceUrl.match(/^https:\/\/find-and-update\.company-information\.service\.gov\.uk\/company\/([A-Z0-9]{8})$/)?.[1];
+ const observedLei=gleif?o.sourceUrl.match(/^https:\/\/search\.gleif\.org\/#\/record\/([A-Z0-9]{18}\d{2})$/)?.[1]:null;
+ if(!observedNumber||o.engine!==(gleif?"gleif-uk-identity-1.0.0":"companies-house-profile-1.0.0")||(gleif&&!observedLei)||
+    (run.configVersion===c.version&&(observedNumber!==companyNumber||(gleif&&"gleif:"+observedLei!==c.repository)))||
+    hashValue({engine:o.engine,checks:o.checks})!==run.signalHash)throw new IntelligenceError("Supplier signal identity or integrity changed",409);
  const current=connectorProviderEnabled(c.provider)&&observationCurrent(run,c,true);
- return {current,reason:current?"Current register observation":c.failureCode?"Collection failed; earlier observation is historical":!c.enabled||!connectorProviderEnabled(c.provider)?"Collection is paused or awaiting activation":"Observation is stale or belongs to earlier connection settings",companyNumber:c.repository.slice(15),snapshot:vendorSignalSchema.parse({connectorId:c.id,configVersion:run.configVersion,signalHash:run.signalHash,runId:run.id,capturedAt:run.capturedAt.toISOString(),resultHash:run.resultHash,observation:o})};
+ return {current,reason:current?"Current register observation":c.failureCode?"Collection failed; earlier observation is historical":!c.enabled||!connectorProviderEnabled(c.provider)?"Collection is paused or awaiting activation":"Observation is stale or belongs to earlier connection settings",companyNumber:observedNumber,snapshot:vendorSignalSchema.parse({connectorId:c.id,configVersion:run.configVersion,signalHash:run.signalHash,runId:run.id,capturedAt:run.capturedAt.toISOString(),resultHash:run.resultHash,observation:o})};
 }
 export function sameVendorSignal(a:z.infer<typeof vendorSignalSchema>,b:z.infer<typeof vendorSignalSchema>){return a.connectorId===b.connectorId&&a.configVersion===b.configVersion&&a.signalHash===b.signalHash;}
 /** One owned investigation for a signal and accepted-review baseline, including collection failures. */
 export async function followUpVendorSignals(tx:Prisma.TransactionClient,ctx:AuthorizedContext,job:EvidenceConnector,fingerprint:string,failed=false){
- if(job.provider!=="COMPANIES_HOUSE")return;
+ if(!registerProviders.includes(job.provider))return;
  const vendors=await tx.vendor.findMany({where:{organizationId:ctx.organizationId,active:true,signalConnectorId:job.id},include:{owner:{select:{email:true}},reviews:{where:{status:"ACCEPTED"},orderBy:{createdAt:"desc"},take:1,select:{id:true,signalSnapshot:true,vendorVersion:true,validUntil:true}}},take:201});
  if(vendors.length>200)throw new IntelligenceError("Supplier monitoring scope exceeds the supported bound",409);
  for(const v of vendors){

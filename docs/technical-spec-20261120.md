@@ -193,3 +193,12 @@ Two additional adapters use the existing daily/weekly collector, manual verifica
 Intune excludes device identifiers and staff details from stored results. It reads at most ten pages and 2,000 devices on Microsoft’s global Graph endpoint. Reconcile enrolment against the organisation's asset register separately. Microsoft documents the [managed device report and permission](https://learn.microsoft.com/en-us/graph/api/intune-devices-manageddevice-list?view=graph-rest-1.0).
 
 The supplier adapter compares the deployed revision with the latest public assessment. When a revision is pinned, it reads the commit-specific API endpoint and verifies the returned repository and commit. Upstream scores cannot substitute for an unscored deployment. The independent PR probe reads GOV.UK Frontend and OpenSSF Scorecard and records the exact revisions, check outcomes and observation hashes. Genuine scoring exceptions are valid responses. Provider contracts and public coverage are described by [OpenSSF](https://api.scorecard.dev/).
+
+## Integration benchmark update · AWS and GLEIF
+
+| Capability | Vanta benchmark | RegPilot implementation on PR 10 |
+| --- | --- | --- |
+| Cloud infrastructure | Vanta supports multi-account AWS and AWS Organizations onboarding and lists more than 40 AWS resource types. | Each connected account and region produces ten S3 and CloudTrail checks. The strongest check requires a single active trail to cover management reads and writes and deliver both log files and integrity digests within 24 hours. Live customer AWS acceptance remains open. |
+| UK supplier identity | Vanta provides vendor assessment and ongoing monitoring. | RegPilot can bind a GLEIF LEI to the exact Companies House number and registration authority, freeze it in an independently accepted supplier review, and assign the supplier owner when evidence changes or fails. |
+
+[RegPilot setup and collection scope](aws-gleif-evidence.md) · [Vanta AWS integration](https://www.vanta.com/integrations/aws) · [Vanta vendor risk management](https://www.vanta.com/products/third-party-risk-management)

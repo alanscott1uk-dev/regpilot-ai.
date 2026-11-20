@@ -1,3 +1,4 @@
+import {providersWithoutStoredSecrets} from "../connectors/capacity";
 import {Prisma,type WatchSchedule,type EvidenceConnector} from '@prisma/client';
 import {randomUUID} from 'node:crypto';
 import {db} from './db';
@@ -9,7 +10,7 @@ type LaneKind='SOURCE'|'CONNECTOR';
 async function claim(kind:LaneKind,providers:string[]=[]){
  const table=kind==='SOURCE'?Prisma.raw('"WatchSchedule"'):Prisma.raw('"EvidenceConnector"');
  const date=kind==='SOURCE'?Prisma.raw('"nextCheckAt"'):Prisma.raw('"nextRunAt"');
- const eligible=kind==='SOURCE'?Prisma.sql`TRUE`:Prisma.sql`j.provider IN (${Prisma.join(providers)}) AND (j."encryptedSecret" IS NOT NULL OR j.provider='OPENSSF_SCORECARD')`;
+ const eligible=kind==='SOURCE'?Prisma.sql`TRUE`:Prisma.sql`j.provider IN (${Prisma.join(providers)}) AND (j."encryptedSecret" IS NOT NULL OR j.provider IN (${Prisma.join(providersWithoutStoredSecrets)}))`;
  const token=randomUUID();
  return db.$queryRaw<Array<WatchSchedule|EvidenceConnector>>(Prisma.sql`
   WITH lane AS (

@@ -1,5 +1,5 @@
 import {vendorAttention,compareVendorSignals} from "../vendor-attention";
-import {vendorSignal,vendorSignalSchema,sameVendorSignal} from "./vendor-signals";
+import {registerProviders,vendorSignal,vendorSignalSchema,sameVendorSignal} from "./vendor-signals";
 import {Prisma,type Vendor,type VendorReview} from "@prisma/client";
 import {z} from "zod";
 import type {AuthorizedContext} from "./authorization";
@@ -47,7 +47,7 @@ export async function vendorWorkspace(ctx:AuthorizedContext){return transaction(
   tx.vendor.findMany({where:org(ctx),include:{owner:{select:{email:true}},reviews:{where:{status:"ACCEPTED"},orderBy:{createdAt:"desc"},take:1}},orderBy:{nextReviewAt:"asc"},take:WORKFLOW_LIMITS.vendors}),
   tx.membership.findMany({where:{...org(ctx),role:{not:"VIEWER"}},select:{role:true,user:{select:{id:true,email:true}}},orderBy:{userId:"asc"},take:100}),
   tx.evidence.findMany({where:{...org(ctx),scanStatus:"CLEAN",reviewStatus:"APPROVED"},select:{id:true,filename:true},orderBy:{createdAt:"desc"},take:200}),
-  tx.evidenceConnector.findMany({where:{...org(ctx),provider:"COMPANIES_HOUSE"},select:{id:true,repository:true,enabled:true},take:20})
+  tx.evidenceConnector.findMany({where:{...org(ctx),provider:{in:registerProviders}},select:{id:true,version:true,provider:true,repository:true,branch:true,enabled:true},take:20})
  ]);
  const vendors=await Promise.all(rows.map(async v=>({id:v.id,name:v.name,service:v.service,active:v.active,version:v.version,criticality:v.criticality,owner:v.owner,nextReviewAt:v.nextReviewAt,recommendation:v.reviews[0]?.recommendation||null,reviewState:await reviewState(tx,ctx,v,v.reviews[0])})));
  return {vendors:vendors.map(v=>({...v,attention:vendorAttention(v)})),members,evidence,signalConnections};
@@ -154,7 +154,11 @@ export async function changeVendor(ctx:AuthorizedContext,id:string,input:unknown
    return {id,taskId:task.id};
   }
   if(d.action==="LINK_SIGNAL"){
-   if(d.connectorId&&!await tx.evidenceConnector.findFirst({where:{id:d.connectorId,...org(ctx),provider:"COMPANIES_HOUSE"}}))throw new IntelligenceError("Choose this organisation's Companies House connection",404);
+   if(d.connectorId){
+    const selected=await tx.evidenceConnector.findFirst({where:{id:d.connectorId,...org(ctx),provider:{in:registerProviders}},select:{version:true}});
+    if(!selected)throw new IntelligenceError("Choose a supplier register connection from this organisation",404);
+    if(d.connectorVersion!==undefined&&d.connectorVersion!==selected.version)throw new IntelligenceError("Register settings changed. Refresh and confirm the legal entity again.",409);
+   }
    await tx.vendor.update({where:{id},data:{signalConnectorId:d.connectorId,version:{increment:1}}});
    await event(tx,ctx,"signal_link_changed",id,{connectorId:d.connectorId,notes:d.notes});return {id};
   }

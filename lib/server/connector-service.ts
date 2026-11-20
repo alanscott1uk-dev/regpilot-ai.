@@ -1,7 +1,10 @@
 import {collectIntune} from "../connectors/intune";
 import {collectScorecard,scorecardTarget} from "../connectors/scorecard";
 import {collectOkta,oktaTarget,oktaConnections,nangoConfig} from "../connectors/nango-okta";
-import {PROVIDERS} from "../connectors/capacity";
+import {registerProviders} from "./vendor-signals";
+import {awsTarget} from "../connectors/aws-target";
+import {collectGleif,gleifTarget} from "../connectors/gleif";
+import {PROVIDERS,requiresStoredSecret} from "../connectors/capacity";
 import {verifiedObservation} from './connector-observation';
 import {enqueueConnectorObservationDelivery,enqueueConnectorFailureDelivery} from './integration-delivery-events';
 import {connectorRecovery} from "../connectors/recovery";
@@ -15,7 +18,7 @@ import {randomUUID} from "node:crypto";
 import {z} from "zod";
 import {db} from "./db";
 import {connectorsEnabled,microsoft365Enabled,googleWorkspaceEnabled,gitlabEnabled,cloudflareEnabled,companiesHouseEnabled,vercelEnabled,supabaseEnabled,connectorProviderEnabled} from "./connector-flags";
-export {connectorsEnabled,microsoft365Enabled,googleWorkspaceEnabled,gitlabEnabled,cloudflareEnabled,companiesHouseEnabled,vercelEnabled,supabaseEnabled,oktaEnabled,intuneEnabled,scorecardEnabled} from "./connector-flags";
+export {connectorsEnabled,microsoft365Enabled,googleWorkspaceEnabled,gitlabEnabled,cloudflareEnabled,companiesHouseEnabled,vercelEnabled,supabaseEnabled,oktaEnabled,intuneEnabled,scorecardEnabled,awsEnabled,gleifEnabled} from "./connector-flags";
 import {collectGitlab,gitlabTarget} from "../connectors/gitlab";
 import {collectCloudflare,cloudflareTarget} from "../connectors/cloudflare";
 import {collectCompaniesHouse,companiesHouseTarget} from "../connectors/companies-house";
@@ -38,6 +41,8 @@ const googleSchema=googleTarget.extend({provider:z.literal("GOOGLE_WORKSPACE"),c
 const microsoftSchema=microsoftTarget.extend({provider:z.enum(["MICROSOFT365","INTUNE"]),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:z.string().min(16).max(512).regex(/^[^\r\n\0]+$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)});
 const extraFields={controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().refine(validCredential).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)};
 const extraSchema=z.discriminatedUnion("provider",[
+ awsTarget.extend({...extraFields,provider:z.literal("AWS")}).omit({token:true}).strict(),
+ gleifTarget.extend({...extraFields,provider:z.literal("GLEIF")}).omit({token:true}).strict(),
  scorecardTarget.extend({...extraFields,provider:z.literal("OPENSSF_SCORECARD")}).omit({token:true}).strict(),
  oktaTarget.extend({...extraFields,provider:z.literal("OKTA")}).omit({token:true}),
  vercelTarget.extend({...extraFields,provider:z.literal("VERCEL")}),
@@ -61,6 +66,8 @@ function storedTarget(settings:ConnectorSettings):{repository:string;branch:stri
   case "VERCEL":return {repository:"vercel:"+settings.projectId,branch:settings.teamId,token:settings.token};
   case "SUPABASE":return {repository:"supabase:"+settings.projectRef.toLowerCase(),branch:settings.providerOrganizationId,token:settings.token};
   case "OKTA":return {repository:"okta:"+settings.connectionId,branch:[settings.groupId,settings.removedUserId].filter(Boolean).join(":"),token:settings.connectionId};
+  case "AWS":return {repository:"aws:"+settings.accountId,branch:settings.region};
+  case "GLEIF":return {repository:"gleif:"+settings.lei,branch:settings.companyNumber};
   case "OPENSSF_SCORECARD":return {repository:"scorecard:"+settings.repository,branch:settings.deployedCommit??"published"};
  }
 }
@@ -70,6 +77,11 @@ export const collectConfiguredConnector:Collector=async(target,secret)=>{
  if(target.provider==="INTUNE" && target.repository.startsWith("intune:")){
   return collectIntune({tenantId:target.repository.slice(7),clientId:target.branch},secret);
  }
+ if(target.provider==="AWS"&&target.repository.startsWith("aws:")&&target.organizationId){
+  const {collectAws}=await import("../connectors/aws");
+  return collectAws({accountId:target.repository.slice(4),region:target.branch},target.organizationId);
+ }
+ if(target.provider==="GLEIF"&&target.repository.startsWith("gleif:"))return collectGleif({lei:target.repository.slice(6),companyNumber:target.branch});
  if(target.provider==="OPENSSF_SCORECARD" && target.repository.startsWith("scorecard:") ){
   return collectScorecard({repository:target.repository.slice(10),deployedCommit:target.branch==="published"?undefined:target.branch});
  }
@@ -98,7 +110,7 @@ export const collectConfiguredConnector:Collector=async(target,secret)=>{
 };
 export async function saveConnector(ctx:AuthorizedContext,input:unknown){
  if(!connectorsEnabled())throw new IntelligenceError("Evidence connectors await activation",503);
- const provider=(input as {provider?:string})?.provider,microsoft=provider==="MICROSOFT365"||provider==="INTUNE",google=provider==="GOOGLE_WORKSPACE",extra=["GITLAB","CLOUDFLARE","COMPANIES_HOUSE","VERCEL","SUPABASE","OKTA","OPENSSF_SCORECARD"].includes(provider||"");
+ const provider=(input as {provider?:string})?.provider,microsoft=provider==="MICROSOFT365"||provider==="INTUNE",google=provider==="GOOGLE_WORKSPACE",extra=["GITLAB","CLOUDFLARE","COMPANIES_HOUSE","VERCEL","SUPABASE","OKTA","OPENSSF_SCORECARD","AWS","GLEIF"].includes(provider||"");
  const parsed=(extra?extraSchema:google?googleSchema:microsoft?microsoftSchema:schema).safeParse(input);if(!parsed.success)throw new IntelligenceError("Check the provider, target, credentials, control and version");
  if(microsoft&&!connectorProviderEnabled(provider!))throw new IntelligenceError("This Microsoft provider awaits activation",503);
  if(google&&!googleWorkspaceEnabled())throw new IntelligenceError("Google Workspace collection awaits activation",503);
@@ -109,7 +121,7 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
   const matches=await oktaConnections(ctx.organizationId,nangoConfig(),fetch,raw.connectionId);
   if(matches.length!==1)throw new IntelligenceError("Choose an authorised Okta directory for this workspace",409);
  }
- const publicReport=raw.provider==="OPENSSF_SCORECARD";
+ const credentialRequired=requiresStoredSecret(raw.provider);
  const v={...raw,...storedTarget(raw)},repository=v.repository;
  return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);
   const control=await tx.managedControl.findFirst({where:{id:v.controlId,organizationId:ctx.organizationId,enabled:true}});if(!control)throw new IntelligenceError("Choose an active control from this organisation",404);
@@ -117,8 +129,10 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
   if(v.id&&!old)throw new IntelligenceError("Connector not found",404);
   if(old&&old.provider!==v.provider)throw new IntelligenceError("Create a separate connection when changing provider",409);
   if((old?.version||0)!==v.version)throw new IntelligenceError("Connector settings changed",409);
-  if(!publicReport&&!v.token&&!old?.encryptedSecret)throw new IntelligenceError("A restricted provider credential is required");
-  if(old&&!publicReport&&!v.token&&(old.repository!==repository||old.branch!==v.branch))throw new IntelligenceError("Supply a newly scoped credential when changing target");
+  if(credentialRequired&&!v.token&&!old?.encryptedSecret)throw new IntelligenceError("A restricted provider credential is required");
+  const targetChanged=old&&(old.repository!==repository||old.branch!==v.branch);
+  if(targetChanged&&registerProviders.includes(v.provider)&&await tx.vendor.findFirst({where:{organizationId:ctx.organizationId,signalConnectorId:old.id},select:{id:true}}))throw new IntelligenceError("This register is linked to a supplier. Create a connection for the new legal entity and select it in the supplier review.",409);
+  if(targetChanged&&credentialRequired&&!v.token)throw new IntelligenceError("Supply a newly scoped credential when changing target");
   if(!old&&await tx.evidenceConnector.count({where:{organizationId:ctx.organizationId}})>=20)throw new IntelligenceError("Connector limit reached",429);
   const id=old?.id||randomUUID();const data={provider:v.provider,controlId:v.controlId,repository,branch:v.branch,configuredById:ctx.userId,enabled:v.enabled,intervalHours:v.intervalHours,encryptedSecret:v.token?encryptConnectorSecret(v.token,ctx.organizationId,id):old?.encryptedSecret??null,encryptedWebhookSecret:old&&old.repository===repository&&old.branch===v.branch?old.encryptedWebhookSecret:null,webhookVersion:old?(old.repository===repository&&old.branch===v.branch?old.webhookVersion:old.webhookVersion+1):0,nextRunAt:new Date(),leaseToken:null,leaseUntil:null,attempts:0,failureCode:null};
   if(!old&&await tx.evidenceConnector.findUnique({where:{organizationId_repository_branch:{organizationId:ctx.organizationId,repository:data.repository,branch:data.branch}}}))throw new IntelligenceError("This target already has a connector",409);
@@ -138,7 +152,7 @@ export async function retryConnector(ctx:AuthorizedContext,id:string,version:num
   const row=await tx.evidenceConnector.findFirst({where:{id,organizationId:ctx.organizationId,version}});
   if(!row)throw new IntelligenceError("Connection not found or settings changed",409);
   if(row.enabled||!row.failureCode)throw new IntelligenceError("Only a paused failed connection can be recovered",409);
-  if(!connectorProviderEnabled(row.provider)||(row.provider!=="OPENSSF_SCORECARD"&&!row.encryptedSecret))throw new IntelligenceError("An enabled provider and stored credential are required",409);
+  if(!connectorProviderEnabled(row.provider)||(requiresStoredSecret(row.provider)&&!row.encryptedSecret))throw new IntelligenceError("An enabled provider and stored credential are required",409);
   const recovery=connectorRecovery(row.failureCode);
   if(!recovery.retryable)throw new IntelligenceError(recovery.message,409);
   const now=new Date();
@@ -167,12 +181,12 @@ export async function verifyConnectorNow(ctx:AuthorizedContext,id:string,version
   await requireMember(tx,ctx,ADMIN);
   const record=await tx.evidenceConnector.findFirst({where:{id,organizationId:ctx.organizationId,version}});
   if(!record)throw new IntelligenceError("Connection not found or settings changed",404);
-  if(!record.enabled||!connectorProviderEnabled(record.provider)||(record.provider!=="OPENSSF_SCORECARD"&&!record.encryptedSecret))throw new IntelligenceError("Active provider and credential required",409);
+  if(!record.enabled||!connectorProviderEnabled(record.provider)||(requiresStoredSecret(record.provider)&&!record.encryptedSecret))throw new IntelligenceError("Active provider and credential required",409);
   if(record.failureCode==="RATE_LIMITED"&&record.nextRunAt>now)throw new IntelligenceError("The provider requested a cooldown. Collection can resume after the scheduled retry time.",429);
   if(record.lastSuccessAt&&now.getTime()-record.lastSuccessAt.getTime()<300000)throw new IntelligenceError("Wait five minutes before another successful verification",429);
   if(!await claimManualConnectorLane(tx,ctx.organizationId,token))throw new IntelligenceError("Another connection in this workspace is being checked. Retry after it finishes.",409);
   const claim=await tx.evidenceConnector.updateMany({where:{
-   id,organizationId:ctx.organizationId,version,enabled:true,...(record.provider==="OPENSSF_SCORECARD"?{}:{encryptedSecret:{not:null}}),
+   id,organizationId:ctx.organizationId,version,enabled:true,...(requiresStoredSecret(record.provider)?{encryptedSecret:{not:null}}:{}),
    OR:[{leaseUntil:null},{leaseUntil:{lte:now}}]
   },data:{leaseToken:token,leaseUntil:new Date(now.getTime()+90000),attempts:{increment:1},nextRunAt:now}});
   if(claim.count!==1)throw new IntelligenceError("This connection is already being verified or was changed",409);
@@ -202,7 +216,7 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector){
  let permit:ProviderPermit|undefined,providerOutcome='NEUTRAL';
  try{
   await transaction(ctx,tx=>assertJob(tx,job));if(job.attempts>3)throw new CollectionError("INTERRUPTED_REPEATEDLY");
-  if(job.provider!=="OPENSSF_SCORECARD"&&!job.encryptedSecret)throw new CollectionError("CREDENTIAL_UNAVAILABLE");
+  if(requiresStoredSecret(job.provider)&&!job.encryptedSecret)throw new CollectionError("CREDENTIAL_UNAVAILABLE");
   const admission=await acquireProviderPermit(job.provider,job.organizationId);
   if(!admission.allowed){
    const deferred=await db.evidenceConnector.updateMany({where:{id:job.id,organizationId:job.organizationId,version:job.version,enabled:true,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},data:{leaseToken:null,leaseUntil:null,attempts:Math.max(0,job.attempts-1),failureCode:admission.reason,nextRunAt:admission.retryAt}});
@@ -228,7 +242,7 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector){
   if(error instanceof Superseded||!connectorProviderEnabled(job.provider))return "SUPERSEDED";
   const code=error instanceof CollectionError?error.code:error instanceof IntelligenceError&&error.status===403?"PERMISSION_REVOKED":"COLLECTION_FAILED";
   const throttled=code==="RATE_LIMITED",retryAfter=error instanceof CollectionError?error.retryAfterSeconds:undefined;
-  const paused=!throttled&&job.attempts>=3||code==="PERMISSION_REVOKED"||code==="CREDENTIAL_REJECTED"||code==="RETRY_REQUIRES_REVIEW";
+  const paused=!throttled&&job.attempts>=3||code==="PERMISSION_REVOKED"||code==="AWS_TRUST_UNSCOPED"||code==="CREDENTIAL_REJECTED"||code==="RETRY_REQUIRES_REVIEW";
   return await transaction(ctx,async tx=>{const changed=await tx.evidenceConnector.updateMany({where:{id:job.id,organizationId:job.organizationId,enabled:true,version:job.version,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},data:{leaseToken:null,leaseUntil:null,failureCode:code,enabled:!paused,...(throttled?{attempts:Math.max(0,job.attempts-1)}:{}),nextRunAt:new Date(Date.now()+(throttled?Math.max(60,Math.min(7*86400,retryAfter||60))*1000:(job.attempts===1?5:30)*60000))}});if(!changed.count)return "SUPERSEDED";
    await enqueueConnectorEvent(tx,job,{kind:'CONNECTOR_FAILED',fingerprint:hashValue(code),reasonCode:code});
    const audit=await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:"connector.collection_failed",entityType:"EvidenceConnector",entityId:job.id,details:{code,paused}}});await enqueueConnectorFailureDelivery(tx,job,audit.id,code,audit.createdAt);return paused?"ATTENTION":"RETRY_SCHEDULED";

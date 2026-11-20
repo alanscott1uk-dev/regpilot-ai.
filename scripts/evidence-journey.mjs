@@ -6,6 +6,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {chromium} from 'playwright';
 import {PrismaClient} from '@prisma/client';
 import {createClient} from '@supabase/supabase-js';
+import {awsGleifJourney} from './aws-gleif-journey.mjs';
 import {auditorSyncJourney} from './auditor-sync-journey.mjs';
 import {authenticatedHorizonWatchlist} from './horizon-browser-journey.mjs';
 import {fixturePdf} from '../tests/helpers/pdf-fixture.mjs';
@@ -499,6 +500,8 @@ try{
  const firm=await signIn(await openContext({width:390,height:844}),app+'/auditor',firmEmail);
  await firm.getByRole('heading',{name:'Shared with me',exact:true}).waitFor();
  report.auditorSync=await auditorSyncJourney({review,guest:firm,app,org,db,evidenceId:rereviewed.id,email:firmEmail,checkpoint,passed});
+
+ report.awsGleif=await awsGleifJourney({review,app,org,db,passed,checkpoint});
 
  await checkpoint('unavailable organisation isolation');
  await review.goto(app+'/team/evidence?'+new URLSearchParams({organizationId:randomUUID(),taskId:task.id}));
