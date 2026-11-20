@@ -103,7 +103,7 @@ export function WatchlistControls({organizationId, watches, filters, canManage, 
 
   return <section className={ui.watchlists} aria-label="Shared watchlists">
     <div className={ui.watchToolbar}>
-      <label>Shared watchlist<select disabled={busy} value={selected?.id ?? ''} onChange={e=>choose(watches.find(row=>row.id===e.target.value) ?? null,false)}>
+      <label>Shared watchlist<select aria-label="Shared watchlist" disabled={busy} value={selected?.id ?? ''} onChange={e=>choose(watches.find(row=>row.id===e.target.value) ?? null,false)}>
         <option value="">Custom filters</option>
         {watches.map(watch=><option key={watch.id} value={watch.id}>{watch.name}</option>)}
       </select></label>
