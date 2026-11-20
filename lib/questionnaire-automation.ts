@@ -89,3 +89,58 @@ export function questionnaireCoverageByProduct(rows: readonly {
   return [...groups.values()].sort((a, b) =>
     b.unresolved - a.unresolved || a.name.localeCompare(b.name, 'en-GB') || a.id.localeCompare(b.id));
 }
+
+type PortfolioQuestion = {
+  id: string;
+  ownerId: string;
+  question: string;
+  instructions?: string;
+  productId?: string | null;
+  productName?: string;
+  status: string;
+};
+
+export function recurringQuestionnaireGaps(
+  records: readonly {id: string; title: string; scope: string; status: string; questions: readonly PortfolioQuestion[]}[],
+  ownerId?: string,
+) {
+  const groups = new Map<string, {
+    question: string;
+    instructions: string;
+    scope: string;
+    productName: string;
+    questionnaireCount: number;
+    pendingCount: number;
+    links: {questionnaireId: string; questionId: string; title: string}[];
+    seen: Set<string>;
+  }>();
+  for (const record of records) {
+    if (record.status !== 'DRAFT') continue;
+    for (const row of record.questions) {
+      if (row.status === 'READY' || ownerId && row.ownerId !== ownerId) continue;
+      const key = JSON.stringify([record.scope, row.productId ?? null, normalQuestion(row.question), row.instructions ?? '']);
+      const group = groups.get(key) ?? {
+        question: row.question,
+        instructions: row.instructions ?? '',
+        scope: record.scope,
+        productName: row.productName || 'Company-wide',
+        questionnaireCount: 0,
+        pendingCount: 0,
+        links: [],
+        seen: new Set<string>(),
+      };
+      group.pendingCount++;
+      if (!group.seen.has(record.id)) {
+        group.seen.add(record.id);
+        group.questionnaireCount++;
+        if (group.links.length < 5) group.links.push({questionnaireId: record.id, questionId: row.id, title: record.title});
+      }
+      groups.set(key, group);
+    }
+  }
+  return [...groups.values()]
+    .filter(group => group.questionnaireCount > 1)
+    .sort((a, b) => b.questionnaireCount - a.questionnaireCount || b.pendingCount - a.pendingCount)
+    .slice(0, 12)
+    .map(({seen: _seen, ...group}) => group);
+}

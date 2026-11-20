@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {automationInput,classifyQuestion,rankApprovedKnowledge,knowledgeHealth,questionnaireCoverageByProduct,type KnowledgeAnswer} from '../lib/questionnaire-automation';
+import {automationInput,classifyQuestion,rankApprovedKnowledge,knowledgeHealth,questionnaireCoverageByProduct,recurringQuestionnaireGaps,type KnowledgeAnswer} from '../lib/questionnaire-automation';
 import {questionnaireInput,questionsSchema} from '../lib/assurance-operations';
 
 const question='How do you encrypt and restore customer backups?';
@@ -90,4 +90,25 @@ test('product coverage preserves scope, counts ambiguous answers and prioritises
   assert.equal(groups[2].confirmed,1);
   assert.equal(groups[2].expired,1);
   assert.deepEqual(questionnaireCoverageByProduct([]),[]);
+});
+
+test('portfolio groups pending questions across different drafts within the same owner, product, scope and instructions', () => {
+  const question = {id:'row',ownerId:'owner',productId:'a',status:'SUGGESTED',question:'Where are backups stored?'};
+  const draft = {id:'one',title:'First questionnaire',scope:'UK',status:'DRAFT',questions:[question,question]};
+  const records = [
+    draft,
+    {...draft,id:'two',questions:[{...question,id:'other',question:'  WHERE are backups stored? '}]},
+    {...draft,id:'foreign',questions:[{...question,ownerId:'different'}]},
+    {...draft,id:'done',questions:[{...question,status:'READY'}]},
+    {...draft,id:'approved',status:'APPROVED'},
+    {...draft,id:'other-scope',scope:'EU'},
+    {...draft,id:'other-product',questions:[{...question,productId:'b'}]},
+    {...draft,id:'other-instructions',questions:[{...question,instructions:'Answer only for the last quarter'}]},
+  ];
+  const [group,...others] = recurringQuestionnaireGaps(records,'owner');
+  assert.equal(others.length,0);
+  assert.equal(group.pendingCount,3);
+  assert.equal(group.questionnaireCount,2);
+  assert.deepEqual(group.links.map(link=>link.questionnaireId),['one','two']);
+  assert.equal(recurringQuestionnaireGaps(records)[0].questionnaireCount,3);
 });

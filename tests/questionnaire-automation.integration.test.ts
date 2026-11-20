@@ -33,6 +33,11 @@ test('structured imports preserve verified source coordinates and recover one ca
   await assert.rejects(()=>createQuestionnaire(x.ed,input),rejects(403));
   await assert.rejects(()=>questionnaireDetail(x.out,creates[0].id),rejects(404));
   const manual=await createQuestionnaire(x.o,importInput(x,[row]));assert.equal((await questionnaireDetail(x.o,manual.id)).questions[0].source,undefined,'A client JSON source claim must not become verified file provenance');
+  const gaps=(await questionnaireWorkspace(x.o)).recurringGaps;
+  assert.equal(gaps?.length,1);
+  assert.equal(gaps[0].questionnaireCount,2);
+  assert.deepEqual(new Set(gaps[0].links.map(link=>link.questionnaireId)),new Set([creates[0].id,manual.id]));
+  assert.deepEqual((await questionnaireWorkspace(x.out)).recurringGaps,[]);
   await assert.rejects(()=>createQuestionnaire(x.o,importInput(x,[row,{...row,question:'How are backup exceptions authorised and recorded?'}])),rejects(400));
  }finally{await x.cleanup();}
 });

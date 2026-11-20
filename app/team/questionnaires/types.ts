@@ -1,3 +1,4 @@
+import type {recurringQuestionnaireGaps} from '../../../lib/questionnaire-automation';
 export type Request=(path:string,options?:RequestInit)=>Promise<any>;
 export type RawRequest=(path:string,options?:RequestInit)=>Promise<Response>;
 export type Reconciliation={state:'saved'|'absent'|'pending';message:string;after?:()=>Promise<void>|void};
@@ -6,7 +7,7 @@ export type Write=<T>(action:WriteAction<T>)=>Promise<void>;
 export type FileReference={id:string;filename:string;sha256?:string;reviewVersion?:number;contentType?:string;sizeBytes?:number;uploadedById?:string|null;reviewerId?:string|null};
 export type Member={user:{id:string;email:string}};
 export type Product={id:string;code:string;name:string;version:number;status:string};
-export type Overview={products?:Product[];admin:boolean;organizationId?:string;members:Member[];answers:{id:string;question:string;scope:string}[];questionnaires:{id:string;title:string;scope:string;status:string;version:number}[];operation?:null|{requestKey:string;questionnaireId:string;version:number;kind:string}};
+export type Overview={recurringGaps?:ReturnType<typeof recurringQuestionnaireGaps>;products?:Product[];admin:boolean;organizationId?:string;members:Member[];answers:{id:string;question:string;scope:string}[];questionnaires:{id:string;title:string;scope:string;status:string;version:number}[];operation?:null|{requestKey:string;questionnaireId:string;version:number;kind:string}};
 export type SourceRow={sheetId?:string;sheetName?:string;sheet?:string;row?:number;rowNumber?:number;filename?:string;[key:string]:unknown};
 export type Question={productId?:string;productName?:string;id:string;reference:string;question:string;instructions?:string;suppliedAnswer?:string;source?:SourceRow|null;status:'EMPTY'|'SUGGESTED'|'READY';ownerId:string;answerId:string|null;answerVersion:number|null;answerHash:string|null;answer:string|null;files:FileReference[];reason:string;changedById?:string|null;suggestions?:{id:string;question:string;exact:boolean}[]};
 export type Detail={questionnaire:{id:string;title:string;recipient:string;scope:string;status:string;version:number;createdById:string;reviewerId:string|null;reviewNotes:string;productContext?:{format:string;products:Product[]}|null};questions:Question[];blockers:string[];contextHash:string;current:boolean;admin?:boolean;canPrepare?:boolean;canApprove?:boolean;approvalReason?:string;disclosure:unknown};
