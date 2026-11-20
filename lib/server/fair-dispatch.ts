@@ -9,7 +9,7 @@ type LaneKind='SOURCE'|'CONNECTOR';
 async function claim(kind:LaneKind,providers:string[]=[]){
  const table=kind==='SOURCE'?Prisma.raw('"WatchSchedule"'):Prisma.raw('"EvidenceConnector"');
  const date=kind==='SOURCE'?Prisma.raw('"nextCheckAt"'):Prisma.raw('"nextRunAt"');
- const eligible=kind==='SOURCE'?Prisma.sql`TRUE`:Prisma.sql`j.provider IN (${Prisma.join(providers)}) AND j."encryptedSecret" IS NOT NULL`;
+ const eligible=kind==='SOURCE'?Prisma.sql`TRUE`:Prisma.sql`j.provider IN (${Prisma.join(providers)}) AND (j."encryptedSecret" IS NOT NULL OR j.provider='OPENSSF_SCORECARD')`;
  const token=randomUUID();
  return db.$queryRaw<Array<WatchSchedule|EvidenceConnector>>(Prisma.sql`
   WITH lane AS (

@@ -1,17 +1,11 @@
-import {requestOAuthToken} from './oauth-request';
-import {resilientGet} from './resilient-http';
+import {GRAPH,microsoftTarget,verifiedMicrosoftGraph,type MicrosoftTarget} from "./microsoft-graph";
+import {readBoundedJson as json} from "./bounded-http";
 import {collectMicrosoftPolicy} from "./microsoft-policy";
-import {z} from "zod";
 import {CollectionError,type ConnectorCheck} from "./github";
 import type {Observation} from "./observation";
-export const microsoftTarget=z.object({tenantId:z.uuid(),clientId:z.uuid()});
-export type MicrosoftTarget=z.infer<typeof microsoftTarget>;
+export {microsoftTarget,type MicrosoftTarget} from "./microsoft-graph";
 export type MicrosoftObservation=Observation&{engine:"microsoft365-identity-2.0.0";tenantId:string;policyCoverage:Awaited<ReturnType<typeof collectMicrosoftPolicy>>["coverage"];coverage:{records:number;members:number;guests:number;unknownType:number;pages:number;complete:boolean;reportAvailable:boolean;staleRecords:number;missingDates:number};};
-const GRAPH="https://graph.microsoft.com",REPORT="/v1.0/reports/authenticationMethods/userRegistrationDetails";
-async function json(response:Response,max=1_000_000){
- if(!response.body)throw new CollectionError("EMPTY_RESPONSE");const reader=response.body.getReader(),chunks:Uint8Array[]=[];let size=0;
- try{while(true){const {value,done}=await reader.read();if(done)break;size+=value.length;if(size>max)throw new CollectionError("RESPONSE_TOO_LARGE");chunks.push(value);}return JSON.parse(Buffer.concat(chunks).toString("utf8"));}catch(e){await reader.cancel().catch(()=>{});if(e instanceof CollectionError)throw e;throw new CollectionError("INVALID_RESPONSE");}
-}
+const REPORT="/v1.0/reports/authenticationMethods/userRegistrationDetails";
 function reportUrl(value:string){
  let url:URL;try{url=new URL(value);}catch{throw new CollectionError("UNSAFE_PAGINATION");}
  if(url.origin!==GRAPH||url.pathname!==REPORT||url.username||url.password||url.hash)throw new CollectionError("UNSAFE_PAGINATION");return url.href;
@@ -19,13 +13,7 @@ function reportUrl(value:string){
 /** Read-only global-cloud adapter. No user identifiers, secrets or raw API responses
  * enter the returned observation. Registration/capability is never MFA enforcement. */
 export async function collectMicrosoft365(target:MicrosoftTarget,secret:string,fetcher:typeof fetch=fetch):Promise<MicrosoftObservation>{
- const t=microsoftTarget.parse(target),started=Date.now(),signal=AbortSignal.timeout(25000);
- const auth=await requestOAuthToken("https://login.microsoftonline.com/"+t.tenantId+"/oauth2/v2.0/token",{client_id:t.clientId,client_secret:secret,scope:GRAPH+"/.default",grant_type:"client_credentials"},fetcher,signal);
- const token=await json(auth,20000);if(typeof token?.access_token!=="string"||token.access_token.length<10||token.access_token.length>16000||/[\r\n]/.test(token.access_token)||String(token.token_type).toLowerCase()!=="bearer")throw new CollectionError("INVALID_AUTH_RESPONSE");
- const read=resilientGet(fetcher,GRAPH,{Authorization:'Bearer '+token.access_token,Accept:'application/json'},{timeoutMs:Math.max(1,25000-(Date.now()-started)),maxRequests:32});
- const get=async(url:string)=>{const response=await read(url);if(response.status===401){await response.body?.cancel();throw new CollectionError("CREDENTIAL_REJECTED");}return response;};
- const org=await get(GRAPH+"/v1.0/organization?$select=id");if(!org.ok){await org.body?.cancel();throw new CollectionError("TENANT_VERIFICATION_FAILED");}
- const organisation=await json(org,20000);if(!Array.isArray(organisation?.value)||organisation.value.length!==1||String(organisation.value[0]?.id).toLowerCase()!==t.tenantId.toLowerCase())throw new CollectionError("TARGET_MISMATCH");
+ const t=microsoftTarget.parse(target),get=await verifiedMicrosoftGraph(t,secret,fetcher);
  const limitations=["Point-in-time Microsoft Graph observations, not a compliance verdict or proof of MFA enforcement at sign-in.","The registration report excludes disabled users and can lag changes. Guest accounts are counted separately; conditional-access policy counts and explicit MFA grant settings are collected separately; policy effectiveness, scope and sign-in activity are not evaluated.","Only aggregate counts/settings are retained. Microsoft responses may contain identifiers in transient server memory; no user names, emails or account IDs are saved in this observation."];
  let defaults:boolean|null=null;
  const defaultsResponse=await get(GRAPH+"/v1.0/policies/identitySecurityDefaultsEnforcementPolicy?$select=isEnabled");

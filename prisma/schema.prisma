@@ -244,7 +244,8 @@ model User {
   paidReservations PaidReservation[]
   paidBudgetConfigurations PaidBudget[]
   auditRooms AuditRoom[]
-  auditGrants AuditGrant[]
+  auditGrants AuditGrant[] @relation("AuditGuest")
+  issuedAuditApiKeys AuditGrant[] @relation("AuditApiIssuer")
   auditQuestions AuditQuestion[]
   policyDrafts PolicyRevision[] @relation("PolicyAuthor")
   policyReviews PolicyRevision[] @relation("PolicyReviewer")
@@ -1146,6 +1147,10 @@ model AuditGrant {
  roomId String @db.Uuid
  email String @db.VarChar(254)
  userId String? @db.Uuid
+ apiKeyHash String? @db.VarChar(64)
+ apiIssuerId String? @db.Uuid
+ apiExpiresAt DateTime?
+ apiLastUsedAt DateTime?
  status String @default("PENDING") @db.VarChar(16)
  version Int @default(1)
  expiresAt DateTime
@@ -1153,7 +1158,8 @@ model AuditGrant {
  createdAt DateTime @default(now())
  organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
  room AuditRoom @relation(fields:[roomId,organizationId],references:[id,organizationId],onDelete:Restrict)
- user User? @relation(fields:[userId],references:[id],onDelete:Restrict)
+ user User? @relation("AuditGuest",fields:[userId],references:[id],onDelete:Restrict)
+ apiIssuer User? @relation("AuditApiIssuer",fields:[apiIssuerId],references:[id],onDelete:Restrict)
  questions AuditQuestion[]
  @@unique([roomId,email])
  @@unique([id,roomId,organizationId])

@@ -1,3 +1,5 @@
+import {collectIntune} from "../connectors/intune";
+import {collectScorecard,scorecardTarget} from "../connectors/scorecard";
 import {collectOkta,oktaTarget,oktaConnections,nangoConfig} from "../connectors/nango-okta";
 import {PROVIDERS} from "../connectors/capacity";
 import {verifiedObservation} from './connector-observation';
@@ -13,7 +15,7 @@ import {randomUUID} from "node:crypto";
 import {z} from "zod";
 import {db} from "./db";
 import {connectorsEnabled,microsoft365Enabled,googleWorkspaceEnabled,gitlabEnabled,cloudflareEnabled,companiesHouseEnabled,vercelEnabled,supabaseEnabled,connectorProviderEnabled} from "./connector-flags";
-export {connectorsEnabled,microsoft365Enabled,googleWorkspaceEnabled,gitlabEnabled,cloudflareEnabled,companiesHouseEnabled,vercelEnabled,supabaseEnabled,oktaEnabled} from "./connector-flags";
+export {connectorsEnabled,microsoft365Enabled,googleWorkspaceEnabled,gitlabEnabled,cloudflareEnabled,companiesHouseEnabled,vercelEnabled,supabaseEnabled,oktaEnabled,intuneEnabled,scorecardEnabled} from "./connector-flags";
 import {collectGitlab,gitlabTarget} from "../connectors/gitlab";
 import {collectCloudflare,cloudflareTarget} from "../connectors/cloudflare";
 import {collectCompaniesHouse,companiesHouseTarget} from "../connectors/companies-house";
@@ -33,9 +35,10 @@ const schema=githubTarget.extend({provider:z.literal("GITHUB").default("GITHUB")
 
 
 const googleSchema=googleTarget.extend({provider:z.literal("GOOGLE_WORKSPACE"),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:googleCredentials.shape.clientSecret.optional(),refreshToken:googleCredentials.shape.refreshToken.optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)}).refine(v=>!!v.clientSecret===!!v.refreshToken,"Rotate both Google credentials together");
-const microsoftSchema=microsoftTarget.extend({provider:z.literal("MICROSOFT365"),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:z.string().min(16).max(512).regex(/^[^\r\n\0]+$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)});
+const microsoftSchema=microsoftTarget.extend({provider:z.enum(["MICROSOFT365","INTUNE"]),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:z.string().min(16).max(512).regex(/^[^\r\n\0]+$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)});
 const extraFields={controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().refine(validCredential).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)};
 const extraSchema=z.discriminatedUnion("provider",[
+ scorecardTarget.extend({...extraFields,provider:z.literal("OPENSSF_SCORECARD")}).omit({token:true}).strict(),
  oktaTarget.extend({...extraFields,provider:z.literal("OKTA")}).omit({token:true}),
  vercelTarget.extend({...extraFields,provider:z.literal("VERCEL")}),
  supabaseTarget.extend({...extraFields,provider:z.literal("SUPABASE")}),
@@ -46,6 +49,12 @@ const extraSchema=z.discriminatedUnion("provider",[
 type Collector=(target:{provider?:string;organizationId?:string;repository:string;branch:string},secret:string)=>Promise<Observation>;
 export const collectConfiguredConnector:Collector=async(target,secret)=>{
  if(!connectorProviderEnabled(target.provider||"GITHUB"))throw new CollectionError("PROVIDER_DISABLED");
+ if(target.provider==="INTUNE" && target.repository.startsWith("intune:")){
+  return collectIntune({tenantId:target.repository.slice(7),clientId:target.branch},secret);
+ }
+ if(target.provider==="OPENSSF_SCORECARD" && target.repository.startsWith("scorecard:") ){
+  return collectScorecard({repository:target.repository.slice(10),deployedCommit:target.branch==="published"?undefined:target.branch});
+ }
  if(target.provider==="OKTA"){
   const [groupId,removedUserId,...excess]=target.branch.split(":");
   if(!target.organizationId||excess.length||target.repository!=="okta:"+secret)throw new CollectionError("INVALID_TARGET");
@@ -71,9 +80,9 @@ export const collectConfiguredConnector:Collector=async(target,secret)=>{
 };
 export async function saveConnector(ctx:AuthorizedContext,input:unknown){
  if(!connectorsEnabled())throw new IntelligenceError("Evidence connectors await activation",503);
- const provider=(input as {provider?:string})?.provider,microsoft=provider==="MICROSOFT365",google=provider==="GOOGLE_WORKSPACE",extra=["GITLAB","CLOUDFLARE","COMPANIES_HOUSE","VERCEL","SUPABASE","OKTA"].includes(provider||"");
+ const provider=(input as {provider?:string})?.provider,microsoft=provider==="MICROSOFT365"||provider==="INTUNE",google=provider==="GOOGLE_WORKSPACE",extra=["GITLAB","CLOUDFLARE","COMPANIES_HOUSE","VERCEL","SUPABASE","OKTA","OPENSSF_SCORECARD"].includes(provider||"");
  const parsed=(extra?extraSchema:google?googleSchema:microsoft?microsoftSchema:schema).safeParse(input);if(!parsed.success)throw new IntelligenceError("Check the provider, target, credentials, control and version");
- if(microsoft&&!microsoft365Enabled())throw new IntelligenceError("Microsoft 365 collection awaits activation",503);
+ if(microsoft&&!connectorProviderEnabled(provider!))throw new IntelligenceError("This Microsoft provider awaits activation",503);
  if(google&&!googleWorkspaceEnabled())throw new IntelligenceError("Google Workspace collection awaits activation",503);
  if(extra&&!connectorProviderEnabled(provider!))throw new IntelligenceError("This provider awaits activation",503);
  const raw=parsed.data;if(raw.provider==="COMPANIES_HOUSE"&&raw.token?.includes(":"))throw new IntelligenceError("Use a valid Companies House API key");
@@ -82,7 +91,10 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
   const matches=await oktaConnections(ctx.organizationId,nangoConfig(),fetch,raw.connectionId);
   if(matches.length!==1)throw new IntelligenceError("Choose an authorised Okta directory for this workspace",409);
  }
- const v=raw.provider==="OKTA"?{...raw,repository:"okta:"+raw.connectionId,branch:[raw.groupId,raw.removedUserId].filter(Boolean).join(":"),token:raw.connectionId}:raw.provider==="VERCEL"?{...raw,repository:"vercel:"+raw.projectId,branch:raw.teamId}:raw.provider==="SUPABASE"?{...raw,repository:"supabase:"+raw.projectRef,branch:raw.providerOrganizationId}:raw.provider==="GITLAB"?{...raw,repository:"gitlab:"+raw.projectPath}:raw.provider==="CLOUDFLARE"?{...raw,repository:"cloudflare:"+raw.zoneId.toLowerCase(),branch:raw.accountId.toLowerCase()}:raw.provider==="COMPANIES_HOUSE"?{...raw,repository:"companieshouse:"+raw.companyNumber,branch:"profile"}:raw.provider==="MICROSOFT365"?{...raw,repository:"microsoft365:"+raw.tenantId.toLowerCase(),branch:raw.clientId.toLowerCase(),token:raw.clientSecret}:raw.provider==="GOOGLE_WORKSPACE"?{...raw,repository:"googleworkspace:"+raw.customerId,branch:raw.clientId,token:raw.clientSecret?JSON.stringify({clientSecret:raw.clientSecret,refreshToken:raw.refreshToken}):undefined}:raw;
+ const publicReport=raw.provider==="OPENSSF_SCORECARD";
+ const v=raw.provider==="OPENSSF_SCORECARD"?{...raw,repository:"scorecard:"+raw.repository,branch:raw.deployedCommit??"published",token:undefined}
+  :"tenantId" in raw?{...raw,repository:(raw.provider==="INTUNE"?"intune:":"microsoft365:")+raw.tenantId.toLowerCase(),branch:raw.clientId.toLowerCase(),token:raw.clientSecret}
+  :raw.provider==="OKTA"?{...raw,repository:"okta:"+raw.connectionId,branch:[raw.groupId,raw.removedUserId].filter(Boolean).join(":"),token:raw.connectionId}:raw.provider==="VERCEL"?{...raw,repository:"vercel:"+raw.projectId,branch:raw.teamId}:raw.provider==="SUPABASE"?{...raw,repository:"supabase:"+raw.projectRef,branch:raw.providerOrganizationId}:raw.provider==="GITLAB"?{...raw,repository:"gitlab:"+raw.projectPath}:raw.provider==="CLOUDFLARE"?{...raw,repository:"cloudflare:"+raw.zoneId.toLowerCase(),branch:raw.accountId.toLowerCase()}:raw.provider==="COMPANIES_HOUSE"?{...raw,repository:"companieshouse:"+raw.companyNumber,branch:"profile"}:raw.provider==="GOOGLE_WORKSPACE"?{...raw,repository:"googleworkspace:"+raw.customerId,branch:raw.clientId,token:raw.clientSecret?JSON.stringify({clientSecret:raw.clientSecret,refreshToken:raw.refreshToken}):undefined}:raw;
  const repository=google||raw.provider==="OKTA"||raw.provider==="COMPANIES_HOUSE"||raw.provider==="VERCEL"?v.repository:v.repository.toLowerCase();
  return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);
   const control=await tx.managedControl.findFirst({where:{id:v.controlId,organizationId:ctx.organizationId,enabled:true}});if(!control)throw new IntelligenceError("Choose an active control from this organisation",404);
@@ -90,17 +102,17 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
   if(v.id&&!old)throw new IntelligenceError("Connector not found",404);
   if(old&&old.provider!==v.provider)throw new IntelligenceError("Create a separate connection when changing provider",409);
   if((old?.version||0)!==v.version)throw new IntelligenceError("Connector settings changed",409);
-  if(!v.token&&!old?.encryptedSecret)throw new IntelligenceError("A restricted provider credential is required");
-  if(old&&!v.token&&(old.repository!==repository||old.branch!==v.branch))throw new IntelligenceError("Supply a newly scoped credential when changing target");
+  if(!publicReport&&!v.token&&!old?.encryptedSecret)throw new IntelligenceError("A restricted provider credential is required");
+  if(old&&!publicReport&&!v.token&&(old.repository!==repository||old.branch!==v.branch))throw new IntelligenceError("Supply a newly scoped credential when changing target");
   if(!old&&await tx.evidenceConnector.count({where:{organizationId:ctx.organizationId}})>=20)throw new IntelligenceError("Connector limit reached",429);
-  const id=old?.id||randomUUID();const data={provider:v.provider,controlId:v.controlId,repository,branch:v.branch,configuredById:ctx.userId,enabled:v.enabled,intervalHours:v.intervalHours,encryptedSecret:v.token?encryptConnectorSecret(v.token,ctx.organizationId,id):old!.encryptedSecret,encryptedWebhookSecret:old&&old.repository===repository&&old.branch===v.branch?old.encryptedWebhookSecret:null,webhookVersion:old?(old.repository===repository&&old.branch===v.branch?old.webhookVersion:old.webhookVersion+1):0,nextRunAt:new Date(),leaseToken:null,leaseUntil:null,attempts:0,failureCode:null};
+  const id=old?.id||randomUUID();const data={provider:v.provider,controlId:v.controlId,repository,branch:v.branch,configuredById:ctx.userId,enabled:v.enabled,intervalHours:v.intervalHours,encryptedSecret:v.token?encryptConnectorSecret(v.token,ctx.organizationId,id):old?.encryptedSecret??null,encryptedWebhookSecret:old&&old.repository===repository&&old.branch===v.branch?old.encryptedWebhookSecret:null,webhookVersion:old?(old.repository===repository&&old.branch===v.branch?old.webhookVersion:old.webhookVersion+1):0,nextRunAt:new Date(),leaseToken:null,leaseUntil:null,attempts:0,failureCode:null};
   if(!old&&await tx.evidenceConnector.findUnique({where:{organizationId_repository_branch:{organizationId:ctx.organizationId,repository:data.repository,branch:data.branch}}}))throw new IntelligenceError("This target already has a connector",409);
   const saved=old?await tx.evidenceConnector.update({where:{id},data:{...data,version:{increment:1}}}):await tx.evidenceConnector.create({data:{id,organizationId:ctx.organizationId,...data}});
   await tx.connectorControlLink.deleteMany({where:{connectorId:id,organizationId:ctx.organizationId,controlId:v.controlId}});
   await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"connector.configured",entityType:"EvidenceConnector",entityId:id,details:{version:saved.version,controlId:v.controlId,enabled:v.enabled,credentialRotated:!!v.token}}});return {id,version:saved.version};
  });
 }
-export async function disconnectConnector(ctx:AuthorizedContext,id:string,version:number){return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const changed=await tx.evidenceConnector.updateMany({where:{id,organizationId:ctx.organizationId,version},data:{enabled:false,encryptedSecret:null,encryptedWebhookSecret:null,webhookVersion:{increment:1},leaseToken:null,leaseUntil:null,version:{increment:1}}});if(!changed.count)throw new IntelligenceError("Connector changed",409);await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"connector.disconnected",entityType:"EvidenceConnector",entityId:id,details:{}}});return {id};});}
+export async function disconnectConnector(ctx:AuthorizedContext,id:string,version:number){return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const changed=await tx.evidenceConnector.updateMany({where:{id,organizationId:ctx.organizationId,version},data:{enabled:false,failureCode:null,encryptedSecret:null,encryptedWebhookSecret:null,webhookVersion:{increment:1},leaseToken:null,leaseUntil:null,version:{increment:1}}});if(!changed.count)throw new IntelligenceError("Connector changed",409);await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"connector.disconnected",entityType:"EvidenceConnector",entityId:id,details:{}}});return {id};});}
 export async function requestConnectorRun(ctx:AuthorizedContext,id:string,version:number){return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const row=await tx.evidenceConnector.findFirst({where:{id,organizationId:ctx.organizationId,version,enabled:true}});if(!row)throw new IntelligenceError("Active connector not found or changed",409);if(row.failureCode==="RATE_LIMITED"&&row.nextRunAt>new Date())throw new IntelligenceError("The provider requested a cooldown. Collection can resume after the scheduled retry time.",429);if(row.leaseUntil&&row.leaseUntil>new Date())throw new IntelligenceError("A collection is already running",409);if(row.lastSuccessAt&&Date.now()-row.lastSuccessAt.getTime()<300000)throw new IntelligenceError("Wait five minutes between successful collections",429);await tx.evidenceConnector.update({where:{id},data:{nextRunAt:new Date()}});return {id};});}
 /** Re-arm one failed paused connector without rotating secrets or erasing its incident. */
 export async function retryConnector(ctx:AuthorizedContext,id:string,version:number){
@@ -111,7 +123,7 @@ export async function retryConnector(ctx:AuthorizedContext,id:string,version:num
   const row=await tx.evidenceConnector.findFirst({where:{id,organizationId:ctx.organizationId,version}});
   if(!row)throw new IntelligenceError("Connection not found or settings changed",409);
   if(row.enabled||!row.failureCode)throw new IntelligenceError("Only a paused failed connection can be recovered",409);
-  if(!connectorProviderEnabled(row.provider)||!row.encryptedSecret)throw new IntelligenceError("An enabled provider and stored credential are required",409);
+  if(!connectorProviderEnabled(row.provider)||(row.provider!=="OPENSSF_SCORECARD"&&!row.encryptedSecret))throw new IntelligenceError("An enabled provider and stored credential are required",409);
   const recovery=connectorRecovery(row.failureCode);
   if(!recovery.retryable)throw new IntelligenceError(recovery.message,409);
   const now=new Date();
@@ -140,12 +152,12 @@ export async function verifyConnectorNow(ctx:AuthorizedContext,id:string,version
   await requireMember(tx,ctx,ADMIN);
   const record=await tx.evidenceConnector.findFirst({where:{id,organizationId:ctx.organizationId,version}});
   if(!record)throw new IntelligenceError("Connection not found or settings changed",404);
-  if(!record.enabled||!connectorProviderEnabled(record.provider)||!record.encryptedSecret)throw new IntelligenceError("Active provider and credential required",409);
+  if(!record.enabled||!connectorProviderEnabled(record.provider)||(record.provider!=="OPENSSF_SCORECARD"&&!record.encryptedSecret))throw new IntelligenceError("Active provider and credential required",409);
   if(record.failureCode==="RATE_LIMITED"&&record.nextRunAt>now)throw new IntelligenceError("The provider requested a cooldown. Collection can resume after the scheduled retry time.",429);
   if(record.lastSuccessAt&&now.getTime()-record.lastSuccessAt.getTime()<300000)throw new IntelligenceError("Wait five minutes before another successful verification",429);
   if(!await claimManualConnectorLane(tx,ctx.organizationId,token))throw new IntelligenceError("Another connection in this workspace is being checked. Retry after it finishes.",409);
   const claim=await tx.evidenceConnector.updateMany({where:{
-   id,organizationId:ctx.organizationId,version,enabled:true,encryptedSecret:{not:null},
+   id,organizationId:ctx.organizationId,version,enabled:true,...(record.provider==="OPENSSF_SCORECARD"?{}:{encryptedSecret:{not:null}}),
    OR:[{leaseUntil:null},{leaseUntil:{lte:now}}]
   },data:{leaseToken:token,leaseUntil:new Date(now.getTime()+90000),attempts:{increment:1},nextRunAt:now}});
   if(claim.count!==1)throw new IntelligenceError("This connection is already being verified or was changed",409);
@@ -175,14 +187,14 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector){
  let permit:ProviderPermit|undefined,providerOutcome='NEUTRAL';
  try{
   await transaction(ctx,tx=>assertJob(tx,job));if(job.attempts>3)throw new CollectionError("INTERRUPTED_REPEATEDLY");
-  if(!job.encryptedSecret)throw new CollectionError("CREDENTIAL_UNAVAILABLE");
+  if(job.provider!=="OPENSSF_SCORECARD"&&!job.encryptedSecret)throw new CollectionError("CREDENTIAL_UNAVAILABLE");
   const admission=await acquireProviderPermit(job.provider,job.organizationId);
   if(!admission.allowed){
    const deferred=await db.evidenceConnector.updateMany({where:{id:job.id,organizationId:job.organizationId,version:job.version,enabled:true,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},data:{leaseToken:null,leaseUntil:null,attempts:Math.max(0,job.attempts-1),failureCode:admission.reason,nextRunAt:admission.retryAt}});
    return deferred.count?'PROVIDER_DEFERRED':'SUPERSEDED';
   }
   permit=admission.permit;
-  const secret=decryptConnectorSecret(job.encryptedSecret,job.organizationId,job.id);
+  const secret=job.encryptedSecret?decryptConnectorSecret(job.encryptedSecret,job.organizationId,job.id):"";
   const result=await collector({provider:job.provider,organizationId:job.organizationId,repository:job.repository,branch:job.branch},secret).then(result=>reconcileObservation(result,null)).then(result=>{providerOutcome='SUCCESS';return result;},error=>{providerOutcome=error instanceof CollectionError?error.code:'NEUTRAL';throw error;});
   return await transaction(ctx,async tx=>{await assertJob(tx,job);
    const previous=await tx.connectorRun.findFirst({where:{organizationId:job.organizationId,connectorId:job.id},orderBy:[{capturedAt:"desc"},{id:"desc"}]});

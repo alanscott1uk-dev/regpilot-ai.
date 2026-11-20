@@ -6,6 +6,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {chromium} from 'playwright';
 import {PrismaClient} from '@prisma/client';
 import {createClient} from '@supabase/supabase-js';
+import {auditorSyncJourney} from './auditor-sync-journey.mjs';
 import {authenticatedHorizonWatchlist} from './horizon-browser-journey.mjs';
 import {fixturePdf} from '../tests/helpers/pdf-fixture.mjs';
 import {createCustomerWorkspace,sourceToReportJourney} from './customer-journey.mjs';
@@ -493,6 +494,12 @@ try{
  report.integrationJourney=await integrationDeliveryCustomerJourney({review,db,app,org,editor,controlId:report.customerApiJourney.controlId,checkpoint,passed,bounded,artifactDir});
  report.ocrJourney=await runOcrCustomerJourney({upload,review,app,org,editor,reviewer,db,artifactDir,checkpoint,passed,bounded});
 
+ const firmEmail='auditor@example.test';
+ await account(firmEmail);
+ const firm=await signIn(await openContext({width:390,height:844}),app+'/auditor',firmEmail);
+ await firm.getByRole('heading',{name:'Shared with me',exact:true}).waitFor();
+ report.auditorSync=await auditorSyncJourney({review,guest:firm,app,org,db,evidenceId:rereviewed.id,email:firmEmail,checkpoint,passed});
+
  await checkpoint('unavailable organisation isolation');
  await review.goto(app+'/team/evidence?'+new URLSearchParams({organizationId:randomUUID(),taskId:task.id}));
  await review.getByText(/belongs to an unavailable organisation/).waitFor();
@@ -509,7 +516,7 @@ try{
  for(const [index,page] of (browser?.contexts().flatMap(context=>context.pages())||[]).entries()){
   const url=new URL(page.url());
   if(url.origin===app&&!url.searchParams.has('code'))
-   await bounded(page.screenshot({path:`${artifactDir}/failure-page-${index+1}.png`,fullPage:true,timeout:5_000}),'Failure screenshot',7_500).catch(()=>{});
+   await bounded(page.screenshot({path:`${artifactDir}/failure-page-${index+1}.png`,fullPage:true,timeout:5_000,mask:[page.getByLabel("One-time auditor key")]}),'Failure screenshot',7_500).catch(()=>{});
  }
  throw error;
 }finally{

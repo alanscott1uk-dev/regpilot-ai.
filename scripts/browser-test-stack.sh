@@ -54,7 +54,7 @@ JS
 from pathlib import Path
 import re
 p = Path('supabase/config.toml')
-s, changes = re.subn(r'^additional_redirect_urls =.*$', 'additional_redirect_urls = ["http://127.0.0.1:3000/team/work", "http://127.0.0.1:3000/team/setup", "http://127.0.0.1:3000/team/settings"]', p.read_text(), flags=re.M)
+s, changes = re.subn(r'^additional_redirect_urls =.*$', 'additional_redirect_urls = ["http://127.0.0.1:3000/team/work", "http://127.0.0.1:3000/team/setup", "http://127.0.0.1:3000/team/settings", "http://127.0.0.1:3000/auditor"]', p.read_text(), flags=re.M)
 if changes != 1: raise SystemExit("Unsupported Supabase redirect configuration")
 p.write_text(s)
 PY
@@ -71,6 +71,7 @@ export DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/regpilot_jour
 psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE regpilot_journey'
 export NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
 export REGPILOT_WORKSPACE_ENABLED=true REGPILOT_EVIDENCE_ENABLED=true REGPILOT_ASSURANCE_ENABLED=true REGPILOT_PROGRAMME_ENABLED=true
+export REGPILOT_AUDITOR_API_ENABLED=true
 export REGPILOT_CUSTOMER_API_ENABLED=true REGPILOT_OUTBOUND_INTEGRATIONS_ENABLED=true
 export REGPILOT_CONNECTOR_ENCRYPTION_KEY=1111111111111111111111111111111111111111111111111111111111111111
 export REGPILOT_OCR_ENABLED=true REGPILOT_PAID_SERVICES_ENABLED=true REGPILOT_PAID_SAFEGUARDS_VERIFIED=true
@@ -78,7 +79,7 @@ export REGPILOT_OCR_RESERVE_MICROS=1000 REGPILOT_PAID_PLATFORM_MONTHLY_MICROS=10
 export REGPILOT_APP_ORIGIN=https://regpilot.example.invalid
 export AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=https://fixture.cognitiveservices.azure.com AZURE_DOCUMENT_INTELLIGENCE_KEY=fictional-ocr-contract-key
 export REGPILOT_OCR_FIXTURE_URL=http://127.0.0.1:4029
-export REGPILOT_AI_ALLOWED_EMAILS=editor@example.test,reviewer@example.test
+export REGPILOT_AI_ALLOWED_EMAILS=editor@example.test,reviewer@example.test,auditor@example.test
 export REGPILOT_EVIDENCE_BUCKET=journey-files REGPILOT_CLAMD_HOST=127.0.0.1
 
 docker run --detach --name "$scanner" --publish 127.0.0.1:3310:3310 --entrypoint sh clamav/clamav:1.4_base -ec '

@@ -180,3 +180,16 @@ The additive database change is `prisma/changes/ai-inventory.sql`. It creates tw
 Open a risk and expand **Financial exposure in pounds** to estimate one year of loss before and after treatment. Enter expected events per year and low, most likely and high loss per event. The model uses independent Poisson event counts and triangular loss severity. It calculates the mean analytically and simulates 10,000 reproducible, paired years for the median and 90th percentile. Results use whole pounds and exclude treatment costs. The inputs come from the assessor. The model has no industry calibration and does not implement the full FAIR taxonomy.
 
 A risk editor can save an attributed scenario with its assumptions, exact risk revision, method version and optional byte-verified evidence. The risk register preserves the actual inputs and outputs, exposes stale evidence and historical revisions, and exports a JSON record. Scenario calculations leave the risk rating and acceptance decision untouched. Apply the additive `prisma/changes/risk-loss-scenarios.sql` migration to the intended private environment as part of release.
+
+## Continuous endpoint and software-supplier evidence
+
+Two additional adapters use the existing daily/weekly collector, manual verification, control links, change history and follow-up. Configure them under **Operations → Connections**. Each can be activated independently after the workspace and connector service are configured.
+
+| Provider | Inputs | Saved evidence |
+| --- | --- | --- |
+| Microsoft Intune (`REGPILOT_INTUNE_ENABLED`) | Tenant ID, application ID and encrypted secret for a dedicated application. A licensed test tenant must grant the application `Organization.Read.All` for tenant identity and `DeviceManagementManagedDevices.Read.All` for managed devices. | Aggregate encryption, policy compliance, seven-day sync and enumeration coverage. A known recent exception triggers follow-up. Empty, stale, missing and truncated results cannot establish an all-device pass. |
+| OpenSSF Scorecard (`REGPILOT_SCORECARD_ENABLED`) | Public GitHub repository and optional deployed Git commit. No supplier credential is required. | Attributed security policy, code review, pinned dependency and signed release scores, a publication date, and the exact assessed commit. Scores below 10 flag the selected criterion for review. Reports older than 14 days remain inconclusive. |
+
+Intune excludes device identifiers and staff details from stored results. It reads at most ten pages and 2,000 devices on Microsoft’s global Graph endpoint. Reconcile enrolment against the organisation's asset register separately. Microsoft documents the [managed device report and permission](https://learn.microsoft.com/en-us/graph/api/intune-devices-manageddevice-list?view=graph-rest-1.0).
+
+The supplier adapter compares the deployed revision with the latest public assessment. If they differ it queries the deployed revision explicitly. Upstream scores cannot substitute for an unscored deployment. Provider contracts and public coverage are described by [OpenSSF](https://api.scorecard.dev/).

@@ -7,11 +7,19 @@ export async function verifiedDownloadResponse(generate:()=>Promise<Uint8Array>|
  signal?.throwIfAborted();
  // Generation performs the service's complete pre/post authority, scope and byte checks.
  // Nothing is streamed from storage or from an uncommitted verification operation.
- let bytes:Uint8Array|null=await generate();
+ const body=verifiedByteStream(await generate(),signal);
+ return new Response(body,{headers:{
+  'Content-Type':contentType,'Content-Disposition':`attachment; filename="${filename}"`,
+  'Cache-Control':'no-store, no-transform','X-Content-Type-Options':'nosniff',
+ }});
+}
+
+export function verifiedByteStream(verified:Uint8Array,signal?:AbortSignal){
+ let bytes:Uint8Array|null=verified;
  signal?.throwIfAborted();
  let offset=0,closed=false,onAbort:(()=>void)|undefined;
  const release=()=>{closed=true;bytes=null;if(onAbort)signal?.removeEventListener('abort',onAbort);};
- const body=new ReadableStream<Uint8Array>({
+ return new ReadableStream<Uint8Array>({
   start(controller){
    onAbort=()=>{if(closed)return;release();controller.error(signal?.reason||new DOMException('Download cancelled','AbortError'));};
    signal?.addEventListener('abort',onAbort,{once:true});if(signal?.aborted)onAbort();
@@ -27,8 +35,4 @@ export async function verifiedDownloadResponse(generate:()=>Promise<Uint8Array>|
   },
   cancel(){release();},
  },{highWaterMark:0});
- return new Response(body,{headers:{
-  'Content-Type':contentType,'Content-Disposition':`attachment; filename="${filename}"`,
-  'Cache-Control':'no-store, no-transform','X-Content-Type-Options':'nosniff',
- }});
 }

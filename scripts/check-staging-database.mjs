@@ -22,6 +22,7 @@ try {
     if (!checks[0]?.runtime_access || checks[0].anon_access || checks[0].api_access) throw new Error('Private table grants are incorrect');
   }
   // Exercise actual generated Prisma mappings without returning stored data.
+  await db.auditGrant.findFirst({select:{apiIssuerId:true,apiExpiresAt:true,apiLastUsedAt:true,apiKeyHash:true}});
   await db.organization.findFirst({select:{id:true}});
   await db.dispatchLane.findFirst({select:{organizationId:true,kind:true,leaseUntil:true}});
   await db.workerRun.findFirst({select:{slot:true}});

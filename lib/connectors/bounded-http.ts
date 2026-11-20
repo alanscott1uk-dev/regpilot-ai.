@@ -19,3 +19,8 @@ export function providerReader(fetcher:typeof fetch,headers:Record<string,string
 }
 export const validCredential=(token:string)=>typeof token==="string"&&token.length>=16&&token.length<=512&&!/[\s\x00-\x1f\x7f]/.test(token);
 export function booleanCheck(id:string,label:string,value:unknown,expected:boolean,nextStep:string):ConnectorCheck{return {id,label,status:typeof value!=="boolean"?"UNKNOWN":value===expected?"PASS":"FAIL",observed:typeof value==="boolean"?String(value):"Not established",nextStep};}
+
+export async function readBoundedJson(response:Response,max=1_000_000){
+ if(!response.body)throw new CollectionError("EMPTY_RESPONSE");const reader=response.body.getReader(),chunks:Uint8Array[]=[];let size=0;
+ try{while(true){const {value,done}=await reader.read();if(done)break;size+=value.length;if(size>max)throw new CollectionError("RESPONSE_TOO_LARGE");chunks.push(value);}return JSON.parse(Buffer.concat(chunks).toString("utf8"));}catch(e){await reader.cancel().catch(()=>{});if(e instanceof CollectionError)throw e;throw new CollectionError("INVALID_RESPONSE");}
+}

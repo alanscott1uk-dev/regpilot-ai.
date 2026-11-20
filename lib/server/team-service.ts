@@ -149,6 +149,7 @@ export async function changeMember(ctx:AuthorizedContext,input:unknown){
   }
   else await tx.membership.update({where:{organizationId_userId:key},data:{role:d.role!}});
   if(d.action==="REMOVE"||d.role==="EDITOR"||d.role==="VIEWER"){
+   await tx.auditGrant.updateMany({where:{organizationId:ctx.organizationId,apiIssuerId:d.userId},data:{apiKeyHash:null,apiIssuerId:null,apiExpiresAt:null,version:{increment:1}}});
    // External disclosure never springs back to life if its issuer is re-promoted.
    const rooms=await tx.auditRoom.findMany({where:{organizationId:ctx.organizationId,createdById:d.userId,status:{in:["DRAFT","PUBLISHED"]}},select:{id:true}});
    if(rooms.length){

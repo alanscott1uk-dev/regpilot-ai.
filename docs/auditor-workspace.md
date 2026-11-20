@@ -34,3 +34,19 @@ The private-service switches and every paid integration remain disabled. This co
 ## Audit-period requests
 
 See [Audit periods and wider coverage](audit-period-and-coverage.md) for the added owned-request workflow, submission history, independently accepted samples and JSON package index. The current UI requires an explicit period; legacy file-only manifests remain readable. Empty period drafts cannot publish. Request acceptance only changes the draft; external access still requires deliberate publication and a named invitation.
+
+## Sync evidence into an audit firm's software
+
+Enable `REGPILOT_AUDITOR_API_ENABLED` after applying `prisma/changes/auditor-sync.sql` to the intended environment. Existing invitations have no API key. In **Auditor workspace → Guest access**, an administrator can issue a key for a named reviewer who has accepted a published room. Transfer the one-time value through the firm's secure credential channel. Replacement immediately invalidates the previous key. The key expires after seven days or at room closure or expiry, whichever comes first. Revoking just the key preserves the reviewer's browser access.
+
+The integration contract is available at `/api/v1/auditor/openapi`. Send the key in the HTTP Authorization bearer header. Each key reads a single room. A firm wanting to sync several clients needs a separate grant from each client.
+
+| Request | Response |
+| --- | --- |
+| GET `/api/v1/auditor/package` | Selected evidence, live availability, accepted control request versions and period coverage. Store the ETag for the next sync. |
+| GET the package with `If-None-Match` | HTTP 304 after RegPilot checks the grant, room, issuer and current evidence again. Withdrawn evidence changes the ETag. |
+| GET a listed evidence download path | Verified file bytes with a SHA-256 Content-Digest. Compare this digest with the package entry before accepting the transfer. |
+
+The firm should retire withdrawn entries from its active evidence set. HTTP 401 ends access to the room for that key. HTTP 409 requires a fresh review before relying on the selected evidence. HTTP 429 includes the retry interval. The limit is 60 requests per grant and 240 per client organisation per minute. Keys and download requests have no write access. The activity log records access and downloads without retaining bearer tokens.
+
+Control versions and coverage describe the accepted request when the client published the room. A file-only room can have zero control requests. The firm receives no staff identifiers, review notes or internal storage addresses. RegPilot rechecks access and file approval after retrieving bytes. A firm that already downloaded a file holds its own copy.
