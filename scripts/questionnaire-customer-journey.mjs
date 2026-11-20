@@ -1,3 +1,4 @@
+import {checkAccessibility} from './browser-accessibility.mjs';
 // Actual application requests, email-authenticated desktop/mobile contexts, private
 // object storage and database. The company, workbook and evidence are fictional.
 import assert from 'node:assert/strict';
@@ -31,6 +32,7 @@ export async function questionnaireCustomerJourney({upload,review,db,app,org,edi
  const recordPath=app+'/team/questionnaires'+query+'&questionnaireId='+row.id,endpoint='/api/workspace/questionnaires/'+row.id;
  await upload.getByRole('button',{name:'Open question Q1',exact:true}).click();
  await upload.getByText('Answer coverage by product',{exact:true}).click();
+ await checkAccessibility(upload,artifactDir+'/questionnaire-coverage-accessibility.json','details[aria-label="Answer coverage by product"]');
  await upload.getByRole('button',{name:'View questions for Company-wide',exact:true}).click();
  await upload.getByText('Showing Company-wide questions.',{exact:false}).waitFor();
  await upload.getByRole('button',{name:'Show all products',exact:true}).click();

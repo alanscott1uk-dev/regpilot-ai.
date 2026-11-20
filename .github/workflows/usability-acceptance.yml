@@ -16,22 +16,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: npm ci --no-audit --no-fund
-      - name: Install pinned test-only browser dependency
-        run: npm install --no-save --package-lock=false playwright@1.55.1
-      - name: Install Chromium for an isolated headless desktop/mobile run
-        run: npx playwright install --with-deps chromium
-      - name: Build application with private features disabled
-        run: npm run build
+      - name: Run local desktop and mobile browser suite
         env:
-          NEXT_PUBLIC_SUPABASE_URL: "https://auth-fixture.example.invalid"
-          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "fictional-browser-acceptance-only"
-          REGPILOT_WORKSPACE_ENABLED: "false"
-          REGPILOT_AI_ENABLED: "false"
-      - name: Run black-box task completion, navigation, focus and overflow journeys
-        run: node scripts/usability-browser-acceptance.mjs
-      - name: Exercise connected work hub on desktop and mobile
-        run: node scripts/work-hub-browser-acceptance.mjs
+          REGPILOT_BROWSER_INSTALL_DEPS: "1"
+        run: npm run test:browser
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -42,31 +30,6 @@ jobs:
   private-evidence-journey:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/regpilot_journey
-      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
-      REGPILOT_WORKSPACE_ENABLED: "true"
-      REGPILOT_EVIDENCE_ENABLED: "true"
-      REGPILOT_ASSURANCE_ENABLED: "true"
-      REGPILOT_PROGRAMME_ENABLED: "true"
-      REGPILOT_CUSTOMER_API_ENABLED: "true"
-      REGPILOT_OUTBOUND_INTEGRATIONS_ENABLED: "true"
-      REGPILOT_CONNECTOR_ENCRYPTION_KEY: "1111111111111111111111111111111111111111111111111111111111111111"
-      REGPILOT_OCR_ENABLED: "true"
-      REGPILOT_PAID_SERVICES_ENABLED: "true"
-      REGPILOT_PAID_SAFEGUARDS_VERIFIED: "true"
-      REGPILOT_OCR_RESERVE_MICROS: "1000"
-      REGPILOT_PAID_PLATFORM_MONTHLY_MICROS: "1000000"
-      REGPILOT_PAID_ORG_MONTHLY_MICROS: "100000"
-      REGPILOT_APP_ORIGIN: https://regpilot.example.invalid
-      AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT: https://fixture.cognitiveservices.azure.com
-      AZURE_DOCUMENT_INTELLIGENCE_KEY: fictional-ocr-contract-key
-      REGPILOT_OCR_FIXTURE_URL: http://127.0.0.1:4029
-      REGPILOT_AI_ALLOWED_EMAILS: editor@example.test,reviewer@example.test
-      REGPILOT_EVIDENCE_BUCKET: journey-files
-      REGPILOT_CLAMD_HOST: 127.0.0.1
-      REGPILOT_AI_ENABLED: "false"
-      NEXT_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -77,60 +40,10 @@ jobs:
       - uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb
         with:
           version: 2.83.0
-      - name: Start disposable Auth, mailbox, private Storage and database
-        run: |
-          mkdir -p "$RUNNER_TEMP/journey"
-          cd "$RUNNER_TEMP/journey"
-          supabase init --yes
-          sed -i '/^additional_redirect_urls =/c\additional_redirect_urls = ["http://127.0.0.1:3000/team/work", "http://127.0.0.1:3000/team/setup", "http://127.0.0.1:3000/team/settings"]' supabase/config.toml
-          supabase start -x realtime,imgproxy,postgres-meta,studio,edge-runtime,logflare,vector,supavisor > "$RUNNER_TEMP/journey-start.log" 2>&1 || { docker ps -a --format '{{.Names}} {{.Status}}'; exit 1; }
-          supabase status -o json > "$RUNNER_TEMP/journey-config.json"
-          node --input-type=module <<'JS'
-          import fs from 'node:fs';
-          const keys=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/journey-config.json'));
-          for(const [name,value] of Object.entries({NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:keys.ANON_KEY,SUPABASE_SECRET_KEY:keys.SERVICE_ROLE_KEY})){
-            if(typeof value!=='string'||!value)throw Error('Missing local test credentials');
-            console.log('::add-mask::'+value);
-            fs.appendFileSync(process.env.GITHUB_ENV,name+'='+value+'\n');
-          }
-          JS
-          psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE regpilot_journey'
-      - name: Start local ClamAV engine with a deterministic test signature
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends clamav-daemon
-          # Use the distribution's scanner directories, which are readable by its service account.
-          echo 'RegPilot.Journey.Fixture:0:*:52454750494c4f545f5343414e5f46495854555245' | sudo tee /var/lib/clamav/journey-fixture.ndb >/dev/null
-          printf 'TCPSocket 3310\nTCPAddr 127.0.0.1\nDatabaseDirectory /var/lib/clamav\nUser clamav\n' | sudo tee /etc/clamav/clamd.conf >/dev/null
-          sudo /usr/sbin/clamd --config-file=/etc/clamav/clamd.conf
-          node --input-type=module <<'JS'
-          import {scanWithClamd} from './lib/evidence/file-guard.mjs';
-          import {fixturePdf} from './tests/helpers/pdf-fixture.mjs';
-          import assert from 'node:assert/strict';
-          const scanner={host:'127.0.0.1',port:3310};
-          assert.equal((await scanWithClamd(fixturePdf([['Fictional cold-chain training record for independent review.']]),scanner)).status,'CLEAN');
-          await assert.rejects(()=>scanWithClamd(fixturePdf([['REGPILOT_SCAN_FIXTURE']]),scanner),e=>e.status===422);
-          JS
-      - run: npm ci --no-audit --no-fund
-      - name: Check real UUIDs through the evidence HTTP boundary
-        run: node --import tsx --test tests/evidence-http.test.ts
-      - run: npm install --no-save --package-lock=false playwright@1.55.1 && npx playwright install --with-deps chromium
-      - name: Build against the isolated application database
-        timeout-minutes: 7
-        run: |
-          npx prisma db push --skip-generate
-          npm run build
-      - name: Run real company setup, invitation handoff, source decision, evidence, completion and report journey
-        timeout-minutes: 8
-        run: |
-          node scripts/ocr-provider-fixture.mjs > "$RUNNER_TEMP/ocr-fixture.log" 2>&1 &
-          ocr_fixture_pid=$!
-          curl -fsS --retry 15 --retry-delay 1 --retry-connrefused http://127.0.0.1:4029/health > /dev/null
-          node --import "$PWD/scripts/ocr-provider-preload.mjs" node_modules/next/dist/bin/next start -H 127.0.0.1 -p 3000 > "$RUNNER_TEMP/journey-next.log" 2>&1 &
-          app_pid=$!
-          trap 'kill "$app_pid" "$ocr_fixture_pid" || true' EXIT
-          curl -fsS --retry 25 --retry-delay 1 --retry-connrefused http://127.0.0.1:3000/api/health > /dev/null
-          node scripts/evidence-journey.mjs
+      - name: Run local authenticated browser suite with disposable services
+        env:
+          REGPILOT_BROWSER_INSTALL_DEPS: "1"
+        run: npm run test:browser:private
       - uses: actions/upload-artifact@v4
         if: always()
         with:

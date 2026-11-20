@@ -115,7 +115,7 @@ try{
  const reviewerEmail='reviewer@example.test';
  const reviewerIdentity=await supabase.auth.admin.createUser({email:reviewerEmail,email_confirm:true});
  if(reviewerIdentity.error)throw Error('Local Auth account setup failed: '+reviewerIdentity.error.status);
- browser=await chromium.launch();
+ browser=await chromium.launch({executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH});
  const review=await signIn(await openContext({width:1440,height:1000}),app+'/team/setup',reviewerEmail);
  const {org,reviewer}=await createCustomerWorkspace({page:review,db,app,email:reviewerEmail,checkpoint,passed,artifactDir});
  const editorEmail='editor@example.test';

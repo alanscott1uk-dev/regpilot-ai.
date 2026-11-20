@@ -9,6 +9,7 @@ import {setTimeout as delay} from "node:timers/promises";
 import {mkdir,writeFile} from "node:fs/promises";
 import assert from "node:assert/strict";
 import {chromium} from "playwright";
+import {checkAccessibility} from './browser-accessibility.mjs';
 import {infrastructureJourney} from "./infrastructure-browser-journey.mjs";
 import {horizonJourney} from "./horizon-browser-journey.mjs";
 import {sharedEvidenceJourney} from "./shared-evidence-browser-journey.mjs";
@@ -43,7 +44,7 @@ async function ready(){
   await delay(300);
  }throw Error("Production server did not start: "+log);
 }
-const browser=await chromium.launch({headless:true,args:["--no-sandbox"]});
+const browser=await chromium.launch({executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH});
 async function testJourney(name,viewport){
  const errors=[],start=Date.now(),ctx=await browser.newContext({viewport,locale:"en-GB",acceptDownloads:true});
  const page=await ctx.newPage();page.on("pageerror",e=>errors.push(e.message.slice(0,200)));
@@ -57,6 +58,7 @@ async function testJourney(name,viewport){
   assert.equal(await page.getByText("Sign in to your team workspace first.",{exact:true}).count(),0,"normal signed-out state must not display an error");
   const workspaceOverflow=await page.evaluate(()=>Math.max(0,document.documentElement.scrollWidth-innerWidth));
   assert.ok(workspaceOverflow<=3,"workspace home must fit mobile");
+  await checkAccessibility(page,"artifacts/usability/accessibility-"+name+".json");
   await page.getByRole("link",{name:"Connections",exact:true}).click();
   await page.getByRole("form",{name:"Email sign-in"}).waitFor();
   assert.equal(await page.getByRole("link",{name:"Connections",exact:true}).getAttribute("aria-current"),"page");
