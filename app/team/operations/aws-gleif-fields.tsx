@@ -14,7 +14,7 @@ export function AwsFields({organizationId,broker,accountId,region}:{organization
   }
   return <>
     <label>AWS account ID<input name="accountId" defaultValue={accountId} required inputMode="numeric" pattern="[0-9]{12}" maxLength={12} placeholder="12-digit account number"/></label>
-    <label>AWS region<select name="region" defaultValue={region??"eu-west-2"}>{Object.entries(awsRegions).map(([id,city])=><option key={id} value={id}>{city} ({id})</option>)}</select></label>
+    <label>AWS region<select aria-label="AWS region" name="region" defaultValue={region??"eu-west-2"}>{Object.entries(awsRegions).map(([id,city])=><option key={id} value={id}>{city} ({id})</option>)}</select></label>
     {broker&&<div className={ui.full}><button type="button" onClick={download}>Download AWS role template</button>
       <p className={ui.hint}>Give this CloudFormation file to your AWS administrator to review and apply in the selected account. It grants this workspace four read permissions.</p></div>}
   </>;
@@ -49,7 +49,7 @@ export function GleifFields({organizationId,active,savedNumber,savedLei}:{organi
   return <>
     <label>Companies House number<input name="companyNumber" value={number} onChange={e=>changeNumber(e.target.value)} required pattern="([0-9]{8}|[A-Z]{2}[0-9]{6})" maxLength={8} placeholder="SC045551"/></label>
     <div><button type="button" disabled={!active||busy||!/^(?:\d{8}|[A-Z]{2}\d{6})$/.test(number)} onClick={()=>void lookup()}>Find matching LEIs</button><p role="status">{busy?"Searching GLEIF…":message}</p></div>
-    {rows.length>0&&<label>Matching legal entity<select value={rows.some(row=>row.lei===lei)?lei:""} onChange={e=>setLei(e.target.value)}>
+    {rows.length>0&&<label>Matching legal entity<select aria-label="Matching legal entity" value={rows.some(row=>row.lei===lei)?lei:""} onChange={e=>setLei(e.target.value)}>
       <option value="">Choose a legal entity</option>{rows.map(row=><option key={row.lei} value={row.lei}>{row.name} · {row.lei}</option>)}</select></label>}
     <label>Legal entity identifier (LEI)<input name="lei" value={lei} onChange={e=>setLei(e.target.value.toUpperCase())} required pattern="[A-Z0-9]{18}[0-9]{2}" maxLength={20}/></label>
   </>;
