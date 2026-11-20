@@ -15,3 +15,55 @@ export function retrievalMetrics(expectedIds:string[],returnedIds:string[],expec
  return {retrievedDocumentIds:retrieved,relevantReturned:relevant.length,expectedDocuments:expected.length,recallAt10:expectNoSupport?null:relevant.length/expected.length,precisionReturned:retrieved.length?relevant.length/retrieved.length:null,reciprocalRank:expectNoSupport?null:first<0?0:1/(first+1),noSupportCorrect:expectNoSupport?retrieved.length===0:null};
 }
 export const EVALUATION_RUBRIC={correctness:'Does the answer agree with the reviewed reference and original evidence?',completeness:'Does it address every material part of this question without omitting a required qualification?',grounding:'Does every material factual claim have a valid supporting citation?',abstention:'Does it acknowledge missing support and avoid answering beyond the evidence?'} as const;
+
+type BenchmarkReference = {id: string; version: number; state: string};
+type BenchmarkRun = {
+  id: string;
+  caseId: string;
+  caseVersion: number;
+  method: 'CONTENT' | 'SEMANTIC';
+  model: string | null;
+  status: 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  createdAt: Date;
+  result: {metrics: ReturnType<typeof retrievalMetrics>} | null;
+};
+
+export function summariseRetrievalBenchmark(references: BenchmarkReference[], runs: BenchmarkRun[]) {
+  const approved = new Map(references.filter(row => row.state === 'APPROVED').map(row => [row.id, row.version]));
+  const groups = new Map<string, Map<string, BenchmarkRun>>();
+  const newestFirst = [...runs].sort((a, b) =>
+    b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id));
+  for (const run of newestFirst) {
+    if (approved.get(run.caseId) !== run.caseVersion) continue;
+    const key = JSON.stringify([run.method, run.model]);
+    const attempts = groups.get(key) ?? new Map<string, BenchmarkRun>();
+    if (!attempts.has(run.caseId)) attempts.set(run.caseId, run);
+    groups.set(key, attempts);
+  }
+
+  const mean = (values: (number | null)[]) => {
+    const scored = values.filter(value => value !== null);
+    return {value: scored.length ? scored.reduce((sum, value) => sum + value, 0) / scored.length : null, count: scored.length};
+  };
+
+  return [...groups.values()].map(attempts => {
+    const latest = [...attempts.values()];
+    const {method, model} = latest[0];
+    const measured = latest.flatMap(run => run.status === 'COMPLETED' && run.result ? [run.result.metrics] : []);
+    const supported = measured.filter(metric => metric.noSupportCorrect === null);
+    const noSupport = measured.filter(metric => metric.noSupportCorrect !== null);
+    return {
+      method, model,
+      approvedCases: approved.size,
+      unmeasured: approved.size - attempts.size,
+      completed: measured.length,
+      failed: latest.filter(run => run.status === 'FAILED').length,
+      pending: latest.filter(run => run.status === 'PROCESSING').length,
+      recall: mean(supported.map(metric => metric.recallAt10)),
+      precision: mean(supported.map(metric => metric.precisionReturned)),
+      rank: mean(supported.map(metric => metric.reciprocalRank)),
+      noSupport: {correct: noSupport.filter(metric => metric.noSupportCorrect).length, count: noSupport.length},
+      attempts: latest.map(({id, caseId, status}) => ({id, caseId, status})),
+    };
+  });
+}
