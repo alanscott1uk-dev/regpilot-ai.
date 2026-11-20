@@ -67,7 +67,21 @@ console.log("Official source probe:",success,"text bodies retrieved,",total-succ
 console.log("Unavailable source diagnostics:",results.filter(x=>x.state==="unavailable").map(x=>({id:x.id,agency:x.agency,reason:x.reasonCode||x.reason,httpStatus:x.httpStatus||null})));
 console.log("Coverage by regulator:",[...new Set(results.map(x=>x.agency))].map(agency=>({agency,retrieved:results.filter(x=>x.agency===agency&&x.state==="text-retrieved").length,total:results.filter(x=>x.agency===agency).length})));
 console.log("Official HTML fallback diagnostics (non-sensitive):",results.slice(0,3).map(x=>({id:x.id,htmlProbeStatus:x.htmlProbeStatus||"not-run",htmlProbeType:x.htmlProbeType||"not-run",safeLoaderReason:x.safeLoaderReason||"not-recorded",govApiDiagnostics:x.govApiDiagnostics||null})));
-if(process.env.GITHUB_STEP_SUMMARY)await writeFile(process.env.GITHUB_STEP_SUMMARY,
-  "## UK official regulatory coverage probe\n\n**"+success+"/"+total+"** publication texts fetched and extracted on "+checkedAt+". "+(total-success)+" source(s) unavailable; inspect uploaded manifest before release. No legal conclusions made.\n\nComparison: "+JSON.stringify(comparison.counts)+". Inspect source-changes.json for outages, recovery and missing baselines.\n",{flag:"a"});
+if(process.env.GITHUB_STEP_SUMMARY){
+ const unavailable=results.filter(row=>row.state==="unavailable");
+ const lines=[
+  "## UK official regulatory coverage probe","",
+  "**"+success+"/"+total+"** official publication texts retrieved on "+checkedAt+".",
+  "Comparison counts: "+JSON.stringify(comparison.counts)+".",
+ ];
+ if(unavailable.length){
+  lines.push("","### Publications requiring review","","| Official publication | Retrieval result |","| --- | --- |");
+  for(const row of unavailable){
+   const reason=row.reasonCode??row.reason;
+   lines.push("| ["+row.agency+" · "+row.id+"]("+row.url+") | "+reason+(row.httpStatus?" (HTTP "+row.httpStatus+")":"")+" |");
+  }
+ }
+ await writeFile(process.env.GITHUB_STEP_SUMMARY,"\n"+lines.join("\n")+"\n",{flag:"a"});
+}
 // Failure makes degradation visible in the independent job rather than claiming coverage.
 if(success<total)process.exitCode=1;

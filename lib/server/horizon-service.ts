@@ -38,7 +38,7 @@ export async function triageHorizon(ctx:AuthorizedContext,input:unknown,load:()=
   const existing=await tx.obligation.findUnique({where:{organizationId_automationKey:{organizationId:ctx.organizationId,automationKey:key}}});
   if(existing){if(v.action==='dismiss')throw new IntelligenceError('This revision already has review work. Manage that task instead of dismissing it.',409);return {taskId:existing.id,reused:true,state:'queued',itemId:item.id,revision:item.revision};}
   const earlier=await tx.auditEvent.findFirst({where:{organizationId:ctx.organizationId,entityId,action:'horizon.dismissed'},orderBy:{createdAt:'desc'}});
-  if(v.action==='dismiss'&&earlier)return {state:'dismissed',reused:true,itemId:item.id,revision:item.revision};
+  if(v.action==='dismiss'&&earlier)return {state:'dismissed',taskId:null,reused:true,itemId:item.id,revision:item.revision};
   let watchlist;
   if (v.watchlist) {
     const row=await tx.horizonWatchlist.findUnique({where:{organizationId_id:{organizationId:ctx.organizationId,id:v.watchlist.id}}});
