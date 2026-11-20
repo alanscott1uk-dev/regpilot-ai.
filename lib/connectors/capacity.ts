@@ -1,5 +1,5 @@
 // Keep this order stable: the provider index identifies its database advisory lock.
-export const PROVIDERS=['GITHUB','MICROSOFT365','GOOGLE_WORKSPACE','GITLAB','CLOUDFLARE','COMPANIES_HOUSE','VERCEL','SUPABASE'] as const;
+export const PROVIDERS=['GITHUB','MICROSOFT365','GOOGLE_WORKSPACE','GITLAB','CLOUDFLARE','COMPANIES_HOUSE','VERCEL','SUPABASE','OKTA'] as const;
 export type ProviderLimits={maxConcurrent:number;perWorkspace:number};
 /** Deployment configuration only. This neither enables a provider nor purchases capacity. */
 export function providerLimits(provider:string,raw=process.env.REGPILOT_PROVIDER_LIMITS):ProviderLimits{

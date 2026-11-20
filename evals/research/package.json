@@ -1,0 +1,10 @@
+{
+  "name": "regpilot-research-evaluation",
+  "private": true,
+  "scripts": {
+    "evaluate": "mkdir -p ../../artifacts && PROMPTFOO_DISABLE_TELEMETRY=1 PROMPTFOO_DISABLE_UPDATE=1 promptfoo eval -c promptfooconfig.cjs --no-cache --no-write --no-share --no-table -j 1 -o ../../artifacts/research-evaluation.json && node summary.cjs ../../artifacts/research-evaluation.json"
+  },
+  "devDependencies": {
+    "promptfoo": "0.126.0"
+  }
+}

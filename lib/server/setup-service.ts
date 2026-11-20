@@ -1,3 +1,4 @@
+import {PROVIDERS} from "../connectors/capacity";
 import {z} from 'zod';
 import {db} from './db';
 import {transaction,IntelligenceError} from './intelligence-service';
@@ -39,7 +40,7 @@ export async function getSetupWorkspace(ctx:AuthorizedContext){
  const [catalogue,coverage,connections]=await Promise.all([workspaceCatalogue(ctx),sourceCoverage(ctx),getConnectorHealth(ctx)]);
  return {...summary,catalogue,coverage,connections,recommendations:recommendSourcePortfolio(catalogue,summary.profile),
   features:{monitoring:monitoringRuntimeActive(),evidence:!!evidenceConfigured(),
-   providers:['GITHUB','MICROSOFT365','GOOGLE_WORKSPACE','GITLAB','CLOUDFLARE','COMPANIES_HOUSE','VERCEL','SUPABASE'].map(id=>({id,configured:connectorProviderEnabled(id)}))},generatedAt:new Date().toISOString()};
+   providers:PROVIDERS.map(id=>({id,configured:connectorProviderEnabled(id)}))},generatedAt:new Date().toISOString()};
 }
 // Profile and schedules are one reviewed, version-checked transaction. No provider calls or activation.
 export async function saveSetupWorkspace(ctx:AuthorizedContext,input:unknown){

@@ -144,3 +144,44 @@ test("provider throttling preserves retry budget and defers work without fabrica
   assert.equal(await db.obligation.count({where:{connectorId:saved.id}}),1,"follow-up remains deduplicated");
  }finally{await x.cleanup();}
 });
+
+test("Okta directory revocation, reinstatement and loss of visibility reach the control through the scheduled worker",async()=>{
+ const x=await assuranceFixture();flags();
+ const {target,oktaConfig,member,mockOkta}=await import("./helpers/okta-fixture");
+ const {testConnectedControl}=await import("../lib/server/control-policy");
+ const nativeFetch=globalThis.fetch;
+ Object.assign(process.env,{REGPILOT_OKTA_ENABLED:"true",REGPILOT_NANGO_API_KEY:oktaConfig.key,REGPILOT_NANGO_OKTA_INTEGRATION:oktaConfig.integration});
+ try {
+  const c=await control(x),options={controlId:c.id,minimumProviders:1};
+  const form={provider:"OKTA",...target,controlId:c.id,version:0,intervalHours:24,enabled:true,consent:true};
+  globalThis.fetch=mockOkta(x.a.id,[[]]);
+  await assert.rejects(()=>saveConnector(x.ed,form),rejects(403));
+  await assert.rejects(()=>saveConnector(x.out,form),rejects(409));
+  const saved=await saveConnector(x.o,form);
+  const collect=async(fetcher:typeof fetch)=>{
+   globalThis.fetch=fetcher;
+   await db.evidenceConnector.update({where:{id:saved.id},data:{nextRunAt:new Date(0)}});
+   const job=await claimConnector();assert.equal(job?.id,saved.id);
+   await executeConnector(job!);
+   return testConnectedControl(x.ad,options);
+  };
+  const initial=await collect(mockOkta(x.a.id,[[{...member(1),id:target.removedUserId!}]]));
+  assert.equal(initial.decision.state,"FINDINGS");
+  const revoked=await collect(mockOkta(x.a.id,[[member(2)]]));
+  assert.equal(revoked.decision.state,"MEETS_TARGET");assert.notEqual(initial.receiptHash,revoked.receiptHash);
+  const old=await exportConnectorRun(x.o,initial.observations[0].runId!);assert.equal(old.currentAtExport,false);
+  const regained=await collect(mockOkta(x.a.id,[[{...member(3),id:target.removedUserId!}]]));
+  assert.equal(regained.decision.state,"FINDINGS");
+  assert.ok(await db.obligation.count({where:{organizationId:x.a.id,connectorId:saved.id,status:{not:"COMPLETE"}}}));
+  const inaccessible=await collect(mockOkta(x.b.id,[[]]));
+  assert.equal(inaccessible.decision.state,"INSUFFICIENT_EVIDENCE");
+  assert.equal(await db.connectorRun.count({where:{connectorId:saved.id}}),3,"a missing tenant binding cannot add clean evidence");
+  assert.equal(await db.connectorRun.count({where:{organizationId:x.b.id}}),0);
+  await assert.rejects(()=>exportConnectorRun(x.out,initial.observations[0].runId!),rejects(404));
+  const retained=JSON.stringify(await db.connectorRun.findMany({where:{connectorId:saved.id}}));
+  assert.ok(!retained.includes(oktaConfig.key));assert.ok(!retained.includes(target.removedUserId!));
+ }finally{
+  globalThis.fetch=nativeFetch;delete process.env.REGPILOT_OKTA_ENABLED;delete process.env.REGPILOT_NANGO_API_KEY;delete process.env.REGPILOT_NANGO_OKTA_INTEGRATION;
+  await x.cleanup();
+ }
+});

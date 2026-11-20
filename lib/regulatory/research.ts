@@ -106,9 +106,9 @@ export function researchCandidates(input: ResearchInput, catalogue: readonly Reg
 
 const segmenter = new Intl.Segmenter("en-GB", {granularity: "sentence"});
 /** Boundaries are UTF-16 offsets in the exact text returned by the verified extractor. */
-function passages(text: string) {
+function passages(text: string, nations: readonly Nation[]) {
   const spans: {start:number; end:number; quote:string}[] = [];
-  let start = -1, end = 0;
+  let start = -1, end = 0, applicable = true;
   function flush() {
     if (start >= 0) {
       while (start < end && /\s/u.test(text[start])) start++;
@@ -118,6 +118,14 @@ function passages(text: string) {
     start = -1;
   }
   for (const part of segmenter.segment(text)) {
+    if (nations.length) {
+      // Unlabelled follow-on sentences inherit the last explicit territorial scope.
+      // Keep foreign sections outside both evidence receipts and extracted answers.
+      const named = mentionedNations(part.segment);
+      if (named.length) applicable = named.some(nation=>nations.includes(nation));
+      else if (/\b(?:UK-wide|across the (?:UK|United Kingdom)|throughout the (?:UK|United Kingdom))\b/i.test(part.segment)) applicable = true;
+      if (!applicable) { flush(); continue; }
+    }
     let from = part.index;
     const to = from + part.segment.length;
     if (start >= 0 && to-start > RESEARCH_LIMITS.passageLength) flush();
@@ -163,6 +171,14 @@ export type PassageCheck = ReturnType<typeof recheckPassage>;
 type AnswerPoint = {citationId:string; sourceId:string; text:string; start:number; end:number};
 type AnswerReference=Pick<ResearchPassage,"id"|"sourceId"|"start"|"end">;
 
+const detailNoise=new Set("how much many long often frequently what which when cost costs price prices fee fees charge charges expensive budget pay frequency interval deadline period day days week weeks month months year years firm company example writing".split(" "));
+const numberWords="one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety hundred thousand a an".split(" ").join("|");
+const duration=new RegExp("\\b(?:\\d+(?:[.,]\\d+)?|"+numberWords+") (?:working |business |calendar )?(?:minutes?|hours?|days?|weeks?|months?|years?)\\b","i");
+const calendarDate=/\b(?:\d{4}-\d{2}-\d{2}|(?:[0-3]?\d(?:st|nd|rd|th)? )?(?:January|February|March|April|May|June|July|August|September|October|November|December) (?:\d{4}|[0-3]?\d))\b/i;
+const namedDay=/\b[0-3]?\d(?:st|nd|rd|th)? (?:January|February|March|April|May|June|July|August|September|October|November|December)\b/i;
+const schedule=/\b(?:daily|weekly|monthly|quarterly|annually|yearly|fortnightly|immediately|without (?:undue )?delay|(?:once|twice) (?:a|per)|(?:every|each|per) (?:day|week|month|quarter|year)|(?:before|after|whenever|until) \S+|(?:no|without a) (?:fixed|set|prescribed) (?:period|interval|frequency|deadline))\b/i;
+function hasTiming(text:string){return duration.test(text) || schedule.test(text) || calendarDate.test(text) || namedDay.test(text);}
+
 /** Pick complete sentences from the original publication, never from text
  * truncated at a passage boundary. Every answer point must fit one receipt. */
 async function extractAnswer(question:string, citations:AnswerReference[], docs:ResearchDocument[], semantics:PublicationSemantics|null) {
@@ -171,6 +187,9 @@ async function extractAnswer(question:string, citations:AnswerReference[], docs:
   if(!semantics || !citations.length) return {model,points};
   const options:AnswerPoint[]=[];
   const asksPrice=/\b(costs?|prices?|fees?|expensive|budget|how much.*(?:pay|charge))\b/i.test(question);
+  const asksTiming=/\b(?:how (?:often|frequently|long)|how many (?:days|weeks|months|years)|what (?:frequency|interval|deadline)|by when)\b/i.test(question);
+  const detailQuestion=asksPrice || asksTiming;
+  const subject=detailQuestion ? terms(question).filter(t=>!detailNoise.has(t) && !generalTerms.has(t)) : [];
   for (const doc of docs) {
     const references=citations.filter(c=>c.sourceId===doc.id);
     if(!references.length) continue;
@@ -187,6 +206,8 @@ async function extractAnswer(question:string, citations:AnswerReference[], docs:
       if(text.length<40 || text.length>420 || !/[.!?][”"’)]?$/.test(text) || text.endsWith("?")) continue;
       if(/^(?:this (?:[\d-]+minute )?(?:article|video|guidance|document)|it explains|click|read more|find out|see also|for more information)\b/i.test(text)) continue;
       if(asksPrice && !/(?:£\s?\d|\b\d[\d,.]*\s*(?:pounds?|GBP)\b|\bfree of charge\b|\bno (?:fee|charge)\b)/i.test(text)) continue;
+      if(asksTiming && !hasTiming(text)) continue;
+      if(detailQuestion && subject.length && !terms(text).some(t=>subject.includes(t))) continue;
       const citation=references.find(c=>c.start<=start && c.end>=end);
       if(citation) options.push({citationId:citation.id,sourceId:doc.id,text,start,end});
     }
@@ -221,7 +242,7 @@ export async function researchPublications(input: ResearchInput, read: ResearchR
       return {source, data, digest:researchHash(data.text)};
     } catch { return null; }
   }));
-  const candidates = loaded.flatMap(row => row ? passages(row.data.text).map(span => ({...span,row})) : []);
+  const candidates = loaded.flatMap(row => row ? passages(row.data.text,nations).map(span => ({...span,row})) : []);
   const query = [...new Set(terms(input.question))].slice(0,64);
   const tokens = candidates.map(span => terms(span.quote));
   const scores = bm25Scores(query, tokens);

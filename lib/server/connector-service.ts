@@ -1,3 +1,5 @@
+import {collectOkta,oktaTarget,oktaConnections,nangoConfig} from "../connectors/nango-okta";
+import {PROVIDERS} from "../connectors/capacity";
 import {verifiedObservation} from './connector-observation';
 import {enqueueConnectorObservationDelivery,enqueueConnectorFailureDelivery} from './integration-delivery-events';
 import {connectorRecovery} from "../connectors/recovery";
@@ -11,7 +13,7 @@ import {randomUUID} from "node:crypto";
 import {z} from "zod";
 import {db} from "./db";
 import {connectorsEnabled,microsoft365Enabled,googleWorkspaceEnabled,gitlabEnabled,cloudflareEnabled,companiesHouseEnabled,vercelEnabled,supabaseEnabled,connectorProviderEnabled} from "./connector-flags";
-export {connectorsEnabled,microsoft365Enabled,googleWorkspaceEnabled,gitlabEnabled,cloudflareEnabled,companiesHouseEnabled,vercelEnabled,supabaseEnabled} from "./connector-flags";
+export {connectorsEnabled,microsoft365Enabled,googleWorkspaceEnabled,gitlabEnabled,cloudflareEnabled,companiesHouseEnabled,vercelEnabled,supabaseEnabled,oktaEnabled} from "./connector-flags";
 import {collectGitlab,gitlabTarget} from "../connectors/gitlab";
 import {collectCloudflare,cloudflareTarget} from "../connectors/cloudflare";
 import {collectCompaniesHouse,companiesHouseTarget} from "../connectors/companies-house";
@@ -34,15 +36,21 @@ const googleSchema=googleTarget.extend({provider:z.literal("GOOGLE_WORKSPACE"),c
 const microsoftSchema=microsoftTarget.extend({provider:z.literal("MICROSOFT365"),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:z.string().min(16).max(512).regex(/^[^\r\n\0]+$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)});
 const extraFields={controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().refine(validCredential).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)};
 const extraSchema=z.discriminatedUnion("provider",[
+ oktaTarget.extend({...extraFields,provider:z.literal("OKTA")}).omit({token:true}),
  vercelTarget.extend({...extraFields,provider:z.literal("VERCEL")}),
  supabaseTarget.extend({...extraFields,provider:z.literal("SUPABASE")}),
  gitlabTarget.extend({...extraFields,provider:z.literal("GITLAB")}),
  cloudflareTarget.extend({...extraFields,provider:z.literal("CLOUDFLARE")}),
  companiesHouseTarget.extend({...extraFields,provider:z.literal("COMPANIES_HOUSE")})
 ]);
-type Collector=(target:{provider?:string;repository:string;branch:string},secret:string)=>Promise<Observation>;
+type Collector=(target:{provider?:string;organizationId?:string;repository:string;branch:string},secret:string)=>Promise<Observation>;
 export const collectConfiguredConnector:Collector=async(target,secret)=>{
  if(!connectorProviderEnabled(target.provider||"GITHUB"))throw new CollectionError("PROVIDER_DISABLED");
+ if(target.provider==="OKTA"){
+  const [groupId,removedUserId,...excess]=target.branch.split(":");
+  if(!target.organizationId||excess.length||target.repository!=="okta:"+secret)throw new CollectionError("INVALID_TARGET");
+  return collectOkta({connectionId:secret,groupId,removedUserId},target.organizationId,nangoConfig());
+ }
  if(target.provider==="VERCEL"&&target.repository.startsWith("vercel:"))return collectVercel({projectId:target.repository.slice(7),teamId:target.branch},secret);
  if(target.provider==="SUPABASE"&&target.repository.startsWith("supabase:"))return collectSupabase({projectRef:target.repository.slice(9),providerOrganizationId:target.branch},secret);
  if(target.provider==="GITHUB"||target.provider===undefined)return collectGithub(target,secret);
@@ -63,14 +71,19 @@ export const collectConfiguredConnector:Collector=async(target,secret)=>{
 };
 export async function saveConnector(ctx:AuthorizedContext,input:unknown){
  if(!connectorsEnabled())throw new IntelligenceError("Evidence connectors await activation",503);
- const provider=(input as {provider?:string})?.provider,microsoft=provider==="MICROSOFT365",google=provider==="GOOGLE_WORKSPACE",extra=["GITLAB","CLOUDFLARE","COMPANIES_HOUSE","VERCEL","SUPABASE"].includes(provider||"");
+ const provider=(input as {provider?:string})?.provider,microsoft=provider==="MICROSOFT365",google=provider==="GOOGLE_WORKSPACE",extra=["GITLAB","CLOUDFLARE","COMPANIES_HOUSE","VERCEL","SUPABASE","OKTA"].includes(provider||"");
  const parsed=(extra?extraSchema:google?googleSchema:microsoft?microsoftSchema:schema).safeParse(input);if(!parsed.success)throw new IntelligenceError("Check the provider, target, credentials, control and version");
  if(microsoft&&!microsoft365Enabled())throw new IntelligenceError("Microsoft 365 collection awaits activation",503);
  if(google&&!googleWorkspaceEnabled())throw new IntelligenceError("Google Workspace collection awaits activation",503);
  if(extra&&!connectorProviderEnabled(provider!))throw new IntelligenceError("This provider awaits activation",503);
  const raw=parsed.data;if(raw.provider==="COMPANIES_HOUSE"&&raw.token?.includes(":"))throw new IntelligenceError("Use a valid Companies House API key");
- const v=raw.provider==="VERCEL"?{...raw,repository:"vercel:"+raw.projectId,branch:raw.teamId}:raw.provider==="SUPABASE"?{...raw,repository:"supabase:"+raw.projectRef,branch:raw.providerOrganizationId}:raw.provider==="GITLAB"?{...raw,repository:"gitlab:"+raw.projectPath}:raw.provider==="CLOUDFLARE"?{...raw,repository:"cloudflare:"+raw.zoneId.toLowerCase(),branch:raw.accountId.toLowerCase()}:raw.provider==="COMPANIES_HOUSE"?{...raw,repository:"companieshouse:"+raw.companyNumber,branch:"profile"}:raw.provider==="MICROSOFT365"?{...raw,repository:"microsoft365:"+raw.tenantId.toLowerCase(),branch:raw.clientId.toLowerCase(),token:raw.clientSecret}:raw.provider==="GOOGLE_WORKSPACE"?{...raw,repository:"googleworkspace:"+raw.customerId,branch:raw.clientId,token:raw.clientSecret?JSON.stringify({clientSecret:raw.clientSecret,refreshToken:raw.refreshToken}):undefined}:raw;
- const repository=google||raw.provider==="COMPANIES_HOUSE"||raw.provider==="VERCEL"?v.repository:v.repository.toLowerCase();
+ if(raw.provider==="OKTA"){
+  await transaction(ctx,tx=>requireMember(tx,ctx,ADMIN));
+  const matches=await oktaConnections(ctx.organizationId,nangoConfig(),fetch,raw.connectionId);
+  if(matches.length!==1)throw new IntelligenceError("Choose an authorised Okta directory for this workspace",409);
+ }
+ const v=raw.provider==="OKTA"?{...raw,repository:"okta:"+raw.connectionId,branch:[raw.groupId,raw.removedUserId].filter(Boolean).join(":"),token:raw.connectionId}:raw.provider==="VERCEL"?{...raw,repository:"vercel:"+raw.projectId,branch:raw.teamId}:raw.provider==="SUPABASE"?{...raw,repository:"supabase:"+raw.projectRef,branch:raw.providerOrganizationId}:raw.provider==="GITLAB"?{...raw,repository:"gitlab:"+raw.projectPath}:raw.provider==="CLOUDFLARE"?{...raw,repository:"cloudflare:"+raw.zoneId.toLowerCase(),branch:raw.accountId.toLowerCase()}:raw.provider==="COMPANIES_HOUSE"?{...raw,repository:"companieshouse:"+raw.companyNumber,branch:"profile"}:raw.provider==="MICROSOFT365"?{...raw,repository:"microsoft365:"+raw.tenantId.toLowerCase(),branch:raw.clientId.toLowerCase(),token:raw.clientSecret}:raw.provider==="GOOGLE_WORKSPACE"?{...raw,repository:"googleworkspace:"+raw.customerId,branch:raw.clientId,token:raw.clientSecret?JSON.stringify({clientSecret:raw.clientSecret,refreshToken:raw.refreshToken}):undefined}:raw;
+ const repository=google||raw.provider==="OKTA"||raw.provider==="COMPANIES_HOUSE"||raw.provider==="VERCEL"?v.repository:v.repository.toLowerCase();
  return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);
   const control=await tx.managedControl.findFirst({where:{id:v.controlId,organizationId:ctx.organizationId,enabled:true}});if(!control)throw new IntelligenceError("Choose an active control from this organisation",404);
   const old=v.id?await tx.evidenceConnector.findFirst({where:{id:v.id,organizationId:ctx.organizationId}}):null;
@@ -145,7 +158,7 @@ export async function verifyConnectorNow(ctx:AuthorizedContext,id:string,version
 }
 export async function claimConnector():Promise<EvidenceConnector|null>{
  if(!connectorsEnabled())return null;
- const providers=['GITHUB','MICROSOFT365','GOOGLE_WORKSPACE','GITLAB','CLOUDFLARE','COMPANIES_HOUSE','VERCEL','SUPABASE'].filter(connectorProviderEnabled);
+ const providers=PROVIDERS.filter(connectorProviderEnabled);
  return claimFairConnector(providers);
 }
 class Superseded extends Error{}
@@ -170,7 +183,7 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector){
   }
   permit=admission.permit;
   const secret=decryptConnectorSecret(job.encryptedSecret,job.organizationId,job.id);
-  const result=await collector({provider:job.provider,repository:job.repository,branch:job.branch},secret).then(result=>reconcileObservation(result,null)).then(result=>{providerOutcome='SUCCESS';return result;},error=>{providerOutcome=error instanceof CollectionError?error.code:'NEUTRAL';throw error;});
+  const result=await collector({provider:job.provider,organizationId:job.organizationId,repository:job.repository,branch:job.branch},secret).then(result=>reconcileObservation(result,null)).then(result=>{providerOutcome='SUCCESS';return result;},error=>{providerOutcome=error instanceof CollectionError?error.code:'NEUTRAL';throw error;});
   return await transaction(ctx,async tx=>{await assertJob(tx,job);
    const previous=await tx.connectorRun.findFirst({where:{organizationId:job.organizationId,connectorId:job.id},orderBy:[{capturedAt:"desc"},{id:"desc"}]});
    const trustedPrevious=previous?.configVersion===job.version?verifiedObservation(previous):null;

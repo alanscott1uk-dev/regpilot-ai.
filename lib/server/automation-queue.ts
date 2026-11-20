@@ -1,3 +1,4 @@
+import {PROVIDERS} from "../connectors/capacity";
 import {Prisma,type AutomationEvent,type EvidenceConnector} from '@prisma/client';
 import {z} from 'zod';
 import {randomUUID} from 'node:crypto';
@@ -20,7 +21,7 @@ export async function enqueueConnectorEvent(tx:Prisma.TransactionClient,job:Evid
  * An optional exact event selector is used by the originating collection only. */
 export async function claimAutomationEvent(exact?:{id:string;organizationId:string}){
  if(!connectorsEnabled())return null;
- const providers=['GITHUB','MICROSOFT365','GOOGLE_WORKSPACE','GITLAB','CLOUDFLARE','COMPANIES_HOUSE','VERCEL','SUPABASE'].filter(connectorProviderEnabled);
+ const providers=PROVIDERS.filter(connectorProviderEnabled);
  if(!providers.length)return null;
  const providerFilter=Prisma.sql`AND EXISTS (SELECT 1 FROM "EvidenceConnector" c WHERE c.id=j."connectorId" AND c."organizationId"=j."organizationId" AND c.provider IN (${Prisma.join(providers)}))`;
  const token=randomUUID(),filter=exact?Prisma.sql`AND j.id=${exact.id}::uuid AND j."organizationId"=${exact.organizationId}::uuid`:Prisma.empty;
