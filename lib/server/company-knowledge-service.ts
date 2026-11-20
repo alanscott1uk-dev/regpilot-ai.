@@ -17,7 +17,7 @@ import {reserveAiRequest,DailyLimitError} from "./ai-meter";
 import {filterKnowledgeEvidence} from "./product-service";
 import {supportingPassages,workspaceResearchInput} from '../workspace-research';
 import {searchWorkspaceRecords} from './workspace-record-search';
-import {searchOfficialPublications} from './publication-research';
+import type {searchOfficialPublications} from './publication-research';
 import {EvidenceError} from "../evidence/file-guard.mjs";
 
 type Tx=Prisma.TransactionClient;
@@ -221,7 +221,7 @@ export async function searchKnowledge(c:AuthorizedContext,input:unknown,dependen
  }catch(error){await transaction(c,async tx=>{await tx.knowledgeSearchRun.updateMany({where:{id:run.id,...org(c),status:"PROCESSING"},data:{status:"FAILED",failureCode:error instanceof DailyLimitError?"DAILY_LIMIT":error instanceof IntelligenceError?"CONTEXT_OR_CONFIGURATION_CHANGED":"SEARCH_FAILED"}});await event(tx,c,run.id,"search_failed");});throwOperationError(error);}
 }
 
-export async function researchWorkspaceQuestion(c:AuthorizedContext,input:unknown,readOfficial=searchOfficialPublications){
+export async function researchWorkspaceQuestion(c:AuthorizedContext,input:unknown,readOfficial:typeof searchOfficialPublications){
  const {question,asset,productId}=workspaceResearchInput.parse(input);
  configured('CONTENT');
  await transaction(c,tx=>requireMember(tx,c,ADMIN));
