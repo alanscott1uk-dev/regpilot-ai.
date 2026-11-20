@@ -39,6 +39,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node --import tsx scripts/verify-live-integrations.mjs
+      - name: Verify live OpenSSF supplier reports against their assessed revisions
+        if: ${{ !cancelled() }}
+        run: node --import tsx scripts/verify-supplier-reports.ts
       - name: Check infrastructure contract harness without customer credentials
         if: ${{ !cancelled() }}
         run: node --import tsx scripts/verify-infrastructure-integrations.mjs

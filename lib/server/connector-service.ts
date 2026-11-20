@@ -46,6 +46,24 @@ const extraSchema=z.discriminatedUnion("provider",[
  cloudflareTarget.extend({...extraFields,provider:z.literal("CLOUDFLARE")}),
  companiesHouseTarget.extend({...extraFields,provider:z.literal("COMPANIES_HOUSE")})
 ]);
+type ConnectorSettings=z.infer<typeof schema>|z.infer<typeof googleSchema>|z.infer<typeof microsoftSchema>|z.infer<typeof extraSchema>;
+function storedTarget(settings:ConnectorSettings):{repository:string;branch:string;token?:string}{
+ switch(settings.provider){
+  case "GITHUB":return {repository:settings.repository.toLowerCase(),branch:settings.branch,token:settings.token};
+  case "MICROSOFT365":
+  case "INTUNE":return {repository:(settings.provider==="INTUNE"?"intune:":"microsoft365:")+settings.tenantId.toLowerCase(),
+    branch:settings.clientId.toLowerCase(),token:settings.clientSecret};
+  case "GOOGLE_WORKSPACE":return {repository:"googleworkspace:"+settings.customerId,branch:settings.clientId,
+    token:settings.clientSecret?JSON.stringify({clientSecret:settings.clientSecret,refreshToken:settings.refreshToken}):undefined};
+  case "GITLAB":return {repository:"gitlab:"+settings.projectPath.toLowerCase(),branch:settings.branch,token:settings.token};
+  case "CLOUDFLARE":return {repository:"cloudflare:"+settings.zoneId.toLowerCase(),branch:settings.accountId.toLowerCase(),token:settings.token};
+  case "COMPANIES_HOUSE":return {repository:"companieshouse:"+settings.companyNumber,branch:"profile",token:settings.token};
+  case "VERCEL":return {repository:"vercel:"+settings.projectId,branch:settings.teamId,token:settings.token};
+  case "SUPABASE":return {repository:"supabase:"+settings.projectRef.toLowerCase(),branch:settings.providerOrganizationId,token:settings.token};
+  case "OKTA":return {repository:"okta:"+settings.connectionId,branch:[settings.groupId,settings.removedUserId].filter(Boolean).join(":"),token:settings.connectionId};
+  case "OPENSSF_SCORECARD":return {repository:"scorecard:"+settings.repository,branch:settings.deployedCommit??"published"};
+ }
+}
 type Collector=(target:{provider?:string;organizationId?:string;repository:string;branch:string},secret:string)=>Promise<Observation>;
 export const collectConfiguredConnector:Collector=async(target,secret)=>{
  if(!connectorProviderEnabled(target.provider||"GITHUB"))throw new CollectionError("PROVIDER_DISABLED");
@@ -92,10 +110,7 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
   if(matches.length!==1)throw new IntelligenceError("Choose an authorised Okta directory for this workspace",409);
  }
  const publicReport=raw.provider==="OPENSSF_SCORECARD";
- const v=raw.provider==="OPENSSF_SCORECARD"?{...raw,repository:"scorecard:"+raw.repository,branch:raw.deployedCommit??"published",token:undefined}
-  :"tenantId" in raw?{...raw,repository:(raw.provider==="INTUNE"?"intune:":"microsoft365:")+raw.tenantId.toLowerCase(),branch:raw.clientId.toLowerCase(),token:raw.clientSecret}
-  :raw.provider==="OKTA"?{...raw,repository:"okta:"+raw.connectionId,branch:[raw.groupId,raw.removedUserId].filter(Boolean).join(":"),token:raw.connectionId}:raw.provider==="VERCEL"?{...raw,repository:"vercel:"+raw.projectId,branch:raw.teamId}:raw.provider==="SUPABASE"?{...raw,repository:"supabase:"+raw.projectRef,branch:raw.providerOrganizationId}:raw.provider==="GITLAB"?{...raw,repository:"gitlab:"+raw.projectPath}:raw.provider==="CLOUDFLARE"?{...raw,repository:"cloudflare:"+raw.zoneId.toLowerCase(),branch:raw.accountId.toLowerCase()}:raw.provider==="COMPANIES_HOUSE"?{...raw,repository:"companieshouse:"+raw.companyNumber,branch:"profile"}:raw.provider==="GOOGLE_WORKSPACE"?{...raw,repository:"googleworkspace:"+raw.customerId,branch:raw.clientId,token:raw.clientSecret?JSON.stringify({clientSecret:raw.clientSecret,refreshToken:raw.refreshToken}):undefined}:raw;
- const repository=google||raw.provider==="OKTA"||raw.provider==="COMPANIES_HOUSE"||raw.provider==="VERCEL"?v.repository:v.repository.toLowerCase();
+ const v={...raw,...storedTarget(raw)},repository=v.repository;
  return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);
   const control=await tx.managedControl.findFirst({where:{id:v.controlId,organizationId:ctx.organizationId,enabled:true}});if(!control)throw new IntelligenceError("Choose an active control from this organisation",404);
   const old=v.id?await tx.evidenceConnector.findFirst({where:{id:v.id,organizationId:ctx.organizationId}}):null;

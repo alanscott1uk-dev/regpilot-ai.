@@ -24,7 +24,7 @@ test("the setup API, fair worker and manual verification share the same public a
       const url=String(input);
       if(url===authBase+"/auth/v1/user")return Response.json({id:f.owner.externalId,email:f.owner.email,email_confirmed_at:new Date().toISOString(),aud:"authenticated"});
       if(url.startsWith("https://api.scorecard.dev/")){
-        assert.equal(new Headers(init?.headers).get("authorization"),null);assert.equal(url,"https://api.scorecard.dev/projects/github.com/example/supplier");
+        assert.equal(new Headers(init?.headers).get("authorization"),null);assert.ok(["https://api.scorecard.dev/projects/github.com/example/supplier","https://api.scorecard.dev/projects/github.com/example/supplier?commit="+sha].includes(url));
         return Response.json({repo:{name:"github.com/example/supplier",commit:sha},date:new Date().toISOString(),scorecard:{version:"v5.7.0"},
           checks:["Code-Review","Security-Policy","Signed-Releases","Pinned-Dependencies"].map(name=>({name,score:10}))});
       }

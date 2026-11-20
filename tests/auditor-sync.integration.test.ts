@@ -92,7 +92,7 @@ test("a firm key cannot synchronise after room closure or bypass the durable rat
   const f=await engagement();try{
     await f.accept();const key=await f.change("ISSUE",f.guest.version+1);assert.ok(key.token);
     const slice=new Date(Math.floor(Date.now()/60000)*60000);
-    await db.customerApiBudget.create({data:{organizationId:f.a.id,bucket:"auditor:"+f.guest.id,minute:slice,count:60}});
+    await db.customerApiBudget.createMany({data:[slice,new Date(slice.getTime()+60000)].map(minute=>({organizationId:f.a.id,bucket:"auditor:"+f.guest.id,minute,count:60}))});
     const limit=await sync(request(key.token,"*"));assert.equal(limit.status,429);assert.ok(Number(limit.headers.get("retry-after"))>=1);
     const row=await db.auditRoom.findUniqueOrThrow({where:{id:f.room.id}});await changeAuditRoom(f.o,row.id,{action:"CLOSE",version:row.version});
     assert.equal((await sync(request(key.token,"*"))).status,401);

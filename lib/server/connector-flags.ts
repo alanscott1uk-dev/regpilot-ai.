@@ -1,3 +1,4 @@
+import {PROVIDERS} from "../connectors/capacity";
 import {workspaceConfigured} from "./ai-auth";
 export const connectorsEnabled=()=>workspaceConfigured()&&process.env.REGPILOT_CONNECTORS_ENABLED==="true"&&/^[a-f\d]{64}$/i.test(process.env.REGPILOT_CONNECTOR_ENCRYPTION_KEY||"");
 export const microsoft365Enabled=()=>connectorsEnabled()&&process.env.REGPILOT_MICROSOFT365_ENABLED==="true";
@@ -10,4 +11,9 @@ export const supabaseEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_SUPAB
 export const oktaEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_OKTA_ENABLED==="true"&&!!process.env.REGPILOT_NANGO_API_KEY;
 export const intuneEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_INTUNE_ENABLED==="true";
 export const scorecardEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_SCORECARD_ENABLED==="true";
-export function connectorProviderEnabled(provider:string){if(provider==="INTUNE")return intuneEnabled();if(provider==="OPENSSF_SCORECARD")return scorecardEnabled();return provider==="OKTA"?oktaEnabled():provider==="VERCEL"?vercelEnabled():provider==="SUPABASE"?supabaseEnabled():provider==="GITHUB"?connectorsEnabled():provider==="MICROSOFT365"?microsoft365Enabled():provider==="GOOGLE_WORKSPACE"?googleWorkspaceEnabled():provider==="GITLAB"?gitlabEnabled():provider==="CLOUDFLARE"?cloudflareEnabled():provider==="COMPANIES_HOUSE"?companiesHouseEnabled():false;}
+const providerGates=new Map<string,()=>boolean>(Object.entries({
+ GITHUB:connectorsEnabled,MICROSOFT365:microsoft365Enabled,GOOGLE_WORKSPACE:googleWorkspaceEnabled,
+ GITLAB:gitlabEnabled,CLOUDFLARE:cloudflareEnabled,COMPANIES_HOUSE:companiesHouseEnabled,
+ VERCEL:vercelEnabled,SUPABASE:supabaseEnabled,OKTA:oktaEnabled,INTUNE:intuneEnabled,OPENSSF_SCORECARD:scorecardEnabled
+} satisfies Record<(typeof PROVIDERS)[number],()=>boolean>));
+export function connectorProviderEnabled(provider:string){return providerGates.get(provider)?.()??false;}

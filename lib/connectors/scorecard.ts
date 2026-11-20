@@ -39,7 +39,7 @@ export async function collectScorecard(input:z.input<typeof scorecardTarget>, fe
   const read = resilientGet(fetcher,origin,{Accept:"application/json"});
   const latest = await publishedReport(read,url,repository);
   const latestCommit = latest?.repo.commit.toLowerCase();
-  const report = deployedCommit && deployedCommit !== latestCommit
+  const report = deployedCommit
     ? await publishedReport(read,url+"?commit="+deployedCommit,repository,deployedCommit) : latest;
   const age = report ? now-Date.parse(report.date) : NaN;
   const fresh = age >= -300000 && age <= 14*86400000;
