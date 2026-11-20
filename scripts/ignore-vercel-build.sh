@@ -3,8 +3,8 @@
 # Permit the explicitly requested source research release in preview only.
 if [ "$VERCEL_GIT_COMMIT_REF" = "feature/traceability-benchmark-batch-20261106" ]; then
   if [ "$VERCEL_ENV" = "preview" ] &&
-     [ "$(git log -1 --format=%s)" = "Publish verified UK source research preview 20261120" ] &&
-     [ "$(git rev-parse HEAD^)" = "7a8688ef4c47db42ec946df659a6f24e753551e2" ]; then
+     [ "$(git log -1 --format=%s)" = "Publish verified RegPilot semantic research preview 20261120" ] &&
+     [ "$(git rev-parse HEAD^)" = "1510964dc90eb8d3f119e5d9b38bebbfd7387531" ]; then
     exit 1
   fi
   exit 0
