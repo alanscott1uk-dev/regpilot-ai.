@@ -15,6 +15,9 @@ import type {EvidenceObjectStore} from "./evidence-storage";
 import {embedKnowledge,type KnowledgeEmbeddingResult} from "./knowledge-embedding-model";
 import {reserveAiRequest,DailyLimitError} from "./ai-meter";
 import {filterKnowledgeEvidence} from "./product-service";
+import {supportingPassages,workspaceResearchInput} from '../workspace-research';
+import {searchWorkspaceRecords} from './workspace-record-search';
+import {searchOfficialPublications} from './publication-research';
 import {EvidenceError} from "../evidence/file-guard.mjs";
 
 type Tx=Prisma.TransactionClient;
@@ -155,7 +158,7 @@ async function corpus(tx:Tx,c:AuthorizedContext,productId:string|null,method:Kno
  for(const item of candidates)if(eligible.has(item.run.evidenceId)&&!chosen.has(item.run.evidenceId))chosen.set(item.run.evidenceId,item);
  const records=[...chosen.values()].sort((a,b)=>a.run.evidenceId.localeCompare(b.run.evidenceId)),manifest=records.map(item=>({id:item.run.id,evidenceId:item.run.evidenceId,inputHash:item.run.inputHash,chunksHash:item.run.chunksHash,expiresAt:item.run.expiresAt.toISOString()})),corpusHash=hashValue({manifest,scope:scoped.scope,method,model:modelFor(method)});
  const chunks:SearchableKnowledgeChunk[]=records.flatMap(item=>item.chunks.map(chunk=>({...chunk,evidenceId:item.run.evidenceId,filename:item.context!.file.filename,indexId:item.run.id})));
- return {corpusHash,chunks,scope:scoped.scope,documents:records.length};
+ return {corpusHash,chunks,files:records.map(item=>item.context!.file),scope:scoped.scope,documents:records.length};
 }
 function searchStored(run:KnowledgeSearchRun){const context=searchContextSchema.safeParse(run.context);if(!context.success||context.data.method!==run.method||context.data.model!==run.model||hashValue(context.data)!==run.inputHash||hashValue(context.data.query)!==run.queryHash)throw new IntelligenceError("Saved search integrity failed",409);return context.data;}
 function validCachedVector(run:KnowledgeSearchRun){try{const value=checkedStoredKnowledgeVector(run.vector);if(hashValue(value)!==run.vectorHash)throw new Error("Saved query vector integrity failed");return value;}catch{throw new IntelligenceError("Saved query vector integrity failed",409);}}
@@ -216,4 +219,39 @@ export async function searchKnowledge(c:AuthorizedContext,input:unknown,dependen
    const changed=await tx.knowledgeSearchRun.updateMany({where:{id:run.id,...org(c),status:"PROCESSING",expiresAt:{gt:new Date()}},data:{status:"READY",result:json(result),resultHash:hashValue(result),vector:vector?json(vector):Prisma.DbNull,vectorHash:vector?hashValue(vector):null,usage:usage?json(usage):Prisma.DbNull}});if(changed.count!==1)throw new IntelligenceError("This saved search is no longer pending",409);await event(tx,c,run.id,"search_ready",{method:d.method,hitCount:result.length,resultHash:hashValue(result),reusedQueryEmbedding:!!prepared.cachedVector});
   });return (await knowledgeSearch(c,{runId:run.id}))!;
  }catch(error){await transaction(c,async tx=>{await tx.knowledgeSearchRun.updateMany({where:{id:run.id,...org(c),status:"PROCESSING"},data:{status:"FAILED",failureCode:error instanceof DailyLimitError?"DAILY_LIMIT":error instanceof IntelligenceError?"CONTEXT_OR_CONFIGURATION_CHANGED":"SEARCH_FAILED"}});await event(tx,c,run.id,"search_failed");});throwOperationError(error);}
+}
+
+export async function researchWorkspaceQuestion(c:AuthorizedContext,input:unknown,readOfficial=searchOfficialPublications){
+ const {question,asset,productId}=workspaceResearchInput.parse(input);
+ configured('CONTENT');
+ await transaction(c,tx=>requireMember(tx,c,ADMIN));
+ // Only fixed register URLs are fetched by the public reader. Do not hold a database lock during that read.
+ const official=await readOfficial({question});
+ return transaction(c,async tx=>{
+  await requireMember(tx,c,ADMIN);
+  const current=await corpus(tx,c,productId,'CONTENT');
+  const files=new Map(current.files.map(file=>[file.id,file]));
+  const policies=new Map<string,{title:string;number:number}|null>();
+  const revisions=current.files.length?await tx.policyRevision.findMany({
+   where:{...org(c),OR:current.files.map(file=>({file:{path:['id'],equals:file.id}}))},
+   select:{number:true,createdById:true,reviewerId:true,publishedAt:true,file:true,fileHash:true,status:true,
+    policy:{select:{title:true,currentRevision:true,active:true,controlledEffectivity:true}},
+    releases:{where:{state:'EFFECTIVE'},take:1,select:{id:true}}}
+  }):[];
+  for(const revision of revisions){
+   const file=reviewedFileSchema.safeParse(revision.file);
+   if(!file.success)throw new IntelligenceError('Policy file snapshot could not be verified',409);
+   const id=file.data.id;
+   if(!policies.has(id))policies.set(id,null);
+   if(revision.status==='PUBLISHED'&&revision.policy.active&&revision.number===revision.policy.currentRevision&&
+    revision.publishedAt&&revision.reviewerId&&revision.createdById!==revision.reviewerId&&
+    (!revision.policy.controlledEffectivity||revision.releases.length>0)&&
+    hashValue(file.data)===revision.fileHash&&hashValue(files.get(id))===revision.fileHash){
+    policies.set(id,{title:revision.policy.title,number:revision.number});
+   }
+  }
+  const records=productId?[]:await searchWorkspaceRecords(tx,c.organizationId,question);
+  return {organizationId:c.organizationId,productId,asset,question,records,documents:current.documents,official,
+   ...supportingPassages(question,asset,current.chunks,policies)};
+ });
 }

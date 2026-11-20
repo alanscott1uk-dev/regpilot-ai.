@@ -28,7 +28,17 @@ test("seven-day regulatory briefing isolates tenants and distinguishes text chan
    category:"Regulatory intelligence",ownerName:users[0].email,dueDate:new Date(Date.now()+2*86400000)}});
   await db.obligation.create({data:{organizationId:b.organizationId,title:"PRIVATE OTHER ORG TASK",
    category:"Private",ownerName:users[1].email,dueDate:new Date(Date.now()+2*86400000)}});
+  const risk=await db.riskRecord.create({data:{organizationId:a.organizationId,createKey:randomUUID(),createdById:a.userId,ownerId:a.userId,title:'Payroll supplier access',description:'Payroll permissions remain active after contractor departure.',category:'SUPPLIER',likelihood:4,impact:5,ratingRationale:'Recurring access findings with sensitive records.',strategy:'MITIGATE',reviewDueAt:new Date(Date.now()-2*86400000)}});
   const ra=await fetchOperationalBrief(a),rb=await fetchOperationalBrief(b);
+  assert.equal(ra.coverage!.risks[0].impact,5);
+  assert.match(ra.coverage!.risks[0].href,new RegExp('riskId='+risk.id));
+  assert.equal(ra.coverage!.measures.find(m=>m.area==='risks')!.attention,1);
+  assert.deepEqual(rb.coverage!.risks,[]);
+  assert.equal(ra.coverage!.measures.length,10);
+  assert.deepEqual(ra.coverage!.measures.filter(m=>m.area==='sources').map(m=>[m.total,m.attention]),[[1,1]]);
+  assert.deepEqual(rb.coverage!.measures.filter(m=>m.area==='sources').map(m=>[m.total,m.attention]),[[0,0]]);
+  await db.membership.updateMany({where:{organizationId:a.organizationId,userId:a.userId},data:{role:'VIEWER'}});
+  assert.equal((await fetchOperationalBrief(a)).coverage,null);
   assert.equal(ra.summary.changedPublications,1);assert.equal(ra.changes[0].title,"Fictional A publication");
   assert.equal(ra.summary.awaitingReview,1);assert.equal(ra.summary.sourceCheckIssues,1);
   assert.equal(ra.collections[0].status,'failed');assert.equal(ra.collections[0].failureCode,'HTTP_UNAVAILABLE');
@@ -42,6 +52,7 @@ test("seven-day regulatory briefing isolates tenants and distinguishes text chan
   await assert.rejects(()=>fetchOperationalBrief({...b,organizationId:a.organizationId}),e=>!!e);
  }finally{
   const ids=orgs.map(o=>o.id);
+  await db.riskRecord.deleteMany({where:{organizationId:{in:ids}}});
   await db.auditEvent.deleteMany({where:{organizationId:{in:ids}}});
   await db.watchSchedule.deleteMany({where:{organizationId:{in:ids}}});
   await db.obligation.deleteMany({where:{organizationId:{in:ids}}});

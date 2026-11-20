@@ -124,6 +124,7 @@ export default function PublicationResearch() {
     <button type="button" className={styles.researchExample} disabled={busy} onClick={()=>void search(example,nation)}>Try a medicines question</button>
     {busy&&<p role="status">Reading the shortlisted official publications…</p>}
     {error&&<p role="alert">{error}</p>}
+    <p><a href="/team/knowledge#workspace-research">Compare guidance with your organisation’s procedures and evidence</a></p>
     {result&&<PublicationResults result={result}/>}
   </section>;
 }

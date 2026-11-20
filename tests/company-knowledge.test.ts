@@ -37,3 +37,30 @@ test('full supported JSON-vector corpus has deterministic top citations with mea
  const start=performance.now(),hits=rankKnowledgeChunks('How are permissions reviewed?',chunks,'SEMANTIC',vector),elapsed=performance.now()-start;
  assert.equal(hits.length,10);assert.equal(hits[0].unit,1);assert.equal(hits[9].unit,10);assert.equal(hits[0].score,1);t.diagnostic(`Controlled in-memory cosine ranking: ${chunks.length} chunks × ${vector.length} dimensions in ${elapsed.toFixed(1)} ms. This is not a live-provider quality or production load evaluation.`);
 });
+
+test('workspace research matches site identifiers, preserves exact passages and excludes retired procedures',async()=>{
+ const {supportingPassages,workspaceResearchInput}=await import('../lib/workspace-research');
+ const make=(filename:string,text:string)=>({...chunkKnowledgeDocument(document(text))[0],evidenceId:randomUUID(),indexId:randomUUID(),filename});
+ const current=make('proc.pdf','Standard operating procedure for temperature mapping.'),
+  old=make('superseded.pdf','Temperature mapping in Cold Room 1.'),sample=make('Room 1.pdf','Temperature mapping report for Cold Room-1.'),
+  other=make('other.pdf','Temperature mapping in Cold Room 10.'),unrelated=make('Room 1 sanitation.pdf','Sanitation and cleaning evidence.');
+ const policies=new Map([[current.evidenceId,{title:'Temperature mapping SOP',number:2}],[old.evidenceId,null]]);
+ const result=supportingPassages('Find the SOP and evidence for temperature mappping','Cold Room 1',[old,other,sample,current,unrelated],policies);
+ assert.deepEqual(result.procedures.map(hit=>hit.evidenceId),[current.evidenceId]);
+ assert.deepEqual(result.evidence.map(hit=>hit.evidenceId),[sample.evidenceId]);
+ assert.equal(result.evidence[0].quote,sample.text);assert.equal(result.evidence[0].quoteHash,citationHash(result.evidence[0]));
+ assert.equal(workspaceResearchInput.safeParse({question:'Supplier access',asset:'---'}).success,false);
+ const privacy=make('privacy.docx','Supplier access to payroll records undergoes quarterly review.');
+ assert.equal(supportingPassages('supplier access','',[sample,privacy],new Map()).evidence[0].evidenceId,privacy.evidenceId);
+});
+
+test('custom report links round trip only selected areas and export numeric denominators',async()=>{
+ const {readReportView,applyReportView}=await import('../lib/coverage-report-view');
+ const {exportCoverageCsv}=await import('../lib/operational-brief.mjs');
+ const params=new URLSearchParams('organizationId=org&areas=bad,api,risks,risks&attention=1');
+ const view=readReportView(params);assert.deepEqual(view,{areas:['risks','api'],attentionOnly:true});
+ assert.equal(applyReportView(params,view).get('areas'),'risks,api');assert.equal(params.get('organizationId'),'org');
+ assert.equal(readReportView(new URLSearchParams('areas=unknown')).areas.length,10);
+ const csv=exportCoverageCsv([{title:'Risk reviews',description:'Overdue risk reviews',total:42,attention:3,href:'/team/risks'}],'2026-11-20');
+ assert.match(csv,/"42","3","2026-11-20"/);assert.equal(csv.split('\r\n').length,2);
+});

@@ -28,6 +28,18 @@ The live Essentials listing also includes policy-to-control mapping and SLA reme
 
 RegPilot baseline: [preview application commit](https://github.com/alanscott1uk-dev/regpilot-ai./commit/1510964dc90eb8d3f119e5d9b38bebbfd7387531) · [22 live search checks](https://github.com/alanscott1uk-dev/regpilot-ai./actions/runs/44783048904).
 
+## Cross-sector acceptance on PR #10
+
+| Business question | Feature to exercise | Evidence required |
+| --- | --- | --- |
+| Who owns the risk from a payroll supplier retaining access? | Search supplier, control, access campaign and risk metadata. Open the risk register from its inherent likelihood and impact. | A matching risk opens in the correct organisation. A second organisation cannot see the result. |
+| Which controls or collections need review before our customer audit? | Choose controls, evidence connections, audit requests and questionnaires in Reports. Filter for attention and export those checks. | Export has separate record and exception counts. Empty scopes are identified. A bookmarked view recalculates counts on refresh. |
+| Which published procedure supports a claim in a tender? | Compare official passages with the current private procedure revision and reviewed evidence. Select the tendered product to restrict documents. | A superseded policy file cannot return as supporting evidence. Organisation-wide operational records are omitted in product scope. |
+| Which training, regulatory changes and corrective actions concern a topic? | Search across training curricula, change responses, quality cases and requirement references. | Matching records display their type, recorded status and workspace destination. |
+| Is there a mapping report for a particular storage location? | Restrict private evidence by site or asset. | Cold Room 1 and Cold Room 10 return different evidence. A passage match still requires a review of report date and coverage. |
+
+These branch features cover workspace discovery and reporting. Full competitive comparison still requires live integration coverage, maintained framework mappings, independently scored answer quality, configurable background tests and remediation, and end-to-end customer and auditor trials.
+
 ## Active competitor-derived development choices — 19 November 2026
 
 The user direction is to use the strongest competitor capabilities as the product baseline, then improve the experience for RegPilot's UK SME customers. Compare the complete customer job, implement the missing workflow, and retain its acceptance evidence. Do not count an existing module again as a new capability or infer superiority from a feature list.

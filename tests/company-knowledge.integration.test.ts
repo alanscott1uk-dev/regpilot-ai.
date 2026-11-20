@@ -115,3 +115,34 @@ test('the supported 40-document, 1600-chunk vector corpus is read and searched w
   t.diagnostic(`Controlled PostgreSQL retrieval at 40 documents × 40 chunks × 1536 dimensions: ${elapsed.toFixed(1)} ms across capture, freshness commit and safe response. Each transaction retains the production 12-second timeout; this is not a hosted load or live semantic-quality evaluation.`);
  }finally{await cleanup(x);}
 });
+
+test('workspace research finds business records, separates published procedures and respects tenant and document scope',async()=>{
+ const {researchWorkspaceQuestion}=await import('../lib/server/company-knowledge-service');
+ const {reviewedFiles}=await import('../lib/server/reviewed-files');
+ const x=await assuranceFixture();config();
+ const official=async()=>({status:'no_match' as const,catalogueSize:0,nations:[],checked:[],unavailable:0,citations:[],answer:{points:[],model:null}});
+ try{
+  const request={question:'Fictional assurance supplier',asset:''};
+  let reads=0;
+  await assert.rejects(()=>researchWorkspaceQuestion(x.ed,request,async()=>{reads++;return official();}),rejects(403));
+  assert.equal(reads,0);
+  const supplier=await db.vendor.create({data:{organizationId:x.a.id,ownerId:x.admin.id,name:'Fictional assurance supplier',service:'UK payroll processing service',criticality:'HIGH',dataAccess:'BUSINESS',nextReviewAt:new Date()}});
+  const file=await x.file();await scope(x,file.id);
+  await indexKnowledgeEvidence(x.ed,indexInput(file.id),{storage:x.store});
+  const first=await researchWorkspaceQuestion(x.ad,request,official);
+  assert.equal(first.evidence[0]?.evidenceId,file.id);
+  assert.ok(first.records.some(row=>row.kind==='Supplier'&&row.id===supplier.id));
+  const other=await researchWorkspaceQuestion(x.out,request,official);
+  assert.deepEqual(other.evidence,[]);assert.ok(!other.records.some(row=>row.id===supplier.id));
+  const product=await createProduct(x.ad,{code:'SCOPE',name:'Supplier portal',description:'Fictional service scope',requestKey:randomUUID(),confirm:true});
+  assert.deepEqual((await researchWorkspaceQuestion(x.ad,{...request,productId:product.id},official)).records,[]);
+  const [snapshot]=await db.$transaction(tx=>reviewedFiles(tx,x.a.id,[file.id]));
+  const policy=await db.policy.create({data:{organizationId:x.a.id,title:'Supplier assurance procedure',currentRevision:1}});
+  const revision=await db.policyRevision.create({data:{organizationId:x.a.id,policyId:policy.id,number:1,summary:'Evidence review',file:snapshot,fileHash:hashValue(snapshot),createdById:x.editor.id,reviewerId:x.admin.id,status:'PUBLISHED',publishedAt:new Date()}});
+  const published=await researchWorkspaceQuestion(x.ad,request,official);
+  assert.equal(published.procedures[0]?.policy?.number,1);assert.deepEqual(published.evidence,[]);
+  await db.policyRevision.update({where:{id:revision.id},data:{status:'SUPERSEDED'}});
+  const obsolete=await researchWorkspaceQuestion(x.ad,request,official);
+  assert.deepEqual(obsolete.procedures,[]);assert.deepEqual(obsolete.evidence,[]);
+ }finally{await cleanup(x);}
+});

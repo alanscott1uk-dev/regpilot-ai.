@@ -205,5 +205,13 @@ export async function riskCustomerJourney({review,upload,db,app,org,editor,revie
  assert.equal(await db.riskReview.count({where:{organizationId:org.id,riskId:id}}),1);assert.equal(stale.selected.risk.score,16);
  await review.getByRole('region',{name:'Selected risk',exact:true}).screenshot({path:artifactDir+'/desktop-risk-changed-evidence.png'});
  passed('A controlled revision to the reviewed evidence removed reliance on the earlier residual rating and showed the changed basis. The original accepted risk decision, its hashes and treatment receipt were retained unchanged as history.');
+ await checkpoint('inspect a risk through the live assurance report');
+ await review.goto(app+'/team/briefing?'+new URLSearchParams({organizationId:org.id,areas:'risks'}));
+ const coverage=review.getByRole('region',{name:'Assurance coverage'});
+ await coverage.getByRole('button',{name:/risks, likelihood 4, impact 4,/}).click();
+ const riskLink=coverage.getByRole('link',{name:title,exact:true});
+ assert.equal(new URL(await riskLink.getAttribute('href'),app).searchParams.get('riskId'),id);
+ await riskLink.click();await review.getByRole('region',{name:'Selected risk'}).getByRole('heading',{name:title,exact:true}).waitFor();
+ passed('The bookmarked risk report recomputed the inherent risk matrix and opened the exact underlying risk after its supporting evidence changed.');
  return {riskId:id,treatmentId:linked.id,taskId:sourceTask.id,completionEventId:completedSource.eventId,reviewId:proposed.id,inherentScore:16,residualScore:6,independentReviewerId:reviewer.id,evidenceId,filesUnchanged:true,staleReviewDetected:true,historyPreserved:true};
 }

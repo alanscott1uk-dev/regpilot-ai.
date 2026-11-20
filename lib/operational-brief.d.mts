@@ -7,3 +7,5 @@ export type BriefCompletedWork={taskId:string;title:string;owner:string;complete
 export type ComplianceBrief={format:string;generatedAt:string;windowStart:string;windowEnd:string;summary:{changedPublications:number;awaitingReview:number;sourceCheckIssues:number;connectorIssues:number;dueWork:number;overdueWork:number;completedWork?:number};changes:BriefChange[];pending:BriefPending[];collections:BriefCollection[];connectors:BriefConnector[];tasks:BriefTask[];completedWork?:BriefCompletedWork[];limitations:string[]};
 export declare function prepareComplianceBrief(inputs:unknown,now?:string):ComplianceBrief;
 export declare function exportBriefCsv(brief:ComplianceBrief):string;
+
+export declare function exportCoverageCsv(measures:Array<{title:string;description:string;total:number;attention:number;href:string}>,checkedAt:string):string;

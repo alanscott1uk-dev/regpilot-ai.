@@ -1,9 +1,10 @@
 "use client";
+import {CoveragePanel} from './coverage-panel';
 import WorkspaceNav from "../../components/workspace-nav";
 import {useEffect,useState} from "react";
 import {useWorkspaceContext,workspaceHref} from "../../../lib/client/workspace-context";
 import EmailSignIn from "../../components/email-sign-in";
-import {exportBriefCsv} from "../../../lib/operational-brief.mjs";
+import {exportBriefCsv,exportCoverageCsv} from "../../../lib/operational-brief.mjs";
 import type {fetchOperationalBrief} from "../../../lib/server/briefing-service";
 import shell from "../../workbench/workbench.module.css";
 import ui from "./briefing.module.css";
@@ -58,6 +59,7 @@ export default function Briefing(){
     <a href="#tasks"><span>Upcoming team work</span><strong>{summary?.dueWork}</strong><small>{summary?.overdueWork} overdue in sampled queue</small></a>
    </div>
    <div className={ui.caveat}>{report.limitations[0]} {report.limitations[1]} Reporting window: {when(report.windowStart)} to {when(report.windowEnd)}. {Object.values(report.limits).some(Boolean)?"At least one history or task sample reached its display limit; open the original workspace for more.":""}</div>
+   {report.coverage&&<CoveragePanel key={orgId} data={report.coverage} onExport={measures=>save(exportCoverageCsv(measures,report.coverage!.checkedAt),'regpilot-assurance-checks.csv','text/csv;charset=utf-8')}/>}
    <section id="changes" className={ui.section}><div className={ui.heading}><h2>01 · Official publication changes</h2><a href={href('/team/sources')}>View source history</a></div>
     {report.changes.length===0?<p className={ui.empty}>No recorded text-change events in this seven-day window. This does not prove that UK regulations remained unchanged.</p>:report.changes.map(x=><article key={x.id} className={ui.item}><div><span className={ui.meta}>DETECTED {when(x.detectedAt)} · {x.status.replaceAll("_"," ")}</span><h3>{x.title}</h3><p>Publication text changed. Human applicability and effective-date assessment is still required.</p></div><a href={x.href}>Review change</a></article>)}
    </section>

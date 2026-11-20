@@ -1,5 +1,6 @@
 import {db} from "./db";
-import {requireMember} from "./workspace-member";
+import {assuranceCoverage} from './assurance-coverage';
+import {ADMIN,requireMember} from "./workspace-member";
 import type {AuthorizedContext} from "./authorization";
 import {REGULATORY_SOURCES} from "../regulatory-sources.mjs";
 import {prepareComplianceBrief} from "../operational-brief.mjs";
@@ -11,7 +12,7 @@ export async function fetchOperationalBrief(ctx:AuthorizedContext){
  const now=new Date(),since=new Date(now.getTime()-7*86400000),nextWeek=new Date(now.getTime()+7*86400000);
  const baseNames=new Map(REGULATORY_SOURCES.map(s=>[s.id,s.title]));
  const data=await db.$transaction(async tx=>{
-  await requireMember(tx,ctx);
+  const member=await requireMember(tx,ctx);
   const [events,snapshots,watches,connectors,tasks,registered,completions]=await Promise.all([
    tx.auditEvent.findMany({where:{organizationId:ctx.organizationId,action:"regulatory.source_text_changed",createdAt:{gte:since}},
      orderBy:{createdAt:"desc"},take:50,select:{entityId:true,createdAt:true}}),
@@ -35,7 +36,8 @@ export async function fetchOperationalBrief(ctx:AuthorizedContext){
    where:{organizationId:ctx.organizationId,id:{in:events.map(e=>e.entityId)}},
    select:{id:true,sourceId:true,title:true,url:true,reviewStatus:true}
   }):[];
-  return {events,snapshots,watches,connectors,tasks,registered,details,completions};
+  const coverage=ADMIN.includes(member.role)?await assuranceCoverage(tx,ctx.organizationId,now):null;
+  return {coverage,events,snapshots,watches,connectors,tasks,registered,details,completions};
  },{isolationLevel:"RepeatableRead",timeout:12000});
  for(const s of data.registered)baseNames.set(s.sourceId,s.title);
  const byId=new Map(data.details.map(s=>[s.id,s]));
@@ -54,7 +56,7 @@ export async function fetchOperationalBrief(ctx:AuthorizedContext){
   tasks:data.tasks.map(t=>({...t,dueDate:t.dueDate.toISOString()}))
  },now.toISOString());
  const scoped=<T extends {href:string}>(items:T[])=>items.map(item=>{const url=new URL(item.href,'https://workspace.invalid');url.searchParams.set('organizationId',ctx.organizationId);return {...item,href:url.pathname+url.search};});
- return {...brief,organizationId:ctx.organizationId,summary:{...brief.summary,completedWork:data.completions.records.length},
+ return {...brief,coverage:data.coverage,organizationId:ctx.organizationId,summary:{...brief.summary,completedWork:data.completions.records.length},
   changes:scoped(brief.changes),pending:scoped(brief.pending),collections:scoped(brief.collections),connectors:scoped(brief.connectors),
   tasks:brief.tasks.map(task=>({...task,href:workspaceLink(ctx.organizationId,'/team/work',{taskId:task.id})})),
   completedWork:data.completions.records,completionRecordsUnavailable:data.completions.unavailable,
