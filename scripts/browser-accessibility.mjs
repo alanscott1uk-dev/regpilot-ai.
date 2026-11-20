@@ -13,7 +13,7 @@ export async function checkAccessibility(page, output, selector = 'html') {
       rule: rule.id,
       impact: rule.impact,
       help: rule.helpUrl,
-      elements: rule.nodes.map(node => node.target),
+      elements: rule.nodes.map(node => ({selector:node.target,reason:node.failureSummary})),
     }));
     return {
       version: result.testEngine.version, scope,

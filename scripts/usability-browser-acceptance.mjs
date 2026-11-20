@@ -44,7 +44,7 @@ async function ready(){
   await delay(300);
  }throw Error("Production server did not start: "+log);
 }
-const browser=await chromium.launch({executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH});
+let browser;
 async function testJourney(name,viewport){
  const errors=[],start=Date.now(),ctx=await browser.newContext({viewport,locale:"en-GB",acceptDownloads:true});
  const page=await ctx.newPage();page.on("pageerror",e=>errors.push(e.message.slice(0,200)));
@@ -113,6 +113,7 @@ async function testJourney(name,viewport){
 }
 try{
  await ready();
+ browser=await chromium.launch({executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH});
  await testJourney("desktop",{width:1365,height:880});
  await testJourney("mobile",{width:390,height:844});
  for(const [name,viewport] of [["desktop",{width:1365,height:880}],["mobile",{width:390,height:844}]]){
@@ -129,7 +130,7 @@ try{
   try{observations.push(await setupJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"setup-"+name,passed:false,error:e.message});}
   try{observations.push(await assuranceRenewalJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"assurance-renewal-"+name,passed:false,error:e.message});}
  }
-}finally{await browser.close();host.kill("SIGTERM");await Promise.race([new Promise(r=>host.once("exit",r)),delay(1500)]);if(host.exitCode===null)host.kill("SIGKILL");}
+}finally{await browser?.close();host.kill("SIGTERM");await Promise.race([new Promise(r=>host.once("exit",r)),delay(1500)]);if(host.exitCode===null)host.kill("SIGKILL");}
 const report={format:"regpilot-browser-acceptance-v1",startedAt,finishedAt:new Date().toISOString(),
  testType:"black-box automated browser acceptance; no independent human participants",
  scenarios:observations,passed:observations.every(x=>x.passed),limitations:[

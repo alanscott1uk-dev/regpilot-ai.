@@ -9,6 +9,8 @@ if [[ "$mode" == private ]]; then
   for bin in docker supabase psql curl; do
     command -v "$bin" >/dev/null || { echo "Private browser tests require $bin." >&2; exit 2; }
   done
+  endpoint=${DOCKER_HOST:-$(docker context inspect "$(docker context show)" --format '{{.Endpoints.docker.Host}}')}
+  [[ "$endpoint" == unix://* ]] || { echo 'Use a local Docker socket for the disposable test stack.' >&2; exit 2; }
   docker info >/dev/null
 fi
 work=$(mktemp -d "${TMPDIR:-/tmp}/regpilot-browser-XXXXXXXX")
