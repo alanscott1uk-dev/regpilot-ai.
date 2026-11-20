@@ -48,6 +48,8 @@ jobs:
       REGPILOT_WORKSPACE_ENABLED: "true"
       REGPILOT_EVIDENCE_ENABLED: "true"
       REGPILOT_ASSURANCE_ENABLED: "true"
+      REGPILOT_PROGRAMME_ENABLED: "true"
+      REGPILOT_CUSTOMER_API_ENABLED: "true"
       REGPILOT_AI_ALLOWED_EMAILS: editor@example.test,reviewer@example.test
       REGPILOT_EVIDENCE_BUCKET: journey-files
       REGPILOT_CLAMD_HOST: 127.0.0.1

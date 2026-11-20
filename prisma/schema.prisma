@@ -142,6 +142,17 @@ enum ReviewStatus {
 }
 
 model User {
+ customerApiCredentials CustomerApiCredential[] @relation("CustomerApiIssuer")
+ customerApiReviews CustomerApiObservation[] @relation("CustomerApiReviewer")
+ customerApiOperations CustomerApiOperation[]
+ trainingCurriculaOwned TrainingCurriculum[] @relation("TrainingCurriculumOwner")
+ trainingCurriculaCreated TrainingCurriculum[] @relation("TrainingCurriculumCreator")
+ trainingEnrollments TrainingEnrollment[] @relation("TrainingEnrollmentLearner")
+ trainingEnrollmentsCreated TrainingEnrollment[] @relation("TrainingEnrollmentCreator")
+ trainingAssignments TrainingAssignment[] @relation("TrainingAssignmentLearner")
+ trainingAttempts TrainingAttempt[] @relation("TrainingAttemptLearner")
+ trainingAttemptsReviewed TrainingAttempt[] @relation("TrainingAttemptReviewer")
+ trainingOperations TrainingOperation[] @relation("TrainingOperationActor")
  productsCreated CompanyProduct[] @relation("ProductCreator")
  evidenceApplicabilitiesUpdated EvidenceApplicability[] @relation("EvidenceScopeUpdater")
  qualityCasesCreated QualityCase[] @relation("QualityCreator")
@@ -224,6 +235,17 @@ model User {
 }
 
 model Organization {
+ customerApiCredentials CustomerApiCredential[]
+ customerApiGrants CustomerApiControlGrant[]
+ customerApiBudgets CustomerApiBudget[]
+ customerApiObservations CustomerApiObservation[]
+ customerApiOperations CustomerApiOperation[]
+ trainingCurricula TrainingCurriculum[]
+ trainingRequirements TrainingRequirement[]
+ trainingEnrollments TrainingEnrollment[]
+ trainingAssignments TrainingAssignment[]
+ trainingAttempts TrainingAttempt[]
+ trainingOperations TrainingOperation[]
  products CompanyProduct[]
  evidenceApplicabilities EvidenceApplicability[]
  evidenceProductLinks EvidenceProductLink[]
@@ -394,6 +416,7 @@ model Membership {
 }
 
 model Obligation {
+ customerApiObservations CustomerApiObservation[]
  qualityActions QualityAction[]
  riskTreatments RiskTreatment[]
  vendorSignalId String? @db.Uuid
@@ -716,6 +739,8 @@ model ProgrammeImport {
 }
 
 model ManagedControl {
+ customerApiGrants CustomerApiControlGrant[]
+ customerApiObservations CustomerApiObservation[]
  riskLinks RiskControl[]
  connectedEvidenceLinks ConnectorControlLink[]
  changeActions ChangeAction[]
@@ -1110,6 +1135,7 @@ model AuditQuestion {
 }
 
 model Policy {
+ trainingRequirements TrainingRequirement[]
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid
  title String @db.VarChar(160)
@@ -1123,6 +1149,8 @@ model Policy {
  @@index([organizationId,createdAt])
 }
 model PolicyRevision {
+ trainingRequirements TrainingRequirement[] @relation("TrainingPreparedRevision")
+ trainingAssignments TrainingAssignment[]
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid
  policyId String @db.Uuid
@@ -1438,6 +1466,8 @@ model QuestionnaireDraftRun {
  createdById String @db.Uuid
  requestKey String @db.Uuid
  requestHash String @db.VarChar(64)
+ retryOfId String? @db.Uuid
+ attempt Int @default(1)
  inputHash String @db.VarChar(64)
  engineVersion String @db.VarChar(80)
  method String @db.VarChar(24)
@@ -1456,8 +1486,12 @@ model QuestionnaireDraftRun {
  questionnaire AssuranceQuestionnaire @relation(fields:[questionnaireId,organizationId],references:[id,organizationId],onDelete:Cascade)
  creator User @relation(fields:[createdById],references:[id],onDelete:Restrict)
  answer AssuranceAnswer? @relation(fields:[answerId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ retrySource QuestionnaireDraftRun? @relation("QuestionnaireRetry",fields:[retryOfId,organizationId],references:[id,organizationId],onDelete:NoAction,onUpdate:NoAction)
+ retries QuestionnaireDraftRun[] @relation("QuestionnaireRetry")
+ @@unique([id,organizationId])
  @@unique([organizationId,requestKey])
- @@unique([organizationId,inputHash,method])
+ @@unique([organizationId,inputHash,method,attempt],map:"QuestionnaireDraftRun_attempt_key")
+ @@index([organizationId,inputHash,method,status],map:"QuestionnaireDraftRun_input_status_idx")
  @@index([organizationId,questionnaireId,createdAt])
 }
 
@@ -1699,4 +1733,248 @@ model EvidenceProductLink {
  product CompanyProduct @relation(fields:[productId,organizationId],references:[id,organizationId],onDelete:Restrict)
  @@id([evidenceId,productId])
  @@index([organizationId,productId,evidenceId])
+}
+
+model TrainingCurriculum {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ createKey String @db.Uuid
+ ownerId String @db.Uuid
+ createdById String @db.Uuid
+ title String @db.VarChar(160)
+ businessRole String @db.VarChar(100)
+ description String @db.VarChar(1600)
+ active Boolean @default(true)
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ owner User @relation("TrainingCurriculumOwner",fields:[ownerId],references:[id],onDelete:Restrict)
+ creator User @relation("TrainingCurriculumCreator",fields:[createdById],references:[id],onDelete:Restrict)
+ requirements TrainingRequirement[]
+ enrollments TrainingEnrollment[]
+ assignments TrainingAssignment[]
+ operations TrainingOperation[]
+ @@unique([id,organizationId])
+ @@unique([organizationId,createKey])
+ @@index([organizationId,active,createdAt])
+}
+model TrainingRequirement {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ curriculumId String @db.Uuid
+ policyId String @db.Uuid
+ preparedRevisionId String @db.Uuid
+ objective String @db.VarChar(1600)
+ criteria Json
+ quiz Json
+ passPercent Int @default(80)
+ dueDays Int @default(14)
+ validDays Int @default(365)
+ active Boolean @default(true)
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ curriculum TrainingCurriculum @relation(fields:[curriculumId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ policy Policy @relation(fields:[policyId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ preparedRevision PolicyRevision @relation("TrainingPreparedRevision",fields:[preparedRevisionId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ assignments TrainingAssignment[]
+ @@unique([id,organizationId])
+ @@unique([curriculumId,policyId])
+ @@index([organizationId,policyId,active])
+}
+model TrainingEnrollment {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ curriculumId String @db.Uuid
+ userId String @db.Uuid
+ enrolledById String @db.Uuid
+ active Boolean @default(true)
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ curriculum TrainingCurriculum @relation(fields:[curriculumId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ learner User @relation("TrainingEnrollmentLearner",fields:[userId],references:[id],onDelete:Restrict)
+ enrolledBy User @relation("TrainingEnrollmentCreator",fields:[enrolledById],references:[id],onDelete:Restrict)
+ assignments TrainingAssignment[]
+ @@unique([id,organizationId])
+ @@unique([curriculumId,userId])
+ @@index([organizationId,userId,active])
+}
+model TrainingAssignment {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ curriculumId String @db.Uuid
+ requirementId String @db.Uuid
+ enrollmentId String @db.Uuid
+ revisionId String @db.Uuid
+ learnerId String @db.Uuid
+ requirementVersion Int
+ enrollmentVersion Int
+ cycle Int @default(1)
+ status String @default("ASSIGNED") @db.VarChar(20)
+ dueAt DateTime @db.Date
+ openedAt DateTime?
+ acknowledgedAt DateTime?
+ acknowledgedHash String? @db.VarChar(64)
+ validUntil DateTime? @db.Date
+ requirementSnapshot Json
+ requirementHash String @db.VarChar(64)
+ version Int @default(1)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ curriculum TrainingCurriculum @relation(fields:[curriculumId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ requirement TrainingRequirement @relation(fields:[requirementId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ enrollment TrainingEnrollment @relation(fields:[enrollmentId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ revision PolicyRevision @relation(fields:[revisionId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ learner User @relation("TrainingAssignmentLearner",fields:[learnerId],references:[id],onDelete:Restrict)
+ attempts TrainingAttempt[]
+ operations TrainingOperation[]
+ @@unique([id,organizationId])
+ @@unique([enrollmentId,requirementId,revisionId,requirementVersion,enrollmentVersion,cycle],map:"TrainingAssignment_identity_key")
+ @@index([organizationId,learnerId,status,dueAt])
+ @@index([organizationId,curriculumId,createdAt])
+}
+model TrainingAttempt {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ assignmentId String @db.Uuid
+ learnerId String @db.Uuid
+ requestKey String @db.Uuid
+ observedAt DateTime @db.Date
+ statement String @db.VarChar(2000)
+ evidenceManifest Json
+ quizAnswers Json
+ quizScore Int?
+ quizPassed Boolean?
+ context Json
+ contextHash String @db.VarChar(64)
+ submissionHash String @db.VarChar(64)
+ status String @default("PENDING") @db.VarChar(20)
+ version Int @default(1)
+ reviewerId String? @db.Uuid
+ reviewNotes String @default("") @db.VarChar(1600)
+ criterionResults Json
+ reviewedAt DateTime?
+ decisionHash String? @db.VarChar(64)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ assignment TrainingAssignment @relation(fields:[assignmentId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ learner User @relation("TrainingAttemptLearner",fields:[learnerId],references:[id],onDelete:Restrict)
+ reviewer User? @relation("TrainingAttemptReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+ @@unique([assignmentId,requestKey])
+ @@index([organizationId,assignmentId,createdAt])
+}
+model TrainingOperation {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ curriculumId String @db.Uuid
+ assignmentId String? @db.Uuid
+ actorId String @db.Uuid
+ requestKey String @db.Uuid
+ action String @db.VarChar(32)
+ requestHash String @db.VarChar(64)
+ result Json
+ resultHash String @db.VarChar(64)
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Restrict)
+ curriculum TrainingCurriculum @relation(fields:[curriculumId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ assignment TrainingAssignment? @relation(fields:[assignmentId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ actor User @relation("TrainingOperationActor",fields:[actorId],references:[id],onDelete:Restrict)
+ @@unique([organizationId,requestKey])
+ @@index([organizationId,curriculumId,createdAt])
+}
+
+model CustomerApiCredential {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ issuedById String @db.Uuid
+ name String @db.VarChar(100)
+ scopes String[] @db.VarChar(40)
+ secretHash String @db.VarChar(64)
+ hint String @db.VarChar(8)
+ version Int @default(1)
+ expiresAt DateTime
+ revokedAt DateTime?
+ lastUsedAt DateTime?
+ createdAt DateTime @default(now())
+ updatedAt DateTime @default(now()) @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ issuer User @relation("CustomerApiIssuer",fields:[issuedById],references:[id],onDelete:Restrict)
+ controls CustomerApiControlGrant[]
+ observations CustomerApiObservation[]
+ @@unique([id,organizationId])
+ @@index([organizationId,createdAt])
+ @@index([organizationId,revokedAt,expiresAt])
+}
+model CustomerApiControlGrant {
+ organizationId String @db.Uuid
+ credentialId String @db.Uuid
+ controlId String @db.Uuid
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ credential CustomerApiCredential @relation(fields:[credentialId,organizationId],references:[id,organizationId],onDelete:Cascade)
+ control ManagedControl @relation(fields:[controlId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ @@id([credentialId,controlId])
+ @@index([organizationId,controlId])
+}
+model CustomerApiBudget {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ bucket String @db.VarChar(80)
+ minute DateTime
+ count Int @default(0)
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ @@unique([organizationId,bucket,minute])
+ @@index([organizationId,minute])
+}
+model CustomerApiObservation {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ credentialId String @db.Uuid
+ credentialVersion Int
+ controlId String @db.Uuid
+ requestKey String @db.Uuid
+ externalId String @db.VarChar(120)
+ payload Json
+ payloadHash String @db.VarChar(64)
+ context Json
+ contextHash String @db.VarChar(64)
+ observedAt DateTime
+ validUntil DateTime
+ status String @default("PENDING") @db.VarChar(20)
+ version Int @default(1)
+ reviewerId String? @db.Uuid
+ reviewedAt DateTime?
+ reviewNotes String @default("") @db.VarChar(1600)
+ followUpTaskId String? @db.Uuid
+ receivedAt DateTime @default(now())
+ updatedAt DateTime @default(now()) @updatedAt
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ credential CustomerApiCredential @relation(fields:[credentialId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ control ManagedControl @relation(fields:[controlId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ reviewer User? @relation("CustomerApiReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
+ followUpTask Obligation? @relation(fields:[followUpTaskId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ @@unique([id,organizationId])
+ @@unique([credentialId,requestKey])
+ @@unique([credentialId,controlId,externalId])
+ @@index([organizationId,status,receivedAt,id])
+ @@index([organizationId,credentialId,receivedAt,id])
+}
+model CustomerApiOperation {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ actorId String @db.Uuid
+ requestKey String @db.Uuid
+ requestHash String @db.VarChar(64)
+ action String @db.VarChar(24)
+ entityId String @db.Uuid
+ result Json
+ createdAt DateTime @default(now())
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ actor User @relation(fields:[actorId],references:[id],onDelete:Restrict)
+ @@unique([organizationId,requestKey])
+ @@index([organizationId,createdAt])
 }

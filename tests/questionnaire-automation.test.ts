@@ -65,7 +65,7 @@ test('structured questionnaire input preserves bounded instructions and coordina
  assert.equal(questionnaireInput.safeParse({...base,rows:[row]}).success,true);
  for(const changed of [{...row,instructions:'x'.repeat(4001)},{...row,source:{...row.source,questionCell:'../../secret'}},{...row,source:{...row.source,sha256:'bad'}}])assert.equal(questionnaireInput.safeParse({...base,rows:[changed]}).success,false);
  const saved=questionsSchema.parse([{...row,id:randomUUID(),ownerId:base.ownerId,answerId:null,answerVersion:null,answerHash:null,status:'EMPTY',changedById:null}]);
- assert.equal(saved[0].source?.questionCell,'C7');assert.equal(saved[0].suppliedAnswer,row.suppliedAnswer);
+ assert.equal((saved[0].source&&'questionCell' in saved[0].source?saved[0].source.questionCell:undefined),'C7');assert.equal(saved[0].suppliedAnswer,row.suppliedAnswer);
 });
 
 test('batch application requires explicit consent, a bounded unique selection and an exact preview fingerprint',()=>{

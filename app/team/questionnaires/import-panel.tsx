@@ -1,6 +1,8 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
 import type {ImportMetadata,Mapping,Member,Product,Request,Workbook,Write} from './types';
+import {DocumentImportPanel} from './document-import-panel';
+import type {DocumentQuestionnaireInspection} from '../../../lib/questionnaire-intake';
 import css from './questionnaires.module.css';
 
 type Props={organizationId:string;members:Member[];products:Product[];request:Request;capture:()=>()=>boolean;write:Write;locked:boolean;onCreated:(id:string)=>Promise<void>};
@@ -19,6 +21,7 @@ function mappedRows(book:Workbook,mappings:Mapping[]){
  });
 }
 export function ImportPanel({organizationId,members,products,request,capture,write,locked,onCreated}:Props){
+ const [document,setDocument]=useState<DocumentQuestionnaireInspection|null>(null);
  const [file,setFile]=useState<File|null>(null),[book,setBook]=useState<Workbook|null>(null),[mappings,setMappings]=useState<Mapping[]>([]),[inspecting,setInspecting]=useState(false),[error,setError]=useState(''),[confirmed,setConfirmed]=useState(false);
  const [metadata,setMetadata]=useState({title:'',recipient:'',scope:'UK business',ownerId:'',productIds:[] as string[]});
  const alive=useRef(true),sequence=useRef(0),key=useRef({payload:'',id:''});
@@ -30,11 +33,12 @@ export function ImportPanel({organizationId,members,products,request,capture,wri
  const validMapping=mappings.every(mapping=>mapping.questionColumn>0&&(!mapping.referenceColumn||mapping.referenceColumn!==mapping.questionColumn)&&(!mapping.answerColumn||mapping.answerColumn!==mapping.questionColumn)&&(!mapping.firstRow||!mapping.lastRow||mapping.firstRow<=mapping.lastRow));
  function changeMapping(sheetId:string,changes:Partial<Mapping>){setMappings(previous=>previous.map(mapping=>mapping.sheetId===sheetId?{...mapping,...changes}:mapping));setConfirmed(false);}
  async function inspect(){
-  if(!file||inspecting||locked)return;const chosen=file,serial=++sequence.current,valid=capture();setInspecting(true);setBook(null);setMappings([]);setConfirmed(false);setError('');
-  try{const body=new FormData();body.set('file',chosen);const result:Workbook=await request('/api/workspace/questionnaires/inspect?'+new URLSearchParams({organizationId}),{method:'POST',body});
+  if(!file||inspecting||locked)return;const chosen=file,serial=++sequence.current,valid=capture();setInspecting(true);setBook(null);setDocument(null);setMappings([]);setConfirmed(false);setError('');
+  try{const body=new FormData();body.set('file',chosen);const result:Workbook|DocumentQuestionnaireInspection=await request('/api/workspace/questionnaires/inspect?'+new URLSearchParams({organizationId}),{method:'POST',body});
    if(!alive.current||!valid()||serial!==sequence.current)return;
-   if(!result||result.version!=='questionnaire-workbook-v1'||!Array.isArray(result.sheets)||!/^[a-f0-9]{64}$/.test(result.sha256))throw Error('The file inspection returned an incomplete result. Inspect the file again.');
-   setBook(result);const first=result.sheets.find(sheet=>!sheet.hidden)||result.sheets[0];setMappings(first?[suggestedMapping(first)]:[]);
+   if(result?.version==='questionnaire-document-v1'){setDocument(result as DocumentQuestionnaireInspection);return;}
+   if(!result||result.version!=='questionnaire-workbook-v1'||!('sheets' in result)||!Array.isArray(result.sheets)||!/^[a-f0-9]{64}$/.test(result.sha256))throw Error('The file inspection returned an incomplete result. Inspect the file again.');
+   const inspected=result as Workbook;setBook(inspected);const first=inspected.sheets.find(sheet=>!sheet.hidden)||inspected.sheets[0];setMappings(first?[suggestedMapping(first)]:[]);
    setMetadata(previous=>({...previous,title:previous.title||chosen.name.replace(/\.[^.]+$/,'').slice(0,160)}));
   }catch(problem){if(alive.current&&valid()&&serial===sequence.current)setError(problem instanceof Error?problem.message:'The file could not be inspected.');}
   finally{if(alive.current&&valid()&&serial===sequence.current)setInspecting(false);}
@@ -50,8 +54,8 @@ export function ImportPanel({organizationId,members,products,request,capture,wri
    return {state:'pending',message:'The import result could not be established. Check again before importing another file.'};
   }});
  }
- return <section className={css.panel} aria-label="Import a questionnaire"><div className={css.heading}><div><span className={css.eyebrow}>01 / BRING THE CUSTOMER’S QUESTIONS</span><h2>Import a questionnaire</h2></div><span className={css.badge}>XLSX or CSV</span></div><p>Choose the sheets and columns that matter. Review the selected questions before creating the response workspace.</p>
-  <fieldset className={css.fieldset} disabled={locked||inspecting}><label className={css.field}>Questionnaire file<input type="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" onChange={event=>{sequence.current++;setBook(null);setMappings([]);setConfirmed(false);setError('');const chosen=event.target.files?.[0]||null;if(chosen&&(!/\.(xlsx|csv)$/i.test(chosen.name)||chosen.size>3*1024*1024)){setFile(null);setError('Choose an XLSX or CSV file no larger than 3 MiB.');event.target.value='';return;}setFile(chosen);}}/></label><p className={css.muted}>Up to 3 MiB and 100 selected questions. The import retains selected text and its source rows; workbook formatting and unselected cells are not included.</p><button type="button" disabled={!file} onClick={()=>void inspect()}>{inspecting?'Inspecting file…':'Inspect questionnaire file'}</button></fieldset>
+ return <section className={css.panel} aria-label="Import a questionnaire"><div className={css.heading}><div><span className={css.eyebrow}>01 / BRING THE CUSTOMER’S QUESTIONS</span><h2>Import a questionnaire</h2></div><span className={css.badge}>XLSX · CSV · PDF · DOCX</span></div><p>Select workbook columns or review exact question passages from a text-based PDF or Word document.</p>
+  <fieldset className={css.fieldset} disabled={locked||inspecting}><label className={css.field}>Questionnaire file<input type="file" accept=".xlsx,.csv,.pdf,.docx" onChange={event=>{sequence.current++;setBook(null);setDocument(null);setMappings([]);setConfirmed(false);setError('');const chosen=event.target.files?.[0]||null;if(chosen&&(!/\.(xlsx|csv|pdf|docx)$/i.test(chosen.name)||chosen.size>3*1024*1024)){setFile(null);setError('Choose an XLSX, CSV, text-based PDF or DOCX file no larger than 3 MiB.');event.target.value='';return;}setFile(chosen);}}/></label><p className={css.muted}>Up to 3 MiB and 100 selected questions. Scanned documents require a readable text copy. Keep the original XLSX to return answers in its existing layout.</p><button type="button" disabled={!file} onClick={()=>void inspect()}>{inspecting?'Inspecting file…':'Inspect questionnaire file'}</button></fieldset>
   {error&&<p className={css.warning} role="alert">{error}</p>}
   {book&&<form onSubmit={event=>{event.preventDefault();void create();}}><fieldset className={css.fieldset} disabled={locked||inspecting}><div className={css.inspectStrip}><span><strong>{book.filename}</strong> · {book.sheets.length} sheet{book.sheets.length===1?'':'s'}</span><span>File inspected · nothing imported yet</span></div>
    {book.warnings.length>0&&<div className={css.warning}><strong>Inspection notes</strong><ul>{book.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul></div>}
@@ -70,5 +74,6 @@ export function ImportPanel({organizationId,members,products,request,capture,wri
    <fieldset className={css.fieldset}><legend>Products covered by this questionnaire</legend><p className={css.muted}>Select up to 10 products to prepare one distinct response per question and product. Leave all unchecked for a general questionnaire. Global answers must be deliberately approved for all products before reuse.</p>{products.map(product=><label className={css.check} key={product.id}><input type="checkbox" aria-label={'Questionnaire product '+product.name} checked={metadata.productIds.includes(product.id)} disabled={!metadata.productIds.includes(product.id)&&metadata.productIds.length>=10} onChange={event=>{setMetadata(previous=>({...previous,productIds:event.target.checked?[...previous.productIds,product.id]:previous.productIds.filter(id=>id!==product.id)}));setConfirmed(false);}}/>{product.name} · {product.code}</label>)}{!products.length&&<p className={css.muted}>Create company products in Products and evidence to prepare a product questionnaire.</p>}<p aria-live="polite">{rows.length} source questions · {metadata.productIds.length||1} response scope{metadata.productIds.length>1?'s':''} · {responseCount} of 100 response rows</p></fieldset>
    <label className={css.check}><input type="checkbox" required checked={confirmed} onChange={event=>setConfirmed(event.target.checked)}/>I checked the selected questions, customer context, recipient and response scope.</label><button disabled={!confirmed||!rows.length||responseCount>100||duplicates||invalidRows||!validMapping}>Import {rows.length} questions</button>
   </fieldset></form>}
+  {document&&file&&<DocumentImportPanel key={document.sha256} document={document} file={file} organizationId={organizationId} members={members} products={products} request={request} write={write} locked={locked} onCreated={onCreated}/>}
  </section>;
 }

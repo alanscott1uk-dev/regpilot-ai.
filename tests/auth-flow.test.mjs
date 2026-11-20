@@ -134,7 +134,7 @@ test('verified sign-in preserves exact evidence library and reuse links only in 
 test('programme, risk, product, knowledge and CAPA links retain only their exact bounded record through sign-in',async()=>{
  const {workspaceReturnIntent,workspaceReturnPath}=await import('../lib/auth-flow.mjs');
  const org='123e4567-e89b-42d3-a456-426614174000',id='123e4567-e89b-42d3-a456-426614174001';
- for(const [path,key] of [['/team/programmes','programmeId'],['/team/risks','riskId'],['/team/products','productId'],['/team/quality','caseId'],['/team/knowledge','productId'],['/team/knowledge','evidenceId']]){
+ for(const [path,key] of [['/team/programmes','programmeId'],['/team/risks','riskId'],['/team/products','productId'],['/team/quality','caseId'],['/team/training','curriculumId'],['/team/training','trainingId'],['/team/developers','credentialId'],['/team/developers','observationId'],['/team/knowledge','productId'],['/team/knowledge','evidenceId']]){
   assert.equal(signInDestination(path),path);
   const query=new URLSearchParams({organizationId:org,[key]:id}).toString();
   const intent=workspaceReturnIntent(path,query+'&next=https://evil.invalid','A@example.invalid',100);

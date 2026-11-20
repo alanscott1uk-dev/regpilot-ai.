@@ -4,8 +4,8 @@ import {findEvidencePassages,type EvidenceDocument} from "./evidence/assurance";
 import {extractionBlocked} from "./documents/coverage";
 
 export const QUESTIONNAIRE_DRAFT_ENGINE="questionnaire-draft-1.0.0";
-export const QUESTIONNAIRE_DRAFT_LIMITS={files:3,daily:20,history:100,characters:90000,modelTimeoutMs:45000,processingTimeoutMs:120000} as const;
-export const prepareQuestionnaireDraftInput=z.object({questionId:z.uuid(),questionnaireVersion:z.number().int().positive(),evidenceIds:z.array(z.uuid()).min(1).max(3).refine(ids=>new Set(ids).size===ids.length),method:z.enum(["CONTENT_SEARCH","AI"]),requestKey:z.uuid(),confirm:z.literal(true)}).strict();
+export const QUESTIONNAIRE_DRAFT_LIMITS={files:3,daily:20,attempts:3,history:100,characters:90000,modelTimeoutMs:45000,processingTimeoutMs:120000} as const;
+export const prepareQuestionnaireDraftInput=z.object({questionId:z.uuid(),questionnaireVersion:z.number().int().positive(),evidenceIds:z.array(z.uuid()).min(1).max(3).refine(ids=>new Set(ids).size===ids.length),method:z.enum(["CONTENT_SEARCH","AI"]),requestKey:z.uuid(),retryOfId:z.uuid().optional(),confirm:z.literal(true)}).strict();
 export const saveQuestionnaireDraftInput=z.object({action:z.literal("SAVE_ANSWER"),version:z.number().int().positive(),answer:z.string().trim().min(40).max(6000),validUntil:z.iso.date(),reviewedSupport:z.literal(true),confirm:z.literal(true)}).strict();
 const modelCitation=z.object({evidenceId:z.uuid(),unit:z.number().int().min(1).max(500),quote:z.string().min(12).max(1200)}).strict();
 export const questionnaireModelSchema=z.object({paragraphs:z.array(z.object({text:z.string().trim().min(20).max(1400),citations:z.array(modelCitation).min(1).max(4)}).strict()).max(4),gaps:z.array(z.string().min(8).max(400)).max(8),limitations:z.array(z.string().min(8).max(400)).max(8)}).strict();

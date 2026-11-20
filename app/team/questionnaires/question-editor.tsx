@@ -2,7 +2,7 @@
 import {useEffect,useState} from 'react';
 import {workspaceHref} from '../../../lib/client/workspace-context';
 import type {Candidate,Detail,Insight,Member,Question,Request,Write} from './types';
-import {dateLabel,insightLabel,questionLabel} from './types';
+import {dateLabel,insightLabel,questionLabel,questionSourceLabel} from './types';
 import {ResponsePreparation} from './response-preparation';
 import css from './questionnaires.module.css';
 
@@ -13,9 +13,9 @@ export function QuestionEditor({organizationId,userId,detail,question:q,insight,
  const active=detail.questionnaire.status==='DRAFT',owns=q.ownerId===userId,candidate=insight?.candidates.find(value=>value.id===chosen);
  useEffect(()=>{setChosen(q.answerId||'');setConfirmed(false);setOwner(q.ownerId);},[q.id,q.answerId,q.answerVersion,q.ownerId]);
  useEffect(()=>setConfirmed(false),[detail.questionnaire.version,candidate?.version,candidate?.contentHash]);
- const label=q.reference+(q.productName?' · '+q.productName:''),source=q.source,sourceRow=source?.row||source?.rowNumber;
- return <article className={css.editor} aria-label={'Question '+label}><header><span className={css.eyebrow} style={{margin:0}}>{label}</span><span className={css.badge} data-tone={q.status==='READY'?'good':'muted'}>{questionLabel(q.status)}</span></header><h3>{q.question}</h3><p className={css.metadata}>Owner: {members.find(member=>member.user.id===q.ownerId)?.user.email||(owns?'You':'Assigned colleague')}{source?.sheet||source?.sheetName?' · '+(source.sheet||source.sheetName):''}{sourceRow?' · source row '+sourceRow:''}</p>
-  {q.instructions&&<details open><summary className={css.sectionToggle}>Customer instructions and context</summary><p className={css.prose}>{q.instructions}</p></details>}{q.suppliedAnswer&&<details><summary className={css.sectionToggle}>Response supplied in the original file</summary><p className={css.muted}>Imported text has not been approved by your organisation.</p><div className={css.prose}>{q.suppliedAnswer}</div></details>}
+ const label=q.reference+(q.productName?' · '+q.productName:''),source=q.source;
+ return <article className={css.editor} aria-label={'Question '+label}><header><span className={css.eyebrow} style={{margin:0}}>{label}</span><span className={css.badge} data-tone={q.status==='READY'?'good':'muted'}>{questionLabel(q.status)}</span></header><h3>{q.question}</h3><p className={css.metadata}>Owner: {members.find(member=>member.user.id===q.ownerId)?.user.email||(owns?'You':'Assigned colleague')}{source?' · '+questionSourceLabel(source):''}</p>
+  {typeof source?.quote==='string'&&<details><summary className={css.sectionToggle}>Original document quotation</summary><div className={css.prose}>{source.quote}</div></details>}{q.instructions&&<details open><summary className={css.sectionToggle}>Customer instructions and context</summary><p className={css.prose}>{q.instructions}</p></details>}{q.suppliedAnswer&&<details><summary className={css.sectionToggle}>Response supplied in the original file</summary><p className={css.muted}>Imported text has not been approved by your organisation.</p><div className={css.prose}>{q.suppliedAnswer}</div></details>}
   {insight&&<div className={insight.classification==='SUPPORTED'?css.notice:css.warning}><strong>{insightLabel(insight.classification)}</strong><p>{insight.reason}</p></div>}
   {q.status==='READY'&&q.answer&&<><h4>Response confirmed by the question owner</h4><div className={css.prose}>{q.answer}</div><p className={css.muted}>{q.files.map(file=>file.filename).join(' · ')}</p></>}{q.reason&&<p className={css.warning}>{q.reason}</p>}
   {insight&&insight.candidates.length>0&&<><h4>Inspect an answer from your library</h4><label className={css.field}>Approved response for {label}<select aria-label={'Approved response for '+label} value={chosen} disabled={locked} onChange={event=>{setChosen(event.target.value);setConfirmed(false);}}><option value="">Choose an answer to inspect</option>{insight.candidates.map(value=><option key={value.id} value={value.id}>{value.matchKind==='EXACT'?'Exact · ':'Related · '}{value.question}{!value.selectable?' · unavailable for reuse':''}</option>)}</select></label>{candidate&&<CandidatePreview candidate={candidate} organizationId={organizationId}/>}</>}

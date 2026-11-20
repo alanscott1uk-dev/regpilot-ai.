@@ -14,6 +14,7 @@ import {downloadEvidence} from "./evidence-service";
 import {extractDocument} from "./document-extraction";
 import type {EvidenceObjectStore} from "./evidence-storage";
 import type {EvidenceDocument} from "../evidence/assurance";
+import {EvidenceError} from "../evidence/file-guard.mjs";
 import {assuranceConfigured,assuranceAiConfigured} from "./assurance-service";
 import {reserveAiRequest,DailyLimitError} from "./ai-meter";
 import {generateQuestionnaireDraft,type QuestionnaireDraftModelInput} from "./questionnaire-draft-model";
@@ -79,11 +80,13 @@ export async function prepareQuestionnaireDraft(c:AuthorizedContext,id:string,in
   if(!assuranceConfigured()||d.method==="AI"&&!questionnaireAiReady())throw new IntelligenceError(d.method==="AI"?"AI questionnaire drafting awaits activation":"Private evidence processing awaits activation",503);
   if(q.row.status!=="DRAFT"||q.row.version!==d.questionnaireVersion)throw new IntelligenceError("Questionnaire changed; refresh before preparation",409);
   const selected=q.questions.find(v=>v.id===d.questionId);if(!selected||selected.ownerId!==c.userId)throw new IntelligenceError("The assigned question owner must prepare the response",403);
-  const state=await capture(tx,c,id,d.questionId,d.evidenceIds,c.userId,d.method),same=await tx.questionnaireDraftRun.findUnique({where:{organizationId_inputHash_method:{organizationId:c.organizationId,inputHash:state.inputHash,method:d.method}}});
-  if(same)throw new IntelligenceError("These exact inputs already have a preparation record. Open its saved outcome; automatic repeat generation is blocked.",409);
+  const state=await capture(tx,c,id,d.questionId,d.evidenceIds,c.userId,d.method),same=await tx.questionnaireDraftRun.findFirst({where:{organizationId:c.organizationId,inputHash:state.inputHash,method:d.method},orderBy:{attempt:"desc"}});
+  if(same&&(!d.retryOfId||same.id!==d.retryOfId||same.status!=="FAILED"))throw new IntelligenceError("These exact inputs already have a preparation record. Open its saved outcome; only an explicit retry of the latest failed attempt can run again.",409);
+  if(d.retryOfId&&!same)throw new IntelligenceError("The failed preparation no longer matches these inputs. Review the current documents and request a new preparation.",409);
+  if(same&&same.attempt>=QUESTIONNAIRE_DRAFT_LIMITS.attempts)throw new IntelligenceError("Three attempts with these exact inputs have been recorded. Resolve the source or provider issue before preparing with a changed basis.",409);
   if(await tx.questionnaireDraftRun.count({where:{organizationId:c.organizationId,createdAt:{gte:new Date(Date.now()-86400000)}}})>=QUESTIONNAIRE_DRAFT_LIMITS.daily)throw new IntelligenceError("The daily limit of 20 questionnaire preparations has been reached",429);
-  const run=await tx.questionnaireDraftRun.create({data:{organizationId:c.organizationId,questionnaireId:id,questionId:d.questionId,createdById:c.userId,requestKey:d.requestKey,requestHash,inputHash:state.inputHash,engineVersion:QUESTIONNAIRE_DRAFT_ENGINE,method:d.method,evidenceManifest:json(state.files),context:json(state.context)}});
-  await event(tx,c,run.id,"processing_consented",{method:d.method,inputHash:state.inputHash,evidenceCount:state.files.length});return {run,state};
+  const run=await tx.questionnaireDraftRun.create({data:{organizationId:c.organizationId,questionnaireId:id,questionId:d.questionId,createdById:c.userId,requestKey:d.requestKey,requestHash,inputHash:state.inputHash,engineVersion:QUESTIONNAIRE_DRAFT_ENGINE,method:d.method,retryOfId:d.retryOfId??null,attempt:same?same.attempt+1:1,evidenceManifest:json(state.files),context:json(state.context)}});
+  await event(tx,c,run.id,d.retryOfId?"retry_consented":"processing_consented",{method:d.method,inputHash:state.inputHash,evidenceCount:state.files.length,attempt:run.attempt,...(d.retryOfId?{retryOfId:d.retryOfId}:{})});return {run,state};
  });
  if(prepared.existing)return {id:prepared.existing.id,reused:true,status:prepared.existing.status};
  const {run,state}=prepared;
@@ -98,10 +101,11 @@ export async function prepareQuestionnaireDraft(c:AuthorizedContext,id:string,in
   await transaction(c,async tx=>{const now=await current(tx,c,run);if(now.row.status!=="DRAFT")throw new IntelligenceError("Questionnaire is no longer a draft",409);if(!assuranceConfigured()||d.method==="AI"&&!questionnaireAiReady())throw new IntelligenceError("Document processing was deactivated",503);const changed=await tx.questionnaireDraftRun.updateMany({where:{id:run.id,organizationId:c.organizationId,status:"PROCESSING",version:1},data:{status:"DRAFT",result:json(result),resultHash:hashValue(result),version:{increment:1}}});if(changed.count!==1)throw new IntelligenceError("This preparation is no longer pending",409);await event(tx,c,run.id,"prepared",{method:d.method,resultHash:hashValue(result),citations:result.citations.length});});
   return {id:run.id,reused:false,status:"DRAFT"};
  }catch(error){
-  await transaction(c,async tx=>{await tx.questionnaireDraftRun.updateMany({where:{id:run.id,organizationId:c.organizationId,status:"PROCESSING"},data:{status:"FAILED",failureCode:error instanceof DailyLimitError?"DAILY_LIMIT":error instanceof IntelligenceError?"CONTEXT_OR_EVIDENCE_CHANGED":"PREPARATION_FAILED",version:{increment:1}}});await event(tx,c,run.id,"failed");});
+  await transaction(c,async tx=>{await tx.questionnaireDraftRun.updateMany({where:{id:run.id,organizationId:c.organizationId,status:"PROCESSING"},data:{status:"FAILED",failureCode:error instanceof DailyLimitError?"DAILY_LIMIT":error instanceof IntelligenceError||error instanceof EvidenceError?"CONTEXT_OR_EVIDENCE_CHANGED":"PREPARATION_FAILED",version:{increment:1}}});await event(tx,c,run.id,"failed");});
   if(error instanceof DailyLimitError)throw new IntelligenceError(error.message,429);
+  if(error instanceof EvidenceError)throw new IntelligenceError(error.message,error.status);
   if(error instanceof IntelligenceError)throw error;
-  throw new IntelligenceError("Preparation failed. The attempt is recorded and will not repeat automatically. Inspect its status before preparing with changed inputs.",502);
+  throw new IntelligenceError("Preparation failed. The attempt is recorded and will not repeat automatically. Inspect its status before explicitly retrying.",502);
  }
 }
 
@@ -126,6 +130,8 @@ export async function questionnaireDrafts(c:AuthorizedContext,id:string,filter:{
   const evidence=await tx.evidence.findMany({where:{organizationId:c.organizationId,scanStatus:"CLEAN",reviewStatus:"APPROVED"},select:{id:true,filename:true},orderBy:{createdAt:"desc"},take:100});
   const productState=await loadProductScopeState(tx,c.organizationId,[...new Set([...fileIds,...evidence.map(file=>file.id)])]);
   const people=runs.length?await completionParticipants(tx,c,[...runs.map(run=>run.createdById),...q.questions.map(question=>question.ownerId),...[...usableFiles.values()].flatMap(file=>[file.uploadedById,file.reviewerId])]):[];
+  const grouped=runs.length?await tx.questionnaireDraftRun.groupBy({by:["inputHash","method"],where:{organizationId:c.organizationId,inputHash:{in:[...new Set(runs.map(run=>run.inputHash))]}},_max:{attempt:true}}):[];
+  const latestAttempts=new Map(grouped.map(row=>[row.inputHash+":"+row.method,row._max.attempt]));
   for(const run of runs){
    let isCurrent=false,reason="",result=null;
    try{
@@ -142,7 +148,9 @@ export async function questionnaireDrafts(c:AuthorizedContext,id:string,filter:{
     if(captured(q,question,files,participants,run.createdById,run.method,productContext).inputHash!==run.inputHash)throw new IntelligenceError("The question, business scope, selected evidence or participant permissions changed. Prepare a new draft.",409);
     isCurrent=true;
    }catch(e){if(!(e instanceof IntelligenceError)&&!(e instanceof z.ZodError))throw e;reason=e instanceof IntelligenceError?e.message:"Stored draft could not be verified";}
-   drafts.push({id:run.id,questionId:run.questionId,createdById:run.createdById,method:run.method,status:run.status,version:run.version,current:isCurrent,reason,failureCode:run.failureCode,answerId:run.answerId,result,canSave:isCurrent&&run.status==="DRAFT"&&run.createdById===c.userId&&owned.includes(run.questionId)&&q.row.status==="DRAFT"});
+   const canOperate=isCurrent&&run.createdById===c.userId&&owned.includes(run.questionId)&&q.row.status==="DRAFT";
+   const evidenceFiles=isCurrent?originals.get(run.id)!.files.map(file=>({id:file.id,filename:file.filename})):[];
+   drafts.push({id:run.id,questionId:run.questionId,createdById:run.createdById,method:run.method,status:run.status,version:run.version,attempt:run.attempt,retryOfId:run.retryOfId,current:isCurrent,reason,failureCode:run.failureCode,answerId:run.answerId,result,evidenceIds:evidenceFiles.map(file=>file.id),evidenceFiles,canRetry:canOperate&&run.status==="FAILED"&&run.attempt<QUESTIONNAIRE_DRAFT_LIMITS.attempts&&latestAttempts.get(run.inputHash+":"+run.method)===run.attempt,canSave:canOperate&&run.status==="DRAFT"});
   }
   const evidenceByQuestion=Object.fromEntries(q.questions.filter(question=>questionIds.includes(question.id)).map(question=>[question.id,evidence.filter(file=>{try{captureQuestionProductContextFromState(productState,q.row,question,[file.id]);return true;}catch(error){if(error instanceof IntelligenceError)return false;throw error;}})]));
   return {drafts,evidence,evidenceByQuestion,evidenceReady:assuranceConfigured(),aiReady:questionnaireAiReady(),canPrepareQuestionIds:q.row.status==="DRAFT"?owned:[],limits:QUESTIONNAIRE_DRAFT_LIMITS};

@@ -66,7 +66,7 @@ test('batch reuse previews full current answers, verifies canonical evidence and
   for(const [index,answer] of [a,b].entries()){await changeQuestionnaire(x.ed,q.id,{action:'ANSWER',version:detail.questionnaire.version,questionId:detail.questions[index].id,answerId:answer.id,confirm:true});detail=await questionnaireDetail(x.o,q.id);}
   await assert.rejects(()=>changeQuestionnaire(x.o,q.id,{action:'APPROVE',version:detail.questionnaire.version,notes,confirm:true},x.store),rejects(403));
   await changeQuestionnaire(x.ad,q.id,{action:'APPROVE',version:detail.questionnaire.version,notes,confirm:true},x.store);
-  const exported=await exportQuestionnaire(x.ad,q.id,x.store);assert.equal(exported.questions[0].answer,response);assert.equal(exported.questions[0].source?.questionCell,'C9');assert.equal(exported.questions[0].suppliedAnswer,'Not approved original buyer text.');assert.match(exported.csv,/quarterly verification/);
+  const exported=await exportQuestionnaire(x.ad,q.id,x.store);assert.equal(exported.questions[0].answer,response);assert.equal((exported.questions[0].source&&'questionCell' in exported.questions[0].source?exported.questions[0].source.questionCell:undefined),'C9');assert.equal(exported.questions[0].suppliedAnswer,'Not approved original buyer text.');assert.match(exported.csv,/quarterly verification/);
   const replay=await automateQuestionnaire(x.o,q.id,input,x.store);assert.ok('reused' in replay&&replay.reused);assert.equal((await questionnaireDetail(x.o,q.id)).questionnaire.status,'APPROVED');
  }finally{await x.cleanup();}
 });

@@ -13,11 +13,14 @@ export type QuestionnaireMapping={
   sheetId:string;headerRow?:number;questionColumn:number;referenceColumn?:number|null;answerColumn?:number|null;
   contextColumns?:number[];firstRow?:number;lastRow?:number;instructions?:string;
 };
-export type QuestionnaireSource={
+export type SpreadsheetQuestionnaireSource={
   filename:string;sha256:string;format:'CSV'|'XLSX';sheet:string;row:number;
   questionCell:string;referenceCell?:string;answerCell?:string;contextCells?:string[];
 };
-export type QuestionnaireImportRow={reference:string;question:string;instructions:string;suppliedAnswer:string;source:QuestionnaireSource};
+export type DocumentQuestionnaireSource={filename:string;sha256:string;format:'PDF'|'DOCX';unitKind:'page'|'block';unit:number;start:number;end:number;quote:string;extractionVersion:string;unitLabel?:string};
+export type QuestionnaireSource=SpreadsheetQuestionnaireSource|DocumentQuestionnaireSource;
+export type OriginalAnswerMapping={sheet:string;productId?:string|null;answerColumn:number};
+export type QuestionnaireImportRow={reference:string;question:string;instructions:string;suppliedAnswer:string;source:SpreadsheetQuestionnaireSource};
 export type QuestionnaireExport={
   title?:string;recipient?:string;scope?:string;approvedHash?:string|null;approvedAt?:string|Date|null;
   questions:Array<{product?:{id:string;code:string;name:string;version:number}|null;reference:string;question:string;answer:string;instructions?:string;suppliedAnswer?:string;source?:QuestionnaireSource;
@@ -30,3 +33,5 @@ export function readQuestionnaireForm(request:Request):Promise<FormData>;
 export function questionnaireFormFile(form:FormData):File;
 export function writeQuestionnaireXlsx(value:QuestionnaireExport):Buffer;
 export function writeQuestionnaireCsv(value:QuestionnaireExport):string;
+
+export function writeQuestionnaireOriginalXlsx(bytes:Uint8Array,filename:string,value:QuestionnaireExport,mappings:unknown):Promise<Buffer>;

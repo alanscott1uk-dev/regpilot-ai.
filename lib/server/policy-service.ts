@@ -9,6 +9,7 @@ import {reviewedFileSchema,reviewedFiles,assertReviewedFiles,verifyReviewedBytes
 import {downloadEvidence} from "./evidence-service";
 import type {EvidenceObjectStore} from "./evidence-storage";
 import type {z} from "zod";
+import {syncPublishedPolicyTraining} from './training-assignments';
 const org=(ctx:AuthorizedContext)=>({organizationId:ctx.organizationId});
 async function event(tx:Prisma.TransactionClient,ctx:AuthorizedContext,action:string,id:string,details:Prisma.InputJsonValue={}){
  await tx.auditEvent.create({data:{...org(ctx),actorId:ctx.userId,action:"policy."+action,entityType:"Policy",entityId:id,details}});
@@ -75,6 +76,7 @@ export async function changePolicy(ctx:AuthorizedContext,id:string,input:unknown
    await tx.policyRevision.update({where:{id:r.id},data:{status:"PUBLISHED",reviewerId:ctx.userId,reviewNotes:d.notes,publishedAt:new Date(),version:{increment:1}}});
    await tx.policy.update({where:{id:p.id},data:{currentRevision:r.number,version:{increment:1}}});
    await tx.policyAssignment.createMany({data:d.userIds.map(userId=>({...org(ctx),revisionId:r.id,userId,dueDate:futureDate(d.dueDate)}))});
+   await syncPublishedPolicyTraining(tx,ctx,id);
    await event(tx,ctx,"published",id,{revisionId:r.id,number:r.number,assigned:d.userIds.length,fileHash:r.fileHash});
    return {id,number:r.number,assigned:d.userIds.length};
   });

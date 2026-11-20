@@ -1,5 +1,6 @@
 import {context,reply,fail} from '../../../../../lib/server/operations-http';
 import {inspectQuestionnaireFile,readQuestionnaireForm,questionnaireFormFile,QuestionnaireWorkbookError} from '../../../../../lib/server/questionnaire-workbook.mjs';
+import {inspectQuestionnaireDocument} from '../../../../../lib/server/questionnaire-document';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
 export const maxDuration=30;
@@ -12,7 +13,7 @@ export async function POST(request:Request){
     const form=await readQuestionnaireForm(request);
     if([...form.keys()].some(key=>key!=='file'))return reply({error:'Inspection accepts one questionnaire file'},400);
     const file=questionnaireFormFile(form);
-    const workbook=await inspectQuestionnaireFile(new Uint8Array(await file.arrayBuffer()),file.name);
+    const bytes=new Uint8Array(await file.arrayBuffer()),workbook=await (/\.(pdf|docx)$/i.test(file.name)?inspectQuestionnaireDocument(bytes,file.name):inspectQuestionnaireFile(bytes,file.name));
     return reply({organizationId:ctx.organizationId,...workbook});
   }catch(error){
     if(error instanceof QuestionnaireWorkbookError)return reply({error:error.message},error.status);

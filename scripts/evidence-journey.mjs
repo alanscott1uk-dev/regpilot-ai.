@@ -12,6 +12,9 @@ import {starterProgrammeCustomerJourney,riskCustomerJourney} from './starter-ris
 import {questionnaireCustomerJourney} from './questionnaire-customer-journey.mjs';
 import {capaCustomerJourney} from './capa-customer-journey.mjs';
 import {productKnowledgeCustomerJourney} from './product-knowledge-customer-journey.mjs';
+import {runQuestionnaireFormatJourney} from './questionnaire-format-customer-journey.mjs';
+import {trainingCustomerJourney} from './training-customer-journey.mjs';
+import {customerApiCustomerJourney} from './customer-api-customer-journey.mjs';
 
 const app='http://127.0.0.1:3000', api='http://127.0.0.1:54321', mail='http://127.0.0.1:54324';
 assert.equal(process.env.NEXT_PUBLIC_SUPABASE_URL,api);
@@ -460,7 +463,18 @@ try{
  report.starterProgrammeJourney=await starterProgrammeCustomerJourney({upload,review,db,app,org,editor,reviewer,checkpoint,passed,bounded,artifactDir});
  report.riskJourney=await riskCustomerJourney({upload,review,db,app,org,editor,reviewer,checkpoint,passed,bounded,artifactDir,completedSource:report.customerJourney,evidenceId:rereviewed.id,storageSnapshot});
  report.questionnaireJourney=await questionnaireCustomerJourney({upload,review,db,app,org,editor,reviewer,checkpoint,passed,bounded,artifactDir,evidenceId:rereviewed.id});
- report.productKnowledgeJourney=await productKnowledgeCustomerJourney({upload,review,db,app,org,editor,reviewer,checkpoint,passed,bounded,artifactDir,evidenceId:rereviewed.id});
+ report.trainingJourney=await trainingCustomerJourney({upload,review,db,app,org,editor,reviewer,submitEvidence,evidenceId:rereviewed.id,completedSource:report.customerJourney,checkpoint,passed,bounded,artifactDir});
+ const withUnavailableEvidence=async(evidenceId,operation)=>{
+  const record=await db.evidence.findFirstOrThrow({where:{id:evidenceId,organizationId:org.id}}),bucket=supabase.storage.from('journey-files'),original=await bucket.download(record.storageKey);
+  if(original.error)throw Error('Could not read the isolated evidence original');const bytes=new Uint8Array(await original.data.arrayBuffer());assert.equal(createHash('sha256').update(bytes).digest('hex'),record.sha256);
+  const unavailable=await bucket.update(record.storageKey,fixturePdf([['Controlled unavailable original for retry verification.']]),{contentType:record.contentType});if(unavailable.error)throw Error('Could not simulate isolated storage mismatch');
+  try{return await operation();}finally{const restored=await bucket.update(record.storageKey,bytes,{contentType:record.contentType});if(restored.error)throw Error('Could not restore the isolated evidence original');}
+ };
+ report.productKnowledgeJourney=await productKnowledgeCustomerJourney({upload,review,db,app,org,editor,reviewer,checkpoint,passed,bounded,artifactDir,evidenceId:rereviewed.id,withUnavailableEvidence});
+
+ report.questionnaireFormatJourney=await runQuestionnaireFormatJourney({upload,review,app,org,editor,reviewer,db,evidenceId:rereviewed.id,artifactDir,checkpoint,passed,bounded});
+
+ report.customerApiJourney=await customerApiCustomerJourney({upload,review,db,app,org,editor,reviewer,evidenceId:rereviewed.id,checkpoint,passed,bounded,artifactDir});
 
  await checkpoint('unavailable organisation isolation');
  await review.goto(app+'/team/evidence?'+new URLSearchParams({organizationId:randomUUID(),taskId:task.id}));
