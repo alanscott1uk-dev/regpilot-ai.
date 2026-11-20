@@ -19,7 +19,7 @@ export default function Accounting() {
   return <div className={shell.app}><WorkspaceNav/><main className={shell.main}><div className={ui.body}>
     <header className={ui.intro}><div><h1>Accounting software</h1>
       <p>Add the accounting packages your organisation uses. Open the provider account or authorise RegPilot to check the connected business.</p></div></header>
-    {workspace.organisations.length>0&&<label>Organisation<select value={workspace.organizationId} onChange={e=>workspace.chooseOrganization(e.target.value)}>
+    {workspace.organisations.length>0&&<label>Organisation<select aria-label="Organisation" value={workspace.organizationId} onChange={e=>workspace.chooseOrganization(e.target.value)}>
       {!workspace.organizationId&&<option value="">Choose an organisation</option>}{workspace.organisations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}
     </select></label>}
     {workspace.organizationId?<Packages key={workspace.revision} workspace={workspace}/>:workspace.loading?<p role="status">Loading workspace…</p>:
@@ -57,7 +57,7 @@ function Packages({workspace}:{workspace:Workspace}) {
   const remaining=accountingIds.filter(id=>!state?.serviceIds.includes(id));
   return <>{error&&<div role="alert"><p>{error}</p>{!state&&<button onClick={()=>void load()}>Reload accounting software</button>}</div>}
     {state?<>{state.canManage&&remaining.length>0&&<form className={ui.card} onSubmit={e=>{e.preventDefault();if(choice)void call({action:"ADD",provider:choice});}}>
-      <h2>Add accounting software</h2><div className={ui.actions}><label>Accounting package<select required disabled={busy} value={choice} onChange={e=>setChoice(e.target.value as AccountingId|"")}>
+      <h2>Add accounting software</h2><div className={ui.actions}><label>Accounting package<select aria-label="Accounting package" required disabled={busy} value={choice} onChange={e=>setChoice(e.target.value as AccountingId|"")}>
         <option value="">Choose a package</option>{remaining.map(id=><option key={id} value={id}>{accountingSoftware[id].name}</option>)}
       </select></label><button type="submit" disabled={busy||!choice}>Add to workspace</button></div></form>}
       {!state.serviceIds.length&&<p>Your workspace has no accounting software added.</p>}

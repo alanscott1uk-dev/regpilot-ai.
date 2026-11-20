@@ -48,10 +48,10 @@ function Directory({workspace}:{workspace:ReturnType<typeof useWorkspaceContext>
   return <div className={ui.body}>
     <header className={ui.intro}><div><h1>Regulator accounts</h1>
       <p>Sign in on the regulator’s website using the account authorised for your organisation. Official services open in a new tab.</p></div></header>
-    <div className={ui.grid}>{workspace.organisations.length>0&&<label>Organisation<select value={organizationId} onChange={e=>workspace.chooseOrganization(e.target.value)}>
+    <div className={ui.grid}>{workspace.organisations.length>0&&<label>Organisation<select aria-label="Organisation" value={organizationId} onChange={e=>workspace.chooseOrganization(e.target.value)}>
       {!organizationId&&<option value="">Choose an organisation</option>}{workspace.organisations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}
     </select></label>}
-    <label>Where is the site?<select value={nation} onChange={e=>setNation(e.target.value)}>
+    <label>Where is the site?<select aria-label="Where is the site?" value={nation} onChange={e=>setNation(e.target.value)}>
       <option value="">All UK nations</option>{["England","Scotland","Wales","Northern Ireland"].map(n=><option key={n}>{n}</option>)}
     </select></label></div>
     {error&&<div role="alert"><p>{error}</p><button type="button" disabled={busy} onClick={()=>void load()}>Reload workspace shortcuts</button></div>}
