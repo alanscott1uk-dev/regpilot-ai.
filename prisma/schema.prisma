@@ -142,6 +142,7 @@ enum ReviewStatus {
 }
 
 model User {
+ horizonWatchlistsChanged HorizonWatchlist[]
  evaluationCasesCreated EvaluationCase[] @relation("EvaluationCaseCreator")
  evaluationCasesReviewed EvaluationCase[] @relation("EvaluationCaseReviewer")
  evaluationRuns EvaluationRun[] @relation("EvaluationRunCreator")
@@ -250,6 +251,7 @@ model User {
 }
 
 model Organization {
+ horizonWatchlists HorizonWatchlist[]
  evaluationCases EvaluationCase[]
  evaluationRuns EvaluationRun[]
  evaluationAnswerReviews EvaluationAnswerReview[]
@@ -2456,4 +2458,20 @@ model EvaluationOperation {
  actor User @relation("EvaluationOperationActor",fields:[actorId],references:[id],onDelete:Restrict)
  @@unique([organizationId,requestKey])
  @@index([organizationId,createdAt])
+}
+
+model HorizonWatchlist {
+  organizationId String @db.Uuid
+  id             String @db.Uuid
+  name           String @db.VarChar(80)
+  filters        Json
+  version        Int @default(1)
+  archived       Boolean @default(false)
+  changedById    String @db.Uuid
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  changedBy      User @relation(fields: [changedById], references: [id], onDelete: Restrict)
+
+  @@id([organizationId, id])
+  @@index([organizationId, archived, name])
 }

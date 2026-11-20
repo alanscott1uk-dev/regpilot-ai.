@@ -1,5 +1,11 @@
 # Infrastructure reliability expansion — 12 November 2026
 
+## Draft update, 20 November 2026
+
+The horizon collector requests up to 1,500 results in one read and reduces the page size when the response exceeds 2 MB. It checks the returned offset when supplied, rejects duplicate and short pages, and retains the previous observation time after a failed feed. The 2,000-result per-publisher ceiling still applies. The horizon screen and its public health endpoint expose the reason for incomplete coverage and any retry time.
+
+Owners and admins can save up to 20 named watchlists in a workspace. Members can open a shared link, see the phrase that matched a publication, and apply publisher, activity, category and review-state filters. The past-day and past-week options use the official publisher timestamp against the collection time. The latest-collection option uses RegPilot's first-seen and metadata-change observations. Reviews opened with saved criteria record the watchlist version, its filters and the matching phrase on the decision. The server rechecks the publication against that version before saving. Each saved edit or archive is versioned and audited. The release adds `prisma/changes/horizon-watchlists.sql`. The hourly collector uses a separately pinned revision on the default branch.
+
 ## Running pipeline
 
 This batch expands the GOV.UK collector from 100 to 2,000 results per publisher, with a fixed end timestamp, pagination identity checks, explicit index-change/limit states, a 90-second deadline per publisher, three concurrent publishers and bounded retries. A failed publisher does not overwrite its previously observed records. Per-publisher cooldowns and consecutive-failure counts survive in the published checkpoint: transient failures back off from 15 minutes to six hours, and explicit provider delays up to seven days are preserved. Longer delays require operator review rather than an early retry. The retained report is bounded to 10,000 records or 4 MB, whichever comes first, to remain within hosting response limits. Retention limits are explicit.

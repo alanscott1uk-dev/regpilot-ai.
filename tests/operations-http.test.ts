@@ -1,3 +1,4 @@
+import {POST as SAVE_WATCHLIST} from '../app/api/workspace/horizon/watchlists/route';
 import {PATCH as LINK_CONTROL} from "../app/api/workspace/connectors/[id]/controls/route";
 import {PATCH as CONNECTION_ACTION} from "../app/api/workspace/connectors/[id]/route";
 import {GET as SETUP,POST as SAVE_SETUP} from "../app/api/workspace/setup/route";
@@ -49,4 +50,12 @@ test("shared evidence links authenticate before selecting tenant controls",async
  const req=()=>new Request("https://example.invalid",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({organizationId:id,version:1,action:"LINK",controlId:id,controlVersion:1,rationale:"Fictional evidence connection rationale",confirm:true})});
  process.env.REGPILOT_WORKSPACE_ENABLED="false";assert.equal((await LINK_CONTROL(req(),{params:Promise.resolve({id})})).status,503);
  process.env.REGPILOT_WORKSPACE_ENABLED="true";assert.equal((await LINK_CONTROL(req(),{params:Promise.resolve({id})})).status,401);
+});
+
+test("watchlist changes require one workspace and authentication before processing the body",async()=>{
+ const req=(query:string)=>new Request("https://example.invalid/api/workspace/horizon/watchlists?"+query,{method:"POST",headers:{"content-type":"application/json"},body:"invalid JSON"});
+ process.env.REGPILOT_WORKSPACE_ENABLED="true";
+ assert.equal((await SAVE_WATCHLIST(req("organizationId="+id))).status,401);
+ assert.equal((await SAVE_WATCHLIST(req("organizationId="+id+"&organizationId="+id))).status,400);
+ assert.equal((await SAVE_WATCHLIST(req(""))).status,400);
 });

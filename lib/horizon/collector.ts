@@ -23,6 +23,36 @@ export async function boundedJson(url:string,fetcher:typeof fetch=fetch,max=2_00
   try{return JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw new CollectionError('INVALID_JSON');}
  }finally{await reader.cancel().catch(()=>{});}
 }
+// GOV.UK supports up to 1,500 results in one response. Most publisher windows
+// then have no offset boundary where a mutable index can repeat or omit a row.
+const MAX_SEARCH_PAGE = 1500;
+const MIN_SEARCH_PAGE = 50;
+
+async function readSearchPage(
+ publisher: string, windowStart: string, generatedAt: string, offset: number,
+ count: number, read: (url:string)=>Promise<Response>,
+) {
+ for (;;) {
+  const params = new URLSearchParams({
+   filter_organisations: publisher,
+   filter_public_timestamp: 'from:'+windowStart.slice(0,10)+',to:'+generatedAt,
+   order: '-public_timestamp',
+   count: String(count), start: String(offset),
+   fields: 'title,link,description,public_timestamp,content_store_document_type,organisations',
+  });
+  try {
+   const raw = await boundedJson('https://www.gov.uk/api/search.json?'+params, url=>read(String(url)));
+   if (!Array.isArray(raw?.results) || raw.results.length > count || !Number.isSafeInteger(raw.total) || raw.total < 0) {
+    throw new CollectionError('INVALID_RESPONSE_SHAPE');
+   }
+   if (raw.start !== undefined && raw.start !== offset) throw new CollectionError('PAGE_OFFSET_MISMATCH');
+   return {raw, count};
+  } catch (error) {
+   if (!(error instanceof CollectionError) || error.code !== 'RESPONSE_TOO_LARGE' || count <= MIN_SEARCH_PAGE) throw error;
+   count = Math.max(MIN_SEARCH_PAGE, Math.floor(count / 2));
+  }
+ }
+}
 export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch,now=new Date(),provenance:{codeCommit:string|null;runId:string|null}={codeCommit:null,runId:null}):Promise<HorizonReport>{
  const started=Date.now(),metrics={requests:0,retries:0};
  const generatedAt=now.toISOString(),windowStart=new Date(now.getTime()-30*86400000).toISOString();let old:HorizonReport|null=null;
@@ -34,10 +64,20 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
   if(priorFeed?.state==='unavailable'&&(priorFeed.reason==='RETRY_REQUIRES_REVIEW'||priorFeed.retryAt&&Date.parse(priorFeed.retryAt)>now.getTime())){feeds[index]={...priorFeed,retrieved:0};continue;}
   const feedMetrics={requests:0,retries:0};
   const retryRead=resilientGet(fetcher,'https://www.gov.uk',{accept:'application/json'},{timeoutMs:90000,maxRequests:60,metrics:feedMetrics});
-  try{for(let page=0;page<MAX_PUBLISHER_RESULTS/50;page++){
-   const params=new URLSearchParams({filter_organisations:publisher.slug,filter_public_timestamp:'from:'+windowStart.slice(0,10)+',to:'+generatedAt,order:'-public_timestamp',count:'50',start:String(page*50),fields:'title,link,description,public_timestamp,content_store_document_type,organisations'});
-   const raw=await boundedJson('https://www.gov.uk/api/search.json?'+params,(url)=>retryRead(String(url)));
-   if(!Array.isArray(raw?.results)||raw.results.length>50||!Number.isSafeInteger(raw.total)||raw.total<0)throw new CollectionError('INVALID_RESPONSE_SHAPE');if(total!==null&&total!==raw.total)indexChanged=true;total=raw.total;
+  try{
+   let pageSize = MAX_SEARCH_PAGE;
+   while (retrieved < MAX_PUBLISHER_RESULTS) {
+    const offset = retrieved;
+    const page = await readSearchPage(publisher.slug, windowStart, generatedAt, offset,
+     Math.min(pageSize, MAX_PUBLISHER_RESULTS-offset), retryRead);
+    const {raw} = page;
+    pageSize = page.count;
+    if(total!==null && total!==raw.total) indexChanged=true;
+    total=raw.total;
+    if (raw.results.length < Math.min(pageSize, Math.max(0, raw.total-offset))) {
+     throw new CollectionError('INCOMPLETE_PAGE');
+    }
+    if (offset+raw.results.length > raw.total) indexChanged=true;
    for(const row of raw.results){
     const parsedPath=horizonPath.safeParse(row?.link);if(!parsedPath.success)throw new CollectionError('INVALID_PUBLICATION_PATH');const path=parsedPath.data;
     const timestamp=typeof row.public_timestamp==='string'?Date.parse(row.public_timestamp):NaN;
@@ -50,7 +90,7 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
     const id=digest(url),revision=digest(JSON.stringify({title,summary,documentType,updatedAt})),before=prior.get(id);
     staged.push({id,revision,path,url,title,summary,documentType,kind:itemKind(path,documentType),publisherIds:[publisher.id],updatedAt,firstSeenAt:before?.firstSeenAt||generatedAt,observedAt:generatedAt,discovery:!old?'BASELINE':!before?'FIRST_SEEN':before.revision!==revision?'METADATA_UPDATED':'UNCHANGED'});
    }
-   if(raw.results.length<50||retrieved>=total!)break;
+   if(retrieved>=raw.total)break;
   }
   for(const item of staged)if(collected.has(item.id)&&collected.get(item.id)!.revision!==item.revision)throw new CollectionError('INCONSISTENT_PUBLICATION');
   for(const item of staged){const existing=collected.get(item.id);if(existing){existing.publisherIds=[...new Set([...existing.publisherIds,publisher.id])];}else collected.set(item.id,item);}

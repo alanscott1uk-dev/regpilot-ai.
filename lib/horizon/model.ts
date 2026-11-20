@@ -38,3 +38,22 @@ export function rankItem(item:HorizonItem,topics:string[]=[]){
  const matched=PUBLISHERS.filter(p=>item.publisherIds.includes(p.id)&&p.topics.some(t=>topics.includes(t)));
  return {score:weights[item.kind]+(matched.length?25:0),reasons:[item.kind+' category',...matched.map(p=>p.name+' matches a selected activity')],suggested:matched.length>0};
 }
+
+const feedIssues: Record<string,string> = {
+ DUPLICATE_PAGE: 'The publisher returned a duplicate publication.',
+ INCOMPLETE_PAGE: 'The publisher returned fewer results than advertised.',
+ PAGE_OFFSET_MISMATCH: 'The publisher returned a different page than requested.',
+ INDEX_CHANGED: 'The search index changed during collection. Some results may be missing.',
+ RESULT_LIMIT: 'The publisher exceeded the collection limit.',
+ RATE_LIMITED: 'The publisher requested a pause before the next read.',
+ RETRY_REQUIRES_REVIEW: 'The publisher requested a long pause. An operator must review it.',
+ RESPONSE_TOO_LARGE: 'The response exceeded the maximum size even at the smallest page size.',
+ PROVIDER_TIMEOUT: 'The publisher did not respond within the collection window.',
+ PROVIDER_UNAVAILABLE: 'The publisher could not complete the request.',
+ REQUEST_LIMIT: 'The collection reached its request budget.',
+};
+export function describeFeedIssue(reason: string) {
+ if (Object.hasOwn(feedIssues, reason)) return feedIssues[reason];
+ if (/^HTTP_STATUS_[1-5]\d{2}$/.test(reason)) return 'The publisher returned HTTP '+reason.slice(-3)+'.';
+ return 'The collection could not verify the response.';
+}
