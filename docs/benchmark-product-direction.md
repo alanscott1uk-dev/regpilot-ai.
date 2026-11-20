@@ -4,6 +4,30 @@ Historical development notes follow. For the latest implemented workflow and mea
 
 **Current technical baseline — 20 November:** [Competitive technical specification](technical-spec-20261120.md) records the new file questionnaire, contextual answer reuse, evidence-grounded drafting and durable processing capabilities, plus the remaining advanced-feature and infrastructure requirements. The current user priority is advanced capabilities and infrastructure first, then workflow refinement. Historical snapshots below must not override that direction or be reused as current implementation status.
 
+## Vanta comparison from the supplied screenshots · 20 November 2026
+
+Vanta presents three customer jobs on mobile. Compliance shows a framework’s completion, number of tests and last refresh. Risk shows counts in an inherent-risk heatmap. Proof lets a customer request access to a Trust Center, ask a question and inspect published controls. The illustrated 87%, 115 tests and three-minute refresh are example dashboard values. The demo page advertises 400+ integrations, 35+ frameworks and 16,000+ customers. These are vendor-reported figures. The demo form also identifies vendor risk, questionnaire automation and US federal frameworks as buying needs, including CMMC, FedRAMP and NIST. Pricing is by quotation.
+
+| Vanta plan | What the buyer sees |
+| --- | --- |
+| Essentials | One framework, policy generation and templates, AI questions spanning policies, controls, frameworks, tests and documents, evidence checks and collection, ongoing control monitoring, audit reporting, an auditor API, a Trust Center and access to expert partners. |
+| Plus | Policy onboarding, access requests and reviews, and 25 automated questionnaires per year. The supplied capture also puts policy-to-control mapping, change summaries and SLA tracking with remediation here. |
+| Professional | The capture shows advanced control and AI-assisted issue management. The pricing page also lists 144 questionnaires per year, custom monitoring tests, automated access management, expanded risk reporting and an advanced Trust Center. |
+| Enterprise | A configurable governance, risk and compliance package. Scope and price require a quote. |
+
+The live Essentials listing also includes policy-to-control mapping and SLA remediation. The capture places these under Plus, so their tier needs confirmation before a purchasing comparison. [Vanta plans and pricing](https://www.vanta.com/pricing)
+
+| Capability | RegPilot evidence on PR #10 | Comparison to demonstrate |
+| --- | --- | --- |
+| AI across the workspace | The preview answers UK guidance questions with verified quotations. The branch also has separate private company knowledge search and questionnaire drafting. | From one question, retrieve the current approved SOP, its mapped control, the latest authorised evidence and the official UK passage. Show which source supports each statement. |
+| Continuous monitoring and framework coverage | The branch records source checks and connector evidence. The preview catalogue contains 51 official publications. | For each supported framework, show applicable controls, passing and failing tests, collection failures and last successful checks. Count integrations with repeatable live evidence collection and frameworks with reviewed control mappings. |
+| Risk and customer assurance | The branch has inherent and residual risk ratings, treatment records and private assurance rooms. | Demonstrate drill-down from a risk heatmap to the exact control and evidence. From the customer side, test requesting access, asking a question and seeing only approved material. |
+| Questionnaires and access governance | The branch supports questionnaire intake, grounded drafts and response packs. | Measure reviewer correction rates and completion time on real formats. Assess recurring access reviews, requests and remediation separately from questionnaire throughput. |
+
+**UK pharma acceptance question:** “What does our temperature-mapping SOP require, and do we have current evidence for the cold room?” Run it against two isolated test organisations. One has an approved SOP, an obsolete revision and a current mapping report. The other has no report. The answer should cite the approved revision and report, distinguish company procedure from MHRA guidance, and identify missing evidence in the second organisation. A reviewer with restricted access should see only records they can open. Repeat with “temperature mappping” and “standard operating procedures”. This is a proposed test for the next build.
+
+RegPilot baseline: [preview application commit](https://github.com/alanscott1uk-dev/regpilot-ai./commit/1510964dc90eb8d3f119e5d9b38bebbfd7387531) · [22 live search checks](https://github.com/alanscott1uk-dev/regpilot-ai./actions/runs/44783048904).
+
 ## Active competitor-derived development choices — 19 November 2026
 
 The user direction is to use the strongest competitor capabilities as the product baseline, then improve the experience for RegPilot's UK SME customers. Compare the complete customer job, implement the missing workflow, and retain its acceptance evidence. Do not count an existing module again as a new capability or infer superiority from a feature list.
