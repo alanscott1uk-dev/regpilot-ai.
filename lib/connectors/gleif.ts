@@ -23,7 +23,8 @@ export const gleifTarget=z.object({companyNumber,lei:leiCode});
 const name=z.string().trim().min(1).max(300);
 const identity=z.object({type:z.literal("lei-records"),id:leiCode,attributes:z.object({lei:leiCode,
   entity:z.object({registeredAt:z.object({id:z.string().nullable()}),registeredAs:z.string().nullable(),legalName:z.object({name}),jurisdiction:z.string().nullable(),status:z.string().nullable().optional()}),
-  registration:z.object({status:z.string().nullable().optional(),nextRenewalDate:z.string().nullable().optional(),lastUpdateDate:z.string().nullable().optional()})})});
+  registration:z.object({status:z.string().nullable().optional(),nextRenewalDate:z.string().nullable().optional(),
+    corroborationLevel:z.string().nullish(),validatedAt:z.object({id:z.string().nullable()}).nullish(),validatedAs:z.string().nullish()})})});
 type Identity=z.infer<typeof identity>;
 // These Companies House number series fix the register even when GLEIF supplies only GB.
 function expectedAuthority(number:string){
@@ -73,13 +74,20 @@ export async function collectGleif(input:z.input<typeof gleifTarget>,fetcher:typ
   const follow="Inspect the LEI record and the exact Companies House company before the next supplier decision.";
   const status=(value:string|undefined|null,positive:string,negative:string[]):ConnectorCheck["status"]=>
     value===positive?"PASS":value&&negative.includes(value)?"FAIL":"UNKNOWN";
-  return {engine:"gleif-uk-identity-1.0.0",sourceUrl:url.source,capturedAt:new Date(now).toISOString(),checks:[
+  const level=registration.corroborationLevel,exactValidation=registration.validatedAt?.id===entity.registeredAt.id&&registration.validatedAs===t.companyNumber;
+  let corroboration:ConnectorCheck["status"]="UNKNOWN";
+  if(level==="FULLY_CORROBORATED"&&exactValidation)corroboration="PASS";
+  if(level==="PARTIALLY_CORROBORATED"||level==="ENTITY_SUPPLIED_ONLY")corroboration="FAIL";
+  return {engine:"gleif-uk-identity-1.1.0",sourceUrl:url.source,capturedAt:new Date(now).toISOString(),checks:[
     {id:"uk-entity-match",label:"LEI record matches the UK company number",status:"PASS",observed:t.companyNumber,nextStep:follow},
     {id:"legal-entity-active",label:"GLEIF records the legal entity as active",status:status(entity.status,"ACTIVE",["INACTIVE"]),observed:entity.status??"Unreported",nextStep:follow},
     {id:"lei-issued",label:"LEI registration is issued",status:status(registration.status,"ISSUED",["LAPSED","RETIRED","MERGED","DUPLICATE","ANNULLED"]),observed:registration.status??"Unreported",nextStep:follow},
     {id:"lei-renewal",label:"An issued LEI has a future renewal date",status:!current||!Number.isFinite(validDate)?"UNKNOWN":validDate>now?"PASS":"FAIL",
      observed:Number.isFinite(validDate)?new Date(validDate).toISOString().slice(0,10):"Renewal date unavailable",nextStep:"Check renewal with the supplier when the reported date has passed or the registration is no longer issued."},
-    {id:"registered-legal-name",label:"Registered legal name and registration authority",status:"PASS",observed:entity.legalName.name+" · "+entity.registeredAt.id,nextStep:follow}
+    {id:"registered-legal-name",label:"Registered legal name and registration authority",status:"PASS",observed:entity.legalName.name+" · "+entity.registeredAt.id,nextStep:follow},
+    {id:"issuer-corroboration",label:"LEI issuer reports full corroboration using the same Companies House record",status:corroboration,
+     observed:(level??"Unreported")+" · "+(exactValidation?"Primary validation authority and number match":"Primary validation authority or number unconfirmed"),
+     nextStep:"Open the Companies House record and review the issuer’s validation basis before relying on this supplier identity."}
   ],limitations:["The match uses the registration authority and exact UK company number recorded by GLEIF. Addresses, officer data and personal contact details are excluded.",
     "An issued LEI identifies a legal entity. Financial health, beneficial ownership, trading permission and sanctions status require separate evidence."]};
 }

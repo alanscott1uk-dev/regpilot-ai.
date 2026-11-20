@@ -7,7 +7,7 @@ import {connectorProviderEnabled} from "./connector-flags";
 import {allowedEmail} from "../ai/security.mjs";
 import type {AuthorizedContext} from "./authorization";
 export const registerProviders=["COMPANIES_HOUSE","GLEIF"];
-const observationSchema=z.object({engine:z.enum(["companies-house-profile-1.0.0","gleif-uk-identity-1.0.0"]),sourceUrl:z.url(),capturedAt:z.iso.datetime(),checks:z.array(z.object({id:z.string().max(80),label:z.string().max(200),status:z.enum(["PASS","FAIL","UNKNOWN"]),observed:z.string().max(500),nextStep:z.string().max(1000)})).min(1).max(20),limitations:z.array(z.string().max(1500)).max(10)});
+const observationSchema=z.object({engine:z.enum(["companies-house-profile-1.0.0","gleif-uk-identity-1.0.0","gleif-uk-identity-1.1.0"]),sourceUrl:z.url(),capturedAt:z.iso.datetime(),checks:z.array(z.object({id:z.string().max(80),label:z.string().max(200),status:z.enum(["PASS","FAIL","UNKNOWN"]),observed:z.string().max(500),nextStep:z.string().max(1000)})).min(1).max(20),limitations:z.array(z.string().max(1500)).max(10)});
 export const vendorSignalSchema=z.object({connectorId:z.uuid(),configVersion:z.number().int().positive(),signalHash:z.string().length(64),runId:z.uuid(),capturedAt:z.iso.datetime(),resultHash:z.string().length(64),observation:observationSchema});
 export async function vendorSignal(tx:Prisma.TransactionClient,organizationId:string,id:string){
  const c=await tx.evidenceConnector.findFirst({where:{id,organizationId,provider:{in:registerProviders}},include:{runs:{orderBy:[{capturedAt:"desc"},{id:"desc"}],take:1}}});
@@ -18,7 +18,8 @@ export async function vendorSignal(tx:Prisma.TransactionClient,organizationId:st
  const o=observationSchema.parse(run.result);
  const observedNumber=gleif?o.checks.find(check=>check.id==="uk-entity-match"&&check.status==="PASS")?.observed.match(/^(?:[A-Z]{2}\d{6}|\d{8})$/)?.[0]:o.sourceUrl.match(/^https:\/\/find-and-update\.company-information\.service\.gov\.uk\/company\/([A-Z0-9]{8})$/)?.[1];
  const observedLei=gleif?o.sourceUrl.match(/^https:\/\/search\.gleif\.org\/#\/record\/([A-Z0-9]{18}\d{2})$/)?.[1]:null;
- if(!observedNumber||o.engine!==(gleif?"gleif-uk-identity-1.0.0":"companies-house-profile-1.0.0")||(gleif&&!observedLei)||
+ const engineMatches=gleif?o.engine.startsWith("gleif-uk-identity-"):o.engine==="companies-house-profile-1.0.0";
+ if(!observedNumber||!engineMatches||(gleif&&!observedLei)||
     (run.configVersion===c.version&&(observedNumber!==companyNumber||(gleif&&"gleif:"+observedLei!==c.repository)))||
     hashValue({engine:o.engine,checks:o.checks})!==run.signalHash)throw new IntelligenceError("Supplier signal identity or integrity changed",409);
  const current=connectorProviderEnabled(c.provider)&&observationCurrent(run,c,true);

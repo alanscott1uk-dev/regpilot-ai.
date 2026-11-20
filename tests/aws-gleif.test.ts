@@ -110,3 +110,16 @@ test("GLEIF collection binds both identifiers, retains selected public fields an
   row.attributes.entity.jurisdiction="US";await assert.rejects(run(),fails("TARGET_MISMATCH"));
   await assert.rejects(collectGleif({lei,companyNumber:number},async()=>new Response(null,{status:404})),fails("REGISTER_RECORD_MISSING"));
 });
+
+test("a fully corroborated LEI supports the UK claim only when the issuer's primary validation register and number both match",async()=>{
+  const row=ukRecord();
+  async function outcome(){
+    const result=await collectGleif({lei,companyNumber:number},async()=>Response.json({data:row}));
+    return result.checks.find(c=>c.id==="issuer-corroboration")!.status;
+  }
+  assert.equal(await outcome(),"PASS");
+  row.attributes.registration.validatedAs="14259";assert.equal(await outcome(),"UNKNOWN");
+  row.attributes.registration.validatedAs=number;row.attributes.registration.validatedAt.id="RA000587";assert.equal(await outcome(),"UNKNOWN");
+  for(const grade of ["PARTIALLY_CORROBORATED","ENTITY_SUPPLIED_ONLY"]){row.attributes.registration.corroborationLevel=grade;assert.equal(await outcome(),"FAIL");}
+  row.attributes.registration.corroborationLevel="PENDING";assert.equal(await outcome(),"UNKNOWN");
+});

@@ -5,7 +5,9 @@ import {hashValue} from "../lib/regulatory/intelligence";
 
 const targets=[
   {companyNumber:"00014259",lei:"MP6I5ZYZBEU3UXPYFY54"},
-  {companyNumber:"SC045551",lei:"2138005O9XJIJN4JPN90"}
+  {companyNumber:"SC045551",lei:"2138005O9XJIJN4JPN90"},
+  {companyNumber:"02366777",lei:"2138001LSWETH5TDQG53"},
+  {companyNumber:"NI003721",lei:"635400HGEXBSGYDUIP53"}
 ];
 async function verify(target:typeof targets[number]){
   try{
@@ -17,7 +19,8 @@ async function verify(target:typeof targets[number]){
   }catch(e){return {...target,state:"UNAVAILABLE",reason:e instanceof CollectionError?e.code:"COLLECTION_FAILED"};}
 }
 async function main(){
-  const results=await Promise.all(targets.map(verify));
+  const results=[];
+  for(const target of targets)results.push(await verify(target));
   await mkdir("artifacts",{recursive:true});
   await writeFile("artifacts/gleif-supplier-contract.json",JSON.stringify({checkedAt:new Date().toISOString(),results},null,2)+"\n");
   for(const result of results)console.log(result.companyNumber,result.state);

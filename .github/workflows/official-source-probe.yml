@@ -42,7 +42,7 @@ jobs:
       - name: Verify live OpenSSF supplier reports against their assessed revisions
         if: ${{ !cancelled() }}
         run: node --import tsx scripts/verify-supplier-reports.ts
-      - name: Check live GLEIF records against English and Scottish company numbers
+      - name: Check live GLEIF records for companies across all four UK nations
         if: ${{ !cancelled() }}
         run: node --import tsx scripts/verify-gleif-suppliers.ts
       - name: Check infrastructure contract harness without customer credentials
