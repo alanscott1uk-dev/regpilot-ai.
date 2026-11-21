@@ -37,6 +37,11 @@ export const trialTracks:Record<string,Track>={
 export const trialEnvironments=['FIXTURE','PARTNER_SANDBOX','PROTECTED_PILOT'] as const;
 export const trialStart=z.object({action:z.literal('START'),requestKey:z.uuid(),track:z.string().refine(k=>Object.hasOwn(trialTracks,k)),steps:z.array(z.string().max(30)).min(1).max(6),release:z.string().regex(/^[a-f0-9]{40}$/),environment:z.enum(trialEnvironments),intendedUse:z.string().trim().min(15).max(360),ukExternal:z.boolean()}).strict();
 export const trialResult=z.object({step:z.string().max(30),outcome:z.enum(['PASS','FAIL','UNOBSERVED']),evidenceId:z.uuid().nullable(),notes:z.string().trim().min(10).max(600),unsupported:z.number().int().min(0).max(1000),edits:z.number().int().min(0).max(1000),assisted:z.boolean()}).strict();
-export const trialFinish=z.object({action:z.literal('FINISH'),id:z.uuid(),results:z.array(trialResult).min(1).max(6)}).strict();
+const comparison=z.object({
+ method:z.string().trim().min(3).max(120),elapsedSeconds:z.number().int().min(1).max(2592000),
+ edits:z.number().int().min(0).max(6000),evidenceId:z.uuid(),sameTasks:z.literal(true)
+}).strict();
+export const trialFinish=z.object({comparison:comparison.optional(),action:z.literal('FINISH'),id:z.uuid(),results:z.array(trialResult).min(1).max(6)}).strict();
 export const trialReview=z.object({action:z.literal('REVIEW'),id:z.uuid(),decision:z.enum(['ACCEPT','REJECT']),notes:z.string().trim().min(20).max(800)}).strict();
-export const trialAction=z.discriminatedUnion('action',[trialStart,trialFinish,trialReview]);
+export const trialStop=z.object({action:z.literal('STOP'),id:z.uuid()}).strict();
+export const trialAction=z.discriminatedUnion('action',[trialStart,trialStop,trialFinish,trialReview]);

@@ -20,6 +20,34 @@ test('timed runs retain release, separate blind decisions, evidence versions and
   await db.evidence.update({where:{id:file.id},data:{reviewVersion:{increment:1}}});assert.equal((await trialWorkspace(f.o)).trials[0].accepted,false);
  }finally{await f.cleanup();}
 });
+test('paired process comparisons stop the server timer, bind the timing evidence and retain release history beyond 50 runs',async()=>{
+ const f=await assuranceFixture();
+ try{
+  const release='a'.repeat(40),file=await f.file(),baseline=await f.file();
+  const plan={action:'START',requestKey:randomUUID(),track:'business',steps:['help'],release,
+   environment:'PARTNER_SANDBOX',ukExternal:true,intendedUse:'Compare unaided recovery from a failed connection.'};
+  const {id}=await recordTrial(f.ed,plan);
+  const finish={action:'FINISH',id,results:[{step:'help',outcome:'PASS',notes:'Recovered using the approved support guide.',evidenceId:file.id,unsupported:0,edits:1,assisted:false}],
+   comparison:{method:'Existing support process',elapsedSeconds:210,edits:3,evidenceId:baseline.id,sameTasks:true}};
+  await assert.rejects(()=>recordTrial(f.ed,finish,f.store),rejects(409));
+  await assert.rejects(()=>recordTrial(f.ad,{action:'STOP',id}),rejects(403));
+  await Promise.all([recordTrial(f.ed,{action:'STOP',id}),recordTrial(f.ed,{action:'STOP',id})]);
+  assert.equal(await db.auditEvent.count({where:{organizationId:f.a.id,entityId:id,action:'trial.stop'}}),1);
+  await recordTrial(f.ed,finish,f.store);
+  await recordTrial(f.ad,{action:'REVIEW',id,decision:'ACCEPT',notes:'I reviewed both records for the same tasks and scope.'},f.store);
+  let record=(await trialWorkspace(f.o,{release})).trials[0];
+  assert.equal(record.elapsedSeconds,Math.floor((Date.parse(record.stoppedAt!)-Date.parse(record.startedAt))/1000));
+  assert.deepEqual(record.comparison,finish.comparison);assert.equal(record.accepted,true);
+  const createdAt=new Date(Date.now()+1000);
+  await db.auditEvent.createMany({data:Array.from({length:50},()=>{const requestKey=randomUUID();return {organizationId:f.a.id,actorId:f.ed.userId,entityId:requestKey,entityType:'CapabilityTrial',action:'trial.start',createdAt,details:{...plan,requestKey}};})});
+  const first=await trialWorkspace(f.o,{release}),next=await trialWorkspace(f.o,{release,before:first.nextCursor!});
+  assert.equal(first.trials.length,50);assert.equal(next.trials.length,1);assert.equal(next.trials[0].id,id);assert.equal(next.nextCursor,null);
+  await assert.rejects(()=>trialWorkspace(f.out,{release,before:first.nextCursor!}),rejects(400));
+  assert.equal((await trialWorkspace(f.o,{release:'b'.repeat(40)})).trials.length,0);
+  await db.evidence.update({where:{id:baseline.id},data:{reviewVersion:{increment:1}}});
+  record=(await trialWorkspace(f.o,{release,before:first.nextCursor!})).trials[0];assert.equal(record.accepted,false);
+ }finally{await f.cleanup();}
+});
 test('guide use counts unique reader-days and routes a failed connection to its assigned accountable owner',async()=>{
  const f=await assuranceFixture();try{
   const guide='connections',read={action:'OPEN',guide};await changeHelp(f.st,read);await changeHelp(f.st,read);
