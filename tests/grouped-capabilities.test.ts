@@ -33,3 +33,13 @@ test('grouped trials cover all 22 workbook criteria once and each NHS task inclu
  const rows=Object.values(trialTracks).flatMap(t=>t.steps.map(s=>s.row)).sort((a,b)=>a-b);assert.deepEqual(rows,Array.from({length:22},(_,i)=>i+7));
  assert.equal(nhsProcurementPack.items.length,6);for(const item of nhsProcurementPack.items)assert.match(item.evidenceHint,/https:\/\/(digital\.nhs\.uk|www\.dsptoolkit\.nhs\.uk)\//);
 });
+
+test('reviewed effective dates handle both boundaries and a missing date rule preserves earlier records',async()=>{
+ const {evaluateDatedRule}=await import('../lib/library/applicability');
+ const rule={kind:'fact' as const,field:'jurisdictions' as const,operator:'includes' as const,value:'Scotland'};
+ const effective={from:'2026-03-01',through:'2026-10-31'};
+ for(const day of ['2026-02-28','2026-11-01'])assert.equal(evaluateDatedRule(rule,{},['Scotland'],day,effective).state,'NO_MATCH');
+ for(const day of [effective.from,effective.through])assert.equal(evaluateDatedRule(rule,{},['Scotland'],day,effective).state,'MATCH');
+ assert.equal(evaluateDatedRule(rule,{},['Northern Ireland'],'2026-06-01',effective).state,'NO_MATCH');
+ assert.equal(evaluateDatedRule(rule,{},[],'2026-06-01').state,'UNKNOWN');
+});

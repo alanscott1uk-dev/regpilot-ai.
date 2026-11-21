@@ -40,3 +40,21 @@ test('group reporting requires current access to every named entity and does not
   await assert.rejects(()=>groupRiskReport(f.o,{selection:{...selection,missingSites:[]},approveHash:report.digest}),rejects(409));
  }finally{await f.cleanup();}
 });
+
+test('verified tenant invoice costs distinguish allocations, incomplete coverage and current evidence',async()=>{
+ const {changeCosts,tenantCosts,costKinds}=await import('../lib/server/tenant-costs');
+ const f=await assuranceFixture();try{
+  const file=await f.file(),month=new Date().toISOString().slice(0,7);
+  const submit=(lines:{kind:string;pence:number;basis:string;evidenceId:string}[])=>({action:'SUBMIT',report:{month,lines,requestKey:randomUUID(),notes:'These fictional invoices and allocation records relate to this workspace.'}});
+  const lines=costKinds.map((kind,i)=>({kind,pence:100*i,basis:i===3?'ALLOCATED':'INVOICED',evidenceId:file.id}));
+  await changeCosts(f.o,submit(lines.slice(0,3)),f.store);let statement=(await tenantCosts(f.o,month)).statement!;
+  await assert.rejects(()=>changeCosts(f.o,{action:'REVIEW',month,id:statement.id,confirm:true},f.store),rejects(403));
+  await changeCosts(f.ad,{action:'REVIEW',month,id:statement.id,confirm:true},f.store);
+  assert.equal((await tenantCosts(f.o,month)).statement!.totalPence,null);
+  await changeCosts(f.o,submit(lines),f.store);statement=(await tenantCosts(f.o,month)).statement!;
+  await changeCosts(f.ad,{action:'REVIEW',month,id:statement.id,confirm:true},f.store);
+  assert.equal((await tenantCosts(f.o,month)).statement!.totalPence,600);
+  assert.equal((await tenantCosts(f.out,month)).statement,null);
+  await db.evidence.update({where:{id:file.id},data:{reviewVersion:{increment:1}}});assert.equal((await tenantCosts(f.o,month)).statement!.totalPence,null);
+ }finally{await f.cleanup();}
+});

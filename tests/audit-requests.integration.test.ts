@@ -43,6 +43,10 @@ test("audit requests preserve period, independent evidence selection, ownership,
   await publish();const exported=await exportAuditPackage(o,room.id);assert.equal(exported.manifest.files.length,1);assert.equal(exported.manifest.requests![0].controlVersion,2);assert.doesNotMatch(JSON.stringify(exported),/ownerName|reviewNotes|samplingNotes|storageKey/);
   await assert.rejects(()=>changeAuditRequest(o,fresh.id,{action:"CANCEL",version:3,notes,confirm:true}),rejects(409));
   const r=(await manageAuditRoom(o,room.id)).room,grant=await changeAuditRoom(o,room.id,{action:"INVITE",version:r.version,email:x.foreign.email}) as {id:string};const identity={externalId:x.foreign.externalId,email:x.foreign.email};await guestAuditAction(identity,grant.id,{action:"ACCEPT",version:1});const guest=await openAuditRoom(identity,grant.id);assert.deepEqual(guest.room.period,period);assert.equal(guest.room.requests.length,1);assert.doesNotMatch(JSON.stringify(guest),/samplingNotes|reviewNotes|ownerName|storageKey/);
+  const finding={action:'SAMPLE',requestId:fresh.id,evidenceId:guest.room.requests[0].fileIds[0],decision:'REJECTED',notes:'The selected audit sample does not establish the scoped period for this request.',requestKey:randomUUID()};
+  await guestAuditAction(identity,grant.id,finding);await guestAuditAction(identity,grant.id,finding);
+  const records=(await manageAuditRoom(o,room.id)).sampleFindings;assert.equal(records.length,1);assert.equal(records[0].decision,'REJECTED');assert.equal(records[0].fileHash,guest.files[0].sha256);
+  await assert.rejects(()=>guestAuditAction(identity,grant.id,{...finding,evidenceId:randomUUID(),requestKey:randomUUID()}),rejects(404));
   const foreignTask=await db.obligation.create({data:{organizationId:x.b.id,title:"Foreign request task",category:"Internal",ownerName:x.foreign.email,dueDate:new Date()}});
   await assert.rejects(()=>db.auditRequest.create({data:{organizationId:x.b.id,roomId:room.id,taskId:foreignTask.id,controlId:control.id,controlSnapshot:{},controlHash:"a".repeat(64),title:"Wrong tenant",instructions:"Invalid cross-tenant request fixture."}}));
  }finally{await x.cleanup();}

@@ -29,3 +29,8 @@ export function evaluateRule(rule:Rule|null,facts:Facts,jurisdictions:string[]):
  const children=rule.rules.map(r=>evaluateRule(r,facts,jurisdictions));const state=rule.kind==="all"?(children.some(c=>c.state==="NO_MATCH")?"NO_MATCH":children.every(c=>c.state==="MATCH")?"MATCH":"UNKNOWN"):(children.some(c=>c.state==="MATCH")?"MATCH":children.every(c=>c.state==="NO_MATCH")?"NO_MATCH":"UNKNOWN");
  return {state,missing:[...new Set(children.flatMap(c=>c.missing))],explanation:rule.kind==="all"?"All conditions must match.":"At least one condition must match.",children};
 }
+
+export function evaluateDatedRule(rule:Rule|null,facts:Facts,nations:string[],on:string,period?:{from:string;through?:string}):RuleResult{
+ if(period&&(on<period.from||period.through&&on>period.through))return {state:'NO_MATCH',missing:[],explanation:'The selected date is outside the independently reviewed effective period.'};
+ return evaluateRule(rule,facts,nations);
+}

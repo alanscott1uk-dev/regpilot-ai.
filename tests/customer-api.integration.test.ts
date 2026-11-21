@@ -1,3 +1,6 @@
+import {createAuditRoom,changeAuditRoom,guestAuditAction,openAuditRoom} from '../lib/server/auditor-service';
+import {attachBuyerAnnex,buyerAnnexOptions} from '../lib/server/buyer-annex';
+import {purgeExpiredPartnerRecords} from '../lib/server/partner-retention';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -129,10 +132,20 @@ test('partner receipts retain revision history through credential rotation, retr
  const x=await fixture();
  try{
   const key=await x.create(),s=await x.session(key.secret!,'observations:write');
-  const record={schemaVersion:1,revision:1,recordId:'company-relationship-7',sourceSystem:'Buyer procurement',sourceVersion:'2026-11',decisionOwnerRef:'buyer-office',state:'CURRENT',record:{kind:'SUPPLIER_RELATION',buyerRef:'buyer',supplierRef:'primary',upstreamRef:'tier-two',consentRef:'consent-044',consentExpiresAt:new Date(Date.now()+86400000).toISOString()}};
+  const record={schemaVersion:1,revision:1,recordId:'company-relationship-7',sourceSystem:'Buyer procurement',sourceVersion:'2026-11',decisionOwnerRef:'buyer-office',state:'CURRENT',record:{kind:'SUPPLIER_RELATION',permittedBuyers:[x.foreign.email],buyerRef:'buyer',supplierRef:'primary',upstreamRef:'tier-two',consentRef:'consent-044',consentExpiresAt:new Date(Date.now()+86400000).toISOString()}};
   const body={...x.observation(x.primary.id,'PASS'),partnerRecord:record};
   const first=await submitCustomerApiObservation(s,randomUUID(),body);
   assert.equal(first.current,true);assert.equal(first.reportedOutcome,'REPORTED_PASS');assert.match(first.receiptHash,/^[a-f0-9]{64}$/);
+  await assert.rejects(()=>reviewCustomerApiObservation(x.o,first.id,{decision:'ACKNOWLEDGE',version:1,notes,confirm:true,requestKey:randomUUID()}),rejects(403));
+  await reviewCustomerApiObservation(x.ad,first.id,{decision:'ACKNOWLEDGE',version:1,notes,confirm:true,requestKey:randomUUID()});
+  const file=await x.file(),room=await createAuditRoom(x.o,{title:'Buyer fixture share',purpose:'Validate explicitly consented partner source records in this named room.',expiresAt:new Date(Date.now()+86400000).toISOString(),evidenceIds:[file.id]});
+  await changeAuditRoom(x.o,room.id,{action:'PUBLISH',version:1,manifestHash:room.manifestHash,acknowledgeDisclosure:true});
+  const g=await changeAuditRoom(x.o,room.id,{action:'INVITE',version:2,email:x.foreign.email}) as {id:string},wrong=await changeAuditRoom(x.o,room.id,{action:'INVITE',version:2,email:x.staff.email}) as {id:string};
+  const b={externalId:x.foreign.externalId,email:x.foreign.email};
+  assert.equal((await buyerAnnexOptions(x.o,room.id,g.id)).receipts.length,1);assert.equal((await buyerAnnexOptions(x.o,room.id,wrong.id)).receipts.length,0);
+  await assert.rejects(()=>attachBuyerAnnex(x.o,room.id,{grantId:wrong.id,observationId:first.id,receiptHash:first.receiptHash,confirm:true}),rejects(409));
+  await attachBuyerAnnex(x.o,room.id,{grantId:g.id,observationId:first.id,receiptHash:first.receiptHash,confirm:true});await guestAuditAction(b,g.id,{action:'ACCEPT',version:1});
+  const annex=(await openAuditRoom(b,g.id)).partnerRecords;assert.equal(annex.length,1);assert.equal('permittedBuyers' in annex[0].record,false);
   const rotate=await changeCustomerCredential(x.o,key.id,{action:'ROTATE',version:1,requestKey:randomUUID(),confirm:true}) as Created;
   const active=await x.session(rotate.secret!,'observations:write');
   await assert.rejects(()=>submitCustomerApiObservation(s,randomUUID(),body),rejects(401));
@@ -142,8 +155,19 @@ test('partner receipts retain revision history through credential rotation, retr
   await assert.rejects(()=>submitCustomerApiObservation(active,randomUUID(),{...next,controlId:x.foreignControl.id}),rejects(404));
   const attempts=await Promise.all([submitCustomerApiObservation(active,randomUUID(),next),submitCustomerApiObservation(active,randomUUID(),next)]);
   assert.equal(attempts[0].id,attempts[1].id);assert.equal(attempts[0].current,false);
-  const list=await developerWorkspace(x.o);assert.match(list.observations.find(v=>v.id===first.id)!.reason,/superseded/);
+  assert.equal((await openAuditRoom(b,g.id)).partnerRecords.length,0);
+  const list=await developerWorkspace(x.o,{all:true});assert.match(list.observations.find(v=>v.id===first.id)!.reason,/superseded/);
   assert.match(list.observations.find(v=>v.id===attempts[0].id)!.reason,/disputed/);
   await assert.rejects(()=>reviewCustomerApiObservation(x.ad,first.id,{decision:'ACKNOWLEDGE',notes,version:1,requestKey:randomUUID(),confirm:true}),rejects(409));
+ }finally{await x.cleanup();}
+});
+
+test('specialist retention withholds expired detail and the worker removes the underlying payload once',async()=>{
+ const x=await fixture();try{
+  const k=await x.create(),s=await x.session(k.secret!,'observations:write');
+  const body={...x.observation(x.primary.id,'PASS'),summary:'Specialist decision supplied by the authorised source.',checks:[{key:'specialist-decision',label:'Specialist decision',observed:'APPROVED',status:'PASS',detail:''}],partnerRecord:{schemaVersion:1,revision:1,state:'CURRENT',recordId:'case-reference-7',sourceSystem:'Specialist system',sourceVersion:'v4',decisionOwnerRef:'privacy-team',record:{kind:'SPECIALIST_ATTESTATION',subject:'PRIVACY',scopeRef:'team-seven',decisionRef:'review-1',decision:'APPROVED',retainUntil:'2025-01-01'}}};
+  const response=await submitCustomerApiObservation(s,randomUUID(),body);assert.equal(response.current,false);assert.equal(response.payload,null);
+  assert.ok(await purgeExpiredPartnerRecords()>=1);assert.equal(await purgeExpiredPartnerRecords(),0);
+  const stored=await db.customerApiObservation.findUniqueOrThrow({where:{id:response.id}});assert.ok(stored.purgedAt);assert.deepEqual(stored.payload,{retention:'ended'});assert.equal(stored.payloadHash,response.receiptHash);
  }finally{await x.cleanup();}
 });

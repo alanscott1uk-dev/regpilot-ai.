@@ -16,6 +16,7 @@ import {publicationResearchJourney} from "./publication-research-journey.mjs";
 import {horizonJourney} from "./horizon-browser-journey.mjs";
 import {sharedEvidenceJourney} from "./shared-evidence-browser-journey.mjs";
 import {changeResponseJourney} from "./change-response-browser-journey.mjs";
+import {portalBrowserJourney} from './portal-hand-off-browser.mjs';
 import {setupJourney} from "./setup-browser-journey.mjs";
 import {assuranceRenewalJourney} from "./assurance-renewal-browser-journey.mjs";
 import {todayJourney} from "./today-browser-journey.mjs";
@@ -131,6 +132,7 @@ try{
   try{observations.push(await infrastructureJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"infrastructure-"+name,passed:false,error:e.message});}
   try{observations.push(await sharedEvidenceJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"shared-evidence-"+name,passed:false,error:e.message});}
   try{observations.push(await changeResponseJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"change-response-"+name,passed:false,error:e.message});}
+  try{observations.push(await portalBrowserJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"portal-handoff-"+name,passed:false,error:e.message});}
   try{observations.push(await setupJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"setup-"+name,passed:false,error:e.message});}
   try{observations.push(await assuranceRenewalJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"assurance-renewal-"+name,passed:false,error:e.message});}
  }

@@ -24,7 +24,7 @@ async function apply(ctx:AuthorizedContext,input:StarterPlan,token:string){const
 test('starter programme preview, concurrent adoption and replay keep one owned task set through real generic completion',async()=>{
  const f=await setup(),{owner,reviewer,editor,viewer,foreign}=f,input=plan(editor.userId);
  try{
-  const empty=await starterProgrammeWorkspace(owner);assert.equal(empty.packs.length,3);assert.equal(empty.programmes.length,0);assert.equal(empty.programmesLimited,false);assert.equal(empty.members.length,3);
+  const empty=await starterProgrammeWorkspace(owner);assert.deepEqual(empty.packs.map(p=>p.id),['business-foundations','people-access','supplier-continuity','nhs-digital-health-england']);assert.equal(empty.programmes.length,0);assert.equal(empty.programmesLimited,false);assert.equal(empty.members.length,3);
   const proposed=await preview(owner,input);assert.equal(proposed.total,2);assert.equal(await db.obligation.count({where:{organizationId:owner.organizationId}}),0);assert.equal(await db.auditEvent.count({where:{organizationId:owner.organizationId}}),0,'preview records no tasks or audit events');
   await assert.rejects(()=>preview(editor,input),(error:any)=>error.status===403);await assert.rejects(()=>preview(viewer,input),(error:any)=>error.status===403);
   await assert.rejects(()=>preview(owner,{...input,items:[{...input.items[0],assigneeId:foreign.userId}]}),(error:any)=>error.status===409);

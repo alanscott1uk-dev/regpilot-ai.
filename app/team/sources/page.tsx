@@ -185,7 +185,7 @@ export default function OfficialSourceHistory(){
        {canReview&&selectedCoverage.schedule.retryAvailable&&<button type="button" disabled={blocked} onClick={()=>void retryMonitoring()}>Request recovery</button>}
        <a href={href('/team/coverage')}>Inspect monitoring history and service status →</a>
       </section>}
-      <div className={ui.line}><a href={activeSource?officialSourceUrl(activeSource):"/team/sources"} target="_blank" rel="noopener noreferrer">Open official source ↗</a>
+      <div className={ui.line}><a href={activeSource?officialSourceUrl(activeSource):"/team/sources"} target="_blank" rel="noopener noreferrer">Open official source ↗</a>{activeSource?.officialDocuments&&<a href={activeSource.officialDocuments} target="_blank" rel="noreferrer">Publisher’s downloadable edition ↗</a>}
        {canCheck&&<button type="button" disabled={blocked} onClick={()=>void check()}>{busy?"Checking…":latest?"Compare latest text":"Create first baseline"}</button>}
       </div>
       {latest?<div className={ui.snapshot}><div className={ui.versionHead}><span>{latest.reviewStatus.replaceAll("_"," ")}</span><span>{latest.contentHash.slice(0,14)}…</span></div>

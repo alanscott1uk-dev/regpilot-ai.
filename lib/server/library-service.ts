@@ -5,7 +5,7 @@ import type {AuthorizedContext} from "./authorization";
 import {transaction,IntelligenceError} from "./intelligence-service";
 import {ADMIN,WRITER,requireMember} from "./workspace-member";
 import {requireLibrary,libraryEnabled} from "./publication-catalogue";
-import {factsSchema,parseRule,evaluateRule} from "../library/applicability";
+import {factsSchema,parseRule,evaluateDatedRule} from "../library/applicability";
 import {uniqueQuote,type RequirementContent} from "../library/coverage";
 import {hashValue} from "../regulatory/intelligence";
 import {sourceTextHash} from "../regulatory/source-fingerprint.mjs";
@@ -15,7 +15,8 @@ import {evidenceConfigured,type EvidenceObjectStore} from "./evidence-storage";
 import {allowedEmail} from "../ai/security.mjs";
 const j=(v:unknown)=>v as Prisma.InputJsonValue;
 const nation=z.enum(["England","Scotland","Wales","Northern Ireland"]);
-const clauseSchema=z.object({reference:z.string().trim().min(1).max(100),title:z.string().trim().min(3).max(180),quote:z.string().trim().min(20).max(3000),kind:z.enum(["DUTY","PROHIBITION","GUIDANCE","STANDARD","EXEMPTION"]),conditions:z.array(z.string().trim().min(5).max(600)).max(6),exceptions:z.array(z.string().trim().min(5).max(600)).max(6),rule:z.unknown().default(null),page:z.number().int().min(1).max(40).optional()});
+const effectivePeriod=z.object({from:z.iso.date(),through:z.iso.date().optional(),quote:z.string().trim().min(15).max(1200)}).strict().refine(v=>!v.through||v.through>=v.from);
+const clauseSchema=z.object({effectivity:effectivePeriod.optional(),reference:z.string().trim().min(1).max(100),title:z.string().trim().min(3).max(180),quote:z.string().trim().min(20).max(3000),kind:z.enum(["DUTY","PROHIBITION","GUIDANCE","STANDARD","EXEMPTION"]),conditions:z.array(z.string().trim().min(5).max(600)).max(6),exceptions:z.array(z.string().trim().min(5).max(600)).max(6),rule:z.unknown().default(null),page:z.number().int().min(1).max(40).optional()});
 const intakeSchema=z.object({collection:z.string().trim().min(2).max(100),source:z.discriminatedUnion("type",[z.object({type:z.literal("PUBLICATION"),id:z.uuid()}),z.object({type:z.literal("PDF"),id:z.uuid()})]),clauses:z.array(clauseSchema).min(1).max(25).refine(v=>new Set(v.map(c=>c.reference)).size===v.length),rightsConfirmed:z.literal(true),consent:z.literal(true)});
 export type Provenance={type:"PUBLICATION"|"PDF";id:string;fingerprint:string;authorId:string|null;url:string|null;name:string;page?:number;start:number;end:number};
 async function sourceState(tx:Prisma.TransactionClient,org:string,type:Provenance["type"],id:string){
@@ -48,8 +49,8 @@ export async function draftRequirements(ctx:AuthorizedContext,input:unknown,deps
  let pages:Array<{page:number;text:string}>=[];
  if(d.source.type==="PDF"){if(!evidenceConfigured())throw new IntelligenceError("Private evidence processing is not activated",503);const file=await downloadEvidence(ctx,d.source.id,deps.storage),pdf=await extractPdf(file.bytes);if(pdf.truncated||pdf.skippedPages.length)throw new IntelligenceError("Incomplete extraction: use a shorter, readable PDF before importing clauses",409);pages=pdf.pages;}
  const prepared=clauses.map(c=>{const text=d.source.type==="PDF"?pages.find(p=>p.page===c.page)?.text||"":original.text;
-  if(!uniqueQuote(text,c.quote)||[...c.conditions,...c.exceptions].some(q=>!uniqueQuote(text,q)))throw new IntelligenceError("Every requirement, condition and exception must be an exact, unique quotation from the selected source page",409);
-  const content:RequirementContent={title:c.title,quote:c.quote,kind:c.kind,conditions:c.conditions,exceptions:c.exceptions,rule:c.rule};
+  if(!uniqueQuote(text,c.quote)||c.effectivity&&!uniqueQuote(text,c.effectivity.quote)||[...c.conditions,...c.exceptions].some(q=>!uniqueQuote(text,q)))throw new IntelligenceError("Every requirement, condition and exception must be an exact, unique quotation from the selected source page",409);
+  const content:RequirementContent={title:c.title,quote:c.quote,kind:c.kind,conditions:c.conditions,exceptions:c.exceptions,rule:c.rule,...(c.effectivity?{effectivity:c.effectivity}:{})};
   const provenance:Provenance={type:d.source.type,id:d.source.id,fingerprint:original.fingerprint,authorId:original.authorId,url:original.url,name:original.name,...(d.source.type==="PDF"?{page:c.page}:{}),start:text.indexOf(c.quote),end:text.indexOf(c.quote)+c.quote.length};return {reference:c.reference,content,provenance};
  });
  return transaction(ctx,async tx=>{await requireMember(tx,ctx,WRITER);requireLibrary();const fresh=await sourceState(tx,ctx.organizationId,d.source.type,d.source.id);if(!fresh.valid||fresh.fingerprint!==original.fingerprint)throw new IntelligenceError("Source changed during import",409);
@@ -73,8 +74,9 @@ export async function revisionContext(tx:Prisma.TransactionClient,ctx:Authorized
  const facts=factsSchema.safeParse(profile?.facts||{}),jurisdictions=Array.isArray(profile?.jurisdictions)?profile!.jurisdictions.filter((v):v is string=>typeof v==="string"):[];
  if(!facts.success)reasons.push("Business facts are invalid");
  const content=integrity&&r.status!=="REDACTED"?r.content as unknown as RequirementContent:null;
- const evaluation=evaluateRule(content?.rule||null,facts.success?facts.data:{},jurisdictions);
- const contextHash=hashValue({revision:r.id,content:r.contentHash,provenance:r.provenanceHash,head:r.requirement.currentRevision,status:r.status,source:state?.fingerprint||null,sourceValid:state?.valid||false,profileVersion:profile?.version||0,facts:profile?.facts||{},jurisdictions});
+ const checkedDate=new Date().toISOString().slice(0,10);
+ const evaluation=evaluateDatedRule(content?.rule||null,facts.success?facts.data:{},jurisdictions,checkedDate,content?.effectivity);
+ const contextHash=hashValue({revision:r.id,content:r.contentHash,provenance:r.provenanceHash,head:r.requirement.currentRevision,status:r.status,source:state?.fingerprint||null,sourceValid:state?.valid||false,...(content?.effectivity?{withinEffectivePeriod:checkedDate>=content.effectivity.from&&(!content.effectivity.through||checkedDate<=content.effectivity.through)}:{}),profileVersion:profile?.version||0,facts:profile?.facts||{},jurisdictions});
  const applicability=await tx.libraryApplicability.findUnique({where:{revisionId_contextHash:{revisionId:r.id,contextHash}}});
 
  return {revision:r,content,provenance:integrity&&r.status!=="REDACTED"?p:null,current:!reasons.length,reasons,contextHash,evaluation,applicability,profileVersion:profile?.version||0};

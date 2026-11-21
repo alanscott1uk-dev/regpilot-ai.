@@ -134,7 +134,7 @@ export async function submitCustomerApiObservation(session:CustomerApiSession,re
 export async function reviewCustomerApiObservation(c:AuthorizedContext,id:string,input:unknown){z.uuid().parse(id);const d=reviewCustomerObservationInput.parse(input),requestHash=hashValue({id,...d});return transaction(c,async tx=>{
  await requireMember(tx,c,ADMIN);const previous=await operation(tx,c,d.requestKey,requestHash);if(previous)return {...previous.result as object,reused:true};
  const row=await tx.customerApiObservation.findFirst({where:{id,...org(c)},include:rowInclude});if(!row)throw new IntelligenceError('Integration observation not found',404);if(row.version!==d.version||row.status!=='PENDING')throw new IntelligenceError('Observation already reviewed or changed; refresh before continuing',409);
- const view=(await observationsView(tx,c,[row]))[0];if(d.decision!=='REJECT'&&!view.current)throw new IntelligenceError(view.reason||'This observation is no longer current',409);if(d.decision==='ACKNOWLEDGE'&&view.reportedOutcome!=='REPORTED_PASS')throw new IntelligenceError('A reported failure or unknown result needs an owned follow-up or rejection',409);
+ const view=(await observationsView(tx,c,[row]))[0];if(d.decision!=='REJECT'&&!view.current)throw new IntelligenceError(view.reason||'This observation is no longer current',409);if(d.decision==='ACKNOWLEDGE'&&view.payload?.partnerRecord&&row.credential.issuedById===c.userId)throw new IntelligenceError('A different administrator must acknowledge the partner source',403);if(d.decision==='ACKNOWLEDGE'&&view.reportedOutcome!=='REPORTED_PASS')throw new IntelligenceError('A reported failure or unknown result needs an owned follow-up or rejection',409);
  let followUpTaskId:string|null=null;
  if(d.decision==='FOLLOW_UP'){
   const owner=await activeOwner(tx,c,d.ownerId!),date=new Date(d.dueDate!+'T00:00:00.000Z'),today=new Date(new Date().toISOString().slice(0,10)+'T00:00:00.000Z');if(date<today||date.getTime()>Date.now()+365*86400000)throw new IntelligenceError('Choose a follow-up date from today to one year ahead',400);
@@ -142,3 +142,12 @@ export async function reviewCustomerApiObservation(c:AuthorizedContext,id:string
  }
  const status=d.decision==='FOLLOW_UP'?'FOLLOW_UP':d.decision==='REJECT'?'REJECTED':'ACKNOWLEDGED',saved=await tx.customerApiObservation.update({where:{id},data:{status,version:{increment:1},reviewerId:c.userId,reviewedAt:new Date(),reviewNotes:d.notes,followUpTaskId}}),result={id,version:saved.version,status,followUpTaskId,requestKey:d.requestKey};await recordOperation(tx,c,d.requestKey,requestHash,'OBSERVATION_REVIEWED',id,result);await enqueueCustomerObservationDelivery(tx,saved,true);return {...result,reused:false};
 });}
+
+export async function buyerPartnerReceipt(tx:Tx,organizationId:string,id:string,email:string){
+ const row=await tx.customerApiObservation.findFirst({where:{id,organizationId,status:'ACKNOWLEDGED',partnerKey:{not:null},supersededAt:null},include:rowInclude});
+ if(!row||!row.reviewerId||row.reviewerId===row.credential.issuedById)return null;
+ const view=(await observationsView(tx,{organizationId},[row]))[0],s=view.payload?.partnerRecord,r=s?.record;
+ if(!view.current||view.reportedOutcome!=='REPORTED_PASS'||!s||!r||(r.kind!=='SUPPLIER_RELATION'&&r.kind!=='SUPPLIER_ASSESSMENT')||!r.permittedBuyers?.includes(email))return null;
+ const {permittedBuyers:_,...permittedRecord}=r;
+ return {id:row.id,source:s.sourceSystem,recordId:s.recordId,sourceVersion:s.sourceVersion,revision:s.revision,receiptHash:view.receiptHash,observedAt:view.observedAt,validUntil:view.validUntil,decisionOwnerRef:s.decisionOwnerRef,record:permittedRecord};
+}

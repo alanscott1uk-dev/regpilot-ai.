@@ -1,3 +1,4 @@
+import {territorialReport,changeTerritorialCase} from '../lib/server/territorial-benchmark';
 import "./helpers/paid-fixture";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -43,6 +44,12 @@ test("obligation library: source registration, versioning, scope, cross-collecti
   const draft=await draftRequirements(maker,intake),rev=draft.revisionIds[0];assert.equal((await draftRequirements(maker,intake)).revisionIds[0],rev);
   await assert.rejects(()=>reviewRevision(maker,rev,{version:1,decision:"ACCEPTED",notes,scopeConfirmed:true}),(e:any)=>e.status===403);
   await reviewRevision(reviewer,rev,{version:1,decision:"ACCEPTED",notes,scopeConfirmed:true});
+  const refCase={action:'PROPOSE',id:randomUUID(),spec:{revisionId:rev,nation:'Northern Ireland',activity:'Widget staff training',on:'2026-11-21',facts:{employeeCount:12},expected:'NO_MATCH',rationale:'The independently sourced Scottish rule excludes the NI example.'}};
+  await changeTerritorialCase(maker,refCase);await assert.rejects(()=>changeTerritorialCase(maker,{action:'VALIDATE',id:refCase.id,decision:'ACCEPT'}),(e:any)=>e.status===403);
+  assert.equal((await territorialReport(reviewer)).metrics.scored,0);
+  await changeTerritorialCase(reviewer,{action:'VALIDATE',id:refCase.id,decision:'ACCEPT'});
+  const measured=await territorialReport(reviewer);assert.equal(measured.metrics.correct,1);assert.equal(measured.cases[0].predicted,'NO_MATCH');
+  const missed={...refCase,id:randomUUID(),spec:{...refCase.spec,expected:'MATCH'}};await changeTerritorialCase(maker,missed);await changeTerritorialCase(reviewer,{action:'VALIDATE',id:missed.id,decision:'ACCEPT'});assert.equal((await territorialReport(reviewer)).metrics.missedApplicable,1);
   const d2=await draftRequirements(maker,{...intake,collection:"Fictional framework B",clauses:[{...intake.clauses[0],reference:"B-1"}]}),rev2=d2.revisionIds[0];await reviewRevision(reviewer,rev2,{version:1,decision:"ACCEPTED",notes,scopeConfirmed:true});
   const decision=async(id:string,ownerId=uploader.userId)=>{const c=await current(id);return decideApplicability(reviewer,id,{contextHash:c.contextHash,version:c.applicability?.version||0,decision:"APPLIES",rationale:notes,ownerId,scopeConfirmed:true});};
   assert.equal((await current(rev)).evaluation.state,"MATCH");await decision(rev);await decision(rev2);
@@ -74,7 +81,7 @@ test("obligation library: source registration, versioning, scope, cross-collecti
   await decision(rev);await decision(rev2);const fresh=await prepareCoverage(maker,input,{storage});assert.notEqual(fresh.id,detail.id);assert.equal((await coverageDetail(reviewer,fresh.id)).current,true);
   // Revoking an owner blocks reuse, but another administrator can repair the ownership.
   await db.membership.update({where:{organizationId_userId:{organizationId:maker.organizationId,userId:uploader.userId}},data:{role:"VIEWER"}});assert.equal((await coverageDetail(reviewer,fresh.id)).current,false);await decision(rev,maker.userId);await db.membership.update({where:{organizationId_userId:{organizationId:maker.organizationId,userId:uploader.userId}},data:{role:"EDITOR"}});
-  const next=await draftRequirements(maker,{...intake,clauses:[{...intake.clauses[0],title:"Updated training scope"}]}),newRev=next.revisionIds[0];await reviewRevision(reviewer,newRev,{version:1,decision:"ACCEPTED",notes,scopeConfirmed:true});assert.equal((await current(rev)).current,false);assert.equal((await current(newRev)).revision.number,2);await decision(newRev);
+  const next=await draftRequirements(maker,{...intake,clauses:[{...intake.clauses[0],title:"Updated training scope"}]}),newRev=next.revisionIds[0];await reviewRevision(reviewer,newRev,{version:1,decision:"ACCEPTED",notes,scopeConfirmed:true});assert.equal((await territorialReport(reviewer)).metrics.stale,2);assert.equal((await current(rev)).current,false);assert.equal((await current(newRev)).revision.number,2);await decision(newRev);
   const nextInput={...input,revisionIds:[newRev],method:"AI"};
   await assert.rejects(()=>prepareCoverage(maker,nextInput,{storage,generate:async()=>{const running=await db.coverageRun.findFirstOrThrow({where:{organizationId:maker.organizationId,status:"PROCESSING"}});await redactCoverage(reviewer,running.id,running.version);return {mappings:[],limitations:[]};}}),(e:any)=>e.status===409);
   const removed=await db.coverageRun.findFirstOrThrow({where:{organizationId:maker.organizationId,status:"REDACTED"}});assert.equal(removed.result,null);

@@ -8,9 +8,10 @@ const sourceLink=z.url({protocol:/^https$/}).max(350).refine(value=>{
  return !url.username&&!url.password&&!url.search&&!url.hash;
 },'Use a permanent HTTPS source location without credentials, query parameters or a fragment');
 
+const permittedBuyers=z.array(z.email().trim().toLowerCase().max(254)).min(1).max(10).refine(v=>new Set(v).size===v.length).optional();
 const records=z.discriminatedUnion('kind',[
- z.object({kind:z.literal('SUPPLIER_RELATION'),buyerRef:reference,supplierRef:reference,upstreamRef:reference,consentRef:reference,consentExpiresAt:z.iso.datetime()}).strict(),
- z.object({kind:z.literal('SUPPLIER_ASSESSMENT'),supplierRef:reference,assessment:z.enum(['SECURITY','ESG']),assessmentRef:reference,consentRef:reference,consentExpiresAt:z.iso.datetime(),result:z.enum(['CLEAR','EXCEPTION','UNASSESSED'])}).strict(),
+ z.object({kind:z.literal('SUPPLIER_RELATION'),permittedBuyers,buyerRef:reference,supplierRef:reference,upstreamRef:reference,consentRef:reference,consentExpiresAt:z.iso.datetime()}).strict(),
+ z.object({kind:z.literal('SUPPLIER_ASSESSMENT'),permittedBuyers,supplierRef:reference,assessment:z.enum(['SECURITY','ESG']),assessmentRef:reference,consentRef:reference,consentExpiresAt:z.iso.datetime(),result:z.enum(['CLEAR','EXCEPTION','UNASSESSED'])}).strict(),
  z.object({kind:z.literal('MODEL_CHANGE'),systemRef:reference,vendorRef:reference,modelRef:reference,modelVersion:reference,approval:z.enum(['PENDING','APPROVED','DECLINED']),decisionRef:reference.optional()}).strict(),
  z.object({kind:z.literal('SPECIALIST_ATTESTATION'),subject:z.enum(['PRIVACY','ETHICS','RESILIENCE']),scopeRef:reference,decisionRef:reference,decision:z.enum(['APPROVED','ACTION_REQUIRED','UNDER_REVIEW']),retainUntil:z.iso.date()}).strict(),
  z.object({kind:z.literal('PRODUCT_EVENT'),event:z.enum(['BATCH_RELEASE','DEVICE_CHANGE','REGISTRATION']),productRef:reference,eventRef:reference,decision:z.enum(['AUTHORISED','ON_HOLD','WITHDRAWN']),decisionRef:reference}).strict(),

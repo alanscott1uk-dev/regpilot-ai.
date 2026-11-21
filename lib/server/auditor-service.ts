@@ -1,3 +1,5 @@
+import {recordSampleFinding,sampleFindings} from './audit-sample-findings';
+import {liveBuyerAnnex} from './buyer-annex';
 import {assertPublicGrant} from './trust-publication';
 import {event,issuerActive,manifest,currentAssurance,filesWithAvailability,activeRoom,auditApiConfigured,clearedAuditKey} from "./audit-disclosure";
 import {Prisma,type AuditRoom,type AuditGrant} from "@prisma/client";
@@ -60,7 +62,7 @@ export async function manageAuditRoom(ctx:AuthorizedContext,id:string){
    filesWithAvailability(tx,ctx.organizationId,manifest(room))
   ]);
   const {manifest:_,createdById:__,...publicRoom}=room;
-  return {room:publicRoom,auditorApiEnabled:auditApiConfigured(),assurance:manifest(room).assurance,period:manifest(room).period,requests:manifest(room).requests||[],files,grants,questions:questions.map(q=>({...q,responses:responseHistorySchema.parse(q.responses)})),activity};
+  return {sampleFindings:await sampleFindings(tx,ctx.organizationId,id),room:publicRoom,auditorApiEnabled:auditApiConfigured(),assurance:manifest(room).assurance,period:manifest(room).period,requests:manifest(room).requests||[],files,grants,questions:questions.map(q=>({...q,responses:responseHistorySchema.parse(q.responses)})),activity};
  });
 }
 export async function changeAuditRoom(ctx:AuthorizedContext,id:string,input:unknown){
@@ -143,12 +145,13 @@ export async function openAuditRoom(identity:VerifiedWorkspaceIdentity,grantId:s
   const files=await filesWithAvailability(tx,room.organizationId,manifest(room));
   const questions=await tx.auditQuestion.findMany({where:{organizationId:room.organizationId,roomId:room.id,grantId:g.id},select:{id:true,evidenceId:true,question:true,response:true,responses:true,status:true,version:true,createdAt:true,answeredAt:true},orderBy:{createdAt:"desc"},take:AUDIT_LIMITS.questions});
   await event(tx,room.organizationId,userId,"room_opened",room.id,{grantId:g.id});
-  return {room:{title:room.title,purpose:room.purpose,expiresAt:room.expiresAt,publishedAt:room.publishedAt,manifestHash:room.manifestHash,assurance:manifest(room).assurance?{title:manifest(room).assurance!.title,scope:manifest(room).assurance!.scope,questions:manifest(room).assurance!.questions}:null,period:manifest(room).period,requests:manifest(room).requests||[]},files,questions:questions.map(q=>({...q,responses:responseHistorySchema.parse(q.responses)}))};
+  return {sampleFindings:await sampleFindings(tx,room.organizationId,room.id,g.id),partnerRecords:await liveBuyerAnnex(tx,g),room:{title:room.title,purpose:room.purpose,expiresAt:room.expiresAt,publishedAt:room.publishedAt,manifestHash:room.manifestHash,assurance:manifest(room).assurance?{title:manifest(room).assurance!.title,scope:manifest(room).assurance!.scope,questions:manifest(room).assurance!.questions}:null,period:manifest(room).period,requests:manifest(room).requests||[]},files,questions:questions.map(q=>({...q,responses:responseHistorySchema.parse(q.responses)}))};
  });
 }
 export async function guestAuditAction(identity:VerifiedWorkspaceIdentity,grantId:string,input:unknown){
  const d=guestActionSchema.parse(input);
  return guestTransaction(identity,grantId,d.action!=="ACCEPT"&&d.action!=="DECLINE",async(tx,g,room,userId)=>{
+  if(d.action==="SAMPLE")return recordSampleFinding(tx,room,g,userId,d);
   if(d.action==="ACCEPT"||d.action==="DECLINE"){
    if(g.status!=="PENDING"||g.version!==d.version)throw new IntelligenceError("Invitation changed; refresh",409);
    const status=d.action==="ACCEPT"?"ACCEPTED":"DECLINED";

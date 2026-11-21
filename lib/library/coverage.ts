@@ -2,7 +2,7 @@ import {z} from "zod";
 import {hashValue} from "../regulatory/intelligence";
 import type {Rule} from "./applicability";
 export const COVERAGE_ENGINE="coverage-2";
-export type RequirementContent={title:string;quote:string;kind:"DUTY"|"PROHIBITION"|"GUIDANCE"|"STANDARD"|"EXEMPTION";conditions:string[];exceptions:string[];rule:Rule|null};
+export type RequirementContent={title:string;quote:string;kind:"DUTY"|"PROHIBITION"|"GUIDANCE"|"STANDARD"|"EXEMPTION";conditions:string[];exceptions:string[];rule:Rule|null;effectivity?:{from:string;through?:string;quote:string}};
 export type CoverageInput={requirements:Array<{id:string;collection:string;reference:string;content:RequirementContent}>;controls:Array<{id:string;title:string;description:string;testProcedure:string}>;documents:Array<{id:string;unitKind?:"page"|"block";pages:Array<{page:number;text:string;label?:string}>}>};
 const mappingSchema=z.object({revisionId:z.uuid(),controlId:z.uuid(),requirementQuote:z.string().min(20).max(3000),controlQuote:z.string().min(15).max(1600),relation:z.enum(["POTENTIAL","PARTIAL","CONFLICT"]),explanation:z.string().min(20).max(1200),limitations:z.array(z.string().min(3).max(500)).max(8),citations:z.array(z.object({evidenceId:z.uuid(),page:z.number().int().positive(),quote:z.string().min(20).max(1500)})).max(4)});
 export const coverageSchema=z.object({mappings:z.array(mappingSchema).max(36),limitations:z.array(z.string().min(3).max(500)).max(10)});

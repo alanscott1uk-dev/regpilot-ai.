@@ -12,7 +12,9 @@ export const roomActionSchema=z.discriminatedUnion("action",[
  z.object({action:z.literal("REVOKE"),grantId:z.uuid(),version:z.number().int().positive()}),
  z.object({action:z.literal("ANSWER"),questionId:z.uuid(),version:z.number().int().positive(),response:z.string().trim().min(10).max(4000)})
 ]);
+export const sampleFindingInput=z.object({action:z.literal('SAMPLE'),requestId:z.uuid(),evidenceId:z.uuid(),decision:z.enum(['ACCEPTED','REJECTED']),notes:z.string().trim().min(20).max(800),requestKey:z.uuid()}).strict();
 export const guestActionSchema=z.discriminatedUnion("action",[
+ sampleFindingInput,
  z.object({action:z.literal("ACCEPT"),version:z.number().int().positive()}),
  z.object({action:z.literal("DECLINE"),version:z.number().int().positive()}),
  z.object({action:z.literal("QUESTION"),question:z.string().trim().min(10).max(2000),evidenceId:z.uuid().optional()}),
