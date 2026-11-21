@@ -58,5 +58,25 @@ export async function capaCustomerJourney({upload,review,db,app,org,editor,revie
  await writeFile(artifactDir+'/quality-case-chronology.json',JSON.stringify(exported,null,2)+'\n');
  await open(upload,id);await expand(upload,'Actions from earlier cycles');assert.ok(await bounded(upload.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Reopened mobile quality layout'));await upload.screenshot({path:artifactDir+'/mobile-quality-reopened-history.png',fullPage:true});assert.equal(await db.evidence.count({where:{organizationId:org.id}}),evidenceBefore);assert.equal(await db.obligation.count({where:{organizationId:org.id}}),tasksBefore);
  passed('A genuine recurrence opened cycle two, cleared its unfinished investigation plan and required fresh actions. The earlier passed decision, reviewed evidence and original task remained unchanged. The downloadable chronology retained creation, investigation, action, observation, independent closure and recurrence with company attribution.');
+ await checkpoint('hand over the reopened case and download the receiving operator’s inspection summary');
+ const checks='Check the temperature logger and keep the affected delivery on hold until Quality reviews it.';
+ const acceptance='I have received the logger reference and will keep the delivery segregated pending review.';
+ await expand(upload,'Hand over this case');
+ await upload.getByLabel('Recipient',{exact:true}).selectOption(reviewer.id);
+ await upload.getByLabel('Outstanding checks and next steps',{exact:true}).fill(checks);
+ await post(upload,'OFFER_HANDOVER',()=>upload.getByRole('button',{name:'Send handover',exact:true}).click());
+ const offered=await open(review,id);
+ assert.equal(offered.selected.case.ownerId,editor.id);
+ assert.equal(offered.selected.canAcceptHandover,true);
+ await review.getByLabel('Acceptance or withdrawal note',{exact:true}).fill(acceptance);
+ await post(review,'ACCEPT_HANDOVER',()=>review.getByRole('button',{name:'Accept responsibility',exact:true}).click());
+ const received=await open(review,id);
+ assert.equal(received.selected.case.ownerId,reviewer.id);
+ const [inspectionDownload]=await Promise.all([review.waitForEvent('download'),review.getByRole('button',{name:'Download inspection summary',exact:true}).click()]);
+ const summary=await readFile(await bounded(inspectionDownload.path(),'Quality inspection summary download'),'utf8');
+ assert.ok(summary.includes(checks)&&summary.includes(acceptance));
+ assert.ok(summary.includes('quality.handover_accepted · Actor '+reviewer.id));
+ await writeFile(artifactDir+'/quality-case-inspection.txt',summary);
+ passed('The outgoing operator recorded outstanding checks. The named reviewer took ownership, and the dated inspection summary retained both accounts and the two participants.');
  return {caseId:id,actionId:linked.id,taskId:sourceTask.id,reviewId:prepared.id,evidenceId,closedThenReopened:true,cycle:2,recurrenceCount:1,decisionRecoveryByExactRequest:true,decisionWrites:1,originalEvidenceUnchanged:true};
 }
