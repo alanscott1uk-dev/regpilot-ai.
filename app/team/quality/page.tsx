@@ -94,12 +94,12 @@ export default function QualityPage(){
      <h3>Case handover</h3>
      {row.handoverRecipientId&&<p role="status">Awaiting acceptance by {people.find(person=>person.id===row.handoverRecipientId)?.email||row.handoverRecipientId}. Outstanding checks: {row.handoverNotes}</p>}
      {selected.canEdit&&!row.handoverRecipientId&&<details className={css.form}><summary>Hand over this case</summary>
-      <label>Recipient<select disabled={blocked} value={recipientId} onChange={event=>setRecipientId(event.target.value)}><option value="">Choose a recipient</option>{people.filter(person=>person.id!==row.ownerId&&person.id!==data.userId).map(person=><option key={person.id} value={person.id}>{person.email}</option>)}</select></label>
-      <label>Outstanding checks and next steps<textarea disabled={blocked} value={handoverNotes} maxLength={1600} onChange={event=>setHandoverNotes(event.target.value)}/></label>
+      <label>Recipient<select aria-label="Recipient" disabled={blocked} value={recipientId} onChange={event=>setRecipientId(event.target.value)}><option value="">Choose a recipient</option>{people.filter(person=>person.id!==row.ownerId&&person.id!==data.userId).map(person=><option key={person.id} value={person.id}>{person.email}</option>)}</select></label>
+      <label>Outstanding checks and next steps<textarea aria-label="Outstanding checks and next steps" disabled={blocked} value={handoverNotes} maxLength={1600} onChange={event=>setHandoverNotes(event.target.value)}/></label>
       <button type="button" disabled={blocked||!recipientId||handoverNotes.trim().length<10} onClick={()=>void mutate('OFFER_HANDOVER',{caseId:row.id,version:row.version,recipientId,notes:handoverNotes})}>Send handover</button>
      </details>}
      {row.handoverRecipientId&&(selected.canAcceptHandover||selected.canEdit)&&<div className={css.form}>
-      <label>Acceptance or withdrawal note<textarea disabled={blocked} value={handoverNotes} maxLength={1600} onChange={event=>setHandoverNotes(event.target.value)}/></label>
+      <label>Acceptance or withdrawal note<textarea aria-label="Acceptance or withdrawal note" disabled={blocked} value={handoverNotes} maxLength={1600} onChange={event=>setHandoverNotes(event.target.value)}/></label>
       {selected.canAcceptHandover&&<button type="button" disabled={blocked||handoverNotes.trim().length<10} onClick={()=>void mutate('ACCEPT_HANDOVER',{caseId:row.id,version:row.version,notes:handoverNotes})}>Accept responsibility</button>}
       {selected.canEdit&&<button type="button" disabled={blocked||handoverNotes.trim().length<10} onClick={()=>void mutate('CANCEL_HANDOVER',{caseId:row.id,version:row.version,notes:handoverNotes})}>Withdraw handover</button>}
      </div>}
