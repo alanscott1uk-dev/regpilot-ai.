@@ -1,6 +1,6 @@
 "use client";
 import {workspaceHref} from "../../../lib/client/workspace-context";
-import {REGULATORY_SOURCES} from "../../../lib/regulatory-sources.mjs";
+import {REGULATORY_SOURCES,manualRefreshSource} from "../../../lib/regulatory-sources.mjs";
 import ui from "./intelligence.module.css";
 export type Watch={id:string;sourceId:string;enabled:boolean;intervalHours:number;version:number;state:string;nextCheckAt:string;lastSuccessAt:string|null;lastOutcome:string|null;failureCode:string|null;attempts:number;recoveryPending?:boolean;lastAttemptAt?:string|null};
 export type MonitoringRuntime={configured:boolean;state:string;reason:string;mode?:string;cadenceMinutes?:number|null};
@@ -13,7 +13,12 @@ export default function MonitoringPanel({sources=REGULATORY_SOURCES,watches,acti
     <div className={ui.monitoringHeader}><div><span className={ui.eyebrow}>WATCH YOUR SOURCES</span><h2 id="monitoring-title">Know when something changes</h2><p>Save daily or weekly checks. A changed excerpt is added to your review inbox when your business context is saved.</p></div><span className={observed?ui.liveBadge:ui.offBadge}>{runtimeLabel}</span></div>
     <p className={ui.scope}>{runtime?.reason||(active?"Saved configuration does not confirm recent execution. Inspect monitoring health before relying on scheduled collection.":"Schedules can be prepared here. Automated checks require a configured and verified worker or cron trigger.")} <a href={workspaceHref("/team/coverage",organizationId)}>View monitoring health and recovery →</a></p>
     {runtime?.configured&&<p className={ui.small}>{runtime.mode==="cron"?"Daily trigger scheduled for 06:00 UTC.":"Worker expected every "+(runtime.cadenceMinutes||30)+" minutes."} A recovery request waits for an available run.</p>}
-    {sources.map(source=>{const watch=watches.find(w=>w.sourceId===source.id),state=watch?.state||"not-scheduled";return <div className={ui.watchRow} key={source.id}>
+    {sources.map(source=>{
+      if(manualRefreshSource(source.id))return <div className={ui.watchRow} key={source.id}>
+        <div><strong>{source.title}</strong><span className={ui.watchState}>Manual refresh</span></div>
+        <a href={workspaceHref('/team/sources',organizationId,{sourceId:source.id})}>Open manual refresh</a>
+      </div>;
+      const watch=watches.find(w=>w.sourceId===source.id),state=watch?.state||"not-scheduled";return <div className={ui.watchRow} key={source.id}>
       <div><strong>{source.title}</strong><span className={state==="attention"||state==="overdue"?ui.alertText:ui.watchState}>{state.replaceAll("-"," ")}</span><small>{watch?.lastSuccessAt?"Last successful check: "+timestamp(watch.lastSuccessAt):"No successful scheduled check recorded"}{watch?.lastOutcome?" · "+watch.lastOutcome.toLowerCase().replaceAll("_"," "):""}</small>
         {watch?.enabled&&<small>{watch.state==="retry-scheduled"?"Retry due: ":"Next check due: "}{timestamp(watch.nextCheckAt)}</small>}
         {watch?.recoveryPending&&<p>Recovery was requested. The previous issue remains recorded until a check succeeds.</p>}
