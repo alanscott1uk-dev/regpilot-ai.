@@ -41,7 +41,7 @@ export default function PartnerActions({id,org,task,hash,isModel,locked,reviewed
   {options&&isModel&&(options.boundSystemId
    ?<a href={'/team/ai-inventory?'+new URLSearchParams({organizationId:org,systemId:options.boundSystemId})}>Open linked AI system and reassessment</a>
    :<form onSubmit={bindModel}>
-     <label>AI system on this control<select name="system" required>
+     <label>AI system on this control<select aria-label="AI system on this control" name="system" required>
       <option value="">Choose system and vendor</option>{options.systems.map(system=><option key={system.id} value={system.id}>{system.name} · {system.vendor?.name}</option>)}
      </select></label>
      <label><input type="checkbox" required/> Reopen assessment of this system when the authorised source sends a new revision.</label>
@@ -54,7 +54,7 @@ export default function PartnerActions({id,org,task,hash,isModel,locked,reviewed
     <a href={'/team/quality?'+new URLSearchParams({organizationId:org,caseId:qualityCase.id})}>{qualityCase.title}</a> · {qualityCase.status} · cycle {cycle}
    </p>)}
    <form onSubmit={linkCase}>
-    <label>Investigation<select name="case" required><option value="">Choose an open quality case</option>
+    <label>Investigation<select aria-label="Investigation" name="case" required><option value="">Choose an open quality case</option>
      {options.cases.map(row=><option key={row.id} value={row.id}>{row.title}</option>)}
     </select></label>
     <label>Purpose of the corrective action<textarea name="purpose" required minLength={20} maxLength={1200}/></label>

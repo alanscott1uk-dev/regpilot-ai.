@@ -115,7 +115,7 @@ function GroupedFollowUp({rows,members,locked,base,submit}:{rows:Observation[];m
  if(candidates.length<2)return null;
  const groups=new Set(selected.map(row=>row.controlId)).size;
  return <details className={css.support}><summary>Assign several reports together</summary>
-  <form onSubmit={async e=>{
+  <form aria-label="Group source reports" onSubmit={async e=>{
    e.preventDefault();
    const form=e.currentTarget,fields=new FormData(form),requestKey=crypto.randomUUID();
    const records=selected.map(({id,version,receiptHash})=>({id,version,receiptHash}));
@@ -126,9 +126,9 @@ function GroupedFollowUp({rows,members,locked,base,submit}:{rows:Observation[];m
     <input type="checkbox" checked={ids.includes(row.id)} disabled={!ids.includes(row.id)&&selected.length>=20} onChange={e=>choose(e.target.checked?[...selected.map(r=>r.id),row.id]:ids.filter(id=>id!==row.id))}/>
     {row.externalId} · {row.controlTitle} · {row.reportedOutcome?.replace('REPORTED_','').toLowerCase()}
    </label>)}</fieldset>
-   <label>Follow-up owner<select name="owner" required disabled={locked}><option value="">Choose an owner</option>{members.map(m=><option key={m.id} value={m.id}>{m.email}</option>)}</select></label>
-   <label>Due date<input name="due" type="date" required min={day()} max={day(365)} disabled={locked}/></label>
-   <label>Reason for the investigation<textarea name="notes" required minLength={20} maxLength={1600} disabled={locked}/></label>
+   <label>Follow-up owner<select aria-label="Follow-up owner" name="owner" required disabled={locked}><option value="">Choose an owner</option>{members.map(m=><option key={m.id} value={m.id}>{m.email}</option>)}</select></label>
+   <label>Due date<input aria-label="Due date" name="due" type="date" required min={day()} max={day(365)} disabled={locked}/></label>
+   <label>Reason for the investigation<textarea aria-label="Reason for the investigation" name="notes" required minLength={20} maxLength={1600} disabled={locked}/></label>
    <p aria-live="polite">{selected.length} reports selected across {groups} controls. Each control gets one follow-up task.</p>
    <button type="submit" disabled={locked||selected.length<2}>Assign selected reports</button>
   </form>

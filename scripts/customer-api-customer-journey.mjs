@@ -59,7 +59,7 @@ export async function customerApiCustomerJourney({upload,review,db,app,org,edito
  }
  await review.goto(app+'/team/developers'+query);
  await review.getByText('Assign several reports together',{exact:true}).click();
- const form=review.locator('details').filter({has:review.getByText('Assign several reports together',{exact:true})}).locator('form');
+ const form=review.getByRole('form',{name:'Group source reports',exact:true});
  for(const report of related)await form.getByRole('checkbox',{name:new RegExp(report.externalId)}).check();
  await form.getByLabel('Follow-up owner',{exact:true}).selectOption(editor.id);
  await form.getByLabel('Due date',{exact:true}).fill(new Date(Date.now()+86400000).toISOString().slice(0,10));
