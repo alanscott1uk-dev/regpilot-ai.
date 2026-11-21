@@ -17,6 +17,7 @@ import type {EvidenceObjectStore} from "../lib/server/evidence-storage";
 import type {AuthorizedContext} from "../lib/server/authorization";
 import type {CoverageResult} from "../lib/library/coverage";
 import type {ProgrammeResult} from "../lib/programme/import";
+import {fixtureDocx,paragraph} from "./helpers/docx-fixture.mjs";
 import {fixturePdf} from "./helpers/pdf-fixture.mjs";
 
 test("obligation library: source registration, versioning, scope, cross-collection relationships and impact are tenant-scoped and independently reviewed",async()=>{
@@ -60,6 +61,19 @@ test("obligation library: source registration, versioning, scope, cross-collecti
   const task=await db.obligation.create({data:{organizationId:maker.organizationId,title:"Fictional policy intake",category:"Programme",ownerName:users[2].email,dueDate:new Date()}}),pdf=fixturePdf([[quote]]);
   const evidence=await createEvidence(uploader,task.id,"fictional-library-policy.pdf",pdf,{storage,scan});await reviewEvidence(reviewer,evidence.id,{version:1,decision:"APPROVED",notes},storage);
   const pd=await draftRequirements(maker,{...intake,collection:"Fictional PDF clauses",source:{type:"PDF",id:evidence.id},clauses:[{...intake.clauses[0],page:1}]},{storage});await reviewRevision(reviewer,pd.revisionIds[0],{version:1,decision:"ACCEPTED",notes,scopeConfirmed:true},{storage});
+  const word=await createEvidence(uploader,task.id,"quality-procedure.docx",fixtureDocx(paragraph("Procedure header")+paragraph(quote)),{storage,scan});
+  await reviewEvidence(reviewer,word.id,{version:1,decision:"APPROVED",notes},storage);
+  const wordClause={...intake.clauses[0],block:2,rule:{kind:"fact",field:"wholesalesMedicines",operator:"eq",value:true}};
+  const wd={...intake,collection:"Fictional Word clauses",source:{type:"DOCX",id:word.id},clauses:[wordClause]};
+  await assert.rejects(()=>draftRequirements(maker,{...wd,clauses:[{...wordClause,block:1}]},{storage}),(e:any)=>e.status===409);
+  await assert.rejects(()=>draftRequirements(outside,wd,{storage}),(e:any)=>e.status===404);
+  const wordRev=(await draftRequirements(maker,wd,{storage})).revisionIds[0];
+  await reviewRevision(reviewer,wordRev,{version:1,decision:"ACCEPTED",notes,scopeConfirmed:true},{storage});
+  const inspected=await current(wordRev);
+  assert.equal(inspected.provenance?.block,2);assert.equal(inspected.provenance?.page,undefined);
+  assert.ok(inspected.provenance?.extractionVersion);assert.equal(inspected.evaluation.state,"UNKNOWN");
+  await db.evidence.update({where:{id:word.id},data:{reviewVersion:{increment:1}}});
+  assert.equal((await current(wordRev)).current,false);
   const imported=await prepareProgramme(maker,{evidenceIds:[evidence.id],method:"SEARCH",consent:true},{storage}),programme=await db.programmeImport.findUniqueOrThrow({where:{id:imported.id}}),programmeResult=programme.result as unknown as ProgrammeResult;
   const accepted=await acceptProgramme(reviewer,programme.id,{version:1,keys:programmeResult.controls.map(c=>c.key),ownerId:uploader.userId,intervalDays:30,firstReview:new Date().toISOString().slice(0,10),notes,scopeConfirmed:true},{storage}),controlId=accepted.controlIds[0];
   const input={revisionIds:[rev,rev2],controlIds:[controlId],evidenceIds:[evidence.id],method:"SEARCH",consent:true};

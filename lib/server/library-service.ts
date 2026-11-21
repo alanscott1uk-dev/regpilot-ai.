@@ -10,15 +10,16 @@ import {uniqueQuote,type RequirementContent} from "../library/coverage";
 import {hashValue} from "../regulatory/intelligence";
 import {sourceTextHash} from "../regulatory/source-fingerprint.mjs";
 import {downloadEvidence} from "./evidence-service";
-import {extractPdf} from "./pdf-extraction";
+import {extractDocument} from "./document-extraction";
+import {extractionBlocked,type DocumentUnit} from "../documents/coverage";
 import {evidenceConfigured,type EvidenceObjectStore} from "./evidence-storage";
 import {allowedEmail} from "../ai/security.mjs";
 const j=(v:unknown)=>v as Prisma.InputJsonValue;
 const nation=z.enum(["England","Scotland","Wales","Northern Ireland"]);
 const effectivePeriod=z.object({from:z.iso.date(),through:z.iso.date().optional(),quote:z.string().trim().min(15).max(1200)}).strict().refine(v=>!v.through||v.through>=v.from);
-const clauseSchema=z.object({effectivity:effectivePeriod.optional(),reference:z.string().trim().min(1).max(100),title:z.string().trim().min(3).max(180),quote:z.string().trim().min(20).max(3000),kind:z.enum(["DUTY","PROHIBITION","GUIDANCE","STANDARD","EXEMPTION"]),conditions:z.array(z.string().trim().min(5).max(600)).max(6),exceptions:z.array(z.string().trim().min(5).max(600)).max(6),rule:z.unknown().default(null),page:z.number().int().min(1).max(40).optional()});
-const intakeSchema=z.object({collection:z.string().trim().min(2).max(100),source:z.discriminatedUnion("type",[z.object({type:z.literal("PUBLICATION"),id:z.uuid()}),z.object({type:z.literal("PDF"),id:z.uuid()})]),clauses:z.array(clauseSchema).min(1).max(25).refine(v=>new Set(v.map(c=>c.reference)).size===v.length),rightsConfirmed:z.literal(true),consent:z.literal(true)});
-export type Provenance={type:"PUBLICATION"|"PDF";id:string;fingerprint:string;authorId:string|null;url:string|null;name:string;page?:number;start:number;end:number};
+const clauseSchema=z.object({effectivity:effectivePeriod.optional(),reference:z.string().trim().min(1).max(100),title:z.string().trim().min(3).max(180),quote:z.string().trim().min(20).max(3000),kind:z.enum(["DUTY","PROHIBITION","GUIDANCE","STANDARD","EXEMPTION"]),conditions:z.array(z.string().trim().min(5).max(600)).max(6),exceptions:z.array(z.string().trim().min(5).max(600)).max(6),rule:z.unknown().default(null),page:z.number().int().min(1).max(40).optional(),block:z.number().int().min(1).max(500).optional()});
+const intakeSchema=z.object({collection:z.string().trim().min(2).max(100),source:z.discriminatedUnion("type",[z.object({type:z.literal("PUBLICATION"),id:z.uuid()}),z.object({type:z.literal("PDF"),id:z.uuid()}),z.object({type:z.literal("DOCX"),id:z.uuid()})]),clauses:z.array(clauseSchema).min(1).max(25).refine(v=>new Set(v.map(c=>c.reference)).size===v.length),rightsConfirmed:z.literal(true),consent:z.literal(true)});
+export type Provenance={type:"PUBLICATION"|"PDF"|"DOCX";id:string;fingerprint:string;authorId:string|null;url:string|null;name:string;page?:number;block?:number;label?:string;extractionVersion?:string;start:number;end:number};
 async function sourceState(tx:Prisma.TransactionClient,org:string,type:Provenance["type"],id:string){
  if(type==="PUBLICATION"){
   const s=await tx.regulatorySnapshot.findFirst({where:{id,organizationId:org}});if(!s)throw new IntelligenceError("Publication snapshot not found",404);
@@ -27,7 +28,8 @@ async function sourceState(tx:Prisma.TransactionClient,org:string,type:Provenanc
   return {fingerprint:hashValue({id:s.id,hash:s.contentHash,version:s.version}),valid,reason:"Publication is changed, unreviewed, unavailable or more than seven days since its last check",authorId:s.capturedById,url:s.url,name:s.title,text:s.bodyText};
  }
  const e=await tx.evidence.findFirst({where:{id,organizationId:org}});if(!e)throw new IntelligenceError("Private evidence file not found",404);
- if(e.contentType!=="application/pdf")throw new IntelligenceError("Exact clause intake currently requires a PDF; use Word files in programme import and evidence assessment",415);
+ const mime=type==="PDF"?"application/pdf":"application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+ if(e.contentType!==mime)throw new IntelligenceError("The selected evidence does not match the requested document format",415);
  const valid=e.scanStatus==="CLEAN"&&e.reviewStatus==="APPROVED"&&!!e.reviewerId&&e.reviewerId!==e.uploadedById;
  return {fingerprint:hashValue({id:e.id,hash:e.sha256,version:e.reviewVersion,status:e.reviewStatus,scan:e.scanStatus,reviewer:e.reviewerId}),valid,reason:"Evidence approval, scan or content has changed",authorId:e.uploadedById,url:null,name:e.filename,text:""};
 }
@@ -46,12 +48,23 @@ export async function draftRequirements(ctx:AuthorizedContext,input:unknown,deps
  requireLibrary();const d=intakeSchema.parse(input);let clauses:Array<Omit<z.infer<typeof clauseSchema>,"rule">&{rule:ReturnType<typeof parseRule>}>;
  try{clauses=d.clauses.map(c=>({...c,rule:parseRule(c.rule)}));}catch{throw new IntelligenceError("Check the applicability rule structure");}
  const original=await transaction(ctx,async tx=>{await requireMember(tx,ctx,WRITER);const s=await sourceState(tx,ctx.organizationId,d.source.type,d.source.id);if(!s.valid)throw new IntelligenceError(s.reason,409);return s;});
- let pages:Array<{page:number;text:string}>=[];
- if(d.source.type==="PDF"){if(!evidenceConfigured())throw new IntelligenceError("Private evidence processing is not activated",503);const file=await downloadEvidence(ctx,d.source.id,deps.storage),pdf=await extractPdf(file.bytes);if(pdf.truncated||pdf.skippedPages.length)throw new IntelligenceError("Incomplete extraction: use a shorter, readable PDF before importing clauses",409);pages=pdf.pages;}
- const prepared=clauses.map(c=>{const text=d.source.type==="PDF"?pages.find(p=>p.page===c.page)?.text||"":original.text;
+ let units:DocumentUnit[]=[],extractionVersion="";
+ if(d.source.type!=="PUBLICATION"){
+  if(!evidenceConfigured())throw new IntelligenceError("Private evidence processing is not activated",503);
+  const file=await downloadEvidence(ctx,d.source.id,deps.storage);
+  const document=await extractDocument(file.bytes,file.filename);
+  if(document.format!==d.source.type||extractionBlocked(document))throw new IntelligenceError("Resolve incomplete or blocked extraction before importing clauses",409);
+  units=document.pages;extractionVersion=document.version;
+ }
+ const prepared=clauses.map(c=>{
+  const coordinate=d.source.type==="DOCX"?c.block:c.page;
+  if(d.source.type!=="DOCX"&&c.block!==undefined||d.source.type==="DOCX"&&c.page!==undefined)
+    throw new IntelligenceError("Use a Word block for DOCX and a page for PDF",400);
+  const unit=units.find(u=>u.page===coordinate);
+  const text=d.source.type==="PUBLICATION"?original.text:unit?.text||"";
   if(!uniqueQuote(text,c.quote)||c.effectivity&&!uniqueQuote(text,c.effectivity.quote)||[...c.conditions,...c.exceptions].some(q=>!uniqueQuote(text,q)))throw new IntelligenceError("Every requirement, condition and exception must be an exact, unique quotation from the selected source page",409);
   const content:RequirementContent={title:c.title,quote:c.quote,kind:c.kind,conditions:c.conditions,exceptions:c.exceptions,rule:c.rule,...(c.effectivity?{effectivity:c.effectivity}:{})};
-  const provenance:Provenance={type:d.source.type,id:d.source.id,fingerprint:original.fingerprint,authorId:original.authorId,url:original.url,name:original.name,...(d.source.type==="PDF"?{page:c.page}:{}),start:text.indexOf(c.quote),end:text.indexOf(c.quote)+c.quote.length};return {reference:c.reference,content,provenance};
+  const provenance:Provenance={type:d.source.type,id:d.source.id,fingerprint:original.fingerprint,authorId:original.authorId,url:original.url,name:original.name,...(d.source.type==="PDF"?{page:c.page}:d.source.type==="DOCX"?{block:c.block,label:unit?.label,extractionVersion}:{}),start:text.indexOf(c.quote),end:text.indexOf(c.quote)+c.quote.length};return {reference:c.reference,content,provenance};
  });
  return transaction(ctx,async tx=>{await requireMember(tx,ctx,WRITER);requireLibrary();const fresh=await sourceState(tx,ctx.organizationId,d.source.type,d.source.id);if(!fresh.valid||fresh.fingerprint!==original.fingerprint)throw new IntelligenceError("Source changed during import",409);
  const count=await tx.libraryRequirement.count({where:{organizationId:ctx.organizationId}});let added=0;const revisions:string[]=[];
@@ -89,7 +102,7 @@ export async function reviewRevision(ctx:AuthorizedContext,id:string,input:unkno
  requireLibrary();const d=z.object({version:z.number().int().positive(),decision:z.enum(["ACCEPTED","REJECTED","WITHDRAWN"]),notes:z.string().trim().min(40).max(1200),scopeConfirmed:z.literal(true)}).parse(input);
  const pre=await transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const r=await tx.libraryRevision.findFirst({where:{id,organizationId:ctx.organizationId}});if(!r)throw new IntelligenceError("Revision not found",404);if(d.decision!=="ACCEPTED")return null;
  if(r.createdById===ctx.userId)throw new IntelligenceError("A different administrator must review this revision",403);return verifyRevisionSource(tx,ctx,r);});
- if(pre?.type==="PDF"){if(!evidenceConfigured())throw new IntelligenceError("Private evidence processing is not activated",503);await downloadEvidence(ctx,pre.id,deps.storage);}
+ if(pre&&pre.type!=="PUBLICATION"){if(!evidenceConfigured())throw new IntelligenceError("Private evidence processing is not activated",503);await downloadEvidence(ctx,pre.id,deps.storage);}
  return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);requireLibrary();const r=await tx.libraryRevision.findFirst({where:{id,organizationId:ctx.organizationId},include:{requirement:true}});if(!r||r.version!==d.version||!(d.decision==="WITHDRAWN"?r.status==="ACCEPTED"&&r.number===r.requirement.currentRevision:r.status==="DRAFT"))throw new IntelligenceError("Revision changed or is not eligible for this decision",409);
  if(d.decision==="ACCEPTED"){const p=await verifyRevisionSource(tx,ctx,r);if(r.createdById===ctx.userId||p.authorId===ctx.userId)throw new IntelligenceError("A different administrator from the author and source uploader must review",403);
  if(r.number<=r.requirement.currentRevision)throw new IntelligenceError("A newer revision is already approved",409);

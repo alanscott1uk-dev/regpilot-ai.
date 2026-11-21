@@ -3,6 +3,12 @@ export const factDefinitions={
  sellsToConsumers:{label:"Sells to consumers",type:"boolean"},distanceSelling:{label:"Sells online or at a distance",type:"boolean"},
  processesPersonalData:{label:"Processes personal information",type:"boolean"},specialCategoryData:{label:"Handles special-category personal data",type:"boolean"},
  foodBusiness:{label:"Operates a food business",type:"boolean"},vatRegistered:{label:"VAT registered",type:"boolean"},limitedCompany:{label:"Operates as a limited company",type:"boolean"},
+ wholesalesMedicines:{label:"Distributes medicines wholesale",type:"boolean"},
+ manufacturesMedicines:{label:"Manufactures or assembles medicines",type:"boolean"},
+ importsMedicines:{label:"Imports medicines",type:"boolean"},
+ handlesControlledDrugs:{label:"Handles controlled drugs",type:"boolean"},
+ reliesOnColdChain:{label:"Handles temperature-controlled products",type:"boolean"},
+ suppliesNhs:{label:"Supplies goods or services to the NHS",type:"boolean"},
  hasPremises:{label:"Occupies business premises",type:"boolean"}
 } as const;
 export type FactKey=keyof typeof factDefinitions;

@@ -8,6 +8,7 @@ const config={
     "/api/workspace/controls/test":["./lib/policies/connected-control.wasm"],
     "/api/ai/research":["./node_modules/@yarflam/potion-base-8m/models/**/*"],
     "/api/workspace/questionnaires/ocr":[...pdfRuntime],
+    "/api/workspace/questionnaires/*/original-export":[...docxRuntime,"./lib/server/questionnaire-original-worker.mjs","./lib/server/questionnaire-original-docx.mjs","./lib/server/questionnaire-workbook.mjs"],
     "/api/workspace/questionnaires/inspect":[...docxRuntime,...pdfRuntime],
     "/api/workspace/questionnaires/import":[...docxRuntime,...pdfRuntime],
     "/api/workspace/knowledge":[...docxRuntime,...pdfRuntime],

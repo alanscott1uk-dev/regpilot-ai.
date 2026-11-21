@@ -2,7 +2,9 @@ import {z} from "zod";
 import {factDefinitions,type FactKey,type Rule} from "./facts";
 export {factDefinitions,type FactKey,type Rule} from "./facts";
 const bool=z.boolean().nullable().optional(),number=z.number().finite().min(0).max(1e12).nullable().optional();
-export const factsSchema=z.object({employeeCount:number.refine(n=>n==null||Number.isInteger(n)),annualTurnoverGBP:number,sellsToConsumers:bool,distanceSelling:bool,processesPersonalData:bool,specialCategoryData:bool,foodBusiness:bool,vatRegistered:bool,limitedCompany:bool,hasPremises:bool}).strict();
+export const factsSchema=z.object({employeeCount:number.refine(n=>n==null||Number.isInteger(n)),annualTurnoverGBP:number,sellsToConsumers:bool,distanceSelling:bool,processesPersonalData:bool,specialCategoryData:bool,foodBusiness:bool,vatRegistered:bool,limitedCompany:bool,hasPremises:bool,
+ wholesalesMedicines:bool,manufacturesMedicines:bool,importsMedicines:bool,
+ handlesControlledDrugs:bool,reliesOnColdChain:bool,suppliesNhs:bool}).strict();
 export type Facts=z.infer<typeof factsSchema>;
 
 export function parseRule(value:unknown,depth=0,budget={nodes:0}):Rule|null{

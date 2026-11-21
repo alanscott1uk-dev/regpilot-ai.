@@ -12,6 +12,9 @@ export async function POST(r:Request,p:{params:Promise<{id:string}>}){
   if(mappings.length!==1||typeof mappings[0]!=='string'||mappings[0].length>30000||versions.length!==1||typeof versions[0]!=='string'||!/^\d{1,9}$/.test(versions[0]))return reply({error:'Check the answer columns and questionnaire version'},400);
   let mapping;try{mapping=JSON.parse(mappings[0]);}catch{return reply({error:'Answer-column mapping must be valid JSON'},400);}
   const input={bytes:new Uint8Array(await file.arrayBuffer()),filename:file.name,mappings:mapping,expectedVersion:Number(versions[0])};
-  return await verifiedDownloadResponse(()=>exportQuestionnaireOriginal(c,id,input),{filename:'completed-original.xlsx',contentType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',signal:r.signal});
+  const format=file.name.split('.').at(-1)?.toLowerCase();
+  const media={docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',csv:'text/csv; charset=utf-8',xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'};
+  if(format!=='csv'&&format!=='docx'&&format!=='xlsx')return reply({error:'Choose the original CSV, DOCX or XLSX.'},415);
+  return await verifiedDownloadResponse(()=>exportQuestionnaireOriginal(c,id,input),{filename:'completed-original.'+format,contentType:media[format],signal:r.signal});
  }catch(e){if(e instanceof QuestionnaireWorkbookError)return reply({error:e.message},e.status);return fail(e);}
 }

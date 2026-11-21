@@ -24,6 +24,14 @@ test('document intake persists verified PDF and DOCX provenance through approval
   assert.equal((await createQuestionnaire(x.o,input,{verifiedFile:{filename,sha256:document.sha256}})).id,imported.id);await assert.rejects(()=>exportQuestionnaireResponsePack(x.ad,imported.id,x.store),rejects(409));
   const approved=await approve(x,imported.id,new Map([['',answer.id]])),source=approved.questions[0].source!;assert.ok('quote' in source);assert.equal(source.quote,'1. '+question);assert.equal(source.unit,1);assert.equal(source.format,document.format);
   const zip=await exportQuestionnaireResponsePack(x.ad,imported.id,x.store),parts=await readZipParts(zip),manifest=JSON.parse(parts.get('manifest.json').toString());assert.equal(manifest.questions[0].source.quote,source.quote);assert.equal(manifest.questions[0].source.extractionVersion,document.extractionVersion);assert.equal(manifest.files.length,1);assert.equal(manifest.questions[0].evidence[0].archiveEntry,manifest.files[0].filename);assert.equal(responsePackHash(parts.get(manifest.files[0].filename)),manifest.files[0].sha256);assert.doesNotMatch(parts.get('manifest.json').toString(),/storageKey|reviewerId|uploadedById/);
+  if(filename.endsWith('.docx')){
+   const original={bytes,filename,mappings:[],expectedVersion:approved.questionnaire.version};
+   const completed=await exportQuestionnaireOriginal(x.ad,imported.id,original,x.store);
+   const returned=await inspectQuestionnaireDocument(completed,'returned.docx');
+   assert.deepEqual(returned.units.map(u=>u.text),[source.quote,approved.questions[0].answer]);
+   await assert.rejects(()=>exportQuestionnaireOriginal(x.ed,imported.id,original,x.store),rejects(403));
+   await assert.rejects(()=>exportQuestionnaireOriginal(x.ad,imported.id,{...original,expectedVersion:0},x.store),rejects(409));
+  }
   await assert.rejects(()=>exportQuestionnaireOriginal(x.ad,imported.id,{bytes:fixtureWorkbook(),filename:'buyer.xlsx',mappings:[{sheet:'Security',answerColumn:4}],expectedVersion:approved.questionnaire.version},x.store),rejects(409));
  }
 }finally{await x.cleanup();}});

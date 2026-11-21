@@ -1,11 +1,12 @@
 import {verifyQuestionnaireOcrOriginals} from './ocr-currentness';
+import {completeOriginalWord} from './questionnaire-original-word';
 import {Prisma} from '@prisma/client';
 import {transaction,IntelligenceError} from './intelligence-service';
 import {requireMember,ADMIN} from './workspace-member';
 import {approvedDisclosure} from './customer-assurance-service';
 import {downloadEvidence} from './evidence-service';
 import {verifyReviewedBytes} from './reviewed-files';
-import {writeQuestionnaireCsv,writeQuestionnaireXlsx,writeQuestionnaireOriginalXlsx} from './questionnaire-workbook.mjs';
+import {writeQuestionnaireCsv,writeQuestionnaireXlsx,writeOriginalSpreadsheet} from './questionnaire-workbook.mjs';
 import {RESPONSE_PACK_LIMITS,responsePackEvidenceSize,responsePackFiles,responsePackHash,writeResponsePackZip} from '../questionnaire-response-pack';
 import type {AuthorizedContext} from './authorization';
 import type {EvidenceObjectStore} from './evidence-storage';
@@ -29,7 +30,19 @@ export async function exportQuestionnaireResponsePack(c:AuthorizedContext,id:str
  const bytes=writeResponsePackZip(entries);await finish(c,id,pre,'response_pack_exported',{approvedHash:pre.row.approvedHash,archiveHash:responsePackHash(bytes),evidenceRecords:pre.files.length,evidenceFiles:files.entries.length});return bytes;
 }
 export async function exportQuestionnaireOriginal(c:AuthorizedContext,id:string,input:{bytes:Uint8Array;filename:string;mappings:unknown;expectedVersion:number},store?:EvidenceObjectStore){
- const pre=await current(c,id);if(!Number.isInteger(input.expectedVersion)||input.expectedVersion!==pre.row.version)throw new IntelligenceError('Questionnaire changed; refresh before exporting the original workbook',409);
- const bytes=await writeQuestionnaireOriginalXlsx(input.bytes,input.filename,{...pre.disclosure,approvedHash:pre.row.approvedHash,approvedAt:pre.row.approvedAt},input.mappings);
- await verifyReviewedBytes(c,pre.files,store);await verifyQuestionnaireOcrOriginals(c,pre.questions,store);await finish(c,id,pre,'original_workbook_exported',{approvedHash:pre.row.approvedHash,sourceHash:responsePackHash(input.bytes),exportHash:responsePackHash(bytes),mappings:input.mappings as Prisma.InputJsonValue});return bytes;
+ const pre=await current(c,id);
+ if(!Number.isInteger(input.expectedVersion)||input.expectedVersion!==pre.row.version)
+   throw new IntelligenceError('Questionnaire changed. Refresh before exporting the original.',409);
+ const format=input.filename.split('.').at(-1)?.toLowerCase();
+ if(!format||!['csv','xlsx','docx'].includes(format))throw new IntelligenceError('Choose an original CSV, XLSX or DOCX.',415);
+ if(format==='docx'&&(!Array.isArray(input.mappings)||input.mappings.length))
+   throw new IntelligenceError('Word uses the reviewed question locations. Column mappings are unsupported.',400);
+ const bytes=format==='docx'
+   ?await completeOriginalWord(input.bytes,input.filename,pre.disclosure.questions)
+   :await writeOriginalSpreadsheet(input.bytes,input.filename,pre.disclosure,input.mappings);
+ await verifyReviewedBytes(c,pre.files,store);
+ await verifyQuestionnaireOcrOriginals(c,pre.questions,store);
+ const action=format==='xlsx'?'original_workbook_exported':'original_'+format+'_exported';
+ await finish(c,id,pre,action,{approvedHash:pre.row.approvedHash,sourceHash:responsePackHash(input.bytes),exportHash:responsePackHash(bytes),mappings:input.mappings as Prisma.InputJsonValue});
+ return bytes;
 }

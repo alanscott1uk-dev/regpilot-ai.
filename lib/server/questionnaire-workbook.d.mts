@@ -36,3 +36,5 @@ export function writeQuestionnaireXlsx(value:QuestionnaireExport):Buffer;
 export function writeQuestionnaireCsv(value:QuestionnaireExport):string;
 
 export function writeQuestionnaireOriginalXlsx(bytes:Uint8Array,filename:string,value:QuestionnaireExport,mappings:unknown):Promise<Buffer>;
+
+export const writeOriginalSpreadsheet: typeof writeQuestionnaireOriginalXlsx;
