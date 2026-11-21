@@ -39,13 +39,20 @@ export default function Library(){
  const [selected,setSelected]=useState<string[]>([]),[controls,setControls]=useState<string[]>([]),[evidence,setEvidence]=useState<string[]>([]),[consent,setConsent]=useState(false),[analysisId,setAnalysisId]=useState(""),[candidateKeys,setCandidateKeys]=useState<string[]>([]);
  const [publications,setPublications]=useState<Publication[]>([]),[publicationQuery,setPublicationQuery]=useState(""),[publicationOffset,setPublicationOffset]=useState(0),[hasMore,setHasMore]=useState(false);
  const [edit,setEdit]=useState<{collection:string;reference:string;content:RequirementContent;source:{type:string;id:string;page?:number;block?:number}}|null>(null),[rule,setRule]=useState<Rule|null>(null),[sourceType,setSourceType]=useState("PUBLICATION");
- const active=useRef(""),epoch=useRef(0);active.current=orgId;
+ const linkConsumed=useRef(false),active=useRef(""),epoch=useRef(0);active.current=orgId;
  const request=useCallback(async(path:string,options:RequestInit={})=>{const token=(await browserAuth().auth.getSession()).data.session?.access_token;if(!token)throw Error("Sign in through your team workspace to continue.");const r=await fetch(path,{...options,cache:"no-store",headers:{...options.headers,authorization:"Bearer "+token}});const b=await r.json();if(!r.ok)throw Error(b.error||"Workspace unavailable");return b;},[]);
  useEffect(()=>{let alive=true,serial=0;const controller=new AbortController();let unsubscribe=()=>{};
- async function session(){const s=++serial;try{const b=await request("/api/ai/context",{signal:controller.signal});if(alive&&serial===s){setOrgs(b.organisations||[]);setUserId(b.userId||"");setOrgId(old=>(b.organisations||[]).some((o:Org)=>o.id===old)?old:b.organisations?.[0]?.id||"");setNotice("");}}catch(e){if(alive&&serial===s){setOrgId("");setOrgs([]);setUserId("");setData(null);setNotice(e instanceof Error?e.message:"Sign in first");}}finally{if(alive)setLoading(false);}}
+ async function session(){const s=++serial;try{const b=await request("/api/ai/context",{signal:controller.signal});if(alive&&serial===s){setOrgs(b.organisations||[]);setUserId(b.userId||"");setOrgId(old=>{
+ const choices:Org[]=b.organisations||[],linked=new URLSearchParams(window.location.search).get('organizationId');
+ if(choices.some(o=>o.id===old))return old;
+ return choices.find(o=>o.id===linked)?.id||choices[0]?.id||'';
+ });setNotice("");}}catch(e){if(alive&&serial===s){setOrgId("");setOrgs([]);setUserId("");setData(null);setNotice(e instanceof Error?e.message:"Sign in first");}}finally{if(alive)setLoading(false);}}
  try{const listener=browserAuth().auth.onAuthStateChange(event=>{if(event==="SIGNED_OUT"){serial++;epoch.current++;active.current="";setOrgId("");setOrgs([]);setData(null);setImpact(null);setRun(null);setUserId("");}else setTimeout(()=>{if(alive)void session();},0);});unsubscribe=()=>listener.data.subscription.unsubscribe();void session();}catch{setNotice("Private workspace sign-in is not configured in this environment.");setLoading(false);}return()=>{alive=false;serial++;controller.abort();unsubscribe();};
  },[request]);
- useEffect(()=>{setRevisionId("");setCursor("");setSearch("");setRunId("");setRun(null);setSelected([]);setControls([]);setEvidence([]);setConsent(false);setEdit(null);setRule(null);setPublications([]);setAnalysisId("");setCandidateKeys([]);},[orgId]);
+ useEffect(()=>{const params=new URLSearchParams(window.location.search),linked=params.get('revisionId');
+ const open=!linkConsumed.current&&orgId&&params.get('organizationId')===orgId&&linked&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(linked);
+ if(orgId)linkConsumed.current=true;
+ setRevisionId(open?linked:"");setCursor("");setSearch("");setRunId("");setRun(null);setSelected([]);setControls([]);setEvidence([]);setConsent(false);setEdit(null);setRule(null);setPublications([]);setAnalysisId("");setCandidateKeys([]);},[orgId]);
  useEffect(()=>{const gen=++epoch.current,c=new AbortController();setData(null);setImpact(null);if(!orgId)return;setLoading(true);
  const params=new URLSearchParams({organizationId:orgId,...(revisionId?{revisionId}:{}),...(cursor?{cursor}:{}),...(search?{search}:{})});
  Promise.all([request("/api/workspace/library?"+params,{signal:c.signal}),request("/api/workspace/library/impact?organizationId="+orgId,{signal:c.signal})]).then(([d,i])=>{if(gen===epoch.current){setData(d);setImpact(i);}}).catch(e=>{if(gen===epoch.current)setNotice(e.message);}).finally(()=>{if(gen===epoch.current)setLoading(false);});return()=>{c.abort();epoch.current++;};

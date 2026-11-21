@@ -2,14 +2,14 @@ import test from 'node:test';import assert from 'node:assert/strict';import {ran
 import {db} from '../lib/server/db';
 import {assuranceFixture,rejects,future} from './helpers/assurance-fixture';
 import {createAssuranceAnswer,changeAssuranceAnswer,createQuestionnaire,questionnaireDetail,changeQuestionnaire} from '../lib/server/customer-assurance-service';
-import {exportQuestionnaireOriginal,exportQuestionnaireResponsePack} from '../lib/server/questionnaire-response-pack-service';
+import {inspectOriginalPdf,exportQuestionnaireOriginal,exportQuestionnaireResponsePack} from '../lib/server/questionnaire-response-pack-service';
 import {inspectQuestionnaireDocument,mapQuestionnaireDocument} from '../lib/server/questionnaire-document';
 import {createProduct,changeProduct,setEvidenceApplicability} from '../lib/server/product-service';
 import {createEvidence,reviewEvidence} from '../lib/server/evidence-service';
 import {inspectQuestionnaireFile,mapQuestionnaireWorkbook} from '../lib/server/questionnaire-workbook.mjs';
 import {fixtureWorkbook} from './helpers/questionnaire-workbook-fixture.mjs';
 import {fixtureDocx,paragraph} from './helpers/docx-fixture.mjs';
-import {fixturePdf} from './helpers/pdf-fixture.mjs';
+import {fixtureFillablePdf,readPdfAnswerFields} from './helpers/pdf-fixture.mjs';
 import {readZipParts} from './helpers/zip-inspection.mjs';
 import {responsePackHash} from '../lib/questionnaire-response-pack';
 const notes='Independently checked the exact fictional customer questions, current product scope, response wording and supporting original files.';
@@ -18,12 +18,24 @@ async function approve(x:Awaited<ReturnType<typeof assuranceFixture>>,id:string,
 
 test('document intake persists verified PDF and DOCX provenance through approval and customer evidence packages',async()=>{const x=await assuranceFixture();enabled();try{
  const file=await x.file(),question='How do you review user access?',answer=await createAssuranceAnswer(x.o,{question,scope:'Fictional UK service',answer:'Fictional user access is reviewed against current records with named independent reviewers and documented exceptions.',evidenceIds:[file.id],validUntil:future(60),confirm:true});await changeAssuranceAnswer(x.ad,answer.id,{action:'APPROVE',version:1,notes,confirm:true},x.store);
- for(const [filename,bytes] of [['request.pdf',fixturePdf([['1. '+question]])],['request.docx',fixtureDocx(paragraph('1. '+question))]] as const){
+ for(const [filename,bytes] of [['request.pdf',await fixtureFillablePdf('1. '+question)],['request.docx',fixtureDocx(paragraph('1. '+question))]] as const){
   const document=await inspectQuestionnaireDocument(bytes,filename),candidate=document.candidates[0],rows=mapQuestionnaireDocument(document,[{unit:candidate.unit,start:candidate.start,end:candidate.end,reference:'Q1',question:question}]);
   const input={title:'Fictional document request',recipient:'Fictional customer',scope:'Fictional UK service',ownerId:x.ed.userId,rows,requestKey:randomUUID(),confirm:true},imported=await createQuestionnaire(x.o,input,{verifiedFile:{filename,sha256:document.sha256}});
   assert.equal((await createQuestionnaire(x.o,input,{verifiedFile:{filename,sha256:document.sha256}})).id,imported.id);await assert.rejects(()=>exportQuestionnaireResponsePack(x.ad,imported.id,x.store),rejects(409));
   const approved=await approve(x,imported.id,new Map([['',answer.id]])),source=approved.questions[0].source!;assert.ok('quote' in source);assert.equal(source.quote,'1. '+question);assert.equal(source.unit,1);assert.equal(source.format,document.format);
   const zip=await exportQuestionnaireResponsePack(x.ad,imported.id,x.store),parts=await readZipParts(zip),manifest=JSON.parse(parts.get('manifest.json').toString());assert.equal(manifest.questions[0].source.quote,source.quote);assert.equal(manifest.questions[0].source.extractionVersion,document.extractionVersion);assert.equal(manifest.files.length,1);assert.equal(manifest.questions[0].evidence[0].archiveEntry,manifest.files[0].filename);assert.equal(responsePackHash(parts.get(manifest.files[0].filename)),manifest.files[0].sha256);assert.doesNotMatch(parts.get('manifest.json').toString(),/storageKey|reviewerId|uploadedById/);
+  if(filename.endsWith('.pdf')){
+   const input={bytes,filename,expectedVersion:approved.questionnaire.version};
+   const described=await inspectOriginalPdf(x.ad,imported.id,input);
+   assert.deepEqual(described.fields,[{name:'Buyer response',page:1,multiline:true,maxLength:null}]);
+   const mapping={questionId:approved.questions[0].id,field:'Buyer response'};
+   const completed=await exportQuestionnaireOriginal(x.ad,imported.id,{...input,mappings:[mapping]},x.store);
+   assert.deepEqual(await readPdfAnswerFields(completed),[{name:mapping.field,value:approved.questions[0].answer}]);
+   await assert.rejects(()=>inspectOriginalPdf(x.ed,imported.id,input),rejects(403));
+   await assert.rejects(()=>inspectOriginalPdf(x.ad,imported.id,{...input,bytes:Buffer.concat([bytes,Buffer.from(' ')])}),rejects(409));
+   await assert.rejects(()=>exportQuestionnaireOriginal(x.ad,imported.id,{...input,mappings:[{...mapping,field:'Other field'}]},x.store),rejects(422));
+   await assert.rejects(()=>exportQuestionnaireOriginal(x.ad,imported.id,{...input,mappings:[mapping]},{...x.store,async get(){return Uint8Array.of(0);}}),rejects(409));
+  }
   if(filename.endsWith('.docx')){
    const original={bytes,filename,mappings:[],expectedVersion:approved.questionnaire.version};
    const completed=await exportQuestionnaireOriginal(x.ad,imported.id,original,x.store);

@@ -1,4 +1,5 @@
 'use client';
+import PdfOriginalPanel from './pdf-original-panel';
 import PortalPanel from './portal-panel';
 import {useEffect,useRef,useState} from 'react';
 import type {Detail,RawRequest} from './types';
@@ -10,6 +11,7 @@ export function ExportPanel({organizationId,detail,requestResponse,capture,locke
  const source=detail.questions[0]?.source;
  const format=String(source?.format||'');
  const original=['XLSX','CSV','DOCX'].includes(format)&&detail.questions.every(q=>q.source?.format===format&&q.source.filename===source?.filename&&q.source.sha256===source?.sha256);
+ const pdf=format==='PDF'&&detail.questions.every(q=>q.source?.format==='PDF'&&q.source.method!=='OCR'&&q.source.sha256===source?.sha256&&q.source.filename===source?.filename);
  const word=format==='DOCX';
  const groups=[...new Map(detail.questions.filter(question=>['CSV','XLSX'].includes(String(question.source?.format))).map(question=>{const sheet=String(question.source!.sheet),productId=question.productId||null;return [JSON.stringify([sheet,productId]),{sheet,productId,productName:question.productName||'General response',suggested:column(question.source!.answerCell)}] as const;})).entries()];
  const [file,setFile]=useState<File|null>(null),[columns,setColumns]=useState<Record<string,string>>(()=>Object.fromEntries(groups.map(([key,value])=>[key,value.suggested]))),[confirmed,setConfirmed]=useState(false),[busy,setBusy]=useState(''),[error,setError]=useState('');const alive=useRef(true),pending=useRef(false);
@@ -37,7 +39,8 @@ export function ExportPanel({organizationId,detail,requestResponse,capture,locke
    setFile(chosen);
  }}/></label>
  {!word&&<p className={css.muted}>Choose a distinct answer column for each product. RegPilot protects question, reference and context columns.</p>}{groups.map(([key,value])=><label className={css.field} key={key}>{value.sheet} · {value.productName}<select aria-label={'Original answer column '+value.sheet+' '+value.productName} value={columns[key]||''} onChange={event=>{setColumns(previous=>({...previous,[key]:event.target.value}));setConfirmed(false);}}><option value="">Choose an answer column</option>{Array.from({length:64},(_,index)=><option key={index+1} value={index+1}>{letter(index+1)}</option>)}</select></label>)}{!distinct&&<p role="alert">Each product needs a different answer column on this worksheet.</p>}<label className={css.check}><input type="checkbox" checked={confirmed} onChange={event=>setConfirmed(event.target.checked)}/>{word?'I checked the Word question locations and product scope.':'I checked the customer’s answer columns and the separate product response mappings.'}</label><button type="button" disabled={!file||!ready||!confirmed} onClick={()=>void download('original')}>{busy==='original'?'Verifying and completing original…':'Download completed original '+format}</button></fieldset></details>}
- {!original&&<p className={css.muted}>Use the response workbook for the approved answers and their exact source references.</p>}{error&&<div className={css.error} role="alert">{error}</div>}
+ {pdf&&<PdfOriginalPanel key={[organizationId,detail.questionnaire.id,detail.questionnaire.version].join('/')} {...{organizationId,detail,requestResponse,capture,locked:locked||!!busy}}/>}
+ {!original&&!pdf&&<p className={css.muted}>Use the response workbook for the approved answers and their exact source references.</p>}{error&&<div className={css.error} role="alert">{error}</div>}
  <PortalPanel detail={detail} organizationId={organizationId} requestResponse={requestResponse} capture={capture} locked={locked||!!busy}/>
  </section>;
 }

@@ -12,3 +12,27 @@ export function fixturePdf(pages){
   for(const offset of offsets.slice(1))pdf+=`${String(offset).padStart(10,"0")} 00000 n \n`;
   return Buffer.from(pdf+`trailer\n<< /Size ${objects.length+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
 }
+
+/** A buyer-authored questionnaire with one printable answer field per page. */
+export async function fixtureFillablePdf(...questions){
+  const {PDFDocument}=await import('pdf-lib');
+  const doc=await PDFDocument.create();
+  for(const [index,question] of questions.entries()){
+    const page=doc.addPage([595,842]);
+    page.drawText(question,{x:40,y:780,size:11});
+    const field=doc.getForm().createTextField(index?'Buyer response '+(index+1):'Buyer response');
+    field.enableMultiline();
+    field.addToPage(page,{x:40,y:440,width:500,height:250});
+  }
+  return Buffer.from(await doc.save());
+}
+
+/** Read the returned field values with a separate PDF implementation. */
+export async function readPdfAnswerFields(bytes,pageNumber=1){
+  const {getDocument}=await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const task=getDocument({data:Uint8Array.from(bytes),isEvalSupported:false,useSystemFonts:false,verbosity:0});
+  try{
+    const doc=await task.promise,page=await doc.getPage(pageNumber);
+    return (await page.getAnnotations()).filter(a=>a.fieldName).map(a=>({name:a.fieldName,value:a.fieldValue}));
+  }finally{await task.destroy();}
+}

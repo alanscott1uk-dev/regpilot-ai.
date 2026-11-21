@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {readFile,writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {fixtureWorkbook,inlineCell,sheetRow} from '../tests/helpers/questionnaire-workbook-fixture.mjs';
-import {fixturePdf} from '../tests/helpers/pdf-fixture.mjs';
+import {fixtureFillablePdf,readPdfAnswerFields} from '../tests/helpers/pdf-fixture.mjs';
 import {fixtureDocx,paragraph} from '../tests/helpers/docx-fixture.mjs';
 import {readZipParts} from '../tests/helpers/zip-inspection.mjs';
 import {inspectQuestionnaireFile} from '../lib/server/questionnaire-workbook.mjs';
@@ -33,10 +33,20 @@ export async function runQuestionnaireFormatJourney({upload,review,app,org,edito
  passed('An authenticated customer XLSX upload was independently answered and approved. Re-uploading the identical original returned the approved answer in its original cell while every untouched ZIP part remained byte-identical. A real private-file ZIP contained the approved responses, exact original evidence bytes and a verified question-to-file manifest.');
 
  const documentIds=[];
- for(const [format,filename,bytes,mimeType] of [['PDF','buyer-questions.pdf',fixturePdf([['1. '+question]]),'application/pdf'],['DOCX','buyer-questions.docx',fixtureDocx(paragraph('1. '+question)),'application/vnd.openxmlformats-officedocument.wordprocessingml.document']]){
+ for(const [format,filename,bytes,mimeType] of [['PDF','buyer-questions.pdf',await fixtureFillablePdf('1. '+question),'application/pdf'],['DOCX','buyer-questions.docx',fixtureDocx(paragraph('1. '+question)),'application/vnd.openxmlformats-officedocument.wordprocessingml.document']]){
   await checkpoint('review exact '+format+' question source and import it through the mobile interface');await upload.goto(app+'/team/questionnaires'+query);await upload.getByRole('button',{name:'Import questionnaire',exact:true}).click();intake=upload.getByRole('region',{name:'Import a questionnaire',exact:true});await intake.getByLabel('Questionnaire file',{exact:true}).setInputFiles({name:filename,mimeType,buffer:bytes});const inspected=await action(upload,'/api/workspace/questionnaires/inspect','POST',()=>intake.getByRole('button',{name:'Inspect questionnaire file',exact:true}).click());assert.equal(inspected.version,'questionnaire-document-v1');assert.equal(inspected.canImport,true);assert.equal(inspected.candidates.length,1);const selection=intake.getByRole('region',{name:'Review document questions',exact:true});await selection.getByRole('checkbox',{name:'Select document question '+inspected.candidates[0].reference,exact:true}).check();await selection.getByLabel('Question reference 1',{exact:true}).fill('Q1');await selection.getByLabel('Questionnaire name',{exact:true}).fill('Fictional '+format+' response');await selection.getByLabel('Customer / recipient',{exact:true}).fill('Fictional customer');await selection.getByLabel('Response scope',{exact:true}).fill(scope);await selection.getByLabel('Initial question owner',{exact:true}).selectOption(editor.id);await selection.getByRole('checkbox',{name:'I checked every selected source passage, question wording, customer instructions, recipient and product scope.',exact:true}).check();await upload.screenshot({path:artifactDir+'/mobile-questionnaire-'+format.toLowerCase()+'-selection.png',fullPage:true});assert.ok(await bounded(upload.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Mobile document intake layout'));
   const imported=await action(upload,'/api/workspace/questionnaires/import','POST',()=>selection.getByRole('button',{name:'Import 1 reviewed document questions',exact:true}).click(),201),record=await db.assuranceQuestionnaire.findUniqueOrThrow({where:{id:imported.id}}),source=record.questions[0].source;assert.equal(source.format,format);assert.equal(source.unitKind,format==='PDF'?'page':'block');assert.equal(source.unit,1);assert.equal(source.quote,'1. '+question);assert.equal(inspected.units[0].text.slice(source.start,source.end),source.quote);documentIds.push(imported.id);
   const disclosure=await approve(imported.id,'Q1'),workbook=await download(disclosure.getByRole('button',{name:'Download approved XLSX',exact:true})),exported=await inspectQuestionnaireFile(workbook,'document-response.xlsx'),headers=exported.sheets[1].rows[0].cells,values=exported.sheets[1].rows[1].cells;assert.equal(values[headers.indexOf('Source quotation')],source.quote);assert.equal(values[headers.indexOf('Source unit kind')],source.unitKind);assert.equal(exported.sheets[0].rows[1].cells[2],answer);await writeFile(artifactDir+'/questionnaire-'+format.toLowerCase()+'-response.xlsx',workbook);
+  if(format==='PDF'){
+    await packages.getByText('Return answers in the original PDF',{exact:true}).click();
+    await packages.getByLabel('Exact original PDF',{exact:true}).setInputFiles({name:filename,mimeType,buffer:bytes});
+    await packages.getByRole('button',{name:'Inspect PDF fields',exact:true}).click();
+    await packages.getByLabel('PDF answer field Q1',{exact:true}).selectOption('Buyer response');
+    await packages.getByLabel('I checked the PDF fields against the questions and product scope.',{exact:true}).check();
+    const returned=await download(packages.getByRole('button',{name:'Download completed original PDF',exact:true}));
+    assert.deepEqual(await readPdfAnswerFields(returned),[{name:'Buyer response',value:answer}]);
+    await writeFile(artifactDir+'/completed-original-questionnaire.pdf',returned);
+  }
   if(format==='DOCX'){
     await packages.getByText('Return answers in the original DOCX',{exact:true}).click();
     await packages.getByLabel('Exact original DOCX',{exact:true}).setInputFiles({name:filename,mimeType,buffer:bytes});
@@ -47,6 +57,6 @@ export async function runQuestionnaireFormatJourney({upload,review,app,org,edito
   }
 
  }
- passed('A real text PDF and DOCX were independently extracted by the application workers, explicitly selected and reviewed in the mobile UI, then persisted with exact page/block and character quotations. Independently approved response workbooks carried the original document provenance and current approved response. The approved Word answer was also returned in the original document.');
+ passed('A real text PDF and DOCX were independently extracted by the application workers, explicitly selected and reviewed in the mobile UI, then persisted with exact page/block and character quotations. Independently approved response workbooks carried the original document provenance and current approved response. The approved answers were also returned in the buyer’s original PDF and Word documents.');
  return {xlsxQuestionnaireId:xlsx.id,documentQuestionnaireIds:documentIds,answerId:saved.id,originalWorkbookPreserved:true,evidenceManifestVerified:true,formats:['XLSX','PDF','DOCX'],paidCalls:0};
 }

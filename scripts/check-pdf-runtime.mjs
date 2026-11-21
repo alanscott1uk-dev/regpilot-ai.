@@ -27,3 +27,34 @@ try{
   });
   console.log(`PDF production-package check PASS: ${routes.length} route traces, ${files.size} runtime files, real isolated extraction.`);
 }finally{await rm(isolated,{recursive:true,force:true});}
+
+// Exercise original-format return from its own route trace, independent of the extraction routes.
+const exportTrace=path.join(root,'.next/server/app/api/workspace/questionnaires/[id]/original-export/route.js.nft.json');
+const exportFiles=JSON.parse(await readFile(exportTrace,'utf8')).files.map(f=>path.resolve(path.dirname(exportTrace),f))
+  .filter(f=>/lib\/server\/(?:questionnaire-original(?:-worker|-pdf|-docx)|questionnaire-workbook|docx-parser)\.mjs$|node_modules\/(?:pdf-lib|yauzl|pend|saxes|xmlchars)\//.test(f));
+const exportDir=await mkdtemp(path.join(os.tmpdir(),'regpilot-pdf-return-'));
+try{
+  for(const file of exportFiles){
+    const relative=path.relative(root,file);
+    assert.ok(!relative.startsWith('..'));
+    const target=path.join(exportDir,relative);
+    await mkdir(path.dirname(target),{recursive:true});
+    await copyFile(file,target);
+  }
+  const {fixtureFillablePdf,readPdfAnswerFields}=await import('../tests/helpers/pdf-fixture.mjs');
+  const answer='Approved fixture response.';
+  const workerData={mode:'pdf',bytes:await fixtureFillablePdf('Q1. Retention?'),
+    questions:[{id:'q',page:1,answer}],mappings:[{questionId:'q',field:'Buyer response'}]};
+  const worker=new Worker(path.join(exportDir,'lib/server/questionnaire-original-worker.mjs'),{workerData,env:{},execArgv:[]});
+  try{
+    const message=await new Promise((resolve,reject)=>{
+      const timeout=setTimeout(()=>reject(Error('Packaged original-return worker timed out')),10000);
+      worker.once('message',reply=>{clearTimeout(timeout);resolve(reply);});
+      worker.once('error',error=>{clearTimeout(timeout);reject(error);});
+      worker.once('exit',()=>{clearTimeout(timeout);reject(Error('Worker exited without a return'));});
+    });
+    assert.ok(message.result,message.error);
+    assert.deepEqual(await readPdfAnswerFields(message.result),[{name:'Buyer response',value:answer}]);
+  }finally{await worker.terminate();}
+  console.log('PDF original-form production package passed independent readback.');
+}finally{await rm(exportDir,{recursive:true,force:true});}

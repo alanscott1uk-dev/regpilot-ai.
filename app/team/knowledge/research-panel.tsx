@@ -67,6 +67,20 @@ export function ResearchPanel({workspace,productId,scopeName}:{workspace:ReturnT
    return source?<p key={point.citationId+point.start}>{point.text} <a href={'#official-'+source.id}>{source.agency} passage</a></p>:null;
   })}
   {result.official.citations.length?result.official.citations.map(c=><details key={c.id} id={'official-'+c.id}><summary>{c.title}</summary><blockquote>{c.quote}</blockquote><p>{c.jurisdictions.join(", ")} · checked {c.checkedAt}{c.revisionAt?" · publisher revision "+c.revisionAt:""}</p><a href={c.url}>Open original publication</a></details>):<p>No supporting official passage retrieved.</p>}
+  {result.requirements&&<section><h3>Reviewed requirements and applicability</h3>
+   {result.requirements.notice&&<p>{result.requirements.notice}</p>}
+   {!result.requirements.hits.length&&!result.requirements.notice&&<p>No matching current requirement found.</p>}
+   {result.requirements.hits.map(r=><article key={r.id}>
+    <h4><a href={workspaceHref('/team/library',result.organizationId,{revisionId:r.id})}>{r.reference} · {r.title}</a></h4>
+    <p>{r.collection} · revision {r.edition} · {r.kind.toLowerCase()} · {r.decision?r.decision.replaceAll('_',' ').toLowerCase():'Applicability needs review'}</p>
+    <blockquote>{r.quote}</blockquote>
+    {r.conditions.map(v=><p key={v}>Condition · {v}</p>)}{r.exceptions.map(v=><p key={v}>Exception · {v}</p>)}
+    {r.effectivity&&<p>Effective from {r.effectivity.from}{r.effectivity.through&&' through '+r.effectivity.through} · {r.effectivity.quote}</p>}
+    {r.rationale&&<p>{r.rationale}</p>}{r.owner&&<p>Owner · {r.owner}</p>}
+    <p>Business profile {r.profileVersion} · {r.nations.join(', ')}</p>
+    <p><a href={r.source.url||workspaceHref('/team/evidence',result.organizationId,{evidenceId:r.source.id})}>{r.source.title}</a>
+     {r.source.block?' · Word block '+r.source.block:r.source.page?' · PDF page '+r.source.page:''} · characters {r.source.start}–{r.source.end}</p>
+   </article>)}</section>}
   <h3>Related workspace records</h3>
   {result.productId?<p>Clear the product filter to include organisation-wide operational records.</p>:result.records.length?<ul>{result.records.map(row=><li key={row.kind+row.id}><a href={row.href}>{row.title}</a> · {row.kind} · {row.status.replaceAll('_',' ')}</li>)}</ul>:<p>No matching operational records found.</p>}
   <h3>Current published procedures</h3><Citations organizationId={result.organizationId} hits={result.procedures} empty="No matching current published procedure found in the indexed records."/>
