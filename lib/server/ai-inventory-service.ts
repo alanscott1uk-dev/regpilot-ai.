@@ -1,3 +1,4 @@
+import {modelReceiptCurrent,modelChangeReceipt} from './partner-follow-up';
 import {Prisma} from "@prisma/client";
 import {actionSchema, assessUse, profileSchema, type InventoryAction} from "../ai-inventory";
 import {allowedEmail} from "../ai/security.mjs";
@@ -59,24 +60,31 @@ export async function inventoryWorkspace(ctx: AuthorizedContext) {
       ADMIN.includes(actor.role) ? tx.evidence.findMany({where:{organizationId, scanStatus:"CLEAN",reviewStatus:"APPROVED", reviewedAt:{not:null}}, select:{id:true,filename:true,uploadedById:true},orderBy:[{reviewedAt:"desc"},{id:"asc"}],take:200}) : [],
     ]);
     const today = new Date().toISOString().slice(0,10);
+    const partnerEvents=await tx.auditEvent.findMany({where:{organizationId,entityType:'AiSystem',entityId:{in:rows.map(r=>r.id)},action:'ai-system.partner-reassessment'},distinct:['entityId'],orderBy:[{entityId:'asc'},{createdAt:'desc'},{id:'desc'}],select:{entityId:true,details:true}});
+    const systemsById=new Map(rows.map(system=>[system.id,system]));
+    const sources=new Map(await Promise.all(partnerEvents.map(async event=>{
+      const system=systemsById.get(event.entityId)!;
+      return [event.entityId,{change:modelChangeReceipt.parse(event.details),current:await modelReceiptCurrent(tx,organizationId,event.details,system)}] as const;
+    })));
     const systems = rows.map(row => {
       const parsed = profileSchema.safeParse(row.profile), profile = parsed.success ? parsed.data : null;
-      const last = row.decisions[0];
+      const last = row.decisions[0], source=sources.get(row.id);
       let status = profile ? "Awaiting review" : "Needs assessment";
       if (profile && last?.systemVersion === row.version) {
         const file = last.evidence;
         const current = usableFile(file) && available(row, members) && ADMIN.includes(members.get(last.reviewerId)?.role ?? "") &&
           independent(row,last.reviewerId,file.uploadedById) && !!file.uploadedById && members.has(file.uploadedById) &&
           !!file.reviewerId && ADMIN.includes(members.get(file.reviewerId)?.role ?? "") &&
-          hashValue(basis(row,file)) === last.contextHash && hashValue(last.context) === last.contextHash;
+          hashValue({...basis(row,file),...(source?{partner:source.change}:{})}) === last.contextHash && hashValue(last.context) === last.contextHash;
         status = !current ? "Review invalidated" : last.validUntil.toISOString().slice(0,10) < today ? "Review expired" :
           ({APPROVED:"Approved", RESTRICTED:"Restricted", DECLINED:"Declined"}[last.verdict] ?? "Review invalidated");
       }
-      return {id:row.id, name:row.name, kind:row.kind, version:row.version, ownerId:row.ownerId, owner:members.get(row.ownerId)?.email ?? "Owner unavailable",
+      if(source&&!source.current)status='Partner source needs review';
+      return {partnerChange:source?.change??null,id:row.id, name:row.name, kind:row.kind, version:row.version, ownerId:row.ownerId, owner:members.get(row.ownerId)?.email ?? "Owner unavailable",
         vendorId:row.vendorId, controlId:row.controlId, profile, assessment:assessUse(profile), status,
         source: row.bomSerial ? {serial:row.bomSerial, reference:row.bomReference, version:row.bomVersion, modelVersion:row.componentVersion} : null,
         canEdit:ADMIN.includes(actor.role) || row.ownerId === ctx.userId,
-        canDecide:!!profile && available(row,members) && last?.systemVersion !== row.version && ADMIN.includes(actor.role) && independent(row,ctx.userId,null),
+        canDecide:source?.current!==false && !!profile && available(row,members) && last?.systemVersion !== row.version && ADMIN.includes(actor.role) && independent(row,ctx.userId,null),
         history:row.decisions.map(d=>({version:d.systemVersion, verdict:d.verdict, rationale:d.rationale, reviewer:members.get(d.reviewerId)?.email ?? "Former reviewer",
           evidence:d.evidence.filename, validUntil:d.validUntil.toISOString().slice(0,10), at:d.createdAt.toISOString()}))};
     });
@@ -162,12 +170,14 @@ async function decide(ctx: AuthorizedContext, input: Decision, storage?: Evidenc
     await requireMember(tx,ctx,ADMIN);
     const row = await record(tx,ctx.organizationId,input.id);
     checkVersion(row,input.version);
+    const partner=await tx.auditEvent.findFirst({where:{organizationId:ctx.organizationId,entityType:'AiSystem',entityId:row.id,action:'ai-system.partner-reassessment'},orderBy:[{createdAt:'desc'},{id:'desc'}]});
+    if(partner&&input.verdict!=='DECLINED'&&!await modelReceiptCurrent(tx,ctx.organizationId,partner.details,row))throw new IntelligenceError('Resolve the changed or unavailable partner model source before approval.',409);
     const members = await eligibleMembers(tx,ctx.organizationId);
     if (!profileSchema.safeParse(row.profile).success || !available(row,members)) throw new IntelligenceError("The current use, owner and linked records must be available for review.",409);
     const [file] = await reviewedFiles(tx,ctx.organizationId,[input.evidenceId]);
     if (!independent(row,ctx.userId,file.uploadedById)) throw new IntelligenceError("Choose a reviewer independent of the owner, last editor and evidence uploader.",403);
     if (!members.has(file.uploadedById) || !ADMIN.includes(members.get(file.reviewerId)?.role ?? "")) throw new IntelligenceError("The evidence participants are no longer eligible.",409);
-    const context = basis(row,file), contextHash = hashValue(context);
+    const context = {...basis(row,file),...(partner?{partner:modelChangeReceipt.parse(partner.details)}:{})}, contextHash = hashValue(context);
     const prior = await tx.aiSystemDecision.findUnique({where:{systemId_systemVersion:{systemId:row.id,systemVersion:row.version}}});
     if (prior && (prior.reviewerId !== ctx.userId || prior.verdict !== input.verdict || prior.rationale !== input.rationale || prior.validUntil.getTime() !== expires.getTime() || prior.contextHash !== contextHash)) throw new IntelligenceError("A decision already exists for this version. Start a new review to change it.",409);
     return {file,context,contextHash,prior};

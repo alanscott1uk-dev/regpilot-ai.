@@ -16,5 +16,10 @@ export const customerObservationInput=z.object({partnerRecord:partnerRecordSchem
 });
 export type CustomerObservationInput=z.infer<typeof customerObservationInput>;
 export const reviewCustomerObservationInput=z.object({decision:z.enum(['ACKNOWLEDGE','FOLLOW_UP','REJECT']),version:z.number().int().positive(),notes:z.string().trim().min(20).max(1600),ownerId:z.uuid().optional(),dueDate:z.iso.date().optional(),requestKey:z.uuid(),confirm:z.literal(true)}).strict().superRefine((value,context)=>{if(value.decision==='FOLLOW_UP'&&(!value.ownerId||!value.dueDate))context.addIssue({code:'custom',message:'Choose an owner and due date for the follow-up'});if(value.decision!=='FOLLOW_UP'&&(value.ownerId||value.dueDate))context.addIssue({code:'custom',message:'An owner and date apply only to a follow-up task'});});
+export const groupFollowUpInput=z.object({
+ records:z.array(z.object({id:z.uuid(),version:z.number().int().positive(),receiptHash:z.string().regex(/^[a-f0-9]{64}$/)}).strict())
+  .min(2).max(20).refine(records=>new Set(records.map(row=>row.id)).size===records.length),
+ ownerId:z.uuid(),dueDate:z.iso.date(),notes:z.string().trim().min(20).max(1600),requestKey:z.uuid(),confirm:z.literal(true)
+}).strict();
 export function reportedObservationOutcome(input:CustomerObservationInput){const outcomes=input.checks.map(check=>check.status);if(input.partnerRecord)outcomes.push(partnerOutcome(input.partnerRecord,input.observedAt));return outcomes.includes('FAIL')?'REPORTED_FAILURE':outcomes.includes('UNKNOWN')?'REPORTED_UNKNOWN':'REPORTED_PASS';}
 export const CUSTOMER_API_SCOPE_LABELS:Record<CustomerApiScope,string>={'controls:read':'Read granted controls','tasks:read':'Read tasks for granted controls','regulatory:read':'Read reviewed regulatory source metadata','evidence:read':'Read reviewed file metadata for granted controls','observations:read':'Read this client’s submitted observations','observations:write':'Submit observations for granted controls'};

@@ -303,8 +303,19 @@ export async function researchPublications(input: ResearchInput, read: ResearchR
     revisionAt:row.data.revisionAt || row.data.updatedAt, documentHash:row.digest, start,end,quote,
     jurisdictions:row.source.jurisdictions || [], kind:row.source.kind, scopeNote:row.source.scopeNote,
   }));
-  const checked = sources.map((source,i) => ({id:source.id,title:source.title,url:officialSourceUrl(source),
-    status: !loaded[i] ? "unavailable" as const : perSource.has(source.id) ? "matched" as const : "no_passage" as const}));
+  const supportingSources=[...new Set([
+    ...answer.points.map(point=>point.sourceId),
+    ...citations.map(passage=>passage.sourceId),
+    ...perSource.keys()
+  ])];
+  const evidenceRank=new Map(supportingSources.map((id,index)=>[id,index]));
+  const checked=sources.map((source,index)=>({
+    id:source.id,title:source.title,url:officialSourceUrl(source),candidateRank:index+1,
+    status:!loaded[index]?"unavailable" as const:perSource.has(source.id)?"matched" as const:"no_passage" as const
+  })).sort((a,b)=>
+    (evidenceRank.get(a.id)??sources.length)-(evidenceRank.get(b.id)??sources.length) ||
+    a.candidateRank-b.candidateRank
+  );
   const unavailable = checked.filter(row=>row.status==="unavailable").length;
   const status = citations.length ? "matched" as const : unavailable ? "incomplete" as const : "no_match" as const;
   return {status, catalogueSize:catalogue.length, nations, checked, unavailable, citations, answer,...(scopeQuestion?{scopeQuestion}:{})};

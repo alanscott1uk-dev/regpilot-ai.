@@ -95,6 +95,7 @@ function Register({workspace}: {workspace:Workspace}) {
          </dl><p>{item.assessment.reasons.join(" ")}</p>
          {item.canEdit && <button type="button" className={ui.secondary} onClick={()=>{setNotice("");setMode("edit");}}>Edit use or start a new review</button>}
          {item.canDecide && <DecisionForm key={item.id+item.version} item={item} data={data} send={write} busy={busy}/>}
+         {item.partnerChange&&<section><h3>Partner model change</h3><p>{item.partnerChange.reportedModel} · {item.partnerChange.reportedVersion} · {item.partnerChange.state}</p><a href={'/team/developers?'+new URLSearchParams({organizationId:workspace.organizationId,observationId:item.partnerChange.observationId})}>Review source receipt and control</a></section>}
          {item.history.length>0 && <section><h3>Recent decisions</h3>{item.history.map(h=><article key={h.version} className={styles.history}><strong>Version {h.version} · {names[h.verdict]}</strong><p>{h.rationale}</p><small>{h.reviewer} · {h.at.slice(0,10)} · Review through {h.validUntil} · {h.evidence}</small></article>)}</section>}
        </section> : <p role="alert">This system is unavailable in the selected company.</p> :
        <section className={ui.panel}><h2>Registered systems <small>({data.systems.length})</small></h2>

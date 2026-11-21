@@ -70,9 +70,19 @@ export async function publicSummaries(query:{id?:string;q?:string}){
  const id=query.id?z.uuid().parse(query.id):undefined;
  const q=query.q?.trim()||'';
  if(!id&&(q.length<3||q.length>100))return [];
- const rows=await db.auditRoom.findMany({where:{status:'PUBLISHED',expiresAt:{gt:new Date()},publicTitle:{not:null},...(id?{publicKey:id}:{publicTitle:{contains:q.replace(/[\\%_]/g,'\\$&'),mode:'insensitive'}})},orderBy:{id:'asc'},take:id?1:30});
+ const candidates=await db.auditRoom.findMany({
+  where:{status:'PUBLISHED',expiresAt:{gt:new Date()},publicTitle:{not:null},...(id?{publicKey:id}:{publicTitle:{contains:q.replace(/[\\%_]/g,'\\$&'),mode:'insensitive'}})},
+  select:{id:true,organizationId:true,publicRevision:true},orderBy:{id:'asc'},take:id?1:30
+ });
  const output=[];
- for(const row of rows)if(row.publicTitle&&row.publicSummary&&row.publicKey&&await ready(db,row))output.push({id:row.publicKey,title:row.publicTitle,summary:row.publicSummary,revision:row.publicRevision,expiresAt:row.expiresAt.toISOString()});
+ for(const candidate of candidates){
+  const summary=await transaction({organizationId:candidate.organizationId,userId:'',role:'VIEWER'},async tx=>{
+   const room=await tx.auditRoom.findFirst({where:candidate});
+   if(!room?.publicTitle||!room.publicSummary||!room.publicKey||!await ready(tx,room))return null;
+   return {id:room.publicKey,title:room.publicTitle,summary:room.publicSummary,revision:room.publicRevision,expiresAt:room.expiresAt.toISOString()};
+  });
+  if(summary)output.push(summary);
+ }
  return output;
 }
 export async function requestTrustAccess(identity:VerifiedWorkspaceIdentity,id:string,raw:unknown){

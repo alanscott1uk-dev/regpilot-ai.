@@ -101,6 +101,18 @@ test("failed reads, wrong identities and real pages with no matching text retain
   const unrelated=await researchPublications(query,async s=>({...await read(s),text:"Our internal fictional catalogue displays only a map of beaches and hills. A dog crossed the street on its way home."}),sources);
   assert.equal(unrelated.status,"no_match");assert.ok(unrelated.checked.every(s=>s.status==="no_passage"));
 });
+test("checked sources present supporting text before an unavailable top candidate and keep its original rank",async()=>{
+  const original=(await researchPublications(query,read,sources)).checked.find(source=>source.candidateRank===1)!;
+  const result=await researchPublications(query,async source=>{
+    if(source.id===original.id)throw new Error("Fictional publisher unavailable");
+    return read(source);
+  },sources);
+  assert.equal(result.checked[0].status,"matched");
+  assert.equal(result.checked[0].candidateRank,2);
+  assert.equal(result.checked[1].status,"unavailable");
+  assert.equal(result.checked[1].candidateRank,1);
+  assert.ok(result.citations.every(passage=>passage.sourceId===result.checked[0].id));
+});
 test("long text that crosses a word boundary retains exact offsets",async()=>{
   const text="📋 Wholesale medicine licence terms appear in this fictional reference ".repeat(50);
   const result=await researchPublications(query,async s=>({...await read(s),text}),sources);

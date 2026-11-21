@@ -50,6 +50,26 @@ export async function customerApiCustomerJourney({upload,review,db,app,org,edito
  await upload.goto(app+'/team/work'+query+'&taskId='+followUp.id);await upload.getByRole('dialog').getByRole('heading',{name:followUp.title,exact:true}).waitFor();assert.ok(await bounded(upload.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Mobile integration follow-up layout'));await upload.screenshot({path:artifactDir+'/mobile-integration-follow-up.png',fullPage:true});
  passed('An explicit administrator review created one ordinary owned OPEN task. A deliberately lost acknowledgement recovered the original human decision and task through GET without resending the mutation. The assigned colleague opened the real follow-up on mobile; the original evidence review was unchanged.');
 
+ await checkpoint('group two attributed reports into one owned control investigation');
+ const related=[];
+ for(const suffix of ['a','b']){
+  const externalId='group-'+suffix+'-'+randomUUID();
+  const response=await machine(token,'observations','POST',{...payload,externalId},randomUUID());
+  assert.equal(response.status(),201);related.push(await response.json());
+ }
+ await review.goto(app+'/team/developers'+query);
+ await review.getByText('Assign several reports together',{exact:true}).click();
+ const form=review.locator('details').filter({has:review.getByText('Assign several reports together',{exact:true})}).locator('form');
+ for(const report of related)await form.getByRole('checkbox',{name:new RegExp(report.externalId)}).check();
+ await form.getByLabel('Follow-up owner',{exact:true}).selectOption(editor.id);
+ await form.getByLabel('Due date',{exact:true}).fill(new Date(Date.now()+86400000).toISOString().slice(0,10));
+ await form.getByLabel('Reason for the investigation',{exact:true}).fill('Inspect both source reports for this control and record a single corrective investigation.');
+ const grouped=await action(review,'/api/workspace/developers/observations/group','POST',()=>form.getByRole('button',{name:'Assign selected reports',exact:true}).click());
+ assert.equal(grouped.records.length,2);assert.equal(grouped.tasks.length,1);assert.equal(grouped.tasks[0].records,2);
+ await review.goto(app+'/team/work'+query+'&taskId='+grouped.tasks[0].id);
+ for(const report of related)await review.getByRole('dialog').getByRole('link',{name:report.externalId,exact:true}).waitFor();
+ passed('Two separately attributed source reports on one control produced one investigation. Both original receipts open from the task.');
+
  await checkpoint('recover a lost rotation acknowledgement, explicitly replace its unavailable secret, and revoke access');
  await review.goto(app+'/team/developers'+query+'&credentialId='+created.id+'&observationId='+observation.id);const credential=review.getByRole('article',{name:'Selected API credential',exact:true});await credential.getByRole('button',{name:'Rotate secret',exact:true}).click();await credential.getByRole('checkbox',{name:'I authorise invalidating the previous secret and creating one replacement.',exact:true}).check();const credentialPath='/api/workspace/developers/credentials/'+created.id;let rotations=0;await review.route('**'+credentialPath+'?*',async route=>{if(route.request().method()!=='PATCH'){await route.continue();return;}rotations++;const response=await route.fetch();assert.equal(response.status(),200);await route.abort('failed');},{times:1});await credential.getByRole('button',{name:'Confirm secret rotation',exact:true}).click();await uncertain.waitFor();await uncertain.getByRole('button',{name:'Check saved operation',exact:true}).click();await uncertain.waitFor({state:'hidden'});assert.equal(rotations,1);assert.equal((await db.customerApiCredential.findUniqueOrThrow({where:{id:created.id}})).version,2);assert.equal(await secretPanel.count(),0);assert.equal((await machine(token,'controls')).status(),401);
  await credential.getByRole('button',{name:'Rotate secret',exact:true}).click();await credential.getByRole('checkbox',{name:'I authorise invalidating the previous secret and creating one replacement.',exact:true}).check();const replacement=await action(review,credentialPath,'PATCH',()=>credential.getByRole('button',{name:'Confirm secret rotation',exact:true}).click());assert.equal(replacement.version,3);token=replacement.secret;assert.ok(typeof token==='string');await secretPanel.getByRole('button',{name:'I saved the secret',exact:true}).click();await secretPanel.waitFor({state:'hidden'});assert.equal((await machine(token,'controls')).status(),200);assert.equal((await (await machine(token,'observations?requestKey='+requestKey)).json()).data[0].current,true);

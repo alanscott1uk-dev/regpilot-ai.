@@ -546,6 +546,7 @@ model AuditEvent {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   actor          User         @relation(fields: [actorId], references: [id], onDelete: Restrict)
   @@index([organizationId, createdAt])
+  @@index([organizationId,entityType,entityId,action,createdAt],map:"AuditEvent_record_action_time_idx")
 }
 
 
@@ -2041,6 +2042,7 @@ model CustomerApiObservation {
  @@unique([credentialId,controlId,externalId])
  @@index([organizationId,status,receivedAt,id])
  @@index([organizationId,credentialId,receivedAt,id])
+ @@index([organizationId,followUpTaskId])
 }
 model CustomerApiOperation {
  id String @id @default(uuid()) @db.Uuid

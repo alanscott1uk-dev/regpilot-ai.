@@ -4,8 +4,7 @@ const reference=z.string().min(1).max(96).regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/
 const hash=z.string().regex(/^[a-f0-9]{64}$/);
 const minText=z.string().trim().min(2).max(120);
 const sourceLink=z.url({protocol:/^https$/}).max(350).refine(value=>{
- const url=new URL(value);
- return !url.username&&!url.password&&!url.search&&!url.hash;
+ try{const url=new URL(value);return !url.username&&!url.password&&!url.search&&!url.hash;}catch{return false;}
 },'Use a permanent HTTPS source location without credentials, query parameters or a fragment');
 
 const permittedBuyers=z.array(z.email().trim().toLowerCase().max(254)).min(1).max(10).refine(v=>new Set(v).size===v.length).optional();

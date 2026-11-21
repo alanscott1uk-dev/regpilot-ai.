@@ -1,3 +1,7 @@
+import {bindPartnerModel,partnerFollowUp} from '../lib/server/partner-follow-up';
+import {inventoryAction,inventoryWorkspace} from '../lib/server/ai-inventory-service';
+import {createQualityCase,addQualityAction} from '../lib/server/capa-service';
+import {workTask} from '../lib/server/work-hub-service';
 import {createAuditRoom,changeAuditRoom,guestAuditAction,openAuditRoom} from '../lib/server/auditor-service';
 import {attachBuyerAnnex,buyerAnnexOptions} from '../lib/server/buyer-annex';
 import {purgeExpiredPartnerRecords} from '../lib/server/partner-retention';
@@ -8,7 +12,7 @@ import {db} from '../lib/server/db';
 import {assuranceFixture,rejects,future} from './helpers/assurance-fixture';
 import {CUSTOMER_API_SCOPES,type CustomerApiScope} from '../lib/customer-api';
 import {authenticateCustomerApi,secretHash,type CustomerApiSession} from '../lib/server/customer-api-auth';
-import {createCustomerCredential,changeCustomerCredential,developerWorkspace,listCustomerApiResource,submitCustomerApiObservation,reviewCustomerApiObservation} from '../lib/server/customer-api-service';
+import {createCustomerCredential,changeCustomerCredential,developerWorkspace,groupObservationFollowUps,listCustomerApiResource,submitCustomerApiObservation,reviewCustomerApiObservation} from '../lib/server/customer-api-service';
 import {hashValue} from '../lib/regulatory/intelligence';
 import {GET as getControls} from '../app/api/v1/controls/route';
 import {GET as getObservations,POST as postObservation} from '../app/api/v1/observations/route';
@@ -169,5 +173,70 @@ test('specialist retention withholds expired detail and the worker removes the u
   const response=await submitCustomerApiObservation(s,randomUUID(),body);assert.equal(response.current,false);assert.equal(response.payload,null);
   assert.ok(await purgeExpiredPartnerRecords()>=1);assert.equal(await purgeExpiredPartnerRecords(),0);
   const stored=await db.customerApiObservation.findUniqueOrThrow({where:{id:response.id}});assert.ok(stored.purgedAt);assert.deepEqual(stored.payload,{retention:'ended'});assert.equal(stored.payloadHash,response.receiptHash);
+ }finally{await x.cleanup();}
+});
+
+test('a reviewed model feed reopens the linked inventory on revision and preserves the earlier approval',async()=>{
+ const x=await fixture();
+ try{
+  const key=await x.create(),session=await x.session(key.secret!,'observations:write');
+  const vendor=await db.vendor.create({data:{organizationId:x.a.id,name:'Fictional model publisher',service:'Model version source',criticality:'HIGH',dataAccess:'LIMITED',ownerId:x.ed.userId,nextReviewAt:new Date(future())}});
+  const profile={purpose:'Prepare draft quality procedures for review.',safeguards:'A qualified human reviews each draft before use.',dataClass:'SENSITIVE',access:'DRAFT',impact:'HEALTH'};
+  await inventoryAction(x.ed,{action:'CREATE',requestKey:randomUUID(),name:'Fictional model',kind:'MODEL',ownerId:x.ed.userId,controlId:x.primary.id,vendorId:vendor.id,profile});
+  const inventory=async()=>(await inventoryWorkspace(x.o)).systems[0];
+  const original=await inventory(),file=await x.file();
+  const decision=(version:number)=>({action:'DECIDE',id:original.id,version,evidenceId:file.id,verdict:'RESTRICTED',validUntil:future(),rationale:'Independent review limits the use to drafts for a qualified person.'});
+  await inventoryAction(x.o,decision(original.version),x.store);
+  const record={schemaVersion:1,recordId:'model-series-1',revision:1,state:'CURRENT',sourceSystem:'Fictional model publisher',sourceVersion:'v1',decisionOwnerRef:'publisher',record:{kind:'MODEL_CHANGE',vendorRef:'vendor-1',systemRef:'system-1',modelRef:'quality-model',modelVersion:'1.0',approval:'APPROVED',decisionRef:'change-1'}};
+  const first=await submitCustomerApiObservation(session,randomUUID(),{...x.observation(x.primary.id,'PASS'),partnerRecord:record});
+  const bind={systemId:original.id,systemVersion:original.version,receiptHash:first.receiptHash,confirm:true};
+  const ack=(id:string)=>reviewCustomerApiObservation(x.ad,id,{decision:'ACKNOWLEDGE',version:1,notes,confirm:true,requestKey:randomUUID()});
+  await assert.rejects(()=>bindPartnerModel(x.o,first.id,bind),rejects(409));
+  await ack(first.id);
+  assert.equal((await partnerFollowUp(x.o,first.id)).systems[0].id,original.id);
+  await assert.rejects(()=>bindPartnerModel(x.out,first.id,bind),rejects(409));
+  await bindPartnerModel(x.o,first.id,bind);await bindPartnerModel(x.o,first.id,bind);
+  const bound=await inventory();assert.equal(bound.version,2);assert.equal(bound.history[0].version,1);assert.equal(bound.status,'Awaiting review');
+  await inventoryAction(x.o,decision(bound.version),x.store);assert.equal((await inventory()).status,'Restricted');
+  const changed={...x.observation(x.primary.id,'PASS'),partnerRecord:{...record,revision:2,previousHash:first.receiptHash,record:{...record.record,modelVersion:'2.1',decisionRef:'change-2'}}};
+  const next=await submitCustomerApiObservation(session,randomUUID(),changed);
+  assert.equal((await submitCustomerApiObservation(session,randomUUID(),changed)).id,next.id);
+  const pending=await inventory();assert.equal(pending.version,3);assert.equal(pending.status,'Partner source needs review');
+  assert.deepEqual(pending.history.map(h=>h.version),[2,1]);assert.equal(pending.partnerChange?.observationId,next.id);
+  await assert.rejects(()=>inventoryAction(x.o,decision(3),x.store),rejects(409));await ack(next.id);
+  await inventoryAction(x.o,decision(3),x.store);assert.equal((await inventory()).status,'Restricted');
+  await changeCustomerCredential(x.o,key.id,{action:'REVOKE',version:1,confirm:true,requestKey:randomUUID()});
+  assert.equal((await inventory()).status,'Partner source needs review');
+ }finally{await x.cleanup();}
+});
+
+test('group follow-up is atomic across controls, survives retries and links a calibrated excursion and hazard to one investigation',async()=>{
+ const x=await fixture();
+ try{
+  const key=await x.create(undefined,[x.primary.id,x.ungranted.id]),session=await x.session(key.secret!,'observations:write');
+  const source={schemaVersion:1,revision:1,state:'CURRENT',sourceSystem:'Fictional facilities',sourceVersion:'2026-11',decisionOwnerRef:'site-quality'};
+  const sensor={kind:'CALIBRATED_READING',siteRef:'site1',sensorRef:'s1',calibrationRef:'cert1',calibratedAt:new Date(Date.now()-86400000).toISOString(),calibrationDue:new Date(Date.now()+86400000).toISOString(),unit:'CELSIUS',minimum:2,maximum:8,reading:10,followUpRef:'exc-01'};
+  const first=await submitCustomerApiObservation(session,randomUUID(),{...x.observation(x.primary.id,'PASS'),partnerRecord:{...source,recordId:'s1-reading',record:sensor}});
+  const second=await submitCustomerApiObservation(session,randomUUID(),{...x.observation(x.primary.id,'PASS'),partnerRecord:{...source,recordId:'food-1',record:{kind:'FOOD_HAZARD',siteRef:'site1',hazardRef:'cold-store',result:'DEVIATION',correctiveActionRef:'exc-01'}}});
+  const third=await submitCustomerApiObservation(session,randomUUID(),x.observation(x.ungranted.id));
+  for(const row of [first,second])assert.equal(row.reportedOutcome,'REPORTED_FAILURE');
+  const records=[first,second,third].map(({id,version,receiptHash})=>({id,version,receiptHash}));
+  const input={records,ownerId:x.ed.userId,dueDate:future(),notes,requestKey:randomUUID(),confirm:true};
+  const count=()=>db.obligation.count({where:{organizationId:x.a.id,category:'Customer integration follow-up'}});
+  await assert.rejects(()=>groupObservationFollowUps(x.ed,input),rejects(403));
+  await assert.rejects(()=>groupObservationFollowUps(x.out,{...input,ownerId:x.out.userId}),rejects(404));
+  await assert.rejects(()=>groupObservationFollowUps(x.ad,{...input,records:[records[0],records[1],{...records[2],version:4}]}),rejects(409));
+  assert.equal(await count(),0);assert.equal(await db.customerApiObservation.count({where:{organizationId:x.a.id,status:'PENDING'}}),3);
+  const [done,replay]=await Promise.all([groupObservationFollowUps(x.ad,input),groupObservationFollowUps(x.ad,{...input,records:[...records].reverse()})]);
+  assert.notEqual(done.reused,replay.reused);assert.equal(await count(),2);
+  const rows=(await developerWorkspace(x.o,{all:true})).observations;
+  const taskId=rows.find(r=>r.id===first.id)!.followUpTaskId!;
+  assert.equal(rows.find(r=>r.id===second.id)!.followUpTaskId,taskId);assert.notEqual(rows.find(r=>r.id===third.id)!.followUpTaskId,taskId);
+  assert.deepEqual((await workTask(x.o,taskId)).integrationReceipts.map(r=>r.id).sort(),[first.id,second.id].sort());assert.deepEqual((await workTask(x.st,taskId)).integrationReceipts,[]);
+  await assert.rejects(()=>groupObservationFollowUps(x.ad,{...input,notes:notes+' Revised.'}),rejects(409));
+  const quality=await createQualityCase(x.ed,{requestKey:randomUUID(),title:'Cold-store investigation',kind:'DEVIATION',classification:'MAJOR',description:notes,impact:notes,containment:notes,occurredAt:new Date().toISOString().slice(0,10),ownerId:x.ed.userId});
+  await addQualityAction(x.ed,quality.id,{requestKey:randomUUID(),version:quality.version,taskId,kind:'CORRECTIVE',purpose:notes});
+  for(const id of [first.id,second.id])assert.equal((await partnerFollowUp(x.ad,id)).qualityActions[0].qualityCase.id,quality.id);
+  await assert.rejects(()=>partnerFollowUp(x.out,first.id),rejects(404));
  }finally{await x.cleanup();}
 });

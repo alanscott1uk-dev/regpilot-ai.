@@ -1,7 +1,7 @@
 import {partnerValidity} from '../partner-records';
 import {Prisma,type CustomerApiObservation} from '@prisma/client';
 import {z} from 'zod';
-import {CUSTOMER_API_LIMITS,CUSTOMER_API_SCOPES,CUSTOMER_API_VERSION,createCustomerCredentialInput,changeCustomerCredentialInput,customerObservationInput,reviewCustomerObservationInput,reportedObservationOutcome,type CustomerApiScope} from '../customer-api';
+import {CUSTOMER_API_LIMITS,CUSTOMER_API_SCOPES,CUSTOMER_API_VERSION,createCustomerCredentialInput,changeCustomerCredentialInput,groupFollowUpInput,customerObservationInput,reviewCustomerObservationInput,reportedObservationOutcome,type CustomerApiScope} from '../customer-api';
 import {hashValue} from '../regulatory/intelligence';
 import type {AuthorizedContext} from './authorization';
 import {transaction,IntelligenceError} from './intelligence-service';
@@ -127,9 +127,15 @@ export async function submitCustomerApiObservation(session:CustomerApiSession,re
   if(await tx.customerApiObservation.count({where:{...org(session),receivedAt:{gte:new Date(now-86400000)}}})>=CUSTOMER_API_LIMITS.dailyObservations)throw new CustomerApiError('The daily company observation allowance has been reached',429,'observation_allowance');
   const context=contextSchema.parse({format:'customer-observation-v1',credentialId:session.credentialId,issuedById:session.issuedById,control:controlSnapshot(control)}),row=await tx.customerApiObservation.create({data:{...org(session),credentialId:session.credentialId,credentialVersion:principal.credential.version,controlId:control.id,requestKey,externalId:d.externalId,partnerKey,partnerRevision:source?.revision,retentionEndsAt:source?.record.kind==='SPECIALIST_ATTESTATION'?new Date(Date.parse(source.record.retainUntil+'T00:00:00Z')+86400000):null,payload:json(payload),payloadHash,context:json(context),contextHash:hashValue(context),observedAt,validUntil},include:rowInclude});
   // This durable record attributes the submission to the machine credential. No human audit action is fabricated.
+  if(source?.record.kind==='MODEL_CHANGE'){const {advanceBoundModel}=await import('./partner-follow-up');await advanceBoundModel(tx,row);}
   await enqueueCustomerObservationDelivery(tx,row);
   return {...(await observationsView(tx,session,[row]))[0],reused:false};
  });
+}
+function followUpDate(value:string){
+ const date=new Date(value+'T00:00:00.000Z'),today=new Date(new Date().toISOString().slice(0,10)+'T00:00:00.000Z');
+ if(date<today||date.getTime()>Date.now()+365*86400000)throw new IntelligenceError('Choose a follow-up date from today to one year ahead',400);
+ return date;
 }
 export async function reviewCustomerApiObservation(c:AuthorizedContext,id:string,input:unknown){z.uuid().parse(id);const d=reviewCustomerObservationInput.parse(input),requestHash=hashValue({id,...d});return transaction(c,async tx=>{
  await requireMember(tx,c,ADMIN);const previous=await operation(tx,c,d.requestKey,requestHash);if(previous)return {...previous.result as object,reused:true};
@@ -137,11 +143,55 @@ export async function reviewCustomerApiObservation(c:AuthorizedContext,id:string
  const view=(await observationsView(tx,c,[row]))[0];if(d.decision!=='REJECT'&&!view.current)throw new IntelligenceError(view.reason||'This observation is no longer current',409);if(d.decision==='ACKNOWLEDGE'&&view.payload?.partnerRecord&&row.credential.issuedById===c.userId)throw new IntelligenceError('A different administrator must acknowledge the partner source',403);if(d.decision==='ACKNOWLEDGE'&&view.reportedOutcome!=='REPORTED_PASS')throw new IntelligenceError('A reported failure or unknown result needs an owned follow-up or rejection',409);
  let followUpTaskId:string|null=null;
  if(d.decision==='FOLLOW_UP'){
-  const owner=await activeOwner(tx,c,d.ownerId!),date=new Date(d.dueDate!+'T00:00:00.000Z'),today=new Date(new Date().toISOString().slice(0,10)+'T00:00:00.000Z');if(date<today||date.getTime()>Date.now()+365*86400000)throw new IntelligenceError('Choose a follow-up date from today to one year ahead',400);
+  const owner=await activeOwner(tx,c,d.ownerId!),date=followUpDate(d.dueDate!);
   const task=await tx.obligation.create({data:{...org(c),title:('Investigate integration report: '+row.control.title).slice(0,160),category:'Customer integration follow-up',ownerName:owner.user.email,assigneeId:d.ownerId,controlId:row.controlId,originKey:hashValue({customerApiObservation:id}),dueDate:date,status:'OPEN',notes:('Administrator-requested investigation of a customer-submitted integration report.\nIntegration: '+row.credential.name+'\nExternal reference: '+row.externalId+'\nThis report is not verified evidence or a compliance decision.\nReview rationale: '+d.notes).slice(0,3000)}});followUpTaskId=task.id;
  }
  const status=d.decision==='FOLLOW_UP'?'FOLLOW_UP':d.decision==='REJECT'?'REJECTED':'ACKNOWLEDGED',saved=await tx.customerApiObservation.update({where:{id},data:{status,version:{increment:1},reviewerId:c.userId,reviewedAt:new Date(),reviewNotes:d.notes,followUpTaskId}}),result={id,version:saved.version,status,followUpTaskId,requestKey:d.requestKey};await recordOperation(tx,c,d.requestKey,requestHash,'OBSERVATION_REVIEWED',id,result);await enqueueCustomerObservationDelivery(tx,saved,true);return {...result,reused:false};
 });}
+
+export async function groupObservationFollowUps(ctx:AuthorizedContext,input:unknown){
+ const data=groupFollowUpInput.parse(input);
+ const records=[...data.records].sort((a,b)=>a.id.localeCompare(b.id));
+ const requestHash=hashValue({action:'GROUPED_FOLLOW_UP',...data,records});
+ return transaction(ctx,async tx=>{
+  await requireMember(tx,ctx,ADMIN);
+  const previous=await operation(tx,ctx,data.requestKey,requestHash);
+  if(previous)return {...previous.result as object,reused:true};
+  const owner=await activeOwner(tx,ctx,data.ownerId),dueDate=followUpDate(data.dueDate);
+  const rows=await tx.customerApiObservation.findMany({where:{organizationId:ctx.organizationId,id:{in:records.map(record=>record.id)}},include:rowInclude});
+  if(rows.length!==records.length)throw new IntelligenceError('One or more selected reports are unavailable in this company',404);
+  const expected=new Map(records.map(record=>[record.id,record]));
+  const views=await observationsView(tx,ctx,rows);
+  for(const view of views){
+   const submitted=expected.get(view.id)!;
+   if(!view.current||view.status!=='PENDING'||view.version!==submitted.version||view.receiptHash!==submitted.receiptHash){
+    throw new IntelligenceError('One or more selected reports changed. Refresh and review the selection.',409);
+   }
+  }
+  const grouped=new Map<string,ObservationRow[]>();
+  for(const row of rows){const group=grouped.get(row.controlId)??[];group.push(row);grouped.set(row.controlId,group);}
+  const tasks:{id:string;controlId:string;records:number}[]=[];
+  for(const [controlId,group] of grouped){
+   const task=await tx.obligation.create({data:{
+    organizationId:ctx.organizationId,controlId,ownerName:owner.user.email,assigneeId:data.ownerId,dueDate,status:'OPEN',
+    title:('Investigate integration reports for '+group[0].control.title).slice(0,160),category:'Customer integration follow-up',
+    originKey:hashValue({requestKey:data.requestKey,controlId}),notes:data.notes
+   }});
+   const reviewedAt=new Date();
+   for(const row of group){
+    const saved=await tx.customerApiObservation.update({where:{id:row.id},data:{
+     followUpTaskId:task.id,status:'FOLLOW_UP',version:{increment:1},reviewerId:ctx.userId,reviewedAt,reviewNotes:data.notes
+    }});
+    await enqueueCustomerObservationDelivery(tx,saved,true);
+   }
+   tasks.push({id:task.id,controlId,records:group.length});
+  }
+  const first=rows.find(row=>row.id===records[0].id)!;
+  const result={id:first.id,requestKey:data.requestKey,records,tasks,followUpTaskId:tasks.find(task=>task.controlId===first.controlId)!.id};
+  await recordOperation(tx,ctx,data.requestKey,requestHash,'GROUPED_FOLLOW_UP',first.id,result);
+  return {...result,reused:false};
+ });
+}
 
 export async function buyerPartnerReceipt(tx:Tx,organizationId:string,id:string,email:string){
  const row=await tx.customerApiObservation.findFirst({where:{id,organizationId,status:'ACKNOWLEDGED',partnerKey:{not:null},supersededAt:null},include:rowInclude});
@@ -150,4 +200,9 @@ export async function buyerPartnerReceipt(tx:Tx,organizationId:string,id:string,
  if(!view.current||view.reportedOutcome!=='REPORTED_PASS'||!s||!r||(r.kind!=='SUPPLIER_RELATION'&&r.kind!=='SUPPLIER_ASSESSMENT')||!r.permittedBuyers?.includes(email))return null;
  const {permittedBuyers:_,...permittedRecord}=r;
  return {id:row.id,source:s.sourceSystem,recordId:s.recordId,sourceVersion:s.sourceVersion,revision:s.revision,receiptHash:view.receiptHash,observedAt:view.observedAt,validUntil:view.validUntil,decisionOwnerRef:s.decisionOwnerRef,record:permittedRecord};
+}
+
+export async function internalPartnerView(tx:Tx,organizationId:string,id:string){
+ const row=await tx.customerApiObservation.findFirst({where:{id,organizationId,partnerKey:{not:null}},include:rowInclude});
+ return row?(await observationsView(tx,{organizationId},[row]))[0]:null;
 }

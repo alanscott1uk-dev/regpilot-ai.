@@ -116,6 +116,8 @@ export async function workTask(ctx:AuthorizedContext,id:string) {
    intelligenceDecisions:{where:{organizationId:ctx.organizationId},orderBy:{createdAt:'desc'},take:10,select:{id:true,decision:true,createdAt:true,run:{select:{snapshot:{select:{id:true,title:true,url:true,sourceId:true,lastCheckedAt:true,version:true}}}}}}
   }});
   if(!record)throw new IntelligenceError('Task not found',404);
+  const integrationReceipts=ADMIN.includes(actor.role)&&record.category==='Customer integration follow-up'
+   ?await tx.customerApiObservation.findMany({where:{organizationId:ctx.organizationId,followUpTaskId:id},select:{id:true,externalId:true,partnerRevision:true},orderBy:{id:'asc'},take:20}):[];
   const history=await tx.auditEvent.findMany({where:{organizationId:ctx.organizationId,entityType:'Obligation',entityId:id},orderBy:[{createdAt:'desc'},{id:'desc'}],take:31,select:{id:true,action:true,createdAt:true}});
   // Reverse treatment links are navigation only. Keep the company scope on both
   // records and project no review context, evidence manifests or stored content.
@@ -139,7 +141,7 @@ export async function workTask(ctx:AuthorizedContext,id:string) {
     progress.assessment.current=checked.valid;progress.assessment.reason=checked.reason;
    }else if(!assessment){progress.assessment.current=false;progress.assessment.reason='The saved assessment is unavailable. Refresh its task context.';}
   }
-  return {organizationId:ctx.organizationId,task:{...safeTask,evidence:evidence.slice(0,50)},evidenceLimited:evidence.length>50,history:history.slice(0,30),historyLimited:history.length>30,
+  return {integrationReceipts,organizationId:ctx.organizationId,task:{...safeTask,evidence:evidence.slice(0,50)},evidenceLimited:evidence.length>50,history:history.slice(0,30),historyLimited:history.length>30,
    relatedRisks,relatedRisksLimited:riskLinks.length>10,
    relatedQualityCases,relatedQualityCasesLimited:qualityLinks.length>10,
    reviewKinds:{files:observed.reviewableFiles,assessments:!!observed.reviewId},planningBlocked:planningBlock(task),canPlan:isAdmin&&!planningBlock(task),canStart:WRITER.includes(actor.role)&&task.status==='OPEN'&&!planningBlock(task),workflow:taskWorkflow(safeTask,ctx.organizationId,progress)};
