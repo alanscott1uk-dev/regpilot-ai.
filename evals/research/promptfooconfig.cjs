@@ -11,6 +11,7 @@ module.exports={
     description:c.id,vars:{question:c.question,...(c.nation?{nation:c.nation}:{}),...(c.outage?{outage:true}:{}),...(c.unavailable?{unavailable:c.unavailable}:{})},
     assert:[
       check("Disposition",r=>r.status!==(c.status||"matched") && "Unexpected research status: "+r.status),
+      ...(c.manual?[check("ManualSource",r=>!r.checked.some(s=>s.id===c.manual && s.status==="manual_refresh") || r.citations.some(q=>q.sourceId===c.manual) ? "Manual publication must be signposted without citing an unread source" : false)]:[]),
       ...(c.unavailable?[check("PartialOutage",r=>!c.unavailable.every(id=>r.checked.some(s=>s.id===id && s.status==="unavailable")) && "Unavailable source was silently omitted")]:[]),
       ...(c.sources?[check("SourceRecallAt3",r=>!c.sources.some(id=>r.checked.slice(0,3).some(s=>s.id===id)) && "Expected source absent from first three reads"),
         check("EvidenceSourcePrecision",r=>(!r.citations.length || r.citations.some(q=>!c.sources.includes(q.sourceId))) && "Missing or off-topic cited source")]:[]),

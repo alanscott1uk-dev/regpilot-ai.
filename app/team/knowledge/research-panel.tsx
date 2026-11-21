@@ -59,6 +59,7 @@ export function ResearchPanel({workspace,productId,scopeName}:{workspace:ReturnT
     <p><a href={workspaceHref("/team/vendors",result.organizationId,{vendorId:s.id})}>{s.name}</a>{s.premises&&<> · {s.activity} at {s.premises}</>}</p>
     <p>{s.number&&<>UK WDA(H) {s.number} · </>}{s.reviewState.replaceAll("_"," ")}{s.recommendation?" · "+s.recommendation:""} · Owner {s.owner}</p>
     {s.requiredEntries.length>0&&<p>Required annex entries · {s.requiredEntries.map(e=>e.code+" "+e.label).join(", ")}</p>}
+    {s.accounting&&<p>Last accounting comparison · {s.accounting.provider==='xero'?'Xero':'QuickBooks'} · {s.accounting.checkedAt.slice(0,10)} · supplier revision {s.accounting.vendorVersion} · {s.accounting.issues.join(' · ')||'Name and active status matched at check time'}</p>}
     <SupplierRegisterLinks links={s.publicRecords}/>{s.checkedOn&&<p>Last MHRA register check {s.checkedOn}</p>}
     {s.findings.map(f=><p key={f}>{f}</p>)}{s.openTasks.map(t=><p key={t.id}><a href={workspaceHref("/team/work",result.organizationId,{taskId:t.id})}>{t.title}</a></p>)}</div>)}</>}
   <h3>Official guidance</h3>{result.official.scopeQuestion&&<p>{result.official.scopeQuestion}</p>}{result.official.unavailable>0&&<p>{result.official.unavailable} shortlisted publications were unavailable.</p>}

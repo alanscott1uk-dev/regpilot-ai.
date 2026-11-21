@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {db} from '../lib/server/db';
@@ -186,4 +187,56 @@ test('workspace journey connects scope, latest source review, full task ownershi
   for(const key of flags){if(prior[key]===undefined)delete process.env[key];else process.env[key]=prior[key];}
   await db.watchSchedule.deleteMany({where:{organizationId:{in:[x.a.id,x.b.id]}}});await x.cleanup();
  }
+});
+
+test('supplier accounting comparisons bind to a verified business, preserve history and send discrepancies to the owner once',async()=>{
+ const {checkSupplierLedger}=await import('../lib/server/accounting-supplier');
+ const {vendorDetail,supplierResearch}=await import('../lib/server/vendor-service');
+ const {transaction}=await import('../lib/server/intelligence-service');
+ const f=await assuranceFixture();
+ Object.assign(process.env,{REGPILOT_ACCOUNTING_ENABLED:'true',REGPILOT_NANGO_API_KEY:'fixture-accounting-supplier-key',REGPILOT_NANGO_QUICKBOOKS_INTEGRATION:'fixture-books'});
+ const provider='quickbooks',realm='123456',grant='fixture-grant';
+ let calls=0,name='Earlier trading name',active=false;
+ const fetcher:typeof fetch=async input=>{
+  const path=new URL(String(input)).pathname;calls++;
+  if(path==='/connections')return Response.json({connections:[{provider,provider_config_key:'fixture-books',connection_id:grant,tags:{organization_id:f.a.id,regpilot_accounting_provider:provider},errors:[]}]});
+  if(path.endsWith('/companyinfo/'+realm))return Response.json({CompanyInfo:{Id:'1',CompanyName:'Fixture purchaser'}});
+  assert.equal(path,'/proxy/v3/company/'+realm+'/vendor/78');
+  return Response.json({Vendor:{Id:'78',DisplayName:name,Active:active,Balance:45}});
+ };
+ try{
+  const vendor=await db.vendor.create({data:{organizationId:f.a.id,name:'Supplier Ltd',service:'Packaging',criticality:'HIGH',dataAccess:'BUSINESS',ownerId:f.ed.userId,nextReviewAt:new Date()}});
+  const input={vendorId:vendor.id,version:1,provider,connectionId:grant,business:realm,externalId:'78',requestKey:randomUUID()};
+  await accountingAction(f.o,{action:'ADD',provider});
+  await assert.rejects(()=>checkSupplierLedger(f.ad,input,fetcher),rejects(409));assert.equal(calls,0);
+  await accountingAction(f.ad,{action:'VERIFY',provider,connectionId:grant,reference:realm},fetcher);
+  const first=await checkSupplierLedger(f.ad,input,fetcher),before=calls;
+  assert.equal(first.vendorName,vendor.name);assert.equal(first.sourceActive,false);assert.equal(first.sourceSupplier,true);assert.equal(first.connectionId,grant);
+  assert.match(first.comparisonHash,/^[a-f0-9]{64}$/);
+  assert.equal((await db.auditEvent.findUniqueOrThrow({where:{id:first.businessCheckId}})).action,'workspace.accounting_business_checked');
+  assert.deepEqual(first.issues,['Accounting record is inactive','Supplier names differ']);assert.ok(first.taskId);
+  assert.equal((await db.obligation.findUniqueOrThrow({where:{id:first.taskId!}})).assigneeId,f.ed.userId);
+  assert.deepEqual(await checkSupplierLedger(f.ad,input,fetcher),first);assert.equal(calls,before);
+  await assert.rejects(()=>checkSupplierLedger(f.ed,{...input,requestKey:randomUUID()},fetcher),rejects(403));
+  await assert.rejects(()=>checkSupplierLedger(f.out,input,fetcher),rejects(409));
+  assert.equal((await checkSupplierLedger(f.o,{...input,requestKey:randomUUID()},fetcher)).taskId,first.taskId);
+  name=vendor.name;active=true;
+  const matched=await checkSupplierLedger(f.o,{...input,requestKey:randomUUID()},fetcher);
+  assert.deepEqual(matched.issues,[]);assert.equal(matched.taskId,null);
+  assert.equal((await db.obligation.findUniqueOrThrow({where:{id:first.taskId!}})).status,'OPEN');
+  assert.equal((await vendorDetail(f.o,vendor.id)).accountingChecks.length,3);
+  const research=await transaction(f.o,tx=>supplierResearch(tx,f.o,[vendor.id],''));
+  assert.equal(research[0].accounting?.provider,provider);assert.ok(research[0].openTasks.some(t=>t.id===first.taskId));
+  assert.deepEqual(await transaction(f.o,tx=>supplierResearch(tx,f.o,[vendor.id],'Other site')),[]);
+  await assert.rejects(()=>checkSupplierLedger(f.ad,{...input,requestKey:randomUUID()},async(resource,init)=>{
+   if(new URL(String(resource)).pathname.endsWith('/vendor/78'))return Response.json({Vendor:{Id:'999',DisplayName:vendor.name,Active:true}});
+   return fetcher(resource,init);
+  }),rejects(409));
+  await assert.rejects(()=>checkSupplierLedger(f.ad,{...input,requestKey:randomUUID()},async(resource,init)=>{
+   if(new URL(String(resource)).pathname.endsWith('/vendor/78'))await db.vendor.update({where:{id:vendor.id},data:{version:{increment:1}}});
+   return fetcher(resource,init);
+  }),rejects(409));
+  assert.equal((await vendorDetail(f.o,vendor.id)).accountingChecks.length,3);
+  assert.doesNotMatch(JSON.stringify((await vendorDetail(f.o,vendor.id)).accountingChecks),/Balance/);
+ }finally{await f.cleanup();}
 });

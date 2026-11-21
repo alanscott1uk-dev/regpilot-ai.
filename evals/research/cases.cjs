@@ -13,7 +13,7 @@ module.exports = [
   {id:"ni-device",question:"Where is the medical device market access review recorded in Northern Ireland?",sources:["mhra-device-ni"],facts:["Lagan Sheet"],forbidden:["Pennine Sheet"]},
   {id:"english-device",question:"Where is medical device post-market surveillance recorded in England?",sources:["mhra-device-surveillance"],facts:["Pennine Sheet"],forbidden:["Lagan Sheet"]},
   {id:"registration-fee",question:"How much does money laundering registration cost the example firm?",sources:["hmrc-aml-registration"],facts:["£321"]},
-  {id:"fire-scotland",question:"Which fire safety checklist covers these non-residential premises in Scotland?",sources:["scotland-fire-premises"],facts:["Forth Checklist"]},
+  {id:"fire-scotland",question:"Which fire safety checklist covers these non-residential premises in Scotland?",manual:"scotland-fire-premises",status:"incomplete",abstain:true,forbidden:["Forth Checklist"]},
   {id:"no-price",question:"What is the price for writing controlled drug standard operating procedures?",sources:["home-office-controlled-drug-sops"],abstain:true},
   {id:"no-interval",question:"How often must the financial services firm check Consumer Duty outcomes?",sources:["fca-consumer-duty"],abstain:true},
   {id:"no-welsh-vat-period",question:"How long does the example business keep VAT invoices?",nation:"Wales",status:"no_match",abstain:true,forbidden:["Slate Ledger","Copper Ledger"]},

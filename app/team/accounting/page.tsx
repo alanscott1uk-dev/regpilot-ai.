@@ -20,6 +20,7 @@ export default function Accounting() {
     <header className={ui.intro}><div><h1>Accounting software</h1>
       <p>Add the accounting packages your organisation uses. Open the provider account or authorise RegPilot to check the connected business.</p></div></header>
      {workspace.organizationId&&<p><a href={'/team/services/costs?'+new URLSearchParams({organizationId:workspace.organizationId})}>Workspace costs and allowances</a></p>}
+    {workspace.organizationId&&<p><a href={'/team/vendors?'+new URLSearchParams({organizationId:workspace.organizationId})}>Compare Xero or QuickBooks records with registered suppliers</a></p>}
     {workspace.organisations.length>0&&<label>Organisation<select aria-label="Organisation" value={workspace.organizationId} onChange={e=>workspace.chooseOrganization(e.target.value)}>
       {!workspace.organizationId&&<option value="">Choose an organisation</option>}{workspace.organisations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}
     </select></label>}

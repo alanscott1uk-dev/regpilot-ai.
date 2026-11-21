@@ -1,3 +1,4 @@
+import {checkSupplierLedger} from "../../../../lib/server/accounting-supplier";
 import {context,reply,readBody,fail} from "../../../../lib/server/operations-http";
 import {accountingWorkspace,accountingAction} from "../../../../lib/server/accounting-service";
 export const runtime="nodejs";
@@ -11,6 +12,11 @@ export async function GET(request:Request) {
 export async function POST(request:Request) {
   try {
     const {organizationId,...input}=await readBody(request,2048);
-    return reply(await accountingAction(await context(request,organizationId,true),input));
+    const ctx=await context(request,organizationId,true);
+    if(input.action==="SUPPLIER"){
+      const {action,...check}=input;
+      return reply({type:"supplier",organizationId:ctx.organizationId,receipt:await checkSupplierLedger(ctx,check)});
+    }
+    return reply(await accountingAction(ctx,input));
   } catch(e) {return fail(e);}
 }

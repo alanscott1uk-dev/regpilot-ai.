@@ -1,3 +1,4 @@
+import {supplierLedgerHistory} from "./accounting-supplier";
 import {matchesNamedScope} from "../operator-answer";
 import {supplierRegisterLinks} from "../supplier-register-links";
 import {licenceFinding,setLicenceScope,importLicence} from "./vendor-licence";
@@ -51,18 +52,19 @@ async function reviewState(tx:Prisma.TransactionClient,ctx:AuthorizedContext,v:V
 }
 export async function supplierResearch(tx:Prisma.TransactionClient,ctx:AuthorizedContext,ids:string[],asset:string){
  if(!ids.length)return [];
- const vendors=await tx.vendor.findMany({where:{...org(ctx),id:{in:ids.slice(0,3)},active:true,OR:[{licenceScope:{not:Prisma.DbNull}},{signalConnectorId:{not:null}}]},include:{owner:{select:{email:true}},reviews:{where:{status:"ACCEPTED"},orderBy:{createdAt:"desc"},take:1}}});
+ const vendors=await tx.vendor.findMany({where:{...org(ctx),id:{in:ids.slice(0,3)},active:true},include:{owner:{select:{email:true}},reviews:{where:{status:"ACCEPTED"},orderBy:{createdAt:"desc"},take:1}}});
  const output=[];
  for(const v of vendors){
   const scope=v.licenceScope?licenceScope.parse(v.licenceScope):null;
   if(!matchesNamedScope(scope?.premises||"",asset))continue;
   const signal=v.signalConnectorId?await vendorSignal(tx,ctx.organizationId,v.signalConnectorId):null;
   const finding=await licenceFinding(tx,v,signal),publicRecords=supplierRegisterLinks(finding,signal);
-  if(!finding&&!publicRecords.length)continue;
+  const [accounting]=asset?[]:await supplierLedgerHistory(tx,ctx.organizationId,v.id);
+  if(!finding&&!publicRecords.length&&!accounting)continue;
   const openTasks=await tx.obligation.findMany({where:{...org(ctx),vendorSignalId:v.id,status:{not:"COMPLETE"}},orderBy:[{dueDate:"asc"},{id:"asc"}],take:5,select:{id:true,title:true}});
   const latest=v.reviews[0],reviewStateValue=await reviewState(tx,ctx,v,latest);
   output.push({id:v.id,name:v.name,owner:v.owner.email,premises:scope?.premises||null,activity:scope?.activity||null,number:scope?.number||null,requiredEntries:(scope?.requiredAnnexEntries||[]).map(code=>({code,label:annexLabels[code]})),
-   publicRecords,openTasks,reviewState:reviewStateValue,recommendation:latest?.recommendation||null,findings:finding?.reasons||[],source:finding?.saved?.record.source||null,checkedOn:finding?.saved?.record.checkedOn||null});
+   accounting:accounting?{provider:accounting.provider,checkedAt:accounting.checkedAt,issues:accounting.issues,vendorVersion:accounting.vendorVersion}:null,publicRecords,openTasks,reviewState:reviewStateValue,recommendation:latest?.recommendation||null,findings:finding?.reasons||[],source:finding?.saved?.record.source||null,checkedOn:finding?.saved?.record.checkedOn||null});
  }
  return output;
 }
@@ -99,7 +101,8 @@ export async function vendorDetail(ctx:AuthorizedContext,id:string){return trans
  const signal=v.signalConnectorId?await vendorSignal(tx,ctx.organizationId,v.signalConnectorId):null;const signalTasks=await tx.obligation.findMany({where:{...org(ctx),vendorSignalId:id},select:{id:true,title:true,status:true,ownerName:true,dueDate:true},orderBy:{createdAt:"desc"},take:20});const accepted=rows.find(r=>r.status==="ACCEPTED"),state=await reviewState(tx,ctx,v,accepted);
  const licence=await licenceFinding(tx,v,signal);
  const licenceHistory=await tx.auditEvent.findMany({where:{...org(ctx),entityType:"Vendor",entityId:id,action:{in:["vendor.licence_scope","vendor.licence_import"]}},orderBy:[{createdAt:"desc"},{id:"desc"}],take:25,select:{id:true,action:true,createdAt:true,actor:{select:{email:true}},details:true}});
- return {vendor:v,reviews,signal,licence,publicRecords:supplierRegisterLinks(licence,signal),licenceHistory,signalTasks,reviewState:state,attention:vendorAttention({...v,reviewState:state,recommendation:accepted?.recommendation||null}),signalChanges:compareVendorSignals(signal?.snapshot?.observation||null,accepted?content(accepted).signal?.observation||null:null)};
+ const accountingChecks=await supplierLedgerHistory(tx,ctx.organizationId,v.id);
+ return {vendor:v,reviews,signal,licence,accountingChecks,publicRecords:supplierRegisterLinks(licence,signal),licenceHistory,signalTasks,reviewState:state,attention:vendorAttention({...v,reviewState:state,recommendation:accepted?.recommendation||null}),signalChanges:compareVendorSignals(signal?.snapshot?.observation||null,accepted?content(accepted).signal?.observation||null:null)};
 });}
 export async function prepareVendorReview(ctx:AuthorizedContext,id:string,input:unknown){
  const d=vendorReviewSchema.parse(input),followUpDue=futureDate(d.followUpDue),validUntil=futureDate(d.validUntil);
@@ -171,7 +174,7 @@ export async function changeVendor(ctx:AuthorizedContext,id:string,input:unknown
    await tx.vendorReview.updateMany({where:{...org(ctx),vendorId:id,status:"ACCEPTED"},data:{status:"SUPERSEDED",version:{increment:1}}});
    await tx.vendorReview.update({where:{id:r.id},data:{status:"ACCEPTED",reviewerId:ctx.userId,reviewNotes:d.notes,reviewedAt:new Date(),followUpTasks:tasks,version:{increment:1}}});
    await tx.vendor.update({where:{id},data:{nextReviewAt:r.validUntil}});
-   if(v.signalConnectorId)await tx.obligation.updateMany({where:{...org(ctx),vendorSignalId:id,status:{not:"COMPLETE"},...(work.some(item=>item.key==="licence")?{category:{not:siteTaskCategory}}:{})},data:{status:"COMPLETE",completedAt:new Date(),completionException:false,completionRationale:"Public register observation independently considered in supplier review "+r.id+"; the accepted recommendation and any follow-up remain recorded."}});
+   if(v.signalConnectorId)await tx.obligation.updateMany({where:{...org(ctx),vendorSignalId:id,status:{not:"COMPLETE"},category:{notIn:["Accounting supplier reconciliation",...(work.some(item=>item.key==="licence")?[siteTaskCategory]:[])]}},data:{status:"COMPLETE",completedAt:new Date(),completionException:false,completionRationale:"Public register observation independently considered in supplier review "+r.id+"; the accepted recommendation and any follow-up remain recorded."}});
    await event(tx,ctx,"review_accepted",id,{reviewId:r.id,recommendation:r.recommendation,tasks});return {id,reviewId:r.id,tasks};
   });
  }
@@ -206,7 +209,7 @@ export async function changeVendor(ctx:AuthorizedContext,id:string,input:unknown
    const previous=await tx.vendorReview.findFirst({where:{...org(ctx),vendorId:id,status:"ACCEPTED"}});
    if(await reviewState(tx,ctx,v,previous)==="CURRENT")throw new IntelligenceError("The review is current; use its existing condition tasks or prepare a new review",409);
    const email=await owner(tx,ctx,v.ownerId);
-   const existing=await tx.obligation.findFirst({where:{...org(ctx),vendorSignalId:id,status:{not:"COMPLETE"}},orderBy:{createdAt:"asc"}});
+   const existing=await tx.obligation.findFirst({where:{...org(ctx),vendorSignalId:id,status:{not:"COMPLETE"},category:{not:"Accounting supplier reconciliation"}},orderBy:{createdAt:"asc"}});
    if(existing)return {id,taskId:existing.id};
    const automationKey=hashValue({kind:"vendor-requested-review",vendorId:id,vendorVersion:v.version,baseline:previous?.id||null});
    const old=await tx.obligation.findUnique({where:{organizationId_automationKey:{...org(ctx),automationKey}}});

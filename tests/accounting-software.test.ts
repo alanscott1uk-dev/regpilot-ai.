@@ -68,3 +68,22 @@ test("the accounting endpoints enforce private workspace configuration and bound
   assert.equal((await GET(new Request("http://localhost/api/workspace/accounting-software?organizationId="+org))).status,503);
   assert.equal((await POST(new Request("http://localhost/api/workspace/accounting-software",{method:"POST",headers:{"content-type":"application/json"},body:" ".repeat(2049)}))).status,413);
 });
+
+test('supplier lookups read one record from the verified business and discard financial and personal fields',async()=>{
+ const {readAccountingSupplier}=await import('../lib/connectors/accounting-oauth');
+ for(const provider of ['xero','quickbooks'] as const){
+  const xero=provider==='xero',key=xero?randomUUID():'234',business=xero?tenant:realm;
+  const fetcher:typeof fetch=async(input,init)=>{
+   const url=new URL(String(input)),headers=new Headers(init?.headers);
+   if(url.pathname==='/connections')return Response.json({connections:[row(provider)]});
+   if(url.pathname==='/proxy/connections')return Response.json([{tenantId:tenant,tenantType:'ORGANISATION',tenantName:'Fixture Ltd'}]);
+   if(url.pathname.includes('companyinfo'))return Response.json({CompanyInfo:{Id:'1',CompanyName:'Fixture Ltd'}});
+   assert.equal(headers.get('Connection-Id'),grant);
+   assert.equal(url.pathname,xero?'/proxy/api.xro/2.0/Contacts/'+key:'/proxy/v3/company/'+realm+'/vendor/'+key);
+   if(xero)assert.equal(headers.get('Nango-Proxy-Xero-Tenant-Id'),tenant);
+   return Response.json(xero?{Contacts:[{ContactID:key,Name:'Supplier',IsSupplier:true,ContactStatus:'ACTIVE',BankAccountDetails:'private'}]}:
+    {Vendor:{Id:key,DisplayName:'Supplier',Active:true,Balance:123,PrimaryEmailAddr:{Address:'private'}}});
+  };
+  assert.deepEqual(await readAccountingSupplier(org,provider,grant,business,key,config,fetcher),{externalId:key,name:'Supplier',active:true,supplier:true});
+ }
+});

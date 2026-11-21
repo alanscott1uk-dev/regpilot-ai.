@@ -84,3 +84,27 @@ export async function disconnectAccountingGrant(org:string,provider:AccountingId
   if(!response.ok && response.status!==404)throw new CollectionError("PROVIDER_UNAVAILABLE");
   return response.ok;
 }
+
+export type SupplierLedger="xero"|"quickbooks";
+export async function readAccountingSupplier(org:string,provider:SupplierLedger,id:string,business:string,externalId:string,config:NangoConfig,fetcher:typeof fetch=fetch){
+  const key=referenceFormat[provider].parse(externalId);
+  const account=await checkAccountingBusiness(org,provider,id,business,config,fetcher);
+  const headers:Record<string,string>={Authorization:"Bearer "+config.key,"Provider-Config-Key":config.integration,
+    "Connection-Id":id,Retries:"0","Nango-Proxy-Accept":"application/json"};
+  if(provider==="xero")headers["Nango-Proxy-Xero-Tenant-Id"]=account.reference;
+  const path=provider==="xero"?"/api.xro/2.0/Contacts/"+key:"/v3/company/"+account.reference+"/vendor/"+key;
+  const body=(await providerReader(fetcher,headers,10000)(brokerOrigin+"/proxy"+path))?.body;
+  const label=z.string().trim().min(1).max(250).regex(/^[^\u0000-\u001f\u007f]+$/u);
+  if(provider==="xero"){
+    const schema=z.object({ContactID:z.uuid(),Name:label,ContactStatus:z.enum(["ACTIVE","ARCHIVED","GDPRREQUEST"]),IsSupplier:z.boolean()});
+    const data=z.object({Contacts:z.array(schema).length(1)}).safeParse(body);
+    if(!data.success)throw new CollectionError("INVALID_RESPONSE");
+    const contact=data.data.Contacts[0];
+    if(contact.ContactID.toLowerCase()!==key.toLowerCase())throw new CollectionError("TARGET_MISMATCH");
+    return {externalId:contact.ContactID,name:contact.Name,active:contact.ContactStatus==="ACTIVE",supplier:contact.IsSupplier};
+  }
+  const data=z.object({Vendor:z.object({Id:z.string(),DisplayName:label,Active:z.boolean()})}).safeParse(body);
+  if(!data.success)throw new CollectionError("INVALID_RESPONSE");
+  if(data.data.Vendor.Id!==key)throw new CollectionError("TARGET_MISMATCH");
+  return {externalId:key,name:data.data.Vendor.DisplayName,active:data.data.Vendor.Active,supplier:true};
+}
