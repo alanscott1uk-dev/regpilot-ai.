@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {readFile,writeFile} from 'node:fs/promises';
 import {fixturePdf} from '../tests/helpers/pdf-fixture.mjs';
 
-export async function trainingCustomerJourney({upload,review,db,app,org,editor,reviewer,submitEvidence,evidenceId,completedSource,checkpoint,passed,bounded,artifactDir}){
+export async function trainingCustomerJourney({qualityCaseId,upload,review,db,app,org,editor,reviewer,submitEvidence,evidenceId,completedSource,checkpoint,passed,bounded,artifactDir}){
  const query='?'+new URLSearchParams({organizationId:org.id}),endpoint='/api/workspace/training',title='Fictional process operator curriculum',policyTitle='Fictional operating procedure for training',today=new Date().toISOString().slice(0,10),due=new Date(Date.now()+14*86400000).toISOString().slice(0,10);
  const proof=await db.evidence.findUniqueOrThrow({where:{id:evidenceId}}),sourceBefore=await db.obligation.findUniqueOrThrow({where:{id:completedSource.taskId}}),evidenceBefore=await db.evidence.count({where:{organizationId:org.id}}),tasksBefore=await db.obligation.count({where:{organizationId:org.id}});
  assert.equal(proof.organizationId,org.id);assert.equal(proof.reviewStatus,'APPROVED');assert.equal(proof.uploadedById,editor.id);assert.equal((await db.membership.findUniqueOrThrow({where:{organizationId_userId:{organizationId:org.id,userId:editor.id}}})).role,'ADMIN');
@@ -66,5 +66,32 @@ export async function trainingCustomerJourney({upload,review,db,app,org,editor,r
  const matrixReady=review.waitForEvent('download');await review.getByRole('button',{name:'Download training matrix JSON',exact:true}).click();const matrixDownload=await matrixReady,matrix=JSON.parse(await readFile(await bounded(matrixDownload.path(),'Training matrix download'),'utf8'));assert.equal(matrix.format,'regpilot-training-matrix');assert.equal(matrix.organizationId,org.id);assert.equal(matrix.curriculumId,id);assert.equal(matrix.rows.length,3);assert.equal(matrix.rows.find(row=>row.assignmentId===assignment1.id).assignmentStatus,'PASSED');assert.equal(matrix.rows.find(row=>row.assignmentId===assignment1.id).competenceCurrent,'NO');assert.equal(matrix.rows.find(row=>row.assignmentId===current.id).revision,2);assert.ok(matrix.rows.every(row=>row.competenceCurrent==='NO'));assert.doesNotMatch(JSON.stringify(matrix),/correctIndex|storageKey|requirementSnapshot|contextHash/);await writeFile(artifactDir+'/training-matrix.json',JSON.stringify(matrix,null,2)+'\n');await review.screenshot({path:artifactDir+'/desktop-training-revision-history.png',fullPage:true});await open(upload,id,current.id);assert.ok(await bounded(upload.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Revised mobile training layout'));await upload.screenshot({path:artifactDir+'/mobile-training-new-revision.png',fullPage:true});
  assert.deepEqual(await db.evidence.findUniqueOrThrow({where:{id:evidenceId}}),proof);assert.deepEqual(await db.obligation.findUniqueOrThrow({where:{id:completedSource.taskId}}),sourceBefore);assert.equal(await db.obligation.count({where:{organizationId:org.id}}),tasksBefore+1);assert.equal(await db.evidence.count({where:{organizationId:org.id}}),evidenceBefore+2);
  passed('Publishing a genuinely changed private procedure automatically issued exact-revision retraining. Fresh competence was blocked until the coordinator reviewed the changed criteria and question. The new original was downloaded and acknowledged; the old accepted decision, reading acknowledgement, question and criterion remained unchanged in history. The actual exported matrix distinguishes prior recorded passes from current competence.');
+ await checkpoint('link the original competence decision and the subsequent retraining assignment to the inspection case');
+ await review.goto(app+'/team/quality?'+new URLSearchParams({organizationId:org.id,caseId:qualityCaseId}));
+ const panel=review.getByRole('region',{name:'Operator training evidence',exact:true});
+ async function captureAssignment(assignmentId,incidentKey){
+  await panel.locator('summary').filter({hasText:'Link operator training evidence'}).click();
+  if(incidentKey)await panel.getByLabel('Evidence purpose',{exact:true}).selectOption(incidentKey);
+  else await panel.getByLabel('Incident time UTC',{exact:true}).fill(retained.reviewedAt.toISOString().slice(11,23));
+  await panel.getByLabel('Operator or procedure',{exact:true}).fill(policyTitle);
+  await panel.getByRole('button',{name:'Find training assignments'}).click();
+  await panel.getByLabel('Training assignment',{exact:true}).selectOption(assignmentId);
+  await panel.getByLabel('Why this record applies').fill(incidentKey?'This assignment records the operator training after the revised procedure was published.':'The operator used this exact procedure revision for the recorded incident.');
+  const pending=review.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/workspace/quality');
+  await panel.getByRole('button',{name:'Save training evidence'}).click();
+  const response=await pending,receipt=await response.json();
+  assert.equal(response.status(),200,receipt.error);await review.getByText('Training evidence saved with the exact procedure revision and dated assessment.',{exact:true}).waitFor();
+  await panel.locator('summary').filter({hasText:incidentKey?'Retraining ·':'Incident ·'}).first().waitFor();
+  return {receipt,key:response.request().postDataJSON().requestKey};
+ }
+ const incident=await captureAssignment(assignment1.id,null);
+ assert.equal(incident.receipt.training.outcome,'PASSED');assert.equal(incident.receipt.training.publishedRevision,1);
+ const afterRevision=await captureAssignment(current.id,incident.key);
+ assert.equal(afterRevision.receipt.training.outcome,'NO_DECISION');assert.equal(afterRevision.receipt.training.publishedRevision,2);
+ const [inspection]=await Promise.all([review.waitForEvent('download'),review.getByRole('button',{name:'Download inspection summary',exact:true}).click()]);
+ const summary=await readFile(await inspection.path(),'utf8');
+ assert.ok(summary.includes(incident.key)&&summary.includes(original.sha256)&&summary.includes(revised.sha256)&&summary.includes(evidenceId));
+ await writeFile(artifactDir+'/training-linked-inspection.txt',summary);
+ passed('The inspection case retained a verified revision-one pass at the incident time and a separate revision-two retraining assignment awaiting assessment.');
  return {curriculumId:id,requirementId:requirement.id,policyId:policy.id,taskId:task.id,procedureEvidenceIds:[original.id,revised.id],procedureHashes:[original.sha256,revised.sha256],revisionIds:[revision1.id,revision2.id],trainingIds:[assignment1.id,automatic.id,current.id],failedKnowledgeAttemptId:failed.id,acceptedCompetenceAttemptId:submitted.id,competenceEvidenceId:evidenceId,decisionRecoveryByExactRequest:true,decisionWrites:1,automaticRevisionRetraining:true,changedProcedureBytes:true,preservedCompetenceAndCriteriaHistory:true,matrixRows:matrix.rows.length,originalEvidenceAndTaskUnchanged:true};
 }

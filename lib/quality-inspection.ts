@@ -1,3 +1,4 @@
+import {trainingOutcome} from './quality-training';
 import type {exportQualityCase} from './server/capa-service';
 
 type CaseExport = Awaited<ReturnType<typeof exportQualityCase>>;
@@ -28,6 +29,19 @@ export function qualityInspectionText(record: CaseExport) {
    `Task ${action.task.id} · Owner: ${action.task.ownerName}`, action.purpose);
  }
  if (!record.previousActions?.length && !record.actions?.length) lines.push('No recorded actions.');
+ if(record.trainingRecords?.length){
+  lines.push('','Operator training evidence');
+  for(const {key,cycle,recordedBy,recordedAt,finding:r} of record.trainingRecords){
+   lines.push(`Cycle ${cycle} · ${r.purpose} · Record ${key}`,`Operator: ${r.learner} (${r.learnerId}) · As of ${r.asOf}`,
+    `Procedure: ${r.procedure} · Assignment revision ${r.revision} · Revision ID ${r.revisionId} · File SHA-256 ${r.procedureSha256}`,
+    `Latest published revision by that time: ${r.publishedRevision??'None recorded'}`,
+    `Assignment ${r.assignmentId} · Created ${r.assignedAt} · Acknowledged by that time: ${r.acknowledgedAt??'No'}`,
+    `Assessment: ${trainingOutcome[r.outcome]}`,r.notes,`Recorded by ${recordedBy} at ${recordedAt}`);
+   if(r.incidentKey)lines.push('Follow-up to incident record '+r.incidentKey);
+   if(r.attemptId)lines.push(`Attempt ${r.attemptId} · Assessor ${r.assessorId} · Decided ${r.decisionAt} · Valid until ${r.validUntil??'N/A'}`);
+   for(const file of r.evidence)lines.push(`Assessment evidence: ${file.filename} · ${file.id} · SHA-256 ${file.sha256}`);
+  }
+ }
  lines.push('', 'Effectiveness reviews');
  for (const review of record.reviews ?? []) {
   lines.push(`Cycle ${review.cycle} · ${review.status} · Observed ${timestamp(review.observedAt).slice(0,10)} · Author ${review.authorId}`,

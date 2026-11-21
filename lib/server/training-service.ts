@@ -90,6 +90,40 @@ async function submissionBasis(tx:Tx,ctx:AuthorizedContext,row:Assignment,eviden
 }
 function submissionHash(row:TrainingAttempt){return hashValue({id:row.id,organizationId:row.organizationId,assignmentId:row.assignmentId,learnerId:row.learnerId,requestKey:row.requestKey,observedAt:row.observedAt.toISOString().slice(0,10),statement:row.statement,evidence:row.evidenceManifest,answers:row.quizAnswers,quizScore:row.quizScore,quizPassed:row.quizPassed,contextHash:row.contextHash});}
 function decisionHash(row:TrainingAttempt){return hashValue({id:row.id,submissionHash:row.submissionHash,status:row.status,reviewerId:row.reviewerId,reviewNotes:row.reviewNotes,criteria:row.criterionResults,reviewedAt:row.reviewedAt?.toISOString()});}
+/** Reconstruct dated facts for this exact assignment without treating today's status as historical authority. */
+export async function trainingAtTime(tx:Tx,ctx:AuthorizedContext,id:string,asOf:Date){
+ await requireMember(tx,ctx,ADMIN);
+ const row=await assignment(tx,ctx,id);
+ const requirement=savedRequirement(row);
+ const file=reviewedFileSchema.safeParse(row.revision.file);
+ if(!file.success||hashValue(file.data)!==row.revision.fileHash)throw new IntelligenceError('The retained procedure file could not be verified',409);
+ const published=await tx.policyRevision.findFirst({where:{organizationId:ctx.organizationId,policyId:row.revision.policyId,
+  publishedAt:{lte:asOf}},orderBy:[{publishedAt:'desc'},{number:'desc'}],select:{number:true}});
+ const attempt=await tx.trainingAttempt.findFirst({where:{organizationId:ctx.organizationId,assignmentId:id,
+  status:{in:['PASSED','RETRAIN']},reviewedAt:{lte:asOf}},orderBy:[{reviewedAt:'desc'},{id:'desc'}]});
+ let validUntil:string|null=null;
+ let outcome:import('../quality-training').TrainingFinding['outcome']=row.createdAt>asOf?'NOT_YET_ASSIGNED':'NO_DECISION';
+ const evidence:{id:string;filename:string;sha256:string}[]=[];
+ if(attempt){
+  const manifest=reviewedFilesSchema.safeParse(attempt.evidenceManifest);
+  if(!manifest.success||!manifest.data.length||attempt.learnerId!==row.learnerId||!attempt.reviewedAt||!attempt.reviewerId||
+   attempt.reviewerId===row.learnerId||attempt.reviewedAt<row.createdAt||
+   hashValue(attempt.context)!==attempt.contextHash||submissionHash(attempt)!==attempt.submissionHash||decisionHash(attempt)!==attempt.decisionHash)
+   throw new IntelligenceError('The retained training decision could not be verified',409);
+  if(attempt.status==='PASSED'){
+   const expiry=new Date(attempt.reviewedAt);
+   expiry.setUTCDate(expiry.getUTCDate()+requirement.validDays);
+   validUntil=expiry.toISOString().slice(0,10);
+   outcome=validUntil<asOf.toISOString().slice(0,10)?'EXPIRED':'PASSED';
+  }else outcome='RETRAIN';
+  for(const {id,filename,sha256} of manifest.data)evidence.push({id,filename,sha256});
+ }
+ const acknowledged=row.acknowledgedAt&&row.acknowledgedAt<=asOf&&row.acknowledgedHash===row.revision.fileHash;
+ return {assignmentId:id,learnerId:row.learnerId,learner:row.learner.email,policyId:row.revision.policyId,
+  procedure:row.revision.policy.title,revisionId:row.revisionId,revision:row.revision.number,publishedRevision:published?.number??null,
+  procedureSha256:file.data.sha256,assignedAt:row.createdAt.toISOString(),acknowledgedAt:acknowledged?row.acknowledgedAt!.toISOString():null,
+  outcome,decisionAt:attempt?.reviewedAt?.toISOString()??null,assessorId:attempt?.reviewerId??null,attemptId:attempt?.id??null,validUntil,evidence};
+}
 async function attemptState(tx:Tx,ctx:AuthorizedContext,row:Assignment,attempt:TrainingAttempt){const no=(reason:string)=>({current:false,reason});if(attempt.status==='QUIZ_FAILED')return no('The recorded knowledge check did not pass. Further learning and a new submission are required.');if(['RETRAIN','SUPERSEDED'].includes(attempt.status))return no('This retained attempt requires further learning or has been superseded.');if(attempt.status==='PASSED'&&(row.status!=='PASSED'||!row.validUntil||row.validUntil.toISOString().slice(0,10)<today()))return no('The competence decision expired or a new training attempt is required.');
  const parsed=reviewedFilesSchema.safeParse(attempt.evidenceManifest);if(!parsed.success||!parsed.data.length||submissionHash(attempt)!==attempt.submissionHash||hashValue(attempt.context)!==attempt.contextHash)return no('The retained competence submission failed its integrity check.');
  if(attempt.status==='PASSED'){const people=attempt.reviewerId?await completionParticipants(tx,ctx,[attempt.reviewerId]):[],expectedExpiry=attempt.reviewedAt?new Date(attempt.reviewedAt.toISOString().slice(0,10)):null;if(expectedExpiry)expectedExpiry.setUTCDate(expectedExpiry.getUTCDate()+savedRequirement(row).validDays);if(!attempt.reviewerId||attempt.reviewerId===row.learnerId||parsed.data.some(file=>file.uploadedById===attempt.reviewerId)||!people.some(person=>person.id===attempt.reviewerId&&person.approved&&ADMIN.includes(person.role))||decisionHash(attempt)!==attempt.decisionHash||expectedExpiry?.toISOString().slice(0,10)!==row.validUntil?.toISOString().slice(0,10))return no('The independent assessor, validity period or saved decision is no longer available.');}

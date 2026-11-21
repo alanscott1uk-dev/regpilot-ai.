@@ -475,7 +475,7 @@ try{
  report.riskJourney=await riskCustomerJourney({upload,review,db,app,org,editor,reviewer,checkpoint,passed,bounded,artifactDir,completedSource:report.customerJourney,evidenceId:rereviewed.id,storageSnapshot});
  report.riskLossJourney=await riskLossJourney({upload,app,org,riskId:report.riskJourney.riskId,evidenceId:rereviewed.id,checkpoint,passed});
  report.questionnaireJourney=await questionnaireCustomerJourney({upload,review,db,app,org,editor,reviewer,checkpoint,passed,bounded,artifactDir,evidenceId:rereviewed.id});
- report.trainingJourney=await trainingCustomerJourney({upload,review,db,app,org,editor,reviewer,submitEvidence,evidenceId:rereviewed.id,completedSource:report.customerJourney,checkpoint,passed,bounded,artifactDir});
+ report.trainingJourney=await trainingCustomerJourney({qualityCaseId:report.capaJourney.caseId,upload,review,db,app,org,editor,reviewer,submitEvidence,evidenceId:rereviewed.id,completedSource:report.customerJourney,checkpoint,passed,bounded,artifactDir});
  report.effectivityJourney=await policyEffectivityCustomerJourney({upload,review,db,app,org,editor,reviewer,submitEvidence,trainingSource:report.trainingJourney,emailLink,checkpoint,passed,bounded,artifactDir});
  const withUnavailableEvidence=async(evidenceId,operation)=>{
   const record=await db.evidence.findFirstOrThrow({where:{id:evidenceId,organizationId:org.id}}),bucket=supabase.storage.from('journey-files'),original=await bucket.download(record.storageKey);

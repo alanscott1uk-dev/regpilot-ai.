@@ -6,12 +6,14 @@ import type {AuthorizedContext} from '../lib/server/authorization';
 import {createEvidence,reviewEvidence} from '../lib/server/evidence-service';
 import {createPolicy,changePolicy,policyDetail} from '../lib/server/policy-service';
 import {createTrainingCurriculum,saveTrainingRequirement,enrolTrainingMembers,refreshTrainingRequirements,setTrainingCurriculumActive,openTrainingProcedure,acknowledgeTrainingProcedure,submitTrainingCompetence,decideTrainingCompetence,trainingWorkspace,exportTrainingMatrix} from '../lib/server/training-service';
+import {createQualityCase,linkQualityTraining,qualityWorkspace,exportQualityCase} from '../lib/server/capa-service';
+import {qualityInspectionText} from '../lib/quality-inspection';
 import type {EvidenceObjectStore} from '../lib/server/evidence-storage';
 import {fixturePdf} from './helpers/pdf-fixture.mjs';
 const date=(days=0)=>new Date(Date.now()+days*86400000).toISOString().slice(0,10),notes='Independently checked the fictional original record, its scope, procedure revision and evidence of observed competence.';
 const status=(expected:number)=>(error:unknown)=>!!error&&typeof error==='object'&&'status' in error&&error.status===expected;
 async function setup(){const suffix=randomUUID(),users=await Promise.all(['owner','reviewer','learner','other','viewer','foreign'].map(name=>db.user.create({data:{externalId:name+suffix,email:name+suffix+'@example.invalid'}}))),orgs=await Promise.all(['A','B'].map(name=>db.organization.create({data:{name:'Fictional role training '+name+suffix}}))),owner:AuthorizedContext={organizationId:orgs[0].id,userId:users[0].id,role:'OWNER'},reviewer:AuthorizedContext={...owner,userId:users[1].id,role:'ADMIN'},learner:AuthorizedContext={...owner,userId:users[2].id,role:'EDITOR'},other:AuthorizedContext={...owner,userId:users[3].id,role:'EDITOR'},viewer:AuthorizedContext={...owner,userId:users[4].id,role:'VIEWER'},foreign:AuthorizedContext={organizationId:orgs[1].id,userId:users[5].id,role:'OWNER'};await db.membership.createMany({data:[owner,reviewer,learner,other,viewer,foreign]});const prior=process.env.REGPILOT_AI_ALLOWED_EMAILS;process.env.REGPILOT_AI_ALLOWED_EMAILS=users.map(user=>user.email).join(',');const objects=new Map<string,Uint8Array>(),storage:EvidenceObjectStore={async put(key,bytes){objects.set(key,Uint8Array.from(bytes));},async get(key){const bytes=objects.get(key);if(!bytes)throw Error('Missing fictional training original');return Uint8Array.from(bytes);},async remove(key){objects.delete(key);}};
- const clean=async()=>{if(prior===undefined)delete process.env.REGPILOT_AI_ALLOWED_EMAILS;else process.env.REGPILOT_AI_ALLOWED_EMAILS=prior;for(const name of ['trainingOperation','trainingAttempt','trainingAssignment','trainingEnrollment','trainingRequirement','trainingCurriculum','policyAssignment','policyRevision','policy','auditEvent','evidence','obligation','membership'] as const)await (db[name] as any).deleteMany({where:{organizationId:{in:orgs.map(org=>org.id)}}});await db.organization.deleteMany({where:{id:{in:orgs.map(org=>org.id)}}});await db.user.deleteMany({where:{id:{in:users.map(user=>user.id)}}});};return {owner,reviewer,learner,other,viewer,foreign,objects,storage,clean};}
+ const clean=async()=>{if(prior===undefined)delete process.env.REGPILOT_AI_ALLOWED_EMAILS;else process.env.REGPILOT_AI_ALLOWED_EMAILS=prior;for(const name of ['qualityOperation','qualityCase','trainingOperation','trainingAttempt','trainingAssignment','trainingEnrollment','trainingRequirement','trainingCurriculum','policyAssignment','policyRevision','policy','auditEvent','evidence','obligation','membership'] as const)await (db[name] as any).deleteMany({where:{organizationId:{in:orgs.map(org=>org.id)}}});await db.organization.deleteMany({where:{id:{in:orgs.map(org=>org.id)}}});await db.user.deleteMany({where:{id:{in:users.map(user=>user.id)}}});};return {owner,reviewer,learner,other,viewer,foreign,objects,storage,clean};}
 type Fixture=Awaited<ReturnType<typeof setup>>;
 async function approved(f:Fixture,filename:string,author=f.learner,content='A fictional procedure requires a documented operating check and an independently observed competence result.'){const task=await db.obligation.create({data:{organizationId:author.organizationId,title:'Fictional training evidence '+filename,category:'Training fixture',ownerName:author.userId,assigneeId:author.userId,dueDate:new Date(date(7))}}),file=await createEvidence(author,task.id,filename,fixturePdf([['FICTIONAL TRAINING RECORD',content]]),{storage:f.storage,scan:async()=>({status:'CLEAN',engine:'fictional-test'})});await reviewEvidence(f.reviewer,file.id,{decision:'APPROVED',version:1,notes},f.storage);return file;}
 async function published(f:Fixture){const sop=await approved(f,'fictional-procedure-v1.pdf'),proof=await approved(f,'fictional-practical-observation.pdf'),policy=await createPolicy(f.owner,{title:'Fictional operating procedure',summary:'This fictional procedure defines the recorded operating check for the training exercise.',evidenceId:sop.id}),detail=await policyDetail(f.owner,policy.id),revision=detail.revisions[0];await changePolicy(f.reviewer,policy.id,{action:'PUBLISH',version:detail.policy.version,revisionId:revision.id,revisionVersion:revision.version,notes,userIds:[f.learner.userId],dueDate:date(14),confirm:true},f.storage);return {sop,proof,policy,revision};}
@@ -56,3 +58,36 @@ test('an independent retraining decision preserves attempts; role removal and re
  const curriculum=(await trainingWorkspace(f.owner,{curriculumId:original.curriculum.id})).selectedCurriculum!,removed=await enrolTrainingMembers(f.owner,curriculum.id,{requestKey:randomUUID(),version:curriculum.version,userIds:[f.viewer.userId],active:false,notes:'The fictional learner no longer performs this business role and retains their earlier history.'});await assert.rejects(()=>submitTrainingCompetence(f.viewer,original.assignment.id,submission(returned.assignmentVersion!,original.proof.id),{storage:f.storage}),status(409));const reinstated=await enrolTrainingMembers(f.owner,curriculum.id,{requestKey:randomUUID(),version:removed.version,userIds:[f.viewer.userId],active:true,notes:'The fictional learner has returned to this business role and needs current training.'});assert.equal(reinstated.created,1);assert.equal(await db.trainingAttempt.count({where:{assignmentId:original.assignment.id}}),1);assert.equal((await trainingWorkspace(f.viewer,{trainingId:original.assignment.id})).selected?.qualified,false);
  const archived=await setTrainingCurriculumActive(f.owner,curriculum.id,{requestKey:randomUUID(),version:reinstated.version,active:false,notes:'The fictional programme is temporarily paused without deleting learner history.'}),reactivated=await setTrainingCurriculumActive(f.owner,curriculum.id,{requestKey:randomUUID(),version:archived.version,active:true,notes:'The fictional role programme is restored and fresh required assignments are reconciled.'});assert.equal(reactivated.status,'ACTIVE');assert.equal(await db.trainingAssignment.count({where:{curriculumId:curriculum.id,status:'ASSIGNED'}}),1);
  }finally{await f.clean();}});
+
+test('quality inspection freezes the exact assignment and assessed decision at incident time',async()=>{
+ const f=await setup();
+ try{
+  const d=await enrolled(f),ack=await acknowledge(f,d.assignment.id);
+  const submitted=await submitTrainingCompetence(f.learner,d.assignment.id,submission(ack.version,d.proof.id),{storage:f.storage});
+  await decideTrainingCompetence(f.reviewer,submitted.id,decision(submitted.version,submitted.assignmentVersion!,d.proof.id),{storage:f.storage});
+  const attempt=await db.trainingAttempt.findUniqueOrThrow({where:{id:submitted.id}});
+  const cut=attempt.reviewedAt!;
+  const created=await createQualityCase(f.owner,{requestKey:randomUUID(),title:'Temperature excursion investigation',kind:'DEVIATION',classification:'MAJOR',description:notes,impact:notes,containment:notes,occurredAt:cut.toISOString().slice(0,10),ownerId:f.owner.userId});
+  const input={requestKey:randomUUID(),purpose:'INCIDENT',assignmentId:d.assignment.id,version:created.version,asOf:cut.toISOString(),notes};
+  await assert.rejects(()=>linkQualityTraining(f.learner,created.id,input),status(403));
+  await assert.rejects(()=>linkQualityTraining(f.foreign,created.id,input),status(404));
+  await assert.rejects(()=>linkQualityTraining(f.owner,created.id,{...input,assignmentId:randomUUID()}),status(404));
+  await assert.rejects(()=>linkQualityTraining(f.owner,created.id,{...input,asOf:new Date(cut.getTime()-86400000).toISOString()}),status(400));
+  const earlier=await linkQualityTraining(f.owner,created.id,{...input,requestKey:randomUUID(),asOf:new Date(cut.getTime()-1).toISOString()});
+  assert.equal(earlier.training?.outcome,'NO_DECISION');
+  const posted={...input,version:earlier.caseVersion};
+  const [first,second]=await Promise.all([linkQualityTraining(f.owner,created.id,posted),linkQualityTraining(f.owner,created.id,posted)]);
+  assert.notEqual(first.reused,second.reused);
+  assert.equal(first.training?.outcome,'PASSED');assert.equal(first.training?.revisionId,d.revision.id);
+  assert.equal(first.training?.assessorId,f.reviewer.userId);assert.equal(first.training?.evidence[0].id,d.proof.id);
+  await assert.rejects(()=>linkQualityTraining(f.owner,created.id,{...posted,notes:'Different inspection rationale for the same request.'}),status(409));
+  await assert.rejects(()=>linkQualityTraining(f.owner,created.id,{requestKey:randomUUID(),purpose:'RETRAINING',incidentKey:input.requestKey,assignmentId:d.assignment.id,version:first.caseVersion,notes}),status(409));
+  const privateReport=await exportQualityCase(f.owner,created.id),summary=qualityInspectionText(privateReport);
+  assert.ok(summary.includes(first.training!.procedureSha256)&&summary.includes(d.proof.id)&&summary.includes(cut.toISOString()));
+  const limited=await exportQualityCase(f.viewer,created.id);
+  assert.equal(limited.trainingRecords,null);assert.ok(!JSON.stringify(limited).includes(d.assignment.id));
+  await db.membership.update({where:{organizationId_userId:{organizationId:f.owner.organizationId,userId:f.owner.userId}},data:{role:'EDITOR'}});
+  await assert.rejects(()=>qualityWorkspace(f.owner,{caseId:created.id,requestKey:input.requestKey}),status(403));
+  assert.deepEqual((await exportQualityCase(f.reviewer,created.id)).trainingRecords,privateReport.trainingRecords);
+ }finally{await f.clean();}
+});
