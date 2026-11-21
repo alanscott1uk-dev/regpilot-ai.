@@ -74,7 +74,7 @@ export function PublicationResults({result}:{result:ResearchResult}) {
     {!!result.unavailable&&<p role="note">{result.unavailable} shortlisted publication(s) could not be checked.</p>}
     <details><summary>Search coverage</summary>
       <p>Ranked a catalogue of {result.catalogueSize} publications and selected {result.checked.length} for passage matching. {result.nations.length ? "Territorial filter: "+result.nations.join(", ")+". " : ""}Results cover extracted page text. Linked files and legal applicability require separate review.</p>
-      <ul>{result.checked.map(s=><li key={s.id}><a href={s.url} target="_blank" rel="noopener noreferrer">{s.title}</a> · {{matched:"Matched",unavailable:"Unavailable",no_passage:"No matching passage"}[s.status]}</li>)}</ul>
+      <ul>{result.checked.map(s=><li key={s.id}><a href={s.url} target="_blank" rel="noopener noreferrer">{s.title}</a> · {{manual_refresh:"Manual refresh at publisher",matched:"Matched",unavailable:"Unavailable",no_passage:"No matching passage"}[s.status]}</li>)}</ul>
     </details>
   </div>;
 }

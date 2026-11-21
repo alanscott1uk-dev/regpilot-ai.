@@ -203,3 +203,11 @@ test("a GB-only passage in a UK-wide source cannot be returned as a Northern Ire
   assert.ok(result.citations.some(c=>c.quote.includes(ni)));
   assert.ok(!result.citations.some(c=>c.quote.includes(gb)));
 });
+
+test('manual-refresh publications remain discoverable without an automatic publisher read',async()=>{
+ const source=REGULATORY_SOURCES.find(row=>row.id==='scotland-fire-premises')!;
+ let reads=0;
+ const result=await researchPublications({question:'Fire safety in existing non-residential premises',nation:'Scotland'},async()=>{reads++;throw Error('Unexpected read');},[source]);
+ assert.equal(reads,0);assert.equal(result.checked[0]?.status,'manual_refresh');
+ assert.equal(result.status,'incomplete');assert.deepEqual(result.citations,[]);
+});

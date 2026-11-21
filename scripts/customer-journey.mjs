@@ -114,6 +114,22 @@ export async function createCustomerWorkspace({page,db,app,email,checkpoint,pass
  await publication.getByText('Last recorded issue: fetch failed.',{exact:true}).waitFor();
  await page.screenshot({path:artifactDir+'/desktop-customer-monitoring-recovery.png',fullPage:true});
  passed('The customer requested recovery of an explicitly injected paused-source fault through real authenticated application endpoints. One retry was persisted, prior failure remained visible after refresh/reload, no snapshot or successful check was invented, and inactive runtime stayed explicit.');
+ await checkpoint('record a manual publication check and verify it survives reload');
+ const manualId='scotland-fire-premises';
+ await page.goto(app+'/team/sources?'+new URLSearchParams({organizationId:org.id,sourceId:manualId}));
+ const manualPanel=page.getByRole('region',{name:'Manual publication check',exact:true});
+ const [manualResponse]=await Promise.all([
+  page.waitForResponse(r=>r.url()===app+'/api/workspace/sources'&&r.request().method()==='POST'),
+  manualPanel.getByRole('button',{name:'I checked the official publication',exact:true}).click()
+ ]);
+ assert.equal(manualResponse.status(),200);
+ const receipt=await manualResponse.json();
+ await manualPanel.getByText(/Last manual check/).waitFor();
+ await page.reload();
+ await manualPanel.getByText(/Last manual check/).waitFor();
+ assert.equal(await db.auditEvent.count({where:{id:receipt.id,organizationId:org.id,entityId:manualId,action:'regulatory.manual_check'}}),1);
+ assert.equal(await db.regulatorySnapshot.count({where:{organizationId:org.id,sourceId:manualId}}),0);
+ passed('A manual Scottish fire-safety check retained its date and reviewer after reload, independently of automated text capture.');
  return {org,reviewer};
 }
 

@@ -25,7 +25,7 @@ export async function resolveWorkspaceSource(tx:Prisma.TransactionClient|typeof 
  const base=REGULATORY_SOURCES.find(s=>s.id===sourceId);if(base)return base;
  const row=await tx.registeredSource.findUnique({where:{organizationId_sourceId:{organizationId:org,sourceId}}});return row?{id:row.sourceId,path:row.path,title:row.title,agency:"GOV.UK",topic:"Registered publication"}:null;
 }
-export async function workspaceCatalogue(ctx:AuthorizedContext){return transaction(ctx,async tx=>{await requireMember(tx,ctx);const extra=await tx.registeredSource.findMany({where:{organizationId:ctx.organizationId},orderBy:{title:"asc"},take:200});return [...REGULATORY_SOURCES,...extra.map(r=>({id:r.sourceId,path:r.path,title:r.title,agency:"GOV.UK",topic:"Registered publication"}))];});}
+export async function workspaceCatalogue(ctx:AuthorizedContext):Promise<RegulatorySource[]>{return transaction(ctx,async tx=>{await requireMember(tx,ctx);const extra=await tx.registeredSource.findMany({where:{organizationId:ctx.organizationId},orderBy:{title:"asc"},take:200});return [...REGULATORY_SOURCES,...extra.map(r=>({id:r.sourceId,path:r.path,title:r.title,agency:"GOV.UK",topic:"Registered publication"}))];});}
 export async function registerPublication(ctx:AuthorizedContext,input:unknown,fetcher:typeof fetch=fetch){
  requireLibrary();const parsed=z.object({path:publicationPath}).safeParse(input);if(!parsed.success)throw new IntelligenceError("Choose an official GOV.UK publication path");
  await transaction(ctx,tx=>requireMember(tx,ctx,ADMIN));

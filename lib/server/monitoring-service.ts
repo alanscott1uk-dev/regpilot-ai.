@@ -1,3 +1,4 @@
+import {manualRefreshSource} from "../regulatory-sources.mjs";
 import {claimFairWatch,releaseDispatchLease} from "./fair-dispatch";
 import {SourceFetchDeferred} from "./shared-source-fetch";
 import {timingSafeEqual} from "node:crypto";
@@ -24,6 +25,7 @@ export async function configureWatch(ctx:AuthorizedContext,input:{sourceId:strin
   return transaction(ctx,async tx=>{
     await requireMember(tx,ctx,ADMIN);
     if(!await resolveWorkspaceSource(tx,ctx.organizationId,input.sourceId))throw new IntelligenceError("Choose a registered official source");
+    if(input.enabled&&manualRefreshSource(input.sourceId))throw new IntelligenceError("This publication uses manual refresh in Official sources.",409);
     const key={organizationId:ctx.organizationId,sourceId:input.sourceId};
     const old=await tx.watchSchedule.findUnique({where:{organizationId_sourceId:key}});
     if((old?.version||0)!==input.version)throw new IntelligenceError("Monitoring settings changed. Refresh first.",409);
@@ -150,6 +152,12 @@ export async function reconcileSourceReviews(ctx:AuthorizedContext,job:WatchSche
 export async function executeWatch(job:WatchSchedule,loader?:Loader){
   let stage:'LEASE'|'RECOVERY'|'FETCH'|'ANALYSIS'|'FINISH'='LEASE';
   try{
+    if(manualRefreshSource(job.sourceId)){
+      // Retire schedules created before this publication became manual. Preserve retrieval history.
+      const changed=await db.watchSchedule.updateMany({where:{id:job.id,organizationId:job.organizationId,enabled:true,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},
+        data:{enabled:false,leaseToken:null,leaseUntil:null,lastOutcome:'MANUAL_REFRESH',version:{increment:1}}});
+      return changed.count?'MANUAL_REFRESH':'SUPERSEDED';
+    }
     await checkLease(job);
     if(job.attempts>3)return await finish(job,"FAILED","INTERRUPTED_REPEATEDLY");
     const ctx:AuthorizedContext={organizationId:job.organizationId,userId:job.configuredById,role:"ADMIN"};

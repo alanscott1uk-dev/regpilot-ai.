@@ -18,3 +18,12 @@ test('new URL, invalid/future cache and absent baseline are never unchanged',()=
  const first=compareProbeHistory([row],null,when);
  for(const previous of [null,{...first.history,checkedAt:'2099-01-01'}, {...first.history,sources:[{...first.history.sources[0],url:'https://elsewhere.invalid'}]}, {...first.history,sources:[{...first.history.sources[0],lastGoodHash:'invalid'}]}])assert.equal(compareProbeHistory([row],previous,later).comparison.changes[0].state,'BASELINE');
 });
+
+test('manual refresh preserves the last retrieved bytes and date without recording another attempt',()=>{
+ const first=compareProbeHistory([row],null,when);
+ const manual=compareProbeHistory([{...row,state:'manual-refresh',textHash:null}],first.history,later);
+ assert.deepEqual(manual.history.sources,first.history.sources);
+ assert.equal(manual.comparison.counts.MANUAL_REFRESH,1);
+ assert.equal(manual.comparison.counts.UNAVAILABLE,0);
+ assert.equal(manual.comparison.changes[0].currentHash,null);
+});

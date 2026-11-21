@@ -52,6 +52,7 @@ export default function OfficialSourceHistory(){
   }).catch(()=>{if(active)setBusinessProfile(null)});
   return()=>{active=false};
  },[orgId,workspace.revision,request,capture]);
+ const automatic=filtered.filter(source=>source.refreshMode!=="manual");
  const loadHistory=useCallback(async(id:string)=>{
   if(!id)return false;const valid=capture(),ticket=++historyRequest.current;
   const current=()=>valid()&&historyRequest.current===ticket&&activeOrg.current===id&&activeSelection.current===selected;
@@ -73,6 +74,18 @@ export default function OfficialSourceHistory(){
  const canReview=currentOrg&&["OWNER","ADMIN"].includes(currentOrg.role);
  const pending=coverage.filter(x=>x.reviewStatus==="NEEDS_REVIEW").length;
  const selectedCoverage=coverage.find(x=>x.sourceId===selected);
+ async function recordManualCheck(){
+  if(blocked||!selectedCoverage||activeSource?.refreshMode!=="manual")return;
+  const valid=capture(),id=orgId,sourceId=selected;
+  const current=()=>valid()&&activeOrg.current===id&&activeSelection.current===sourceId;
+  setBusy(true);setMessage("");
+  try{
+   await request("/api/workspace/sources",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({organizationId:id,sourceId,action:"recordManualCheck",confirmed:true,previousId:selectedCoverage.manualCheck?.id??null})});
+   if(current()&&await loadHistory(id)&&current())setMessage("Manual publication check recorded.");
+  }catch(e){if(current())setMessage(e instanceof Error?e.message:"Manual check could not be recorded.");}
+  finally{if(valid())setBusy(false);}
+ }
  async function check(){
   if(!orgId||blocked)return;const current=capture();setBusy(true);setMessage("");
   try{
@@ -112,11 +125,11 @@ export default function OfficialSourceHistory(){
  }
  async function monitorPortfolio(){
   if(!orgId||blocked)return;const current=capture();
-  if(!filtered.length||filtered.length>30){setMessage("Filter to between 1 and 30 publications before enabling portfolio monitoring.");return;}
+  if(!automatic.length||automatic.length>30){setMessage("Filter to between 1 and 30 publications before enabling portfolio monitoring.");return;}
   setBusy(true);setMessage("");
   try{
    const result=await request("/api/workspace/monitoring/portfolio",{method:"POST",headers:{"Content-Type":"application/json"},
-     body:JSON.stringify({organizationId:orgId,sourceIds:filtered.map(s=>s.id),enabled:true,intervalHours:Number(monitorEvery)})});
+     body:JSON.stringify({organizationId:orgId,sourceIds:automatic.map(s=>s.id),enabled:true,intervalHours:Number(monitorEvery)})});
    if(!current())return;setMessage(result.created+" new, "+result.updated+" updated, "+result.unchanged+" already scheduled. Collection starts only when the secure worker is enabled.");
    await loadHistory(orgId);
   }catch(e){if(current())setMessage(e instanceof Error?e.message:"Could not configure the monitoring portfolio");}
@@ -166,8 +179,8 @@ export default function OfficialSourceHistory(){
   <strong style={{display:"block",fontSize:13,marginBottom:7}}>Monitor this filtered source portfolio</strong>
   <label style={{display:"block",fontSize:12}}>Check frequency<select value={monitorEvery} onChange={e=>setMonitorEvery(e.target.value as "24"|"168")}>
    <option value="168">Weekly</option><option value="24">Daily</option></select></label>
-  <button type="button" disabled={blocked||filtered.length<1||filtered.length>30} onClick={()=>void monitorPortfolio()}>
-   {busy?"Saving…":"Enable monitoring for "+filtered.length+" shown source(s)"}</button>
+  <button type="button" disabled={blocked||automatic.length<1||automatic.length>30} onClick={()=>void monitorPortfolio()}>
+   {busy?"Saving…":"Enable monitoring for "+automatic.length+" shown source(s)"}</button>
   <p style={{fontSize:11}}>Choose a location, industry or search to limit selection to 30. Official text checks require an activated scheduler; source changes still require human interpretation.</p>
  </div>}</div>
       {filtered.length===0&&<p>No references match these filters. This does not mean no requirements apply.</p>}
@@ -186,8 +199,13 @@ export default function OfficialSourceHistory(){
        <a href={href('/team/coverage')}>Inspect monitoring history and service status →</a>
       </section>}
       <div className={ui.line}><a href={activeSource?officialSourceUrl(activeSource):"/team/sources"} target="_blank" rel="noopener noreferrer">Open official source ↗</a>{activeSource?.officialDocuments&&<a href={activeSource.officialDocuments} target="_blank" rel="noreferrer">Publisher’s downloadable edition ↗</a>}
-       {canCheck&&<button type="button" disabled={blocked} onClick={()=>void check()}>{busy?"Checking…":latest?"Compare latest text":"Create first baseline"}</button>}
+       {canCheck&&<button type="button" disabled={blocked} onClick={()=>void check()}>{busy?"Checking…":activeSource?.refreshMode==="manual"?"Refresh official text manually":latest?"Compare latest text":"Create first baseline"}</button>}
       </div>
+      {activeSource?.refreshMode==="manual"&&<section aria-label="Manual publication check" className={ui.status}>
+       <h3>Manual refresh</h3><p>Open the Scottish Government publication or its downloadable edition. After reading it, record your check here.</p>
+       <p>{selectedCoverage?.manualCheck?'Last manual check · '+new Date(selectedCoverage.manualCheck.at).toLocaleString('en-GB')+' · '+selectedCoverage.manualCheck.by:'No manual check recorded.'}</p>
+       {canCheck&&<button type="button" disabled={blocked||!selectedCoverage} onClick={()=>void recordManualCheck()}>I checked the official publication</button>}
+      </section>}
       {latest?<div className={ui.snapshot}><div className={ui.versionHead}><span>{latest.reviewStatus.replaceAll("_"," ")}</span><span>{latest.contentHash.slice(0,14)}…</span></div>
        <strong>Last text check: {dateLabel(latest.lastCheckedAt)}</strong><p>First captured {dateLabel(latest.firstCapturedAt)} · Source metadata revision {latest.revisionAt||"not stated"}</p>
        <div className={ui.deltas}>

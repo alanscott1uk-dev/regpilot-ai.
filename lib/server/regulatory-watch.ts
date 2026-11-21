@@ -6,7 +6,8 @@ import {resolveWorkspaceSource} from "./publication-catalogue";
 import {sourceTextHash,canonicalSourceText,compareSourceText,publicSnapshot} from "../regulatory/source-fingerprint.mjs";
 import {Prisma} from "@prisma/client";
 import {transaction} from "./intelligence-service";
-import {officialSourceUrl} from "../regulatory-sources.mjs";
+import {requireMember,WRITER} from "./workspace-member";
+import {manualRefreshSource,officialSourceUrl} from "../regulatory-sources.mjs";
 export class RegulatoryWatchError extends Error{
  status:number;
  constructor(message:string,status=400){super(message);this.name="RegulatoryWatchError";this.status=status;}
@@ -21,6 +22,17 @@ export async function listSourceSnapshots(ctx:AuthorizedContext,sourceId?:string
   orderBy:[{firstCapturedAt:"desc"},{id:"desc"}],take:60
  });
  return snapshots.map(publicSnapshot);
+}
+export async function recordManualSourceCheck(ctx:AuthorizedContext,sourceId:string,previousId:unknown){
+ if(!manualRefreshSource(sourceId)||previousId!==null&&!validUuid(previousId))throw new RegulatoryWatchError('Invalid manual check',400);
+ return transaction(ctx,async tx=>{
+  await requireMember(tx,ctx,WRITER);
+  const where={organizationId:ctx.organizationId,entityType:'RegulatorySource',entityId:sourceId,action:'regulatory.manual_check'};
+  const last=await tx.auditEvent.findFirst({where,orderBy:[{createdAt:'desc'},{id:'desc'}],select:{id:true}});
+  if((last?.id??null)!==previousId)throw new RegulatoryWatchError('A newer manual check was recorded. Refresh the source status.',409);
+  const entry=await tx.auditEvent.create({data:{...where,actorId:ctx.userId,details:{method:'reviewer_opened_publication'}},select:{id:true,createdAt:true}});
+  return {id:entry.id,at:entry.createdAt.toISOString()};
+ });
 }
 export async function checkOfficialSource(ctx:AuthorizedContext,sourceId:string,loader?:Loader,guard?:(tx:Prisma.TransactionClient)=>Promise<void>){
  if(!roles.includes(ctx.role))throw new RegulatoryWatchError("Insufficient permission to check official source",403);

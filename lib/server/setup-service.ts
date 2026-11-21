@@ -39,7 +39,7 @@ export async function getSetupWorkspace(ctx:AuthorizedContext){
    evidence:{total:evidence.reduce((n,r)=>n+r._count,0),approved:evidence.filter(r=>r.scanStatus==='CLEAN'&&r.reviewStatus==='APPROVED').reduce((n,r)=>n+r._count,0)},controls,openTasks:tasks};
  },{isolationLevel:'RepeatableRead',timeout:12000});
  const [catalogue,coverage,connections]=await Promise.all([workspaceCatalogue(ctx),sourceCoverage(ctx),getConnectorHealth(ctx)]);
- return {...summary,catalogue,coverage,connections,recommendations:recommendSourcePortfolio(catalogue,summary.profile),
+ return {...summary,catalogue,coverage,connections,recommendations:recommendSourcePortfolio(catalogue.filter(s=>s.refreshMode!=="manual"),summary.profile),
   features:{monitoring:monitoringRuntimeActive(),evidence:!!evidenceConfigured(),
    providers:PROVIDERS.map(id=>({id,configured:connectorProviderEnabled(id)}))},generatedAt:new Date().toISOString()};
 }

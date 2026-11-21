@@ -4,7 +4,7 @@ import {workspaceCatalogue} from "../../../../lib/server/publication-catalogue";
 import {requireMember,WRITER} from "../../../../lib/server/workspace-member";
 import {NextResponse} from "next/server";
 import {authorisedWorkspaceContext,workspaceConfigured,AccessError} from "../../../../lib/server/ai-auth";
-import {checkOfficialSource,listSourceSnapshots,RegulatoryWatchError} from "../../../../lib/server/regulatory-watch";
+import {checkOfficialSource,recordManualSourceCheck,listSourceSnapshots,RegulatoryWatchError} from "../../../../lib/server/regulatory-watch";
 import {SourceUnavailable} from "../../../../lib/server/ai-sources";
 import {SourceFetchDeferred} from "../../../../lib/server/shared-source-fetch";
 import {monitoringRuntimeStatus} from '../../../../lib/server/monitoring-runtime-status';
@@ -32,6 +32,9 @@ export async function POST(request:Request){
   const raw=await request.text();if(raw.length>700)return reply({error:"Source check request too large"},413);
   const data=JSON.parse(raw);
   const ctx=await authorisedWorkspaceContext(request,data.organizationId||"",["OWNER","ADMIN","EDITOR"]);
+  if(data.action==="recordManualCheck"&&data.confirmed===true)
+   return reply(await recordManualSourceCheck(ctx,data.sourceId,data.previousId));
+  if(data.action!==undefined)return reply({error:"Confirm the manual publication check"},400);
   const result=await checkOfficialSource(ctx,data.sourceId,undefined,async tx=>{await requireMember(tx,ctx,WRITER);});
   return reply(result);
  }catch(e){

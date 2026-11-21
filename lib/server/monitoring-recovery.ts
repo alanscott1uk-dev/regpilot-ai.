@@ -58,6 +58,7 @@ export async function retryWatch(ctx:AuthorizedContext,input:{sourceId:string;ve
   await requireMember(tx,ctx,ADMIN);
   const source=await resolveWorkspaceSource(tx,ctx.organizationId,input.sourceId);
   if(!source)throw new IntelligenceError('Choose a registered official source');
+  if(source.refreshMode==='manual')throw new IntelligenceError('Use manual refresh in Official sources.',409);
   // The workspace transaction serialises configuration; Prisma's guarded write
   // exposes a concurrent worker claim as a retryable serialization conflict.
   const watch=await tx.watchSchedule.findUnique({where:{organizationId_sourceId:{organizationId:ctx.organizationId,sourceId:input.sourceId}}});

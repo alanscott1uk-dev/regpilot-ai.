@@ -1,6 +1,6 @@
 import {z} from "zod";
 import {db} from "./db";
-import {REGULATORY_SOURCES} from "../regulatory-sources.mjs";
+import {REGULATORY_SOURCES,manualRefreshSource} from "../regulatory-sources.mjs";
 import {requireMember,ADMIN} from "./workspace-member";
 import {IntelligenceError} from "./intelligence-service";
 import type {AuthorizedContext} from "./authorization";
@@ -19,6 +19,7 @@ export function planSourcePortfolio(input:unknown, permitted:readonly string[]) 
  if(new Set(sourceIds).size!==sourceIds.length)throw new IntelligenceError("Remove duplicate source identifiers");
  const allowed=new Set(permitted);
  if(sourceIds.some(id=>!allowed.has(id)))throw new IntelligenceError("Unknown or unregistered publication identifier");
+ if(enabled&&sourceIds.some(manualRefreshSource))throw new IntelligenceError("This publication uses manual refresh in Official sources.",409);
  return {sourceIds,enabled,intervalHours};
 }
 export async function configureWatchPortfolio(ctx:AuthorizedContext,input:unknown){

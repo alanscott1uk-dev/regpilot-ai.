@@ -67,6 +67,9 @@ export function ResearchPanel({workspace,productId,scopeName}:{workspace:ReturnT
    return source?<p key={point.citationId+point.start}>{point.text} <a href={'#official-'+source.id}>{source.agency} passage</a></p>:null;
   })}
   {result.official.citations.length?result.official.citations.map(c=><details key={c.id} id={'official-'+c.id}><summary>{c.title}</summary><blockquote>{c.quote}</blockquote><p>{c.jurisdictions.join(", ")} · checked {c.checkedAt}{c.revisionAt?" · publisher revision "+c.revisionAt:""}</p><a href={c.url}>Open original publication</a></details>):<p>No supporting official passage retrieved.</p>}
+  {result.official.checked.filter(source=>source.status==='manual_refresh').map(source=><p key={source.id}>
+   <a href={workspaceHref('/team/sources',result.organizationId,{sourceId:source.id})}>{source.title} · open manual refresh</a>
+  </p>)}
   {result.requirements&&<section><h3>Reviewed requirements and applicability</h3>
    {result.requirements.notice&&<p>{result.requirements.notice}</p>}
    {!result.requirements.hits.length&&!result.requirements.notice&&<p>No matching current requirement found.</p>}
