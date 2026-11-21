@@ -153,8 +153,14 @@ async function reviewState(tx:Tx,ctx:AuthorizedContext,row:QualityCase,review:Qu
  if(current.blockers.length)return no(current.blockers[0]);if(current.hash!==review.contextHash)return no('The investigation, action evidence or responsible people changed after this assessment.');
  return {current:true,reason:'The recorded assessment matches the current investigation, actions and reviewed evidence metadata.'};
 }
-function independent(ctx:AuthorizedContext,row:QualityCase,review:QualityEffectiveness,current:Awaited<ReturnType<typeof basis>>){
+async function independent(tx:Tx,ctx:AuthorizedContext,row:QualityCase,review:QualityEffectiveness,current:Awaited<ReturnType<typeof basis>>){
  if([row.ownerId,row.createdById,review.authorId,...current.actions.flatMap(action=>[action.createdById,action.task.assigneeId])].includes(ctx.userId)||current.verification.some(file=>file.uploadedById===ctx.userId))throw new IntelligenceError('A different administrator who did not own or prepare this case, its actions or supporting files must decide effectiveness',403);
+ const transfer=await tx.auditEvent.findFirst({where:{
+  organizationId:ctx.organizationId,entityType:'QualityCase',entityId:row.id,action:'quality.handover_accepted',
+  AND:[{details:{path:['cycle'],equals:row.cycle}},
+   {OR:[{actorId:ctx.userId},{details:{path:['previousOwnerId'],equals:ctx.userId}}]}]
+ },select:{id:true}});
+ if(transfer)throw new IntelligenceError('An administrator who held responsibility during this investigation cycle cannot independently decide effectiveness',403);
 }
 
 export async function prepareQualityEffectiveness(ctx:AuthorizedContext,id:string,input:unknown,deps:{storage?:EvidenceObjectStore}={}){
@@ -181,7 +187,7 @@ export async function decideQualityEffectiveness(ctx:AuthorizedContext,id:string
   const row=await record(tx,ctx,review.caseId),hash=requestHash(ctx,'DECIDE_EFFECTIVENESS',row.id,{...data,reviewId:id}),prior=await replay(tx,ctx,data.requestKey,'DECIDE_EFFECTIVENESS',row.id,hash);if(prior)return {row,review,hash,prior,current:null};
   unchanged(row,data.caseVersion);if(review.status!=='PENDING'||review.version!==data.version||review.cycle!==row.cycle)throw new IntelligenceError('The effectiveness assessment changed or was already decided',409);
   const state=await reviewState(tx,ctx,row,review);if(!state.current)throw new IntelligenceError(state.reason,409);
-  const files=reviewedFilesSchema.parse(review.evidenceManifest),current=await basis(tx,ctx,row,files.map(file=>file.id),review.authorId);independent(ctx,row,review,current);
+  const files=reviewedFilesSchema.parse(review.evidenceManifest),current=await basis(tx,ctx,row,files.map(file=>file.id),review.authorId);await independent(tx,ctx,row,review,current);
   if(data.decision==='PASSED'&&!qualityCanClose(review.observedAt.toISOString().slice(0,10),row.effectivenessDueAt?.toISOString()||null))throw new IntelligenceError('The planned effectiveness observation date has not been met. Record a later observation before closing.',409);
   return {row,review,hash,prior:null,current};
  }
@@ -226,7 +232,7 @@ export async function qualityWorkspace(ctx:AuthorizedContext,input:Partial<Quali
    const row=await record(tx,ctx,selectedId),current=await basis(tx,ctx,row,[]),reviews=await tx.qualityEffectiveness.findMany({where:{...base,caseId:selectedId},orderBy:[{createdAt:'desc'},{id:'desc'}],take:41}),reviewViews=[];
    for(const [index,review] of reviews.slice(0,40).entries()){const state=index===0?await reviewState(tx,ctx,row,review):{current:false,reason:'Historical assessment; a newer assessment is recorded.'},files=reviewedFilesSchema.safeParse(review.evidenceManifest);reviewViews.push({id:review.id,cycle:review.cycle,version:review.version,status:review.status,authorId:review.authorId,reviewerId:review.reviewerId,reviewedAt:review.reviewedAt,reviewNotes:review.reviewNotes,observedAt:review.observedAt,notes:review.notes,createdAt:review.createdAt,evidence:files.success?files.data:[],...state});}
    const latest=reviewViews[0],canEdit=WRITER.includes(actor.role)&&(ADMIN.includes(actor.role)||row.ownerId===ctx.userId||row.createdById===ctx.userId);let canReview=false;
-   if(latest?.status==='PENDING'&&latest.current&&ADMIN.includes(actor.role)){try{const candidate=await basis(tx,ctx,row,latest.evidence.map(file=>file.id),latest.authorId);independent(ctx,row,reviews[0],candidate);canReview=true;}catch{canReview=false;}}
+   if(latest?.status==='PENDING'&&latest.current&&ADMIN.includes(actor.role)){try{const candidate=await basis(tx,ctx,row,latest.evidence.map(file=>file.id),latest.authorId);await independent(tx,ctx,row,reviews[0],candidate);canReview=true;}catch{canReview=false;}}
    const previousActions=await tx.qualityAction.findMany({where:{...base,caseId:row.id,cycle:{lt:row.cycle}},orderBy:[{cycle:'desc'},{createdAt:'asc'}],take:400,select:{id:true,cycle:true,kind:true,purpose:true,obligation:{select:{id:true,title:true,status:true,ownerName:true}}}});
    const history=await tx.auditEvent.findMany({where:{...base,entityType:'QualityCase',entityId:row.id},orderBy:[{createdAt:'asc'},{id:'asc'}],take:1001,select:{id:true,action:true,actorId:true,createdAt:true,details:true}});
    selected={canAcceptHandover:row.handoverRecipientId===ctx.userId&&WRITER.includes(actor.role),case:{...row,ownerName:(await tx.user.findUnique({where:{id:row.ownerId},select:{email:true}}))?.email||'Owner unavailable',href:href('/team/quality',ctx.organizationId,{caseId:row.id}),due:qualityDue(row.effectivenessDueAt?.toISOString()||null,row.status)},actions:current.actions.map(({proof,...action})=>action),previousActions:previousActions.map(({obligation,...action})=>({...action,task:{...obligation,href:href('/team/work',ctx.organizationId,{taskId:obligation.id})}})),reviews:reviewViews,latestReview:latest||null,canEdit:canEdit&&row.status!=='CLOSED',canReview,canReopen:ADMIN.includes(actor.role),closureCurrent:row.status==='CLOSED'&&latest?.status==='PASSED'&&latest.current,blockers:current.blockers,history:history.slice(0,1000),historyLimited:history.length>1000,reviewsLimited:reviews.length>40};

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {db} from '../lib/server/db';
 import type {AuthorizedContext} from '../lib/server/authorization';
+import {searchWorkspaceRecords} from '../lib/server/workspace-record-search';
 import {qualityInspectionText} from '../lib/quality-inspection';
 import {changeQualityHandover,createQualityCase,investigateQualityCase,addQualityAction,prepareQualityEffectiveness,decideQualityEffectiveness,reopenQualityCase,qualityWorkspace,exportQualityCase} from '../lib/server/capa-service';
 import {createEvidence,reviewEvidence} from '../lib/server/evidence-service';
@@ -105,6 +106,11 @@ test('a temperature excursion retains accountability until the named recipient a
   const inbox=await qualityWorkspace(f.owner,{status:'handover'});
   assert.deepEqual(inbox.items.map(row=>row.id),[created.id]);
   assert.equal((await qualityWorkspace(f.foreign,{status:'handover'})).total,0);
+  const research=(org:string,asset:string)=>db.$transaction(tx=>searchWorkspaceRecords(tx,org,'handover logger',asset));
+  const matches=await research(f.owner.organizationId,'affected delivery');
+  assert.ok(matches.some(hit=>hit.kind==='Pending handover'&&hit.id===created.id&&hit.href.includes(created.id)));
+  assert.ok(!(await research(f.owner.organizationId,'Other warehouse')).some(hit=>hit.id===created.id));
+  assert.ok(!(await research(f.foreign.organizationId,'')).some(hit=>hit.id===created.id));
   const pending=(await qualityWorkspace(f.viewer,{caseId:created.id})).selected!;
   assert.equal(pending.case.ownerId,f.editor.userId);
   assert.ok(pending.blockers.some(message=>message.includes('outstanding case handover')));
@@ -127,5 +133,24 @@ test('a temperature excursion retains accountability until the named recipient a
   const withdrawn=await exportQualityCase(f.owner,created.id);
   assert.equal(withdrawn.case?.ownerId,f.owner.userId);
   assert.ok(qualityInspectionText(withdrawn).includes(cancel.notes));
+ }finally{await f.clean();}
+});
+
+test('transferring a case back preserves the receiving owner’s involvement in independent review',async()=>{
+ const f=await setup();
+ try{
+  const {created,action,file}=await readyCase(f);
+  let version=action.caseVersion;
+  for(const [sender,recipient] of [[f.editor,f.reviewer],[f.reviewer,f.editor]]){
+   const sent=await changeQualityHandover(sender,created.id,{action:'OFFER_HANDOVER',version,requestKey:randomUUID(),recipientId:recipient.userId,notes:'Confirm the outstanding logger checks for this incident.'});
+   const accepted=await changeQualityHandover(recipient,created.id,{action:'ACCEPT_HANDOVER',version:sent.version,requestKey:randomUUID(),notes:'Confirmed receipt of the case and its outstanding checks.'});
+   version=accepted.version;
+  }
+  const prepared=await prepareQualityEffectiveness(f.editor,created.id,assessment(version,[file.id]),{storage:f.storage});
+  const view=await qualityWorkspace(f.reviewer,{caseId:created.id});
+  assert.equal(view.selected?.canReview,false);
+  await assert.rejects(()=>decideQualityEffectiveness(f.reviewer,prepared.id,decision(prepared.version,prepared.caseVersion),{storage:f.storage}),status(403));
+  const closure=await decideQualityEffectiveness(f.owner,prepared.id,decision(prepared.version,prepared.caseVersion),{storage:f.storage});
+  assert.equal(closure.status,'PASSED');
  }finally{await f.clean();}
 });

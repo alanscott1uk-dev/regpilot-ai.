@@ -20,6 +20,7 @@ const destinations={
  Policy:['/team/people',''],
  'Regulatory change':['/team/changes','responseId'],
  'Quality case':['/team/quality','caseId'],
+ 'Pending handover':['/team/quality','caseId'],
  'Evidence connection':['/team/operations','']
 } as const;
 type RecordRow={kind:keyof typeof destinations;id:string;target:string;title:string;status:string};
@@ -48,7 +49,12 @@ export async function searchWorkspaceRecords(tx:Prisma.TransactionClient,org:str
   UNION ALL SELECT 'Obligation',id,id,title,status::text,category FROM "Obligation" WHERE "organizationId"=${org}::uuid
   UNION ALL SELECT 'Requirement',r.id,r.id,r.collection||' · '||r.reference,'Accepted revision '||v.number,r.collection||' framework' FROM "LibraryRequirement" r JOIN "LibraryRevision" v ON v."requirementId"=r.id AND v."organizationId"=r."organizationId" AND v.number=r."currentRevision" WHERE r."organizationId"=${org}::uuid AND v.status='ACCEPTED'
   UNION ALL SELECT 'Regulatory change',id,id,title,status,'regulatory change response' FROM "ChangeResponse" WHERE "organizationId"=${org}::uuid
-  UNION ALL SELECT 'Quality case',id,id,title,status,kind||' '||description||' corrective action CAPA' FROM "QualityCase" WHERE "organizationId"=${org}::uuid
+  UNION ALL SELECT CASE WHEN c."handoverRecipientId" IS NULL THEN 'Quality case' ELSE 'Pending handover' END,
+   c.id,c.id,c.title,CASE WHEN c."handoverRecipientId" IS NULL THEN c.status ELSE 'Awaiting acceptance by '||coalesce(recipient.email,c."handoverRecipientId"::text) END,
+   concat_ws(' ',c.kind,c.description,c.impact,c.containment,c."rootCause",c."handoverNotes",'corrective action CAPA')
+   FROM "QualityCase" c LEFT JOIN "User" recipient ON recipient.id=c."handoverRecipientId"
+   WHERE c."organizationId"=${org}::uuid AND (${siteFilter}='' OR
+    position((' '||${siteFilter}||' ') in (' '||regexp_replace(lower(concat_ws(' ',c.title,c.description,c.impact,c.containment,c."handoverNotes")),'[^[:alnum:]]+',' ','g')||' '))>0)
   UNION ALL SELECT 'Evidence connection',id,id,provider||' · '||repository,CASE WHEN enabled THEN 'Enabled' ELSE 'Paused' END,'integration evidence connector' FROM "EvidenceConnector" WHERE "organizationId"=${org}::uuid
   UNION ALL SELECT 'Training',id,id,title,'Active',description||' '||"businessRole" FROM "TrainingCurriculum" WHERE "organizationId"=${org}::uuid AND active
   UNION ALL SELECT 'Policy',p.id,p.id,p.title,'Published revision '||v.number,v.summary||' sop procedure' FROM "Policy" p JOIN "PolicyRevision" v ON v."policyId"=p.id AND v."organizationId"=p."organizationId" AND v.number=p."currentRevision" WHERE p."organizationId"=${org}::uuid AND p.active AND v.status='PUBLISHED'
