@@ -1128,6 +1128,11 @@ model AuditRoom {
  createdById String @db.Uuid
  title String @db.VarChar(160)
  purpose String @db.VarChar(1200)
+ publicKey String? @unique @db.Uuid
+ publicTitle String? @db.VarChar(120)
+ publicSummary String? @db.VarChar(600)
+ publicRevision Int @default(0)
+ publicPublishedBy String? @db.Uuid
  manifest Json
  manifestHash String @db.VarChar(64)
  status String @default("DRAFT") @db.VarChar(16)
@@ -1146,6 +1151,7 @@ model AuditGrant {
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid
  roomId String @db.Uuid
+ publicRevision Int?
  email String @db.VarChar(254)
  userId String? @db.Uuid
  apiKeyHash String? @db.VarChar(64)
@@ -2004,6 +2010,11 @@ model CustomerApiObservation {
  controlId String @db.Uuid
  requestKey String @db.Uuid
  externalId String @db.VarChar(120)
+ partnerKey String? @db.VarChar(64)
+ partnerRevision Int?
+ supersededAt DateTime?
+ retentionEndsAt DateTime?
+ purgedAt DateTime?
  payload Json
  payloadHash String @db.VarChar(64)
  context Json
@@ -2024,6 +2035,8 @@ model CustomerApiObservation {
  reviewer User? @relation("CustomerApiReviewer",fields:[reviewerId],references:[id],onDelete:Restrict)
  followUpTask Obligation? @relation(fields:[followUpTaskId,organizationId],references:[id,organizationId],onDelete:Restrict)
  @@unique([id,organizationId])
+ @@index([retentionEndsAt,purgedAt])
+ @@unique([credentialId,controlId,partnerKey,partnerRevision],map:"CustomerApiObservation_partner_revision_key")
  @@unique([credentialId,requestKey])
  @@unique([credentialId,controlId,externalId])
  @@index([organizationId,status,receivedAt,id])

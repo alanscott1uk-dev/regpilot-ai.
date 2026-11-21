@@ -1,5 +1,6 @@
 "use client";
 import {useEffect,useRef,useState} from "react";
+import SupportPanel from './support-panel';
 import WorkspaceNav from "../components/workspace-nav";
 import {researchHandoff} from "../../lib/operator-answer";
 import {helpArticles,searchHelp} from "../../lib/help-centre";
@@ -35,5 +36,5 @@ export default function HelpCentre(){
     <p role="status">{hits.length} {hits.length===1?"guide":"guides"}</p></section>
     {!hits.length&&<section className={ui.card}><h2>No matching guide</h2><p>Try a task name such as “SOP”, “supplier” or “sign in”.</p><button onClick={()=>{setQuery("");setCategory("");search.current?.focus();}}>Show all guides</button></section>}
     {hits.map(a=><article className={ui.card} id={a.id} key={a.id}><h2><button type="button" aria-controls={"guide-"+a.id} aria-expanded={active===a.id} onClick={()=>choose(a.id)}>{a.title}</button></h2><p>{a.summary}</p>
-      <div id={"guide-"+a.id} hidden={active!==a.id}><ol>{a.steps.map(s=><li key={s}>{s}</li>)}</ol><div className={ui.actions}>{a.links.map(([label,url])=><a key={url} href={href(url)}>{label}</a>)}</div></div></article>)}</div></main></div>;
+      <div id={"guide-"+a.id} hidden={active!==a.id}><ol>{a.steps.map(s=><li key={s}>{s}</li>)}</ol><div className={ui.actions}>{a.links.map(([label,url])=><a key={url} href={href(url)}>{label}</a>)}</div></div></article>)}<SupportPanel article={active}/></div></main></div>;
 }

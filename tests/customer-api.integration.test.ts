@@ -124,3 +124,26 @@ test('historical credentials do not exhaust active capacity and administrator re
   await assert.rejects(()=>db.customerApiControlGrant.create({data:{organizationId:x.b.id,credentialId:key.id,controlId:x.foreignControl.id}}),error=>(error as {code?:string}).code==='P2003');
  }finally{await x.cleanup();}
 });
+
+test('partner receipts retain revision history through credential rotation, retry and dispute',async()=>{
+ const x=await fixture();
+ try{
+  const key=await x.create(),s=await x.session(key.secret!,'observations:write');
+  const record={schemaVersion:1,revision:1,recordId:'company-relationship-7',sourceSystem:'Buyer procurement',sourceVersion:'2026-11',decisionOwnerRef:'buyer-office',state:'CURRENT',record:{kind:'SUPPLIER_RELATION',buyerRef:'buyer',supplierRef:'primary',upstreamRef:'tier-two',consentRef:'consent-044',consentExpiresAt:new Date(Date.now()+86400000).toISOString()}};
+  const body={...x.observation(x.primary.id,'PASS'),partnerRecord:record};
+  const first=await submitCustomerApiObservation(s,randomUUID(),body);
+  assert.equal(first.current,true);assert.equal(first.reportedOutcome,'REPORTED_PASS');assert.match(first.receiptHash,/^[a-f0-9]{64}$/);
+  const rotate=await changeCustomerCredential(x.o,key.id,{action:'ROTATE',version:1,requestKey:randomUUID(),confirm:true}) as Created;
+  const active=await x.session(rotate.secret!,'observations:write');
+  await assert.rejects(()=>submitCustomerApiObservation(s,randomUUID(),body),rejects(401));
+  const again=await submitCustomerApiObservation(active,randomUUID(),body);assert.equal(again.id,first.id);assert.equal(again.reused,true);
+  const next={...x.observation(x.primary.id,'PASS'),partnerRecord:{...record,revision:2,previousHash:first.receiptHash,state:'DISPUTED'}};
+  await assert.rejects(()=>submitCustomerApiObservation(active,randomUUID(),{...next,partnerRecord:{...next.partnerRecord,previousHash:'0'.repeat(64)}}),rejects(409));
+  await assert.rejects(()=>submitCustomerApiObservation(active,randomUUID(),{...next,controlId:x.foreignControl.id}),rejects(404));
+  const attempts=await Promise.all([submitCustomerApiObservation(active,randomUUID(),next),submitCustomerApiObservation(active,randomUUID(),next)]);
+  assert.equal(attempts[0].id,attempts[1].id);assert.equal(attempts[0].current,false);
+  const list=await developerWorkspace(x.o);assert.match(list.observations.find(v=>v.id===first.id)!.reason,/superseded/);
+  assert.match(list.observations.find(v=>v.id===attempts[0].id)!.reason,/disputed/);
+  await assert.rejects(()=>reviewCustomerApiObservation(x.ad,first.id,{decision:'ACKNOWLEDGE',notes,version:1,requestKey:randomUUID(),confirm:true}),rejects(409));
+ }finally{await x.cleanup();}
+});

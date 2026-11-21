@@ -1,3 +1,4 @@
+import {assertPublicGrant} from './trust-publication';
 import {event,issuerActive,manifest,currentAssurance,filesWithAvailability,activeRoom,auditApiConfigured,clearedAuditKey} from "./audit-disclosure";
 import {Prisma,type AuditRoom,type AuditGrant} from "@prisma/client";
 import {db} from "./db";
@@ -91,7 +92,7 @@ export async function changeAuditRoom(ctx:AuthorizedContext,id:string,input:unkn
   if(d.action==="INVITE"){
    eligible(d.email);if(room.version!==d.version)throw new IntelligenceError("Room changed; refresh",409);
    if(await tx.auditGrant.findUnique({where:{roomId_email:{roomId:id,email:d.email}}}))throw new IntelligenceError("This email already has an invitation. Use a new room for renewed access",409);
-   if(await tx.auditGrant.count({where:{roomId:id}})>=AUDIT_LIMITS.guests)throw new IntelligenceError("This room supports ten named guests",429);
+   if(await tx.auditGrant.count({where:{roomId:id,status:{in:["PENDING","ACCEPTED"]}}})>=AUDIT_LIMITS.guests)throw new IntelligenceError("This room supports ten named guests",429);
    const grant=await tx.auditGrant.create({data:{organizationId:ctx.organizationId,roomId:id,email:d.email,expiresAt:new Date(Math.min(room.expiresAt.getTime(),Date.now()+AUDIT_LIMITS.inviteDays*86400000))},select:{id:true,status:true,version:true,expiresAt:true}});
    await event(tx,ctx.organizationId,ctx.userId,"guest_invited",id,{grantId:grant.id});return grant;
   }
@@ -117,6 +118,7 @@ async function guestTransaction<T>(identity:VerifiedWorkspaceIdentity,grantId:st
   if(!grant||!activeRoom(grant.room)||!await issuerActive(tx,grant.room)||!["PENDING","ACCEPTED"].includes(grant.status)||(grant.status==="PENDING"&&grant.expiresAt<=new Date()))throw new IntelligenceError("Audit access unavailable",404);
   if(grant.user&&grant.user.externalId!==identity.externalId)throw new IntelligenceError("Audit access unavailable",404);
   if(accepted&&grant.status!=="ACCEPTED")throw new IntelligenceError("Accept this invitation before opening the room",403);
+  await assertPublicGrant(tx,grant.room,grant);
   await currentAssurance(tx,grant.room);
   const user=await verifiedLocalUser(tx,identity);
   if(grant.status==="ACCEPTED"&&grant.userId!==user.id)throw new IntelligenceError("Audit access unavailable",404);
@@ -127,9 +129,10 @@ export async function auditInbox(identity:VerifiedWorkspaceIdentity){
  eligible(identity.email);
  const local=await db.user.findUnique({where:{email:identity.email},select:{externalId:true}});
  if(local&&local.externalId!==identity.externalId)throw new IntelligenceError("Account identity needs administrator review",409);
- const rows=await db.auditGrant.findMany({where:{email:identity.email,status:{in:["PENDING","ACCEPTED"]},room:{status:"PUBLISHED",expiresAt:{gt:new Date()}}},select:{id:true,status:true,version:true,expiresAt:true,user:{select:{externalId:true}},room:{select:{...summary,organizationId:true,createdById:true,organization:{select:{name:true}}}}},orderBy:{createdAt:"desc"},take:100});
+ const rows=await db.auditGrant.findMany({where:{email:identity.email,status:{in:["PENDING","ACCEPTED"]},room:{status:"PUBLISHED",expiresAt:{gt:new Date()}}},select:{id:true,status:true,version:true,publicRevision:true,expiresAt:true,user:{select:{externalId:true}},room:{include:{organization:{select:{name:true}}}}},orderBy:{createdAt:"desc"},take:100});
  const result=[];
  for(const row of rows){
+  if(row.publicRevision!==null){try{await assertPublicGrant(db,row.room,row);}catch(e){if(e instanceof IntelligenceError&&e.status===404)continue;throw e;}}
   if(row.user&&row.user.externalId!==identity.externalId||row.status==="PENDING"&&row.expiresAt<=new Date()||!await issuerActive(db,row.room))continue;
   result.push({id:row.id,status:row.status,version:row.version,invitationExpiresAt:row.expiresAt,title:row.room.title,organizationName:row.room.organization.name,expiresAt:row.room.expiresAt});
  }

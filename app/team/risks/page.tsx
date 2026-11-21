@@ -136,7 +136,7 @@ export default function RiskRegister(){
  }
  const savedResidual=selected?.reviews.find(review=>review.status==='ACCEPTED'&&review.current);
  const availableControls=data?[...data.controls,...(selected?.controls||[]).filter(control=>!data.controls.some(candidate=>candidate.id===control.id))]:[];
- return <div className={shell.app}><WorkspaceNav/><main className={shell.main}>
+ return <div className={shell.app}><WorkspaceNav/><main className={shell.main}><p><a href="/team/risks/group">Group risk and treatment costs</a></p>
   <div className={shell.topbar}><span className={shell.crumb}>Workspace / Risks</span><span className={shell.demo}>PRIVATE WORKSPACE</span></div>
   <header className={ui.hero}><div><span className={ui.eyebrow}>CONNECT THE RISK TO THE WORK</span><h1>Risk register</h1><p>Record what could go wrong, assign an owner and connect the treatment tasks. Reassess the remaining risk with reviewed evidence and an independent decision.</p></div>{data?.canWrite&&<button className={ui.primary} type="button" disabled={blocked} onClick={beginRisk}>New risk</button>}</header>
   {(workspace.error||link.error||error)&&<section className={ui.alert} role="alert"><p>{workspace.error||link.error||error}</p>{organizationId&&(link.id||link.error)&&!uncertain&&<button type="button" disabled={busy} onClick={()=>openRisk('')}>Back to risk register</button>}</section>}

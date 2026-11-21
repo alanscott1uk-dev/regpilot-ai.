@@ -32,10 +32,11 @@ export const changeDeliveryEndpointInput=z.object({action:z.enum(['PROBE','PAUSE
 export const replayDeliveryInput=z.object({version:z.number().int().positive(),requestKey:z.uuid(),confirm:z.literal(true)}).strict();
 const source=z.object({kind:z.enum(['CUSTOMER_OBSERVATION','CONNECTOR_RUN','CONNECTOR_FAILURE','ENDPOINT']),id:z.uuid(),version:z.number().int().positive()}).strict();
 const common={apiVersion:z.literal(DELIVERY_VERSION),id:z.uuid(),organizationId:z.uuid(),occurredAt:z.iso.datetime(),source,controlIds:z.array(z.uuid()).max(500)};
+const partnerNotice=z.object({series:z.string().regex(/^[a-f0-9]{64}$/),revision:z.number().int().positive(),state:z.enum(['CURRENT','DISPUTED','WITHDRAWN'])}).strict().optional();
 export const deliveryEnvelopeSchema=z.discriminatedUnion('type',[
  z.object({...common,type:z.literal('endpoint.probe'),data:z.object({endpointId:z.uuid(),challenge:z.string().regex(/^[a-f0-9]{64}$/)}).strict()}).strict(),
- z.object({...common,type:z.literal('customer.observation.received'),data:z.object({observationId:z.uuid(),credentialId:z.uuid(),reportedOutcome:z.enum(['REPORTED_PASS','REPORTED_FAILURE','REPORTED_UNKNOWN']),validUntil:z.iso.datetime()}).strict()}).strict(),
- z.object({...common,type:z.literal('customer.observation.reviewed'),data:z.object({observationId:z.uuid(),credentialId:z.uuid(),reportedOutcome:z.enum(['REPORTED_PASS','REPORTED_FAILURE','REPORTED_UNKNOWN']),decision:z.enum(['ACKNOWLEDGED','REJECTED','FOLLOW_UP']),followUpTaskId:z.uuid().nullable(),validUntil:z.iso.datetime()}).strict()}).strict(),
+ z.object({...common,type:z.literal('customer.observation.received'),data:z.object({observationId:z.uuid(),credentialId:z.uuid(),partner:partnerNotice,reportedOutcome:z.enum(['REPORTED_PASS','REPORTED_FAILURE','REPORTED_UNKNOWN']),validUntil:z.iso.datetime()}).strict()}).strict(),
+ z.object({...common,type:z.literal('customer.observation.reviewed'),data:z.object({observationId:z.uuid(),credentialId:z.uuid(),partner:partnerNotice,reportedOutcome:z.enum(['REPORTED_PASS','REPORTED_FAILURE','REPORTED_UNKNOWN']),decision:z.enum(['ACKNOWLEDGED','REJECTED','FOLLOW_UP']),followUpTaskId:z.uuid().nullable(),validUntil:z.iso.datetime()}).strict()}).strict(),
  z.object({...common,type:z.literal('connector.observation.recorded'),data:z.object({connectorId:z.uuid(),runId:z.uuid(),outcome:z.enum(['OBSERVED','FOLLOW_UP','INCOMPLETE']),resultHash:z.string().regex(/^[a-f0-9]{64}$/)}).strict()}).strict(),
  z.object({...common,type:z.literal('connector.collection.failed'),data:z.object({connectorId:z.uuid(),code:z.string().regex(/^[A-Z][A-Z0-9_]{0,79}$/)}).strict()}).strict()
 ]);

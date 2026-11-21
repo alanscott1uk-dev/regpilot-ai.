@@ -1,3 +1,4 @@
+import {assertPublicGrant} from './trust-publication';
 import {createHash,randomBytes,timingSafeEqual} from "node:crypto";
 import {z} from "zod";
 import {allowedEmail} from "../ai/security.mjs";
@@ -39,7 +40,8 @@ export async function manageAuditorKey(ctx:AuthorizedContext,roomId:string,input
     if(grant.status!=="ACCEPTED" || !grant.user || grant.user.email!==grant.email ||
        !allowedEmail(grant.email,process.env.REGPILOT_AI_ALLOWED_EMAILS) || !activeRoom(grant.room) || !await issuerActive(tx,grant.room))
       throw new IntelligenceError("A current, accepted auditor invitation is required",409);
-    await currentAssurance(tx,grant.room);
+    await assertPublicGrant(tx,grant.room,grant);
+  await currentAssurance(tx,grant.room);
     const token="rpa1_"+grant.id+"_"+randomBytes(32).toString("base64url");
     const expiresAt=new Date(Math.min(grant.room.expiresAt.getTime(),Date.now()+7*86400000));
     await tx.auditGrant.update({where:{id:grant.id},data:{apiKeyHash:digest(token,grant.user.externalId),apiIssuerId:ctx.userId,
@@ -65,7 +67,8 @@ async function auditorAccess(request:Request):Promise<AuditReadScope> {
        !grant.apiIssuerId || !grant.apiExpiresAt || grant.apiExpiresAt<=new Date() || !activeRoom(grant.room) ||
        !matches(grant.apiKeyHash,digest(token,grant.user.externalId)) || !await issuerActive(tx,grant.room) ||
        (grant.apiIssuerId!==grant.room.createdById && !await issuerActive(tx,{organizationId:org,createdById:grant.apiIssuerId})))throw unavailable();
-    await currentAssurance(tx,grant.room);
+    await assertPublicGrant(tx,grant.room,grant);
+  await currentAssurance(tx,grant.room);
     return fn(tx,grant,grant.room,grant.user.id);
   });
   await access(async(tx)=>{

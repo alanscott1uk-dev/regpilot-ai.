@@ -4,6 +4,7 @@ const pdfRuntime=["./lib/server/pdf-extraction-worker.mjs","./node_modules/pdfjs
 const config={
   serverExternalPackages:["@open-policy-agent/opa-wasm","pdfjs-dist","@yarflam/potion-base-8m"],
   outputFileTracingIncludes:{
+    "/api/tools/portal-helper":["./public/portal-helper/**/*"],
     "/api/workspace/controls/test":["./lib/policies/connected-control.wasm"],
     "/api/ai/research":["./node_modules/@yarflam/potion-base-8m/models/**/*"],
     "/api/workspace/questionnaires/ocr":[...pdfRuntime],

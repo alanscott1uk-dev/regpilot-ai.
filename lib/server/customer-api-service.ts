@@ -1,3 +1,4 @@
+import {partnerValidity} from '../partner-records';
 import {Prisma,type CustomerApiObservation} from '@prisma/client';
 import {z} from 'zod';
 import {CUSTOMER_API_LIMITS,CUSTOMER_API_SCOPES,CUSTOMER_API_VERSION,createCustomerCredentialInput,changeCustomerCredentialInput,customerObservationInput,reviewCustomerObservationInput,reportedObservationOutcome,type CustomerApiScope} from '../customer-api';
@@ -25,7 +26,13 @@ async function observationsView(tx:Tx,c:{organizationId:string},rows:Observation
  const allowed=(id:string,roles:string[])=>people.some(person=>person.id===id&&person.approved&&roles.includes(person.role));
  return rows.map(row=>{
   let payload:z.infer<typeof customerObservationInput>|null=null,current=false,reason='';
-  try{const parsed=customerObservationInput.parse(row.payload),context=contextSchema.parse(row.context);if(hashValue(parsed)!==row.payloadHash||hashValue(context)!==row.contextHash||context.credentialId!==row.credentialId||context.issuedById!==row.credential.issuedById||parsed.controlId!==row.controlId||parsed.externalId!==row.externalId||parsed.observedAt!==row.observedAt.toISOString()||parsed.validUntil!==row.validUntil.toISOString())throw new Error('Submission integrity failed');payload=parsed;
+  try{if(row.purgedAt||row.retentionEndsAt&&row.retentionEndsAt<=new Date())throw new Error('The specialist retention period ended. Only its receipt remains.');const parsed=customerObservationInput.parse(row.payload),context=contextSchema.parse(row.context);if(hashValue(parsed)!==row.payloadHash||hashValue(context)!==row.contextHash||context.credentialId!==row.credentialId||context.issuedById!==row.credential.issuedById||parsed.controlId!==row.controlId||parsed.externalId!==row.externalId||parsed.observedAt!==row.observedAt.toISOString()||parsed.validUntil!==row.validUntil.toISOString())throw new Error('Submission integrity failed');payload=parsed;
+   if(row.supersededAt)throw new Error('A later source revision superseded this record');
+   if(parsed.partnerRecord){
+    const source=parsed.partnerRecord;
+    if(source.revision!==row.partnerRevision||row.partnerKey!==hashValue({kind:source.record.kind,recordId:source.recordId}))throw new Error('Partner revision integrity failed');
+    const restriction=partnerValidity(source,Date.now());if(restriction)throw new Error(restriction);
+   }
    if(row.validUntil<=new Date())throw new Error('The submitted observation expired');
    if(row.credential.revokedAt||row.credential.expiresAt<=new Date()||!allowed(row.credential.issuedById,ADMIN))throw new Error('The integration credential or its issuer is no longer authorised');
    if(!row.credential.scopes.includes('observations:write')||!row.credential.controls.some(grant=>grant.controlId===row.controlId))throw new Error('The integration no longer has permission to submit observations for this control');
@@ -33,7 +40,7 @@ async function observationsView(tx:Tx,c:{organizationId:string},rows:Observation
    if(!row.control.enabled||row.control.programmeImport.status!=='ACCEPTED'||hashValue(context.control)!==hashValue(controlSnapshot(row.control)))throw new Error('The control configuration or owner changed since this submission');
    if(row.status==='REJECTED')throw new Error('An administrator rejected this submission');current=true;
   }catch(error){reason=error instanceof z.ZodError?'Submission integrity failed':error instanceof Error?error.message:'Submission unavailable';}
-  return {id:row.id,requestKey:row.requestKey,externalId:row.externalId,controlId:row.controlId,controlTitle:row.control.title,source:{kind:'CUSTOMER_API_CLIENT' as const,credentialId:row.credentialId,name:row.credential.name,credentialVersion:row.credentialVersion},status:row.status,version:row.version,current,reason,payload,reportedOutcome:payload?reportedObservationOutcome(payload):null,observedAt:row.observedAt.toISOString(),receivedAt:row.receivedAt.toISOString(),validUntil:row.validUntil.toISOString(),reviewerId:row.reviewerId,reviewedAt:row.reviewedAt?.toISOString()||null,reviewNotes:row.reviewNotes,followUpTaskId:row.followUpTaskId,limitation:'Customer-submitted observations are unverified reports. Receipt, acknowledgement and follow-up do not approve evidence, certify compliance or complete a control.'};
+  return {id:row.id,requestKey:row.requestKey,receiptHash:row.payloadHash,supersededAt:row.supersededAt?.toISOString()||null,externalId:row.externalId,controlId:row.controlId,controlTitle:row.control.title,source:{kind:'CUSTOMER_API_CLIENT' as const,credentialId:row.credentialId,name:row.credential.name,credentialVersion:row.credentialVersion},status:row.status,version:row.version,current,reason,payload,reportedOutcome:payload?reportedObservationOutcome(payload):null,observedAt:row.observedAt.toISOString(),receivedAt:row.receivedAt.toISOString(),validUntil:row.validUntil.toISOString(),reviewerId:row.reviewerId,reviewedAt:row.reviewedAt?.toISOString()||null,reviewNotes:row.reviewNotes,followUpTaskId:row.followUpTaskId,limitation:'Customer-submitted observations are unverified reports. Receipt, acknowledgement and follow-up do not approve evidence, certify compliance or complete a control.'};
  });
 }
 
@@ -100,12 +107,25 @@ export async function submitCustomerApiObservation(session:CustomerApiSession,re
  return customerApiTransaction(session,'observations:write',async(tx,principal)=>{
   if(!principal.controlIds.includes(d.controlId))throw new CustomerApiError('Control not found in this credential’s granted scope',404,'not_found');
   const previous=await tx.customerApiObservation.findUnique({where:{credentialId_requestKey:{credentialId:session.credentialId,requestKey}},include:rowInclude});if(previous){if(previous.payloadHash!==payloadHash)throw new CustomerApiError('This idempotency key belongs to different observation data',409,'idempotency_conflict');return {...(await observationsView(tx,session,[previous]))[0],reused:true};}
+  const source=d.partnerRecord,partnerKey=source?hashValue({kind:source.record.kind,recordId:source.recordId}):null;
+  if(source&&partnerKey){
+   const series={organizationId:session.organizationId,credentialId:session.credentialId,controlId:d.controlId,partnerKey};
+   const latest=await tx.customerApiObservation.findFirst({where:series,orderBy:{partnerRevision:'desc'}});
+   if(latest?.partnerRevision===source.revision&&latest.payloadHash===payloadHash)return {...(await observationsView(tx,session,[await tx.customerApiObservation.findUniqueOrThrow({where:{id:latest.id},include:rowInclude})]))[0],reused:true};
+   if(source.revision!==(latest?.partnerRevision??0)+1||source.previousHash!==(latest?.payloadHash??undefined))throw new CustomerApiError('The record revision or predecessor receipt does not match the latest source record',409,'source_revision_conflict');
+   if(latest){
+    if(latest.purgedAt)throw new CustomerApiError('This source record reached the end of retention',409,'source_retired');
+    const prior=customerObservationInput.parse(latest.payload).partnerRecord;
+    if(!prior||prior.sourceSystem!==source.sourceSystem||latest.observedAt>new Date(d.observedAt))throw new CustomerApiError('A revision must retain its source and follow its predecessor in time',409,'source_revision_conflict');
+    await tx.customerApiObservation.update({where:{id:latest.id},data:{supersededAt:new Date()}});
+   }
+  }
   if(await tx.customerApiObservation.findUnique({where:{credentialId_controlId_externalId:{credentialId:session.credentialId,controlId:d.controlId,externalId:d.externalId}}}))throw new CustomerApiError('This external reference is already recorded for the control. Recover the original request, or use a new reference for a new observation.',409,'external_reference_exists');
   const now=Date.now(),observedAt=new Date(d.observedAt),validUntil=new Date(d.validUntil);if(observedAt.getTime()>now+300000||observedAt.getTime()<now-CUSTOMER_API_LIMITS.observationDays*86400000||validUntil.getTime()<=now||validUntil.getTime()<=observedAt.getTime()||validUntil.getTime()>observedAt.getTime()+CUSTOMER_API_LIMITS.observationDays*86400000)throw new CustomerApiError('Observation timestamps must describe the last seven days and expire within seven days of observation',400,'invalid_observation_window');
   const control=await tx.managedControl.findFirst({where:{id:d.controlId,...org(session),enabled:true,programmeImport:{status:'ACCEPTED'}},include:{programmeImport:{select:{status:true}}}});if(!control)throw new CustomerApiError('The granted control is unavailable or paused',409,'control_unavailable');await activeOwner(tx,{organizationId:session.organizationId,userId:session.issuedById,role:'ADMIN'},control.ownerId);
-  if(await tx.customerApiObservation.count({where:{...org(session),status:'PENDING'}})>=CUSTOMER_API_LIMITS.pendingObservations)throw new CustomerApiError('Review pending integration observations before accepting more submissions',429,'review_queue_full');
+  if(await tx.customerApiObservation.count({where:{...org(session),status:'PENDING',supersededAt:null}})>=CUSTOMER_API_LIMITS.pendingObservations)throw new CustomerApiError('Review pending integration observations before accepting more submissions',429,'review_queue_full');
   if(await tx.customerApiObservation.count({where:{...org(session),receivedAt:{gte:new Date(now-86400000)}}})>=CUSTOMER_API_LIMITS.dailyObservations)throw new CustomerApiError('The daily company observation allowance has been reached',429,'observation_allowance');
-  const context=contextSchema.parse({format:'customer-observation-v1',credentialId:session.credentialId,issuedById:session.issuedById,control:controlSnapshot(control)}),row=await tx.customerApiObservation.create({data:{...org(session),credentialId:session.credentialId,credentialVersion:principal.credential.version,controlId:control.id,requestKey,externalId:d.externalId,payload:json(payload),payloadHash,context:json(context),contextHash:hashValue(context),observedAt,validUntil},include:rowInclude});
+  const context=contextSchema.parse({format:'customer-observation-v1',credentialId:session.credentialId,issuedById:session.issuedById,control:controlSnapshot(control)}),row=await tx.customerApiObservation.create({data:{...org(session),credentialId:session.credentialId,credentialVersion:principal.credential.version,controlId:control.id,requestKey,externalId:d.externalId,partnerKey,partnerRevision:source?.revision,retentionEndsAt:source?.record.kind==='SPECIALIST_ATTESTATION'?new Date(Date.parse(source.record.retainUntil+'T00:00:00Z')+86400000):null,payload:json(payload),payloadHash,context:json(context),contextHash:hashValue(context),observedAt,validUntil},include:rowInclude});
   // This durable record attributes the submission to the machine credential. No human audit action is fabricated.
   await enqueueCustomerObservationDelivery(tx,row);
   return {...(await observationsView(tx,session,[row]))[0],reused:false};
