@@ -1581,6 +1581,8 @@ model ConnectorControlLink {
 }
 
 model QualityCase {
+ handoverRecipientId String? @db.Uuid
+ handoverNotes String @default("") @db.VarChar(1600)
  id String @id @default(uuid()) @db.Uuid
  organizationId String @db.Uuid
  createKey String @db.Uuid
@@ -1612,6 +1614,7 @@ model QualityCase {
  @@unique([id,organizationId])
  @@unique([organizationId,createKey])
  @@index([organizationId,status,effectivenessDueAt])
+ @@index([organizationId,handoverRecipientId])
 }
 
 model QualityAction {
