@@ -1,22 +1,151 @@
 name: CI
 on:
-  push:
   pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: regpilot-ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: regpilot
+          POSTGRES_PASSWORD: regpilot-test-only
+          POSTGRES_DB: regpilot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U regpilot -d regpilot"
+          --health-interval 5s --health-timeout 5s --health-retries 12
     env:
-      DATABASE_URL: postgresql://regpilot:dummy@localhost:5432/regpilot?schema=public
+      DATABASE_URL: postgresql://regpilot:regpilot-test-only@localhost:5432/regpilot?schema=public
+      REGPILOT_AI_DAILY_USER_LIMIT: "2"
+      REGPILOT_AI_DAILY_ORG_LIMIT: "3"
+      REGPILOT_AI_ENABLED: "false"
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      - run: npm install --no-audit --no-fund
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+      - run: npm audit --audit-level=high
       - run: npm run test
+      - run: python -m unittest discover -s tests -p 'test_worker_invoker.py'
       - run: npm run db:validate
       - run: npm run db:generate
+      - run: npx tsc --noEmit
+      # Isolated disposable CI database only, not a live migration.
+      - run: npx prisma db push --schema fixtures/schema-b857436.prisma --skip-generate
+      - run: npx prisma db execute --file prisma/changes/obligation-intelligence.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/monitoring-semantic.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/evidence-assurance.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/programme-operations.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/obligation-library.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/team-access.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/paid-services.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/auditor-workspace.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/people-vendor-assurance.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/audit-evidence-requests.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/change-response.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/assurance-operations.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/connected-supplier-signals.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/worker-runtime.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/fair-dispatch.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/worker-capacity.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/integration-runtime.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/shared-source-fetch.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/automation-outbox.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/shared-connector-evidence.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/risk-register.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/questionnaire-drafts.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/product-scope.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/company-knowledge.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/capa.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/questionnaire-retries.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/training.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/customer-api.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/questionnaire-ocr.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/policy-effectivity.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/integration-delivery.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/quality-evaluations.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/horizon-watchlists.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/ai-inventory.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/risk-loss-scenarios.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/auditor-sync.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/vendor-site-authorisation.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/workspace-account-shortcuts.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/partner-and-trust.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/group-observation-follow-up.sql --schema prisma/schema.prisma
+      - run: npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+      # Protect Prisma tables from Supabase Data API roles and test the policy
+      # using a disposable PostgreSQL 17 instance; NEVER run this fixture on Supabase.
+      - run: npx prisma db execute --file security/test-role-setup.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file security/supabase-private-tables.sql --schema prisma/schema.prisma
+      - run: node --import tsx --test tests/private-tables.integration.test.ts
+      - run: npm run test:integration
       - run: npm run build
+      - run: npm run test:pdf-runtime
+      - run: npm run test:smoke
+  evidence-recovery:
+    name: Restore private database and evidence fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Locate disposable PostgreSQL server tools
+        run: |
+          server=$(find /usr/lib/postgresql -path '*/bin/initdb' 2>/dev/null | sort -V | tail -1 || true)
+          if [[ -z "$server" ]]; then
+            sudo apt-get update -qq && sudo apt-get install -y postgresql
+            server=$(find /usr/lib/postgresql -path '*/bin/initdb' 2>/dev/null | sort -V | tail -1 || true)
+          fi
+          test -x "$server"
+          echo "REGPILOT_TEST_PG_BIN=$(dirname "$server")" >> "$GITHUB_ENV"
+      - run: npm run test:recovery
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: synthetic-evidence-recovery
+          path: artifacts/recovery-drill.json
+          retention-days: 14
+  research-evaluation:
+    name: UK research answer benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            evals/research/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm --prefix evals/research ci --ignore-scripts --no-audit --no-fund
+      - run: npm --prefix evals/research audit --audit-level=high
+      - run: npm run eval:research
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: uk-research-evaluation
+          path: artifacts/research-evaluation.json
+          retention-days: 14

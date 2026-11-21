@@ -1,0 +1,7 @@
+import {authorisedWorkspaceContext,workspaceConfigured} from '../../../../../../lib/server/ai-auth';
+import {fail,validId} from '../../../../../../lib/server/operations-http';
+import {IntelligenceError} from '../../../../../../lib/server/intelligence-service';
+import {openTrainingProcedure} from '../../../../../../lib/server/training-service';
+import {verifiedDownloadResponse} from '../../../../../../lib/server/verified-download';
+export const runtime='nodejs';export const dynamic='force-dynamic';export const maxDuration=60;
+export async function GET(request:Request,{params}:{params:Promise<{id:string}>}){try{if(!workspaceConfigured())throw new IntelligenceError('Private workspace awaits activation',503);const query=new URL(request.url).searchParams;if(query.getAll('organizationId').length!==1||[...query.keys()].some(key=>key!=='organizationId'))throw new IntelligenceError('Choose one organisation');const ctx=await authorisedWorkspaceContext(request,validId(query.get('organizationId'))),id=validId((await params).id),result=await openTrainingProcedure(ctx,id);return await verifiedDownloadResponse(()=>result.bytes,{filename:'training-procedure-'+id+(result.contentType==='application/pdf'?'.pdf':result.contentType==='application/vnd.openxmlformats-officedocument.wordprocessingml.document'?'.docx':'.txt'),contentType:result.contentType,signal:request.signal});}catch(error){return fail(error);}}

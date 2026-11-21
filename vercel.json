@@ -3,7 +3,8 @@
   "git": {
     "deploymentEnabled": {
       "main": true,
-      "feature/*": false
+      "feature/*": false,
+      "feature/traceability-benchmark-batch-20261106": false
     }
   },
   "crons": [
@@ -12,5 +13,8 @@
       "schedule": "0 6 * * *"
     }
   ],
-  "ignoreCommand": "git log -1 --format=%s | grep -Ex 'Activate pinned RegPilot public source watch|Activate RegPilot private automation worker'"
+  "ignoreCommand": "sh scripts/ignore-vercel-build.sh",
+  "regions": [
+    "lhr1"
+  ]
 }

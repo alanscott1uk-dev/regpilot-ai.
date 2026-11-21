@@ -1,0 +1,17 @@
+.sources{border:1px solid #dbe3ec;border-radius:12px;padding:16px;margin:16px 0;display:grid;gap:10px;max-height:280px;overflow:auto}.sources label{display:flex;align-items:center;gap:10px}.reference,.result{padding:20px;border:1px solid #dbe3ec;border-radius:12px;margin:18px 0;background:#f8fafc;overflow-wrap:anywhere}.pre{white-space:pre-wrap}.metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.metrics p{background:white;border:1px solid #dbe3ec;border-radius:10px;padding:14px;margin:0}.metrics strong{display:block;font-size:1.5rem;margin-top:8px}.history{display:grid;gap:8px;margin-top:16px;max-height:340px;overflow:auto}.history button{text-align:left;white-space:normal}.smallStat{font-size:1.15rem!important}@media(max-width:640px){.metrics{grid-template-columns:1fr}.reference,.result{padding:14px}}
+
+.benchmarkMetrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: 12px;
+}
+.benchmarkMetrics div {
+  border: 1px solid #dbe3ec;
+  background: white;
+  border-radius: 10px;
+  padding: 12px;
+}
+.benchmarkMetrics dd {
+  margin: 6px 0 0;
+  font-weight: 600;
+}

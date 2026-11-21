@@ -1,0 +1,52 @@
+name: Black-box desktop and mobile usability acceptance
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser-acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run local desktop and mobile browser suite
+        env:
+          REGPILOT_BROWSER_INSTALL_DEPS: "1"
+        run: npm run test:browser
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: regpilot-usability-browser-evidence
+          path: artifacts/usability/
+          retention-days: 14
+
+  private-evidence-journey:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb
+        with:
+          version: 2.83.0
+      - name: Run local authenticated browser suite with disposable services
+        env:
+          REGPILOT_BROWSER_INSTALL_DEPS: "1"
+        run: npm run test:browser:private
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: regpilot-private-evidence-journey
+          path: artifacts/usability/private-evidence/
+          retention-days: 14

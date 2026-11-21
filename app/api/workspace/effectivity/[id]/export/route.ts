@@ -1,0 +1,4 @@
+import {context,fail,validId} from '../../../../../../lib/server/operations-http';
+import {exportPolicyRelease} from '../../../../../../lib/server/policy-effectivity-service';
+export const runtime='nodejs';export const dynamic='force-dynamic';export const maxDuration=60;
+export async function GET(request:Request,args:{params:Promise<{id:string}>}){try{const ctx=await context(request,new URL(request.url).searchParams.get('organizationId'),true),id=validId((await args.params).id),record=await exportPolicyRelease(ctx,id);return new Response(JSON.stringify(record,null,2)+'\n',{headers:{'Content-Type':'application/json','Content-Disposition':'attachment; filename="regpilot-controlled-release-'+id+'.json"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});}catch(error){return fail(error);}}

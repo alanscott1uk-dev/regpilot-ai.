@@ -1,0 +1,4 @@
+"use client";
+import ui from "../operations/operations.module.css";
+type Props={busy:boolean;label:string;onSave:(notes:string,confirmed:boolean)=>void;children?:React.ReactNode};
+export default function ReviewForm({busy,label,onSave,children}:Props){return <form className={ui.formGrid} onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);onSave(String(f.get("reviewNotes")||""),f.get("confirmed")==="on");}}>{children}<label className={ui.full}>Explain your decision<textarea name="reviewNotes" required minLength={40} maxLength={1200} rows={3} placeholder="What applies, what is excluded, and why this decision is supported"/></label><label className={ui.check}><input name="confirmed" type="checkbox" required/>I checked the original material, scope, conditions and exceptions.</label><div><button disabled={busy}>{label}</button></div></form>;}

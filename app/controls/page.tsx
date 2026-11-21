@@ -45,9 +45,11 @@ export default function Controls(){
    <a href="/workbench" className={ui.logo}><span className={ui.logoMark}>R</span><span>RegPilot <b>AI</b><small>COMPLIANCE OPERATIONS</small></span></a>
    <div className={ui.sideCaption}>WORKSPACE</div>
    <nav className={ui.sideNav} aria-label="Navigation">
-    <a href="/workbench">◉ &nbsp;Today's work</a><a href="/intelligence">✦ &nbsp;Regulatory intelligence</a>
+    <a href="/workbench">◉ &nbsp;Today's work</a>
+    <a href="/team">▣ &nbsp;Secure team tasks</a>
+    <a href="/ai">✦ &nbsp;AI review studio</a><a href="/intelligence">✦ &nbsp;Regulatory intelligence</a>
     <a className={ui.active} href="/controls" aria-current="page">◇ &nbsp;Shared control library</a>
-    <a href="/assurance">◈ &nbsp;Review centre</a><a href="/documents">▣ &nbsp;Documents</a><a href="/register">▤ &nbsp;Action register</a>
+    <a href="/traceability">✧ &nbsp;Traceability explorer</a><a href="/assurance">◈ &nbsp;Review centre</a><a href="/documents">▣ &nbsp;Documents</a><a href="/register">▤ &nbsp;Action register</a>
     <a href="/departments">⚙ &nbsp;Business setup</a>
    </nav>
    <div className={ui.sideFoot}><strong>Control mapping pilot</strong><p>Links multiple work items and documents. This is not continuous monitoring or a control effectiveness test.</p></div>
