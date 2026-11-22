@@ -86,14 +86,18 @@ export async function disconnectAccountingGrant(org:string,provider:AccountingId
 }
 
 export type SupplierLedger="xero"|"quickbooks";
-export async function readAccountingSupplier(org:string,provider:SupplierLedger,id:string,business:string,externalId:string,config:NangoConfig,fetcher:typeof fetch=fetch){
+async function readLedgerRecord(org:string,provider:SupplierLedger,id:string,business:string,externalId:string,config:NangoConfig,fetcher:typeof fetch,kind:"supplier"|"bill"){
   const key=referenceFormat[provider].parse(externalId);
   const account=await checkAccountingBusiness(org,provider,id,business,config,fetcher);
   const headers:Record<string,string>={Authorization:"Bearer "+config.key,"Provider-Config-Key":config.integration,
     "Connection-Id":id,Retries:"0","Nango-Proxy-Accept":"application/json"};
   if(provider==="xero")headers["Nango-Proxy-Xero-Tenant-Id"]=account.reference;
-  const path=provider==="xero"?"/api.xro/2.0/Contacts/"+key:"/v3/company/"+account.reference+"/vendor/"+key;
-  const body=(await providerReader(fetcher,headers,10000)(brokerOrigin+"/proxy"+path))?.body;
+  const resource=kind==="bill"?["Invoices","bill"]:["Contacts","vendor"];
+  const path=provider==="xero"?"/api.xro/2.0/"+resource[0]+"/"+key:"/v3/company/"+account.reference+"/"+resource[1]+"/"+key;
+  return {key,body:(await providerReader(fetcher,headers,10000)(brokerOrigin+"/proxy"+path))?.body};
+}
+export async function readAccountingSupplier(org:string,provider:SupplierLedger,id:string,business:string,externalId:string,config:NangoConfig,fetcher:typeof fetch=fetch){
+  const {key,body}=await readLedgerRecord(org,provider,id,business,externalId,config,fetcher,"supplier");
   const label=z.string().trim().min(1).max(250).regex(/^[^\u0000-\u001f\u007f]+$/u);
   if(provider==="xero"){
     const schema=z.object({ContactID:z.uuid(),Name:label,ContactStatus:z.enum(["ACTIVE","ARCHIVED","GDPRREQUEST"]),IsSupplier:z.boolean()});
@@ -107,4 +111,35 @@ export async function readAccountingSupplier(org:string,provider:SupplierLedger,
   if(!data.success)throw new CollectionError("INVALID_RESPONSE");
   if(data.data.Vendor.Id!==key)throw new CollectionError("TARGET_MISMATCH");
   return {externalId:key,name:data.data.Vendor.DisplayName,active:data.data.Vendor.Active,supplier:true};
+}
+
+export type BillObservation={issuedOn:string;grossPence:number}|{reason:string};
+
+function xeroBillDate(value:unknown):string|undefined {
+  if(typeof value!=="string")return;
+  const iso=/^(\d{4}-\d{2}-\d{2})(?:T00:00:00(?:\.0+)?Z?)?$/.exec(value);
+  if(iso)return iso[1];
+  const legacy=/^\/Date\((\d{1,13})(?:\+0000)?\)\/$/.exec(value);
+  if(legacy)return new Date(Number(legacy[1])).toISOString().slice(0,10);
+}
+
+export async function readAccountingBill(org:string,provider:SupplierLedger,id:string,business:string,externalId:string,config:NangoConfig,fetcher:typeof fetch=fetch):Promise<BillObservation>{
+  const {key,body}=await readLedgerRecord(org,provider,id,business,externalId,config,fetcher,"bill");
+  let date:unknown,currency:unknown,amount:unknown;
+  if(provider==="xero"){
+    const item=Array.isArray(body?.Invoices)&&body.Invoices.length===1?body.Invoices[0]:null;
+    if(typeof item?.InvoiceID!=="string"||item.InvoiceID.toLowerCase()!==key.toLowerCase())throw new CollectionError("TARGET_MISMATCH");
+    if(item.Type!=="ACCPAY"||!["AUTHORISED","PAID"].includes(item.Status))return {reason:"Xero did not report an authorised or paid purchase bill"};
+    date=xeroBillDate(item.DateString??item.Date);currency=item.CurrencyCode;amount=item.Total;
+  }else{
+    const item=body?.Bill;
+    if(item?.Id!==key)throw new CollectionError("TARGET_MISMATCH");
+    date=item.TxnDate;currency=item.CurrencyRef?.value;amount=item.TotalAmt;
+  }
+  if(currency!=="GBP")return {reason:"An explicit GBP bill currency is required"};
+  if(!z.iso.date().safeParse(date).success||typeof date!=="string")return {reason:"The bill date could not be confirmed"};
+  const decimal=(typeof amount==="number"||typeof amount==="string")&&/^(\d{1,9})(?:\.(\d{1,2}))?$/.exec(String(amount));
+  if(!decimal)return {reason:"The gross bill total could not be verified in pence"};
+  const grossPence=Number(decimal[1])*100+Number((decimal[2]??"").padEnd(2,"0"));
+  return grossPence>0?{issuedOn:date,grossPence}:{reason:"The bill has no positive gross amount"};
 }

@@ -87,3 +87,25 @@ test('supplier lookups read one record from the verified business and discard fi
   assert.deepEqual(await readAccountingSupplier(org,provider,grant,business,key,config,fetcher),{externalId:key,name:'Supplier',active:true,supplier:true});
  }
 });
+
+test('bill reads restrict the business, verify the returned identity and retain only positive GBP gross amounts and bill dates',async()=>{
+ const {readAccountingBill}=await import('../lib/connectors/accounting-oauth');
+ for(const provider of ['xero','quickbooks'] as const){
+  const x=provider==='xero',business=x?tenant:realm,id=x?randomUUID():'13';
+  const good=x?{InvoiceID:id,Status:'PAID',Type:'ACCPAY',CurrencyCode:'GBP',Date:'/Date(1782864000000+0000)/',Total:'93.07'}:{Id:id,CurrencyRef:{value:'GBP'},TxnDate:'2026-07-01',TotalAmt:93.07};
+  const read=(changes:Record<string,unknown>)=>readAccountingBill(org,provider,grant,business,id,config,async(url,init)=>{
+   const path=new URL(String(url)).pathname;
+   if(path==='/connections')return Response.json({connections:[row(provider)]});
+   if(path==='/proxy/connections')return Response.json([{tenantId:tenant,tenantType:'ORGANISATION',tenantName:'Example'}]);
+   if(path.includes('/companyinfo/'))return Response.json({CompanyInfo:{Id:'1',CompanyName:'Example'}});
+   assert.equal(path,x?'/proxy/api.xro/2.0/Invoices/'+id:'/proxy/v3/company/'+realm+'/bill/'+id);
+   if(x)assert.equal(new Headers(init?.headers).get('Nango-Proxy-Xero-Tenant-Id'),tenant);
+   const bill={...good,...changes,PrivateNote:'discard this'};
+   return Response.json(x?{Invoices:[bill]}:{Bill:bill});
+  });
+  assert.deepEqual(await read({}),{issuedOn:'2026-07-01',grossPence:9307});
+  for(const change of [{[x?'Total':'TotalAmt']:0},{[x?'Total':'TotalAmt']:'3.141'},{[x?'Date':'TxnDate']:'2026-02-31'},x?{CurrencyCode:'USD'}:{CurrencyRef:null}])assert.ok('reason' in await read(change));
+  await assert.rejects(read({[x?'InvoiceID':'Id']:randomUUID()}),{code:'TARGET_MISMATCH'});
+  if(x){assert.ok('reason' in await read({Status:'VOIDED'}));assert.ok('reason' in await read({Type:'ACCREC'}));}
+ }
+});

@@ -1,3 +1,4 @@
+import {checkRiskBill} from '../../../../lib/server/risk-bills';
 import {checkSupplierLedger} from "../../../../lib/server/accounting-supplier";
 import {context,reply,readBody,fail} from "../../../../lib/server/operations-http";
 import {accountingWorkspace,accountingAction} from "../../../../lib/server/accounting-service";
@@ -13,6 +14,10 @@ export async function POST(request:Request) {
   try {
     const {organizationId,...input}=await readBody(request,2048);
     const ctx=await context(request,organizationId,true);
+    if(input.action==="RISK_BILL"){
+      const {action,...check}=input;
+      return reply({organizationId:ctx.organizationId,receipt:await checkRiskBill(ctx,check)});
+    }
     if(input.action==="SUPPLIER"){
       const {action,...check}=input;
       return reply({type:"supplier",organizationId:ctx.organizationId,receipt:await checkSupplierLedger(ctx,check)});

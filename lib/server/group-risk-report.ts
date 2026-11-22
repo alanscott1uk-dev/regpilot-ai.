@@ -6,7 +6,9 @@ import {IntelligenceError,transaction} from './intelligence-service';
 import {ADMIN,requireMember} from './workspace-member';
 import {reviewedFileSchema} from './reviewed-files';
 
-const selection=z.object({entities:z.array(z.object({id:z.uuid(),annualTreatmentCostGbp:z.number().int().min(0).max(1000000000).nullable()}).strict()).min(1).max(12),missingSites:z.array(z.string().trim().min(1).max(80)).max(30),scopeComplete:z.boolean()}).strict().refine(v=>new Set(v.entities.map(e=>e.id)).size===v.entities.length);
+import {riskBillSample,reportMonth} from './risk-bills';
+
+const selection=z.object({month:reportMonth.optional(),entities:z.array(z.object({id:z.uuid(),annualTreatmentCostGbp:z.number().int().min(0).max(1000000000).nullable()}).strict()).min(1).max(12),missingSites:z.array(z.string().trim().min(1).max(80)).max(30),scopeComplete:z.boolean()}).strict().refine(v=>new Set(v.entities.map(e=>e.id)).size===v.entities.length);
 const request=z.object({selection,approveHash:z.string().regex(/^[a-f0-9]{64}$/).optional()}).strict();
 const money=(events:number,low:number,likely:number,high:number)=>Math.round(events*(low+likely+high)/3);
 
@@ -17,7 +19,7 @@ export async function groupRiskReport(ctx:AuthorizedContext,raw:unknown){
   for(const e of entities)await requireMember(tx,{...ctx,organizationId:e.id},ADMIN);
   const rows=[];
   for(const e of entities){
-   const organisation=await tx.organization.findUniqueOrThrow({where:{id:e.id},select:{name:true}});
+   const organisation=await tx.organization.findUniqueOrThrow({where:{id:e.id},select:{name:true,accountShortcuts:true}});
    const risks=await tx.riskRecord.findMany({where:{organizationId:e.id,status:{not:'ARCHIVED'}},orderBy:{id:'asc'},take:201,select:{id:true,title:true,version:true,likelihood:true,impact:true,reviewDueAt:true,lossScenarios:{orderBy:[{createdAt:'desc'},{id:'desc'}],take:1,include:{evidence:true}}}});
    const exceptions:string[]=[],pieces=[],basis=[];
    if(risks.length>200)exceptions.push('Additional risks exceed the 200-record report limit');
@@ -33,12 +35,13 @@ export async function groupRiskReport(ctx:AuthorizedContext,raw:unknown){
    }
    if(!risks.length)exceptions.push('No active risk records in this entity');
    const covered=risks.length>0&&risks.length<=200&&pieces.length===risks.length;
-   rows.push({organizationId:e.id,name:organisation.name,risks:risks.length>200?200:risks.length,limited:risks.length>200,covered,exceptions,baseline:covered?pieces.reduce((sum,v)=>sum+v.baseline,0):null,treated:covered&&pieces.every(v=>v.treated!==null)?pieces.reduce((sum,v)=>sum+v.treated!,0):null,annualTreatmentCostGbp:e.annualTreatmentCostGbp,basisHash:hashValue(basis)});
+   const billSample=d.selection.month?await riskBillSample(tx,e.id,organisation.accountShortcuts,risks.slice(0,200),d.selection.month):null;
+   rows.push({billSample,organizationId:e.id,name:organisation.name,risks:risks.length>200?200:risks.length,limited:risks.length>200,covered,exceptions,baseline:covered?pieces.reduce((sum,v)=>sum+v.baseline,0):null,treated:covered&&pieces.every(v=>v.treated!==null)?pieces.reduce((sum,v)=>sum+v.treated!,0):null,annualTreatmentCostGbp:e.annualTreatmentCostGbp,basisHash:hashValue(basis)});
   }
   const missingSites=[...new Set(d.selection.missingSites)].sort(),complete=d.selection.scopeComplete&&!missingSites.length&&rows.every(r=>r.covered);
   const baseline=complete?rows.reduce((s,r)=>s+r.baseline!,0):null,after=complete&&rows.every(r=>r.treated!==null&&r.annualTreatmentCostGbp!==null)?rows.reduce((s,r)=>s+r.treated!+r.annualTreatmentCostGbp!,0):null;
   const report={currency:'GBP',rows,missingSites,scopeComplete:d.selection.scopeComplete,complete,baseline,afterTreatmentAndCost:after,annualNetReduction:baseline!==null&&after!==null?baseline-after:null};
-  const digest=hashValue(report);
+  const digest=hashValue(d.selection.month?report:{...report,rows:rows.map(({billSample,...legacy})=>legacy)});
   if(d.approveHash&&d.approveHash!==digest)throw new IntelligenceError('Group risk inputs changed. Review the current report.',409);
   const where={organizationId:ctx.organizationId,entityType:'GroupRiskReport',entityId:digest,action:'risk.finance-review'};
   let receipt=await tx.auditEvent.findFirst({where:{...where,actorId:ctx.userId},select:{createdAt:true},orderBy:{createdAt:'desc'}});
