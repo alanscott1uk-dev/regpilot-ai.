@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer"><title>Save email to RegPilot</title>
+<link rel="stylesheet" href="./pane.css"><script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<script defer src="./pane.js"></script></head>
+<body><main><h1>Save email to RegPilot</h1>
+<p>Open one message in Outlook, then choose what to take into your quality case.</p>
+<button id="read" type="button" disabled>Read selected message</button>
+<section id="preview" hidden><h2 id="subject"></h2><p id="sender"></p>
+<label for="excerpt">Message text to include</label><textarea id="excerpt" rows="6" maxlength="3000"></textarea>
+<p id="limit"></p><fieldset><legend>Attachments to include</legend><div id="files"></div></fieldset>
+<button id="prepare" type="button">Prepare selected content</button></section>
+<section id="transfer" hidden><h2>Choose a quality case</h2>
+<p>Open your RegPilot workspace, select a case, then open <strong>Email correspondence</strong> and choose <strong>Receive from Outlook</strong>.</p>
+<button id="open" type="button">Open RegPilot workspace</button>
+<p>If Outlook opens a separate browser, download the transfer file and choose it in the same case. The file contains the selected private content.</p>
+<button id="download" type="button">Download transfer file</button></section>
+<p id="status" role="status" aria-live="polite">Connecting to Outlook…</p>
+</main></body></html>

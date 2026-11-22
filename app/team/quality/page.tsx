@@ -8,6 +8,8 @@ import {QUALITY_SCOPE,qualityCanClose} from '../../../lib/capa';
 import shell from '../../workbench/workbench.module.css';
 import ui from '../programmes/programmes.module.css';
 import Excursion from './excursion';
+import EmailCorrespondence from './email-correspondence';
+import type {CaseEmailRecord} from '../../../lib/quality-email';
 import CaseNextStep from './case-next-step';
 import StockReconciliation from './stock-reconciliation';
 import type {StockRecord} from '../../../lib/stock-reconciliation';
@@ -21,7 +23,7 @@ type Action={id:string;cycle:number;kind:string;purpose:string;task:Task;complet
 type File={id:string;filename:string};
 type Review={id:string;cycle:number;version:number;status:string;authorId:string;reviewerId:string|null;observedAt:string;notes:string;reviewNotes:string;reviewedAt:string|null;current:boolean;reason:string;evidence:File[]};
 type Receipt={id:string;caseId:string;version:number;caseVersion:number;status:string;cycle:number;taskId?:string};
-type Selected={stockRecords:StockRecord[]|null;trainingRecords:CaseTrainingRecord[]|null;canAcceptHandover:boolean;case:Case;actions:Action[];previousActions:Action[];reviews:Review[];latestReview:Review|null;canEdit:boolean;canReview:boolean;canReopen:boolean;closureCurrent:boolean;blockers:string[];history:{id:string;action:string;actorId:string;createdAt:string;details:{recipientId?:string;outstandingChecks?:string;notes?:string;decision?:string;reason?:string;cycle?:number;purpose?:string}}[]};
+type Selected={emailRecords:CaseEmailRecord[]|null;stockRecords:StockRecord[]|null;trainingRecords:CaseTrainingRecord[]|null;canAcceptHandover:boolean;case:Case;actions:Action[];previousActions:Action[];reviews:Review[];latestReview:Review|null;canEdit:boolean;canReview:boolean;canReopen:boolean;closureCurrent:boolean;blockers:string[];history:{id:string;action:string;actorId:string;createdAt:string;details:{recipientId?:string;outstandingChecks?:string;notes?:string;decision?:string;reason?:string;cycle?:number;purpose?:string}}[]};
 type Data={userId:string;organizationId:string;role:string;canWrite:boolean;members:{id:string;email:string;role:string}[];membersLimited:boolean;evidence:File[];evidenceLimited:boolean;items:Case[];total:number;page:number;pages:number;summary:Record<string,number>;selected:Selected|null;tasks:{items:Task[];total:number;page:number;pages:number};operationLookup:{requestKey:string;found:boolean;receipt:Receipt|null;action:string|null}|null};
 type Pending={action:string;caseId:string;requestKey:string;payload:Record<string,unknown>};
 const today=()=>new Date().toISOString().slice(0,10),future=(days:number)=>new Date(Date.now()+days*86400000).toISOString().slice(0,10);
@@ -104,6 +106,9 @@ export default function QualityPage(){
     <CaseNextStep selected={selected} members={people} busy={blocked} download={()=>void download('text')}/>
     <div className={css.context}><div><h3>Impact and scope</h3><p>{row.impact}</p></div><div><h3>Containment</h3><p>{row.containment}</p></div></div>
     <div className={css.links}><button type="button" disabled={blocked} onClick={()=>void download()}>Download quality chronology</button><button type="button" disabled={blocked} onClick={()=>void download('text')}>Download inspection summary</button><a href={row.href}>Exact case link →</a><a href={href('/team/evidence')}>Supporting evidence →</a></div>
+    {selected.emailRecords&&<EmailCorrespondence key={`email:${organizationId}:${row.id}:${row.version}`} org={organizationId} caseId={row.id} title={row.title} version={row.version}
+     editable={selected.canEdit&&!blocked} records={selected.emailRecords} actions={selected.actions} request={request} capture={capture}
+     onSaved={()=>{setNotice('Email saved to this case. Open Email correspondence to see the source and attachment records.');setRefresh(v=>v+1);}}/>}
     {row.kind==='DEVIATION'&&(selected.canEdit||selected.trainingRecords)&&<Excursion key={`excursion:${organizationId}:${row.id}:${row.cycle}`} organizationId={organizationId} caseId={row.id} version={row.version} files={data?.evidence??[]} request={request} canEdit={selected.canEdit} canDecide={!!selected.trainingRecords} onChange={()=>setRefresh(v=>v+1)}/>}
     {row.kind==='DEVIATION'&&selected.stockRecords&&<StockReconciliation key={`stock:${organizationId}:${row.id}:${row.version}`} records={selected.stockRecords} files={data?.evidence??[]}
      owner={row.ownerName} members={people} organizationId={organizationId} expanded={openStock===organizationId+row.id}

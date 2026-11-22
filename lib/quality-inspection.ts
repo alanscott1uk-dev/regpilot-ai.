@@ -29,6 +29,15 @@ export function qualityInspectionText(record: CaseExport) {
    `Task ${action.task.id} · Owner: ${action.task.ownerName}`, action.purpose);
  }
  if (!record.previousActions?.length && !record.actions?.length) lines.push('No recorded actions.');
+ if(record.emailRecords?.length){
+  lines.push('','Email correspondence');
+  for(const mail of record.emailRecords){
+   lines.push(mail.source.subject,'From '+mail.source.sender,'Outlook item created '+mail.source.createdAt,
+    'Message ID '+mail.source.messageId,'Recorded '+mail.at+' by '+mail.actor+' in cycle '+mail.cycle);
+   if(mail.source.excerpt)lines.push('Selected text',mail.source.excerpt);
+   for(const file of mail.files)lines.push('Attachment '+file.filename+' · '+file.id+' · SHA-256 '+file.sha256);
+  }
+ }
  if(record.trainingRecords?.length){
   lines.push('','Operator training evidence');
   for(const {key,cycle,recordedBy,recordedAt,finding:r} of record.trainingRecords){
