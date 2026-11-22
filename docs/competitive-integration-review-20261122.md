@@ -22,6 +22,12 @@ A separate logger CSV import covers a period of temperature or humidity monitori
 
 [Logger assessment](../lib/logger-window.ts) · [CSV converter](../public/examples/logger-csv.mjs) · [Collector implementation](../lib/connectors/operational-records.ts) · [Provider catalogue](../lib/connectors/record-catalogue.ts) · [Database integration test](../tests/operational-records.integration.test.ts) · [Existing partner record types](../lib/partner-records.ts) · [Buyer trial criteria](../lib/capability-trials.ts)
 
+## Shared controls and applicability statements
+
+The obligation library now builds a statement for a named collection or every collection in a workspace. It retains pending approvals, exclusions and their rationale, requirements with no current mapping, decision owners and reviewers, cited file versions and hashes, and the most recent signals for primary and shared controls. The CSV supports filtering. The JSON preserves the evidence chain and verification time for each page. A changed inventory or business profile interrupts preparation. A reviewer can refresh manually.
+
+The statement covers requirements the workspace has registered. Framework completeness, operation of controls, auditor acceptance and permission to reuse licensed material remain separate questions. [Statement service](../lib/server/applicability-statement.ts) · [Workspace report and downloads](../app/team/library/applicability-statement.tsx)
+
 ## All 22 capability gaps
 
 The row numbers match the Capability gaps tab. The count is the number of competitors mapped to the gap in this review. One competitor can appear against several gaps. Hosted recovery is also a release prerequisite independent of any single competitor.
@@ -64,7 +70,7 @@ The capability numbers below refer to worksheet row numbers. The branch column n
 | 3 | [Sprinto](https://sprinto.com/continuous-compliance/) | 7, 8 | Scheduled observations and owned follow-ups now include Jira and ServiceNow | Reopen a ticket and revoke a grant. Measure detection delay and duplicate tasks across two collection cycles. |
 | 4 | [Secureframe](https://secureframe.com/products/secureframe-comply) | 10, 26 | Shared evidence, auditor access and support intake | Have a named adviser guide an unfamiliar SME to its first auditor-accepted evidence pack. Measure hours of assistance. |
 | 5 | [Scrut Automation](https://www.scrut.io/) | 10, 11 | Shared controls and UK obligation mappings | Select a framework buyers actually request. Have an independent expert test mapping completeness, exceptions and update ownership. |
-| 6 | [Thoropass](https://www.thoropass.com/independence-and-excellence) | 10, 27 | Auditor workspace and scoped exchange | Have an external firm sample fresh, stale and rejected evidence, then reconcile its acceptances against the export. |
+| 6 | [Thoropass](https://www.thoropass.com/independence-and-excellence) | 10, 27 | Auditor workspace, scoped exchange and applicability statement | Have an external firm sample fresh, stale and rejected evidence, then reconcile its acceptances against the export. |
 | 7 | [Scytale](https://scytale.ai/wp-content/uploads/2026/01/Scytale_Overview_One-pager.pdf) | 18, 26 | Controlled disclosures and questionnaire drafts | Time first-use setup through a buyer accepting a response. Record which steps still require an adviser. |
 | 8 | [Anecdotes](https://www.anecdotes.ai/data-engine) | 7, 9 | Scoped observations, signed events and a partner connector example | Have an external developer ship and maintain an adapter. Exercise retries, token rotation, schema changes and support. |
 | 9 | [Hyperproof](https://hyperproof.io/product/risk-management/) | 7, 20 | Manual verification, scheduled collectors and linked controls | Measure recurring collection effort and evidence age across the same five customer systems. |
@@ -78,7 +84,7 @@ The capability numbers below refer to worksheet row numbers. The branch column n
 | # | Comparator and vendor source | Gap rows | RegPilot capability today | Remaining integration or test |
 | ---: | --- | --- | --- | --- |
 | 14 | [Naq](https://www.naqcyber.com/faqs) | 23, 26 | English NHS procurement pack and evidence reuse | Have a digital-health buyer and clinical safety reviewer assess current DSPT, DTAC and DCB evidence for one product. |
-| 15 | [ISMS.online / IO](https://brand.isms.online/wp-content/uploads/2025/08/ISO-27001-Platform-Features.pdf) | 10, 13 | Controlled SOP drafts and shared programme records | Produce a reviewed Statement of Applicability with inclusion, exclusion rationale and revision history. |
+| 15 | [ISMS.online / IO](https://brand.isms.online/wp-content/uploads/2025/08/ISO-27001-Platform-Features.pdf) | 10, 13 | Collection-level applicability statement with exclusions, rationale, owners and evidence | Have an ISMS owner reconcile the full licensed control set, sign the reviewed statement and sample changes. |
 | 16 | [Hicomply](https://www.hicomply.com/plans) | 26, 28 | Help, support and usage controls | Give a buyer a priced scope with included support, paid usage and onboarding time. Verify the cost against a trial. |
 | 17 | [DataGuard](https://www.dataguard.com/) | 12, 22 | UK research, private evidence and specialist attestations | Run procurement privacy questions with a qualified reviewer and retain which answers required specialist input. |
 | 18 | [CyberSmart](https://cybersmart.co.uk/frameworks/cyber-essentials/) | 7, 26 | Intune fleet observations | Reconcile unmanaged and missing devices against the real asset register and obtain a certification partner assessment. |
@@ -146,10 +152,10 @@ The capability numbers below refer to worksheet row numbers. The branch column n
 | ---: | --- | --- | --- | --- |
 | 61 | [ServiceNow Integrated Risk Management](https://www.servicenow.com/docs/r/governance-risk-compliance/audit-management/continuous-monitoring.html) | 8, 20 | Direct read of a selected ServiceNow incident, with ownership, inactivity and closure time | Reopen an incident in a customer instance and reconcile the audit trail. Bidirectional IRM issue updates still need a separate integration. |
 | 62 | [OneTrust](https://www.onetrust.com/products/privacy-operations/) | 22 | Privacy evidence and specialist decisions | Connect an authorised data inventory and trace a processing activity into a reviewed assessment and change record. |
-| 63 | [Optro (formerly AuditBoard)](https://optro.ai/blog/auditboard-is-now-optro) | 10, 20 | Audit periods, evidence packs and grants | Have an independent audit team trace a sampled control through programme-level reporting with a local exception. |
+| 63 | [Optro (formerly AuditBoard)](https://optro.ai/blog/auditboard-is-now-optro) | 10, 20 | Audit periods, grants and a cross-collection evidence statement | Have an independent audit team trace a sampled control through programme-level reporting with a local exception. |
 | 64 | [LogicGate Risk Cloud](https://help.logicgate.com/hc/en-us/articles/6822955323668-How-to-Run-a-Risk-Cloud-Quantify-Analysis) | 20 | Saved loss scenarios, assumptions and repeatable estimates | Compare sensitivity and calibration against independently modelled scenarios with a risk owner. |
 | 65 | [Archer Evolv Compliance](https://explore.archerirm.com/contact-us-compliance-ai) | 11 | Versioned sources, change actions and owners | Benchmark obligation supersession and false-positive alerts against an independently maintained regulatory set. |
-| 66 | [MetricStream](https://www.metricstream.com/innovations) | 10, 20 | Reusable control evidence and tracked exceptions | Roll up two entities with different evidence freshness and verify a failed local control remains visible. |
+| 66 | [MetricStream](https://www.metricstream.com/innovations) | 10, 20 | Cross-collection control evidence, exclusions and visible stale signals | Roll up two entities with different evidence freshness and verify a failed local control remains visible. |
 | 67 | [Diligent One](https://www.diligent.com/lp/the-diligent-one-platform) | 20 | Risk registers and exportable evidence | Have a director reproduce each material board-pack claim and see exposure that lacks current evidence. |
 | 68 | [Workiva](https://www.workiva.com/uk/platform/grc-and-financial-reporting) | 20, 7 | Accounting connections, risk estimates and evidence exports | Reconcile a report line to its period, source transaction, control and approved change in a finance sandbox. |
 | 69 | [IBM OpenPages](https://www.ibm.com/products/openpages/operational-risk) | 10, 20 | Source, obligation, owner and control records | Load-test cross-entity reassessment after a common obligation changes and preserve local accountability. |

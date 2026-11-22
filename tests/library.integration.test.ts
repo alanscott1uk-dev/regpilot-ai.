@@ -1,3 +1,4 @@
+import {applicabilityStatementPage} from "../lib/server/applicability-statement";
 import {territorialReport,changeTerritorialCase} from '../lib/server/territorial-benchmark';
 import "./helpers/paid-fixture";
 import test from "node:test";
@@ -54,6 +55,14 @@ test("obligation library: source registration, versioning, scope, cross-collecti
   const measured=await territorialReport(reviewer);assert.equal(measured.metrics.correct,1);assert.equal(measured.cases[0].predicted,'NO_MATCH');
   const missed={...refCase,id:randomUUID(),spec:{...refCase.spec,expected:'MATCH'}};await changeTerritorialCase(maker,missed);await changeTerritorialCase(reviewer,{action:'VALIDATE',id:missed.id,decision:'ACCEPT'});assert.equal((await territorialReport(reviewer)).metrics.missedApplicable,1);
   const d2=await draftRequirements(maker,{...intake,collection:"Fictional framework B",clauses:[{...intake.clauses[0],reference:"B-1"}]}),rev2=d2.revisionIds[0];await reviewRevision(reviewer,rev2,{version:1,decision:"ACCEPTED",notes,scopeConfirmed:true});
+  const statement=(collection:string)=>applicabilityStatementPage(reviewer,{collection});
+  assert.equal((await statement(intake.collection)).rows[0].state,'SCOPE_REVIEW');
+  const scope=(await current(rev)).contextHash;
+  await decideApplicability(reviewer,rev,{contextHash:scope,version:0,decision:'NOT_APPLICABLE',rationale:notes,ownerId:null,scopeConfirmed:true});
+  const exclusion=(await statement(intake.collection)).rows[0];
+  assert.equal(exclusion.state,'EXCLUDED');assert.equal(exclusion.rationale,notes);assert.equal(exclusion.reviewerId,reviewer.userId);
+  assert.equal((await applicabilityStatementPage(outside,{collection:intake.collection})).total,0);
+  await assert.rejects(applicabilityStatementPage({...outside,organizationId:maker.organizationId},{}),(e:any)=>e.status===403);
   const decision=async(id:string,ownerId=uploader.userId)=>{const c=await current(id);return decideApplicability(reviewer,id,{contextHash:c.contextHash,version:c.applicability?.version||0,decision:"APPLIES",rationale:notes,ownerId,scopeConfirmed:true});};
   assert.equal((await current(rev)).evaluation.state,"MATCH");await decision(rev);await decision(rev2);
   await assert.rejects(()=>decision(rev,outside.userId),(e:any)=>e.status===409);
@@ -97,12 +106,34 @@ test("obligation library: source registration, versioning, scope, cross-collecti
   await assert.rejects(()=>reviewCoverage(maker,detail.id,review,{storage}),(e:any)=>e.status===403);
   const savedEvidence=await db.evidence.findUniqueOrThrow({where:{id:evidence.id}});objects.set(savedEvidence.storageKey,fixturePdf([["Tampered training evidence."]]));await assert.rejects(()=>reviewCoverage(reviewer,detail.id,review,{storage}),(e:any)=>e.status===409);objects.set(savedEvidence.storageKey,pdf);
   for(const m of result.mappings)await reviewCoverage(reviewer,detail.id,{...review,key:m.key},{storage});assert.equal((await coverageImpact(reviewer)).acceptedCurrent,2);
+  const monitored=await db.evidenceConnector.create({data:{organizationId:maker.organizationId,controlId,configuredById:maker.userId,repository:'fixture/statement',branch:'main',provider:'GITHUB',enabled:true}});
+  const acceptedStatement=await statement(intake.collection),mapped=acceptedStatement.rows[0];
+  assert.equal(mapped.state,'APPLIES_MAPPED');assert.equal(mapped.mappings[0].controlId,controlId);assert.equal(mapped.mappings[0].signals[0].status,'NO_RUN');
+  assert.equal(mapped.mappings[0].citations[0].sha256,savedEvidence.sha256);
+  assert.equal((await statement('Fictional framework B')).rows[0].mappings[0].controlId,controlId);
+  Object.assign(process.env,{REGPILOT_CONNECTORS_ENABLED:'true',REGPILOT_CONNECTOR_ENCRYPTION_KEY:'aa'.repeat(32)});
+  const observed={engine:'test-1',sourceUrl:'https://example.invalid/record',capturedAt:new Date().toISOString(),checks:[{id:'test',label:'Source check',status:'FAIL',observed:'Missing',nextStep:'Review the source'}],limitations:[]};
+  const proof=await db.connectorRun.create({data:{organizationId:maker.organizationId,connectorId:monitored.id,leaseToken:randomUUID(),configVersion:1,result:observed,resultHash:hashValue(observed),signalHash:hashValue({engine:observed.engine,checks:observed.checks}),outcome:'FOLLOW_UP'}});
+  const signal=async()=>(await statement(intake.collection)).rows[0].mappings[0].signals[0];
+  assert.equal((await signal()).status,'FOLLOW_UP');
+  await db.evidenceConnector.update({where:{id:monitored.id},data:{version:{increment:1}}});
+  assert.equal((await signal()).status,'STALE');
+  await db.connectorRun.update({where:{id:proof.id},data:{resultHash:'0'.repeat(64)}});
+  assert.equal((await signal()).status,'INTEGRITY_REVIEW');assert.equal((await signal()).hash,null);
+  const collection='Statement pagination fixtures';
+  await db.libraryRequirement.createMany({data:Array.from({length:11},(_,n)=>({organizationId:maker.organizationId,collection,reference:String(n).padStart(2,'0')}))});
+  const page1=await statement(collection);assert.equal(page1.total,11);assert.equal(page1.nextOffset,10);
+  const page2=await applicabilityStatementPage(reviewer,{collection,inventory:page1.inventory,offset:10});
+  assert.equal(page2.rows[0].state,'AWAITING_APPROVAL');assert.equal(page2.rows[0].reference,'10');assert.equal(page2.nextOffset,null);
+  await db.libraryRequirement.create({data:{organizationId:maker.organizationId,collection,reference:'11'}});
+  await assert.rejects(applicabilityStatementPage(reviewer,{collection,inventory:page1.inventory,offset:10}),(e:any)=>e.status===409);
   await assert.rejects(()=>reviewCoverage(reviewer,detail.id,review,{storage}),(e:any)=>e.status===409);await assert.rejects(()=>coverageDetail(outside,detail.id),(e:any)=>e.status===404);
   // Deduplicate provider work, exact grounding and independent review; no network AI call.
   let calls=0;const generate=async()=>{calls++;return {mappings:result.mappings,limitations:["Fictional provider fixture only."]};};
   const ai=await Promise.all([prepareCoverage(maker,{...input,method:"AI"},{storage,generate}),prepareCoverage(maker,{...input,method:"AI"},{storage,generate})]);assert.equal(ai[0].id,ai[1].id);assert.equal(calls,1);
   // Changed facts invalidate accepted relationships and create one owned task per decision.
   await saveLibraryFacts(maker,{version:1,facts:{employeeCount:7},jurisdictions:["Scotland"]});assert.equal((await current(rev)).applicability,null);assert.equal((await coverageDetail(reviewer,detail.id)).current,false);
+  const stale=(await statement(intake.collection)).rows[0];assert.equal(stale.state,'SCOPE_REVIEW');assert.equal(stale.rationale,null);assert.ok(stale.mappings.every(m=>!m.current&&!m.citations.length&&!m.signals.length));
   const impacts=await Promise.all([coverageImpact(reviewer,true),coverageImpact(reviewer,true)]);assert.equal(impacts.reduce((n,r)=>n+r.created,0),2);assert.equal(impacts[0].needsReview,2);assert.equal(await db.obligation.count({where:{organizationId:maker.organizationId,category:"Requirement review"}}),2);
   const impactTask=await db.obligation.findFirstOrThrow({where:{organizationId:maker.organizationId,category:"Requirement review"}});assert.equal(impactTask.assigneeId,uploader.userId);assert.equal(impactTask.originKey,null);
   await assert.rejects(()=>reviewCoverage(reviewer,ai[0].id,review,{storage}),(e:any)=>e.status===409);
@@ -126,6 +157,6 @@ test("obligation library: source registration, versioning, scope, cross-collecti
   await redactRevision(reviewer,rev2,2);assert.equal((await db.libraryRevision.findUniqueOrThrow({where:{id:rev2}})).status,"REDACTED");assert.equal((await coverageDetail(reviewer,detail.id)).result,null);assert.equal((await db.coverageRun.findUniqueOrThrow({where:{id:detail.id}})).status,"REDACTED");
   const audit=await db.auditEvent.findMany({where:{organizationId:maker.organizationId}});assert.doesNotMatch(JSON.stringify(audit),/Fictional widget staff must|fictional-library-policy.pdf/);
  }finally{
-  for(const name of ["coverageDecision","coverageRun","libraryApplicability","libraryRevision","libraryRequirement","registeredSource","watchSchedule","intelligenceDecision","intelligenceRun","regulatorySnapshot","businessProfile","auditEvent","aiDailyUsage","evidence","obligation","managedControl","programmeImport","membership"] as const)await (db[name] as any).deleteMany({where:{organizationId:{in:orgIds}}});await db.organization.deleteMany({where:{id:{in:orgIds}}});await db.user.deleteMany({where:{id:{in:users.map(u=>u.id)}}});
+  for(const name of ["connectorRun","evidenceConnector","coverageDecision","coverageRun","libraryApplicability","libraryRevision","libraryRequirement","registeredSource","watchSchedule","intelligenceDecision","intelligenceRun","regulatorySnapshot","businessProfile","auditEvent","aiDailyUsage","evidence","obligation","managedControl","programmeImport","membership"] as const)await (db[name] as any).deleteMany({where:{organizationId:{in:orgIds}}});await db.organization.deleteMany({where:{id:{in:orgIds}}});await db.user.deleteMany({where:{id:{in:users.map(u=>u.id)}}});
  }
 });
