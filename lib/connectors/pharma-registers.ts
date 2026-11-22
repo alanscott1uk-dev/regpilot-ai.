@@ -32,8 +32,12 @@ async function mapping(input:RegisterTarget,read:Read){
  const found=entries.data.filter(r=>r.id===record);
  if(found.length!==1||found[0].name!==item.name||found[0].format!==item.format)throw new CollectionError('TARGET_MISMATCH');
  const csv=typeof item.format==='string'?item.format.toUpperCase()==='CSV':undefined;
- const approved=month(item.name),months=entries.data.filter(r=>r.format?.toUpperCase()==='CSV'&&r.state==='active').map(r=>month(r.name)).filter((m):m is string=>!!m).sort();
- const complete=Number.isInteger(pkg.num_resources)&&pkg.num_resources===entries.data.length;
+ const approved=month(item.name);
+ const activeCsv=entries.data.filter(r=>r.format?.toUpperCase()==='CSV'&&r.state==='active');
+ const months=activeCsv.map(r=>month(r.name)).filter((m):m is string=>!!m).sort();
+ const complete=Number.isInteger(pkg.num_resources)&&pkg.num_resources===entries.data.length
+  &&entries.data.every(r=>!!r.format&&!!r.state)&&new Set(entries.data.map(r=>r.id)).size===entries.data.length
+  &&months.length===activeCsv.length&&new Set(months).size===months.length;
  const latest=months.at(-1),url='https://opendata.nhsbsa.net/dataset/'+scope+'/resource/'+record;
  return {sourceUrl:url,checks:[
   check('mapping-active','Dataset and reviewed release are active',typeof item.state==='string'&&typeof pkg.state==='string'?pkg.state==='active'&&item.state==='active':undefined,[pkg.state,item.state].join(' / '),'Check the publisher for a withdrawal.'),

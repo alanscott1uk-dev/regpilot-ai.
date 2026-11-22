@@ -3,8 +3,8 @@
 # Build the requested staging monitoring preview.
 if [ "$VERCEL_GIT_COMMIT_REF" = "feature/traceability-benchmark-batch-20261106" ]; then
   if [ "$VERCEL_ENV" = "preview" ] &&
-     [ "$(git log -1 --format=%s)" = "Publish RegPilot pharmaceutical register monitoring staging 20261122" ] &&
-     [ "$(git rev-parse HEAD^)" = "135f64f4945a7687b64587ca506ea2896412e014" ]; then
+     [ "$(git log -1 --format=%s)" = "Publish RegPilot daily pharmaceutical benchmark staging 20261122" ] &&
+     [ "$(git rev-parse HEAD^)" = "ca8f43eef4edc59160f85f4a61bd3890b3b8846d" ]; then
     exit 1
   fi
   exit 0

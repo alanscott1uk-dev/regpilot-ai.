@@ -203,6 +203,9 @@ test('public pharmaceutical registers bind the exact records and flag material d
  const signal=(r:{checks:{id:string;status:string}[]},id:string)=>r.checks.find(c=>c.id===id)?.status;
  assert.equal(signal(await readMapping(pkg,item),'mapping-release'),'FAIL');
  assert.equal(signal(await readMapping({...pkg,num_resources:9},item),'mapping-release'),'UNKNOWN');
+ for(const other of [{...item,id:'new-release',name:'December mapping revised'},{...item,id:'duplicate-period'},{...item,id:'unknown-state',state:null}]){
+  assert.equal(signal(await readMapping({...pkg,resources:[item,other]},item),'mapping-release'),'UNKNOWN');
+ }
  await assert.rejects(readMapping(pkg,{...item,package_id:'other'}),{code:'TARGET_MISMATCH'});
  const readTrial=(id:string,status:object)=>collectPublicRegister(trial.provider,trial.target,async()=>Response.json({protocolSection:{identificationModule:{nctId:id},statusModule:status}}));
  const status={overallStatus:'COMPLETED',lastUpdatePostDateStruct:{type:'ACTUAL',date:'2025-10-10'}};
