@@ -107,3 +107,10 @@ test('EPCIS compares exact pack identities and real instants within one despatch
  assert.equal(epcisTransfer.safeParse({...pair,shipping:{...shipping,'@context':['https://example.org/custom']}}).success,false);
  assert.throws(()=>customerObservationInput.parse({...generic,observedAt:'2026-01-01T00:00:00Z',partnerRecord:{...source,record:pair}}));
 });
+
+test('site scenarios inherit company-wide financial and legal facts while unknown local activities stay unknown',async()=>{
+ const {factsAtSite,siteProfile}=await import('../lib/library/site-facts');
+ const site=siteProfile.parse({id:randomUUID(),name:'Warehouse',nation:'Scotland',facts:{reliesOnColdChain:false}});
+ assert.deepEqual(factsAtSite({employeeCount:30,vatRegistered:true,reliesOnColdChain:true,wholesalesMedicines:true},site),{employeeCount:30,vatRegistered:true,reliesOnColdChain:false});
+ assert.equal(siteProfile.safeParse({...site,facts:{employeeCount:1}}).success,false);
+});

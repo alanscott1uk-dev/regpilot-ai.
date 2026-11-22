@@ -1,4 +1,5 @@
 'use client';
+import SiteProfiles from './site-profiles';
 import {useEffect,useRef,useState} from 'react';
 import type {applicabilityStatementPage} from '../../../lib/server/applicability-statement';
 import ui from '../operations/operations.module.css';
@@ -42,11 +43,11 @@ export function ApplicabilityStatement({organizationId,request}:{organizationId:
   }
   const rows=pages.flatMap(p=>p.rows);
   function downloadCsv(){
-    const table=[['Collection','Reference','Revision','Requirement','Applicability','Rationale','Owner ID','Reviewer ID','Decision date','Source','Original source ID','Control','Mapping state','Cited evidence','Connected evidence','Scenario date','England','Scotland','Wales','Northern Ireland','Checked at']];
+    const table=[['Collection','Reference','Revision','Requirement','Applicability','Rationale','Owner ID','Reviewer ID','Decision date','Source','Original source ID','Control','Mapping state','Cited evidence','Connected evidence','Scenario date','England','Scotland','Wales','Northern Ireland',...(pages[0]?.siteRegister.sites??[]).map(s=>s.name+' ('+s.nation+')'),'Checked at']];
     for(const page of pages)for(const row of page.rows){
       const maps:Array<Row['mappings'][number]|undefined>=row.mappings.length?row.mappings:[undefined];
       for(const m of maps)table.push([row.collection,row.reference,String(row.revision),row.title,labels[row.state],row.rationale??row.reasons.join(' / '),row.ownerId??'',row.reviewerId??'',row.reviewedAt??'',row.source?.name??'',row.source?.id??'',m?.title??'',m?.reason??'',
-        m?.citations.map(c=>c.id+' '+c.location+' '+(c.sha256??'')).join(' / ')??'',m?.signals.map(s=>s.provider+' '+s.status+' '+(s.runId??'')+' '+(s.observedAt??'')).join(' / ')??'',page.assessmentDate,...['England','Scotland','Wales','Northern Ireland'].map(n=>row.territories.find(t=>t.nation===n)?.assessment.state??'UNKNOWN'),page.checkedAt]);
+        m?.citations.map(c=>c.id+' '+c.location+' '+(c.sha256??'')).join(' / ')??'',m?.signals.map(s=>s.provider+' '+s.status+' '+(s.runId??'')+' '+(s.observedAt??'')).join(' / ')??'',page.assessmentDate,...['England','Scotland','Wales','Northern Ireland'].map(n=>row.territories.find(t=>t.nation===n)?.assessment.state??'UNKNOWN'),...page.siteRegister.sites.map(site=>row.sites.find(s=>s.siteId===site.id)?.assessment.state??'UNKNOWN'),page.checkedAt]);
     }
     save('regpilot-applicability-statement.csv','text/csv;charset=utf-8','\uFEFF'+table.map(line=>line.map(csvCell).join(',')).join('\r\n'));
   }
@@ -58,13 +59,21 @@ export function ApplicabilityStatement({organizationId,request}:{organizationId:
       <button disabled={busy}>{busy?'Checking requirements…':'Refresh statement'}</button>
     </form>
     {message&&<p role="status">{message}</p>}
+    {pages[0]?.canManageSites&&<SiteProfiles key={pages[0].siteRegister.version} version={pages[0].siteRegister.version} sites={pages[0].siteRegister.sites} disabled={busy} save={async body=>{
+      await request('/api/workspace/library/statement',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({organizationId,...body})});
+      setPages([]);setIndex(0);setMessage('Site register updated. Refresh the statement to compare the current site facts.');
+    }}/>}
     {rows.length>0&&<>
       <p>{rows.length} requirements. {rows.filter(r=>r.state==='APPLIES_MAPPED').length} with a current mapping. {rows.filter(r=>r.state==='EXCLUDED').length} excluded with a rationale.</p>
+      {pages[0].siteRegister.sites.length>0&&<details><summary>Site differences and missing decisions</summary>
+        <div style={{overflowX:'auto'}}><table><caption>Rules on {on} with different site results or an unknown assessment</caption><thead><tr><th scope="col">Requirement</th>{pages[0].siteRegister.sites.map(s=><th scope="col" key={s.id}>{s.name}</th>)}</tr></thead>
+        <tbody>{rows.filter(r=>!r.sites.length||r.sites.some(s=>s.assessment.state==='UNKNOWN')||new Set(r.sites.map(s=>s.assessment.state)).size>1).map(r=><tr key={r.id}><th scope="row">{r.collection} · {r.reference}</th>{pages[0].siteRegister.sites.map(s=><td key={s.id}>{(r.sites.find(a=>a.siteId===s.id)?.assessment.state??'UNKNOWN').replace('_',' ').toLowerCase()}</td>)}</tr>)}</tbody></table></div></details>}
       <p className={ui.hint}>The four nation scenarios use the selected date, current approved source revision and the same saved business facts. The recorded human decision applies to the actual business. Each page records when its evidence was checked. Control mappings describe the relationship to a requirement. Review the underlying signals before deciding whether the control operated effectively.</p>
       <div className={ui.buttons}><button type="button" onClick={downloadCsv}>Download CSV</button><button type="button" onClick={()=>save('regpilot-applicability-evidence.json','application/json',JSON.stringify({format:'regpilot-applicability-evidence-v1',pages},null,2))}>Download evidence JSON</button></div>
       {pages[index]?.rows.map(row=><details key={row.id}><summary>{row.collection} · {row.reference} · {labels[row.state]}</summary>
         <p>{row.title} {row.revision?'· revision '+row.revision:''}</p>
         {row.rationale&&<p>{row.rationale}</p>}{row.reasons.map(s=><p key={s}>{s}</p>)}
+        {row.sites.length>0&&<details><summary>Compare {row.sites.length} operating sites</summary><ul>{row.sites.map(s=><li key={s.siteId}><strong>{s.name}</strong> · {s.nation} · {s.assessment.state.replace('_',' ').toLowerCase()} · {s.assessment.explanation}{s.assessment.missing.length>0?' Missing facts: '+s.assessment.missing.join(', '):''}</li>)}</ul></details>}
         {row.territories.length>0&&<details><summary>Compare UK nations on {pages[index].assessmentDate}</summary><ul>{row.territories.map(t=><li key={t.nation}><strong>{t.nation}</strong> · {t.assessment.state.replace('_',' ').toLowerCase()} · {t.assessment.explanation}{t.assessment.missing.length>0?' Missing facts: '+t.assessment.missing.join(', '):''}</li>)}</ul></details>}
         {row.revisionId&&<a href={'/team/library?'+new URLSearchParams({organizationId,revisionId:row.revisionId})}>Open requirement and decision history</a>}
         {row.mappings.map(m=><div key={m.decisionId}><strong>{m.title}</strong><p>{m.reason}. {m.citations.length} cited locations.</p>{m.rationale&&<p>{m.rationale}</p>}{m.signals.map(s=><p key={s.connectionId}>{s.provider} · {s.status} · {s.observedAt??'No observation'}</p>)}</div>)}

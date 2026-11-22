@@ -1,3 +1,4 @@
+import {saveLibrarySite} from '../lib/server/library-sites';
 import {applicabilityStatementPage} from "../lib/server/applicability-statement";
 import {territorialReport,changeTerritorialCase} from '../lib/server/territorial-benchmark';
 import "./helpers/paid-fixture";
@@ -82,6 +83,22 @@ test("obligation library: source registration, versioning, scope, cross-collecti
   await assert.rejects(()=>draftRequirements(outside,wd,{storage}),(e:any)=>e.status===404);
   const wordRev=(await draftRequirements(maker,wd,{storage})).revisionIds[0];
   await reviewRevision(reviewer,wordRev,{version:1,decision:"ACCEPTED",notes,scopeConfirmed:true},{storage});
+  const initialSites=await statement(wd.collection);
+  const site={id:randomUUID(),name:'Scottish warehouse',nation:'Scotland',facts:{wholesalesMedicines:true}};
+  const addSite={action:'SAVE',requestKey:randomUUID(),version:0,site};
+  await assert.rejects(saveLibrarySite(uploader,addSite),(e:any)=>e.status===403);
+  const firstSite=await saveLibrarySite(maker,addSite);assert.deepEqual(await saveLibrarySite(maker,addSite),firstSite);
+  await assert.rejects(saveLibrarySite(maker,{...addSite,requestKey:randomUUID()}),(e:any)=>e.status===409);
+  await assert.rejects(applicabilityStatementPage(reviewer,{collection:wd.collection,inventory:initialSites.inventory}),(e:any)=>e.status===409);
+  const other={id:randomUUID(),name:'English manufacturing site',nation:'England',facts:{wholesalesMedicines:false}};
+  await saveLibrarySite(maker,{...addSite,site:other,requestKey:randomUUID(),version:1});
+  const compared=await statement(wd.collection);
+  assert.deepEqual(Object.fromEntries(compared.rows[0].sites.map(s=>[s.name,s.assessment.state])),{'Scottish warehouse':'MATCH','English manufacturing site':'NO_MATCH'});
+  assert.equal((await applicabilityStatementPage(outside,{})).siteRegister.sites.length,0);
+  await saveLibrarySite(maker,{...addSite,site:{...other,facts:{}},version:2,requestKey:randomUUID()});
+  assert.equal((await statement(wd.collection)).rows[0].sites.find(s=>s.siteId===other.id)?.assessment.state,'UNKNOWN');
+  await saveLibrarySite(maker,{action:'ARCHIVE',version:3,siteId:other.id,requestKey:randomUUID()});
+  assert.equal((await statement(wd.collection)).siteRegister.sites.length,1);
   const inspected=await current(wordRev);
   assert.equal(inspected.provenance?.block,2);assert.equal(inspected.provenance?.page,undefined);
   assert.ok(inspected.provenance?.extractionVersion);assert.equal(inspected.evaluation.state,"UNKNOWN");
