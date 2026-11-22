@@ -3,9 +3,11 @@ export const dynamic='force-dynamic';
 // A sideloaded manifest must point back to the deployment from which it was installed.
 export function GET(request:Request){
  const url=new URL(request.url);
- if(url.protocol!=='https:'&&!['localhost','127.0.0.1','[::1]'].includes(url.hostname))
-  return new Response('Use the HTTPS address of your RegPilot workspace.',{status:400});
- const origin=url.origin.replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;');
+ const host=request.headers.get('host')??url.host;
+ if(!/^(?:[a-z0-9.-]+|\[::1\])(?::[0-9]{1,5})?$/i.test(host))
+  return new Response('Invalid workspace host.',{status:400});
+ const local=/^(?:localhost|127\.0\.0\.1|\[::1\])(?::[0-9]+)?$/i.test(host);
+ const origin=(local?url.protocol:'https:')+'//'+host;
  const pane=origin+'/outlook/pane.html',icon=(size:number)=>origin+'/outlook/icon-'+size+'.png';
  const xml=`<?xml version="1.0" encoding="UTF-8"?>
 <OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0" xsi:type="MailApp">

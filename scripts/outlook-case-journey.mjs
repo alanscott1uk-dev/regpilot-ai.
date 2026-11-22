@@ -13,7 +13,8 @@ export async function outlookCaseJourney({upload,review,db,app,org,otherOrgId,ed
   purpose:'Check the supplier delivery note against the incoming receipt.',createdById:editor.id}});
  const manifest=await upload.request.get(app+'/api/tools/outlook-manifest');
  assert.equal(manifest.status(),200);
- const xml=await manifest.text();assert.ok(xml.includes('<Permissions>ReadItem</Permissions>')&&xml.includes(app+'/outlook/pane.html'));
+ const xml=await manifest.text();assert.ok(xml.includes('<Permissions>ReadItem</Permissions>'),'The add-in must only request selected-item access');
+ assert.equal(xml.match(/<SourceLocation DefaultValue="([^"]+)"/)?.[1],app+'/outlook/pane.html');
  for(const size of [16,32,64,80,128])assert.equal((await upload.request.get(app+'/outlook/icon-'+size+'.png')).status(),200);
  const pdf=Buffer.from(fixturePdf([['FICTIONAL DELIVERY RECORD','Delivery reference A-19.']]));
  const pane=await upload.context().newPage();
