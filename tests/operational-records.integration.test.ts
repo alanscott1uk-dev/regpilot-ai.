@@ -214,6 +214,7 @@ test('repeated logger collection checks the physical serial, rotated key and cur
   await excursionCommand(f.o,q.id,disposition,f.store);
   const fetchRecord={action:'RETRIEVE',version:assessed.version+1,requestKey:randomUUID()};
   await assert.rejects(excursionCommand(f.o,q.id,fetchRecord,f.store),rejects(403));
+  await assert.rejects(excursionCommand(f.ad,q.id,fetchRecord,f.store),rejects(403));
   await db.membership.update({where:{organizationId_userId:{organizationId:f.a.id,userId:f.re.userId}},data:{role:'ADMIN'}});
   const independent=await excursionCommand(f.re,q.id,fetchRecord,f.store);
   assert.match(JSON.stringify(independent),/TEST-001/);assert.match(JSON.stringify(independent),/TEST-QD-1/);
@@ -224,7 +225,8 @@ test('repeated logger collection checks the physical serial, rotated key and cur
   assert.equal((await exportConnectorRun(f.o,run.id)).currentAtExport,false);
   await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
   assert.equal((await verifyConnectorNow(f.o,saved.id,updated.version)).outcome,'INCOMPLETE');
-  assert.equal(await db.connectorRun.count({where:{organizationId:f.a.id,connectorId:saved.id}}),4);
+  const history=await db.connectorRun.findMany({where:{organizationId:f.a.id,connectorId:saved.id},orderBy:{capturedAt:'asc'},select:{outcome:true}});
+  assert.deepEqual(history.map(read=>read.outcome),['INCOMPLETE','OBSERVED','OBSERVED','FOLLOW_UP','INCOMPLETE']);
  }finally{globalThis.fetch=original;await f.cleanup();}
 });
 
