@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 jobs:
   catalogue:
     runs-on: ubuntu-latest
@@ -19,8 +20,41 @@ jobs:
       - run: node --import tsx scripts/check-live-integration-directory.ts
       - name: Read GLEIF and OpenSSF public source records twice
         run: node --import tsx scripts/check-live-public-evidence.ts
+      - name: Read actual repository workflow decisions and jobs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node --import tsx scripts/check-live-workflow-evidence.ts
       - uses: actions/upload-artifact@v4
         with:
           name: public-provider-evidence
-          path: live-public-evidence.json
+          path: |
+            live-public-evidence.json
+            live-workflow-evidence.json
+          retention-days: 14
+  identity-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+      - name: Verify credential rotation and policy drift on a real identity server
+        shell: bash
+        run: |
+          set -euo pipefail
+          export KC_BOOTSTRAP_ADMIN_PASSWORD="$(openssl rand -hex 32)"
+          docker run -d --name regpilot-idp -p 127.0.0.1:8180:8080 -e KC_BOOTSTRAP_ADMIN_USERNAME=regpilot-test-admin -e KC_BOOTSTRAP_ADMIN_PASSWORD quay.io/keycloak/keycloak:26.3.5 start-dev
+          trap 'docker rm -f regpilot-idp >/dev/null' EXIT
+          curl --fail --silent --retry 30 --retry-connrefused --retry-delay 2 --retry-all-errors http://127.0.0.1:8180/realms/master/.well-known/openid-configuration -o /dev/null
+          node --import tsx scripts/check-live-keycloak.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: identity-server-monitoring-evidence
+          path: live-keycloak-evidence.json
           retention-days: 14

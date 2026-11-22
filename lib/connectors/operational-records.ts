@@ -1,3 +1,5 @@
+import {collectKeycloak,keycloakTarget} from './keycloak';
+import {collectWorkflow,workflowTarget} from './workflow-evidence';
 import { z } from "zod";
 import { booleanCheck, providerReader, validCredential } from "./bounded-http";
 import { CollectionError, type ConnectorCheck } from "./github";
@@ -18,7 +20,9 @@ export const calibrationBasis=z.string().max(120).refine(value=>{
  return !extra.length&&z.uuid().safeParse(file).success&&/^[1-9]\d{0,6}$/.test(version)&&z.iso.date().safeParse(from).success&&z.iso.date().safeParse(until).success&&from<until&&numeric(low)&&numeric(high)&&Number(low)<Number(high)&&/^[1-9]\d{0,3}$/.test(age)&&Number(age)<=1440;
 });
 export const recordTargets = {
-  NANGO_SYNC:z.object({scope:z.string().max(201).regex(/^(?:regpilot-|rpw-)[A-Za-z0-9._-]{1,92}\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/),record:z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,79}$/),reference:z.string().regex(/^[a-z0-9][a-z0-9_-]{0,79}$/)}),
+  KEYCLOAK_REALM:keycloakTarget,
+  GITHUB_WORKFLOW:workflowTarget,
+  NANGO_SYNC:z.object({scope:z.string().max(201).regex(/^(?:regpilot-|rpw-)[A-Za-z0-9._-]{1,92}\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/),record:z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,79}$/),reference:z.string().refine(v=>{const [provider,policy,...rest]=v.split('/');return !rest.length&&/^[a-z0-9][a-z0-9_-]{0,79}$/.test(provider)&&(policy===undefined||z.uuid().safeParse(policy).success);})}),
   UBIBOT:z.object({scope:number,record:z.string().regex(/^[A-Za-z0-9_-]{3,60}$/),reference:calibrationBasis}),
   BENCHLING:z.object({scope:slug,record:z.string().regex(/^(?:[a-z]{1,8}_[A-Za-z0-9]{1,48}|[a-f0-9-]{36})$/),reference:z.string().regex(/^etr_[A-Za-z0-9]{1,48}\/ent_[A-Za-z0-9]{1,48}$|^etr_[A-Za-z0-9]{1,48}\/usr_[A-Za-z0-9]{1,48}$/)}),
   JIRA: z.object({scope: guid, record: z.string().toUpperCase().regex(/^[A-Z][A-Z0-9_]{1,19}-[1-9]\d{0,10}$/)}),
@@ -69,6 +73,8 @@ export async function collectOperationalRecord(provider: RecordProvider, target:
   const get = providerReader(fetcher, {Authorization: auth});
 
   switch (provider) {
+    case "KEYCLOAK_REALM":return collectKeycloak(keycloakTarget.parse(target),token,fetcher);
+    case "GITHUB_WORKFLOW":return collectWorkflow(workflowTarget.parse(target),token,fetcher);
     case "NANGO_SYNC":throw new CollectionError("WORKSPACE_REQUIRED");
     case "UBIBOT": {
       const source="https://webapi.ubibot.com/channels/"+scope;

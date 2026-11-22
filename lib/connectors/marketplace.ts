@@ -1,5 +1,7 @@
 import {z} from 'zod';
-import {createHash} from 'node:crypto';
+import {profiles,evaluateResource,type ResourcePolicy,type RuleState} from './resource-control';
+import type {ConnectorCheck} from './github';
+import {createHash,createHmac} from 'node:crypto';
 import {brokerId,brokerOrigin} from './hosted-oauth';
 import {readBoundedJson,validCredential} from './bounded-http';
 import {CollectionError} from './collection-error';
@@ -69,7 +71,7 @@ export async function deployedModels(source:Integration,id:string,key:string,fet
  const params=new URLSearchParams({provider_config_key:source.integration,connection_id:brokerId.parse(id),syncs:'*'});
  const rows=(await get('/sync/status?'+params,key,fetcher)).syncs;
  if(!Array.isArray(rows)||rows.length>200)throw new CollectionError('SCOPE_LIMIT');
- const models=new Map<string,Array<{state:string;finishedAt:string|null}>>();
+ const models=new Map<string,Array<{state:string;finishedAt:string|null;expected:number|null}>>();
  for(const row of rows){
   if(row?.connection_id!==id)throw new CollectionError('TARGET_MISMATCH');
   const names=new Set([...Object.keys(row.recordCount??{}),...Object.keys(row.latestResult??{})]);
@@ -77,7 +79,7 @@ export async function deployedModels(source:Integration,id:string,key:string,fet
    if(!sourceModel.safeParse(name).success)continue;
    const finished=z.iso.datetime({offset:true}).safeParse(row.finishedAt);
    const states=models.get(name)??[];
-   states.push({state:['SUCCESS','RUNNING','PAUSED','STOPPED','ERROR'].includes(row.status)?String(row.status):'UNKNOWN',finishedAt:finished.success?new Date(finished.data).toISOString():null});
+   states.push({expected:Number.isSafeInteger(row.recordCount?.[name])&&row.recordCount[name]>=0?row.recordCount[name]:null,state:['SUCCESS','RUNNING','PAUSED','STOPPED','ERROR'].includes(row.status)?String(row.status):'UNKNOWN',finishedAt:finished.success?new Date(finished.data).toISOString():null});
    models.set(name,states);
   }
  }
@@ -88,10 +90,10 @@ export async function deployedModels(source:Integration,id:string,key:string,fet
   const age=finishedAt?Date.now()-Date.parse(finishedAt):NaN;
   const state=jobs.some(job=>['ERROR','PAUSED','STOPPED'].includes(job.state))?'NEEDS_ATTENTION':
    allComplete&&age>=0?(age<=86400000?'FRESH':'STALE'):'UNKNOWN';
-  return {name,state,finishedAt};
+  return {name,state,finishedAt,expected:jobs.length===1?jobs[0].expected:null};
  });
 }
-export async function readSync(org:string,source:Integration,id:string,model:string,key:string,fetcher:typeof fetch=fetch){
+export async function readSync(org:string,source:Integration,id:string,model:string,key:string,fetcher:typeof fetch=fetch,policy?:ResourcePolicy){
  sourceModel.parse(model);
  await checkGrant(org,source,id,key,fetcher);
  const deployed=await deployedModels(source,id,key,fetcher).catch(error=>{
@@ -101,11 +103,18 @@ export async function readSync(org:string,source:Integration,id:string,model:str
  const pipeline=deployed.find(entry=>entry.name===model);
  if(!pipeline&&!source.models.includes(model))throw new CollectionError('INVALID_TARGET');
  const q=new URLSearchParams({model,limit:'50'}),seen=new Set<string>(),items=[] as {id:string;changed:string;action:string}[];
+ const evaluated:{resource:string;states:RuleState[]}[]=[],now=Date.now();
  let more=false;
  for(let page=0;page<4;page++){
   const result=await get('/records?'+q,key,fetcher,{'Connection-Id':id,'Provider-Config-Key':source.integration});
   const records=z.array(z.object({id:z.union([z.string().min(1).max(512),z.number().safe()]),_nango_metadata:z.object({last_modified_at:z.iso.datetime({offset:true}),last_action:z.enum(['ADDED','UPDATED','DELETED'])})})).max(50).parse(result.records);
-  for(const row of records)items.push({id:String(row.id),changed:row._nango_metadata.last_modified_at,action:row._nango_metadata.last_action});
+  for(const [index,row] of records.entries()){
+   items.push({id:String(row.id),changed:row._nango_metadata.last_modified_at,action:row._nango_metadata.last_action});
+   if(policy&&row._nango_metadata.last_action!=='DELETED'){
+    const resource=createHmac('sha256',key).update(JSON.stringify([org,source.integration,id,model,String(row.id)])).digest('hex').slice(0,24);
+    evaluated.push({resource,states:evaluateResource(result.records[index],policy,now)});
+   }
+  }
   more=result.next_cursor!=null;
   if(!more)break;
   const cursor=z.string().min(1).max(4096).parse(result.next_cursor);
@@ -113,19 +122,30 @@ export async function readSync(org:string,source:Integration,id:string,model:str
  }
  if(new Set(items.map(i=>i.id)).size!==items.length)throw new CollectionError('INVALID_RESPONSE');
  const sorted=items.sort((a,b)=>a.id.localeCompare(b.id)||a.changed.localeCompare(b.changed));
- return {syncState:pipeline?.state??"UNKNOWN",syncCompletedAt:pipeline?.finishedAt??null,count:items.length,limited:more,deleted:items.filter(r=>r.action==='DELETED').length,lastChanged:items.map(r=>new Date(r.changed).toISOString()).sort().at(-1)??null,
+ const finalPipeline=policy&&pipeline?(await deployedModels(source,id,key,fetcher)).find(p=>p.name===model):undefined;
+ const populationComplete=!!policy&&!!pipeline&&!!finalPipeline&&pipeline.state==='FRESH'&&finalPipeline.state==='FRESH'&&pipeline.finishedAt===finalPipeline.finishedAt&&pipeline.expected===evaluated.length&&finalPipeline.expected===evaluated.length&&!more;
+ const rules:ConnectorCheck[]=policy?profiles[policy.profile].rules.map((rule,index)=>{
+  const failed=evaluated.filter(row=>row.states[index]==='FAIL'),unknown=evaluated.filter(row=>row.states[index]==='UNKNOWN');
+  const complete=!!evaluated.length&&populationComplete&&!unknown.length;
+  return {id:'resource-'+policy.profile+'-'+rule.field,label:rule.label,status:failed.length?'FAIL':complete?'PASS':'UNKNOWN',
+   observed:(evaluated.length-failed.length-unknown.length)+' passed · '+failed.length+' failed · '+unknown.length+' unknown · '+evaluated.length+' active resources',
+   nextStep:'Review the mapped source field and any affected resources.'};
+ }):[];
+ const findings=evaluated.filter(row=>row.states.some(state=>state!=='PASS')).sort((a,b)=>a.resource.localeCompare(b.resource)).slice(0,12);
+ const ruleHash=policy?createHash('sha256').update(JSON.stringify(evaluated.sort((a,b)=>a.resource.localeCompare(b.resource)))).digest('hex'):null;
+ return {rules,findings,populationComplete,activeResources:evaluated.length,ruleHash,syncState:pipeline?.state??"UNKNOWN",syncCompletedAt:pipeline?.finishedAt??null,count:items.length,limited:more,deleted:items.filter(r=>r.action==='DELETED').length,lastChanged:items.map(r=>new Date(r.changed).toISOString()).sort().at(-1)??null,
   digest:createHash('sha256').update(JSON.stringify(sorted)).digest('hex')};
 }
 
-export async function managedSyncObservation(org:string,target:{scope:string;record:string;reference?:string},fetcher:typeof fetch=fetch):Promise<import('./observation').Observation>{
+export async function managedSyncObservation(org:string,target:{scope:string;record:string;reference?:string},fetcher:typeof fetch=fetch,policy?:ResourcePolicy):Promise<import('./observation').Observation>{
  const key=brokerKey();if(!key)throw new CollectionError('PROVIDER_DISABLED');
  const [integration,connectionId]=target.scope.split('/');
  const source=(await enabledIntegrations(key,fetcher,org)).find(s=>s.integration===integration&&s.provider===target.reference);
  if(!source)throw new CollectionError('TARGET_MISMATCH');
- const sample=await readSync(org,source,connectionId,target.record,key,fetcher);
+ const sample=await readSync(org,source,connectionId,target.record,key,fetcher,policy);
  await checkGrant(org,source,connectionId,key,fetcher);
- return {engine:'managed-sync-metadata-v1',capturedAt:new Date().toISOString(),sourceUrl:'https://nango.dev/docs/api-integrations/'+source.provider,
-  checks:[{id:'source-sync',label:'Source sync completed in the past 24 hours',status:sample.syncState==='FRESH'?'PASS':sample.syncState==='STALE'||sample.syncState==='NEEDS_ATTENTION'?'FAIL':'UNKNOWN',observed:sample.syncState+' · '+(sample.syncCompletedAt??'completion unconfirmed'),nextStep:'Check the deployed upstream sync schedule, errors and last completion.'},
+ return {engine:policy?'managed-control-'+policy.profile+'-v1':'managed-sync-metadata-v1',capturedAt:new Date().toISOString(),sourceUrl:'https://nango.dev/docs/api-integrations/'+source.provider,
+  checks:[...sample.rules,...(policy?[{id:'affected-resources',label:'Affected resource references',status:sample.rules.some(r=>r.status==='FAIL')?'FAIL' as const:sample.rules.every(r=>r.status==='PASS')?'PASS' as const:'UNKNOWN' as const,observed:sample.findings.map(r=>r.resource+' '+r.states.join('/')).join(' · ')||'No affected resources returned',nextStep:'Up to 12 pseudonymous references are retained for comparison.'}]:[]),{id:'source-sync',label:'Source sync completed in the past 24 hours',status:sample.syncState==='FRESH'?'PASS':sample.syncState==='STALE'||sample.syncState==='NEEDS_ATTENTION'?'FAIL':'UNKNOWN',observed:sample.syncState+' · '+(sample.syncCompletedAt??'completion unconfirmed'),nextStep:'Check the deployed upstream sync schedule, errors and last completion.'},
    {id:'sync-coverage',label:'Synced record metadata available',status:sample.count&&!sample.limited?'PASS':'UNKNOWN',observed:sample.count+' records · '+(sample.limited?'truncated':'end of returned pages'),nextStep:'Compare the model and its sync scope with the source system.'},
    {id:'sync-sample',label:'Version of the sampled record identities and modification times',status:sample.count?'PASS':'UNKNOWN',observed:sample.digest+' · last change '+(sample.lastChanged??'unknown')+' · '+sample.deleted+' deleted',nextStep:'Inspect changed records in the provider before relying on the control.'}],
   limitations:['The broker cache is read on this collection. The upstream job status and completion time come from the broker. Verify the underlying control and model scope in the source system.']};

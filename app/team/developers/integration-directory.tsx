@@ -1,4 +1,5 @@
 'use client';
+import ModelControlMonitor from './model-control-monitor';
 import {useState} from 'react';
 import type {Integration} from '../../../lib/connectors/marketplace';
 import type {useWorkspaceContext} from '../../../lib/client/workspace-context';
@@ -48,6 +49,7 @@ export default function IntegrationDirectory({workspace,locked}:{workspace:Retur
  <button type="button" onClick={()=>void act('RENEW')}>Renew this connection</button>
  <button type="button" onClick={()=>void act('MODELS')}>Check deployed sync models</button>
  {source&&models.length>0&&<><label>Synced record model <select aria-label="Synced record model" value={model} onChange={e=>setModel(e.target.value)}>{models.map(m=><option key={m}>{m}</option>)}</select></label><button type="button" onClick={()=>void act('COLLECT')}>Collect and compare sync metadata</button><p>For daily or weekly collection, choose Managed provider sync in <a href={'/team/operations?'+new URLSearchParams({organizationId:workspace.organizationId,view:'connections'})}>Operations</a>. Use {source.integration}/{id}, model {model} and provider {source.provider}.</p></>}
+ {source&&id&&model&&deployed.includes(model)&&<ModelControlMonitor key={[workspace.organizationId,source.integration,id,model].join(':')} workspace={workspace} scope={{integration:source.integration,provider:source.provider,connectionId:id,model}}/>}
  {source&&source.aiModels.length>0&&<><label>AI model <select aria-label="AI model" value={aiModel} onChange={e=>setAiModel(e.target.value)}>{source.aiModels.map(m=><option key={m}>{m}</option>)}</select></label><button onClick={()=>void act('SET_AI')}>Verify model and link AI account</button></>}</>}</fieldset>}
  {link&&<p><a href={link} rel="noreferrer" target="_blank">Continue securely with the provider</a>. Return here and check organisation connections.</p>}
  {account?.provider&&<p>Linked model · {account.provider} / {account.model} · <a href="/ai">Open AI Studio</a> <button disabled={locked||busy} onClick={()=>void act('UNLINK_AI')}>Unlink AI account</button></p>}

@@ -47,6 +47,8 @@ const googleSchema=googleTarget.extend({provider:z.literal("GOOGLE_WORKSPACE"),c
 const microsoftSchema=microsoftTarget.extend({provider:z.enum(["MICROSOFT365","INTUNE"]),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:z.string().min(16).max(512).regex(/^[^\r\n\0]+$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)});
 const extraFields={controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().refine(validCredential).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)};
 const extraSchema=z.discriminatedUnion("provider",[
+ recordTargets.KEYCLOAK_REALM.extend({...extraFields,provider:z.literal("KEYCLOAK_REALM")}).strict(),
+ recordTargets.GITHUB_WORKFLOW.extend({...extraFields,provider:z.literal("GITHUB_WORKFLOW")}).strict(),
  recordTargets.NANGO_SYNC.extend({...extraFields,provider:z.literal("NANGO_SYNC")}).omit({token:true}).strict(),
  recordTargets.UBIBOT.extend({...extraFields,provider:z.literal("UBIBOT")}).strict(),
  recordTargets.BENCHLING.extend({...extraFields,provider:z.literal("BENCHLING")}).strict(),
@@ -71,6 +73,8 @@ type ConnectorSettings=z.infer<typeof schema>|z.infer<typeof googleSchema>|z.inf
 function storedTarget(settings:ConnectorSettings):{repository:string;branch:string;token?:string}{
  switch(settings.provider){
   case "NANGO_SYNC":return recordKeys(settings.provider,settings);
+  case "KEYCLOAK_REALM":
+  case "GITHUB_WORKFLOW":
   case "BENCHLING":
   case "UBIBOT":
   case "JIRA":
@@ -106,7 +110,10 @@ export const collectConfiguredConnector:Collector=async(target,secret)=>{
   if(target.provider==="NANGO_SYNC"){
    if(!target.organizationId)throw new CollectionError("WORKSPACE_REQUIRED");
    const {managedSyncObservation}=await import("../connectors/marketplace");
-   return managedSyncObservation(target.organizationId,configured);
+   const [provider,policyId]=configured.reference!.split('/');
+   const [integration,connectionId]=configured.scope.split('/');
+   const policy=policyId?await (await import('./managed-control-policy')).readManagedPolicy(target.organizationId,policyId,{integration,connectionId,provider,model:configured.record}):undefined;
+   return managedSyncObservation(target.organizationId,{...configured,reference:provider},fetch,policy);
   }
   return collectOperationalRecord(target.provider,configured,secret);
  }

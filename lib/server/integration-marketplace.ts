@@ -1,3 +1,5 @@
+import {resourcePolicy} from '../connectors/resource-control';
+import {saveManagedPolicy,readManagedPolicy} from './managed-control-policy';
 import {z} from 'zod';
 import {brokerId,brokerOrigin,hostedConnectSession} from '../connectors/hosted-oauth';
 import {aiProvider,workspaceIntegrationId,brokerKey,enabledIntegrations,checkGrant,deployedModels,workspaceGrants,readSync,publicDirectory,sourceModel} from '../connectors/marketplace';
@@ -12,7 +14,8 @@ const actions=z.discriminatedUnion('action',[
  z.object({action:z.literal('DIRECTORY')}).strict(),z.object({action:z.literal('AVAILABLE')}).strict(),
  z.object({action:z.enum(['CONNECT','GRANTS']),integration:brokerId}).strict(),
  z.object({action:z.enum(['RENEW','MODELS']),...fields}).strict(),
- z.object({action:z.literal('COLLECT'),...fields,model:sourceModel}).strict(),
+ z.object({action:z.literal('BIND_POLICY'),...fields,model:sourceModel,policy:resourcePolicy}).strict(),
+ z.object({action:z.literal('COLLECT'),...fields,model:sourceModel,policyId:z.uuid().optional()}).strict(),
  z.object({action:z.literal('SET_AI'),...fields,model:brokerId,previous:z.uuid().nullable()}).strict(),
  z.object({action:z.literal('UNLINK_AI'),previous:z.uuid()}).strict()
 ]);
@@ -79,18 +82,27 @@ export async function marketplaceAction(ctx:AuthorizedContext,raw:unknown,fetche
   if(model.id!==d.model)throw new IntelligenceError('The provider did not confirm this exact model identifier.',409);
   return saveBinding(ctx,{integration:source.integration,connectionId:d.connectionId,provider,model:d.model},d.previous);
  }
+ if(d.action==='BIND_POLICY'){
+  await checkGrant(ctx.organizationId,source,d.connectionId,key,fetcher);
+  const models=await deployedModels(source,d.connectionId,key,fetcher);
+  if(!models.some(v=>v.name===d.model))throw new IntelligenceError('Choose a deployed model from this connection',409);
+  await checkGrant(ctx.organizationId,source,d.connectionId,key,fetcher);
+  return saveManagedPolicy(ctx,{provider:source.provider,integration:source.integration,connectionId:d.connectionId,model:d.model},d.policy);
+ }
  if(d.action!=='COLLECT')throw new IntelligenceError('Unknown operation',400);
- const entityId=hashValue([source.integration,d.connectionId,d.model]),where={organizationId:ctx.organizationId,entityType:'ManagedSyncSample',entityId,action:'integration.sync-sampled'};
+ const policy=d.policyId?await readManagedPolicy(ctx.organizationId,d.policyId,{provider:source.provider,integration:source.integration,connectionId:d.connectionId,model:d.model}):undefined;
+ const entityId=hashValue([source.integration,d.connectionId,d.model,...(d.policyId?[d.policyId]:[])]),where={organizationId:ctx.organizationId,entityType:'ManagedSyncSample',entityId,action:'integration.sync-sampled'};
  const head=()=>transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);return tx.auditEvent.findFirst({where,orderBy:[{createdAt:'desc'},{id:'desc'}],select:{id:true}});});
- const before=await head(),sample=await readSync(ctx.organizationId,source,d.connectionId,d.model,key,fetcher);
+ const before=await head(),sample=await readSync(ctx.organizationId,source,d.connectionId,d.model,key,fetcher,policy);
  await checkGrant(ctx.organizationId,source,d.connectionId,key,fetcher);
  return transaction(ctx,async tx=>{
   await requireMember(tx,ctx,ADMIN);
   const prior=await tx.auditEvent.findFirst({where,orderBy:[{createdAt:'desc'},{id:'desc'}]});
   if(prior?.id!==before?.id)throw new IntelligenceError('A newer collection was saved. Refresh to compare.',409);
   const priorDigest=z.object({digest:z.string()}).safeParse(prior?.details).data?.digest??null;
-  const row=await tx.auditEvent.create({data:{...where,actorId:ctx.userId,details:{...sample,integration:source.integration,model:d.model,previous:prior?.id??null}}});
-  return {...sample,receiptId:row.id,checkedAt:row.createdAt.toISOString(),previousCheckedAt:prior?.createdAt.toISOString()??null,changed:priorDigest===null?null:sample.digest!==priorDigest};
+  const previousRules=(prior?.details as {ruleHash?:string}|null)?.ruleHash;
+  const row=await tx.auditEvent.create({data:{...where,actorId:ctx.userId,details:{...sample,...(d.policyId?{policyId:d.policyId}:{}),integration:source.integration,model:d.model,previous:prior?.id??null}}});
+  return {...sample,receiptId:row.id,checkedAt:row.createdAt.toISOString(),previousCheckedAt:prior?.createdAt.toISOString()??null,changed:priorDigest===null?null:sample.digest!==priorDigest||!!policy&&sample.ruleHash!==previousRules};
  });
 }
 export async function resolveCustomerAi(ctx:AuthorizedContext,version:string,fetcher:typeof fetch=fetch){
