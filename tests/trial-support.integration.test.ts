@@ -140,12 +140,13 @@ test('a site decision binds the live build, the named configuration, reviewed te
   await assert.rejects(()=>recordSiteDecision(f.o,id,{...input,basisHash:pack.basisHash},f.store),rejects(409));
   await recordTrial(f.ad,{action:'REVIEW',id,decision:'ACCEPT',notes:'Verified the source count and signed recount against the acceptance criterion.'},f.store);
   pack=await siteQualification(f.o,id);const signed={...input,basisHash:pack.basisHash};
+  assert.notEqual(pack.reviews[0].id,id);assert.equal(pack.reviews[0].actor,f.ad.userId);
   assert.equal(pack.currentRelease,release);assert.equal(pack.finishRelease,release);assert.deepEqual(pack.blockers,[]);
   await assert.rejects(()=>recordSiteDecision(f.o,id,{...signed,basisHash:oldHash},f.store),rejects(409));
   await assert.rejects(()=>recordSiteDecision(f.o,id,{...signed,decisionFile:proof.id},f.store),rejects(409));
-  const stored=await db.evidence.findUniqueOrThrow({where:{id:proof.id}}),bytes=f.objects.get(stored.storageKey)!;
-  f.objects.set(stored.storageKey,new Uint8Array([77]));
-  await assert.rejects(()=>recordSiteDecision(f.o,id,signed,f.store),rejects(409));f.objects.set(stored.storageKey,bytes);
+  const stored=await db.evidence.findUniqueOrThrow({where:{id:proof.id}}),bytes=await f.store.get(stored.storageKey);
+  await f.store.put(stored.storageKey,new Uint8Array([77]));
+  await assert.rejects(()=>recordSiteDecision(f.o,id,signed,f.store),rejects(409));await f.store.put(stored.storageKey,bytes);
   const receipts=await Promise.all([recordSiteDecision(f.o,id,signed,f.store),recordSiteDecision(f.o,id,signed,f.store)]);
   assert.deepEqual(receipts[0],receipts[1]);
   pack=await siteQualification(f.o,id);assert.equal(pack.status,'APPROVED_FOR_SITE_USE');

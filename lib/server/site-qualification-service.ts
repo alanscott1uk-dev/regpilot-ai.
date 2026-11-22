@@ -19,7 +19,11 @@ async function inspect(tx:Prisma.TransactionClient,ctx:AuthorizedContext,id:stri
  const trial=await loadTrial(tx,ctx,id);
  const scope=trial.plan.siteProtocol;
  if(trial.plan.track!=='site_qualification'||!scope)throw new IntelligenceError('This trial has no site qualification protocol.',404);
- const reviews=trial.reviews.map(r=>({id:r.id,actor:r.actorId,at:iso(r.createdAt),...trialReview.parse(r.details)}));
+ const reviews=trial.reviews.map(event=>{
+  const review=trialReview.parse(event.details);
+  if(review.id!==id)throw new IntelligenceError('The independent review belongs to a different trial.',409);
+  return {id:event.id,actor:event.actorId,at:iso(event.createdAt),decision:review.decision,notes:review.notes};
+ });
  const basis={
   organizationId:ctx.organizationId,trialId:id,protocol:{...scope,intendedUse:trial.plan.intendedUse,release:trial.plan.release,environment:trial.plan.environment},
   participant:trial.start.actorId,startedAt:iso(trial.start.createdAt),finishedAt:trial.finish?iso(trial.finish.createdAt):null,
