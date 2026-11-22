@@ -29,7 +29,8 @@ export async function guidedStockJourney({upload,review,db,app,org,editor,submit
  await guidance.getByRole('button',{name:'Open investigation'}).click();
  assert.equal(await upload.locator('#quality-plan-form').evaluate(el=>el.open),true);
  const stock=upload.locator('#quality-stock');
- await stock.locator(':scope > summary').click();
+ assert.equal(await stock.count(),1,'The selected case must contain one stock reconciliation panel');
+ await upload.locator('details#quality-stock > summary').click();
  await stock.getByLabel('Site and stock location').fill('Site A');await stock.getByLabel('Product, strength and form').fill('Test product');
  await stock.getByLabel('Batch or lot').fill('TEST-1');await stock.getByLabel('Opening balance time (local)').fill('2025-06-01T08:00');
  await stock.getByLabel('Opening balance',{exact:true}).fill('10');await stock.getByRole('button',{name:'Add register movement'}).click();

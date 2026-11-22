@@ -104,13 +104,13 @@ export default function QualityPage(){
     <CaseNextStep selected={selected} members={people} busy={blocked} download={()=>void download('text')}/>
     <div className={css.context}><div><h3>Impact and scope</h3><p>{row.impact}</p></div><div><h3>Containment</h3><p>{row.containment}</p></div></div>
     <div className={css.links}><button type="button" disabled={blocked} onClick={()=>void download()}>Download quality chronology</button><button type="button" disabled={blocked} onClick={()=>void download('text')}>Download inspection summary</button><a href={row.href}>Exact case link →</a><a href={href('/team/evidence')}>Supporting evidence →</a></div>
-    {row.kind==='DEVIATION'&&(selected.canEdit||selected.trainingRecords)&&<Excursion key={organizationId+row.id+row.cycle} organizationId={organizationId} caseId={row.id} version={row.version} files={data?.evidence??[]} request={request} canEdit={selected.canEdit} canDecide={!!selected.trainingRecords} onChange={()=>setRefresh(v=>v+1)}/>}
-    {row.kind==='DEVIATION'&&selected.stockRecords&&<StockReconciliation key={organizationId+row.id+row.version} records={selected.stockRecords} files={data?.evidence??[]}
+    {row.kind==='DEVIATION'&&(selected.canEdit||selected.trainingRecords)&&<Excursion key={`excursion:${organizationId}:${row.id}:${row.cycle}`} organizationId={organizationId} caseId={row.id} version={row.version} files={data?.evidence??[]} request={request} canEdit={selected.canEdit} canDecide={!!selected.trainingRecords} onChange={()=>setRefresh(v=>v+1)}/>}
+    {row.kind==='DEVIATION'&&selected.stockRecords&&<StockReconciliation key={`stock:${organizationId}:${row.id}:${row.version}`} records={selected.stockRecords} files={data?.evidence??[]}
      owner={row.ownerName} members={people} organizationId={organizationId} expanded={openStock===organizationId+row.id}
      onToggle={open=>setOpenStock(open?organizationId+row.id:'')} reloadFiles={refreshStockFiles} download={()=>void download('text')}
      userId={data!.userId} busy={blocked} editable={selected.canEdit} administrator={!!selected.trainingRecords}
      save={(action,input)=>void mutate(action,{caseId:row.id,version:row.version,...input})}/>}
-    {selected.trainingRecords&&<TrainingRecords key={organizationId+row.id+row.version} records={selected.trainingRecords} organizationId={organizationId}
+    {selected.trainingRecords&&<TrainingRecords key={`training:${organizationId}:${row.id}:${row.version}`} records={selected.trainingRecords} organizationId={organizationId}
      occurredAt={row.occurredAt} cycle={row.cycle} blocked={blocked} editable={selected.canEdit} request={request}
      save={fields=>void mutate('LINK_TRAINING',{caseId:row.id,version:row.version,...fields})}/>}
     <section className={css.section} id="quality-handover" tabIndex={-1} aria-label="Case handover">
