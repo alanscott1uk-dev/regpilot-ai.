@@ -215,3 +215,23 @@ test('public pharmaceutical registers bind the exact records and flag material d
  assert.equal(signal(await readRecall(1,{...row,status:'Terminated',termination_date:'20250230'}),'recall-closure'),'UNKNOWN');
  await assert.rejects(readRecall(2,row),{code:'TARGET_MISMATCH'});await assert.rejects(readRecall(1,{...row,event_id:'other'}),{code:'TARGET_MISMATCH'});
 });
+
+test('the public evidence benchmark counts a product once after independent daily receipts and withdraws stale or failed coverage',async()=>{
+ const {registerBenchmark}=await import('../lib/connectors/register-benchmark');
+ const {referenceRegisters}=await import('../lib/connectors/pharma-registers');
+ const source=referenceRegisters[1],now=Date.parse('2026-11-22T18:00:00Z'),day=86400000;
+ const row=(offset:number)=>({batch:'capture-'+offset,provider:source.provider,part:'study',started_at:new Date(now-offset),finished_at:new Date(now-offset+1000),http_status:200,intact:true,fingerprint:'receipt',
+  url:'https://clinicaltrials.gov/api/v2/studies/'+source.target.scope+'?fields=NCTId,OverallStatus,LastUpdatePostDate,ResultsFirstPostDate',
+  metadata:{protocolSection:{identificationModule:{nctId:source.target.scope},statusModule:{overallStatus:'COMPLETED',lastUpdatePostDateStruct:{date:'2026-10-01'}}}}});
+ const current=row(2000),prior=row(day+2000);
+ assert.equal((await registerBenchmark([current],now)).qualified,0);
+ assert.equal((await registerBenchmark([current,row(day)],now)).qualified,0);
+ assert.equal((await registerBenchmark([current,row(3*day)],now)).qualified,0);
+ const accepted=await registerBenchmark([current,prior,row(day*2+2000)],now);
+ assert.equal(accepted.qualified,1);assert.equal(accepted.target,500);
+ assert.equal(accepted.products[1].latest?.observation?.checks.find(c=>c.id==='trial-results')?.status,'FAIL');
+ for(const change of [{intact:false},{http_status:403},{finished_at:null},{url:'https://example.invalid'},{metadata:{}}]){
+  assert.equal((await registerBenchmark([{...current,...change},prior],now)).qualified,0);
+ }
+ assert.equal((await registerBenchmark([current,prior],now+day+1800001)).qualified,0);
+});

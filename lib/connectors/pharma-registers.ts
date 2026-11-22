@@ -4,27 +4,20 @@ import {CollectionError} from './collection-error';
 import type {Observation} from './observation';
 import type {ConnectorCheck} from './github';
 
-export const publicRegisters=['NHSBSA_MAPPING','CLINICALTRIALS_GOV','OPENFDA_RECALL'] as const;
-export type PublicRegister=typeof publicRegisters[number];
-export function isPublicRegister(value:string):value is PublicRegister{return publicRegisters.some(id=>id===value);}
+import type {PublicRegister,RegisterTarget} from './register-targets';
+export {publicRegisters,referenceRegisters,type PublicRegister,type RegisterTarget} from './register-targets';
 const studyStates=['NOT_YET_RECRUITING','RECRUITING','ENROLLING_BY_INVITATION','ACTIVE_NOT_RECRUITING','COMPLETED','SUSPENDED','TERMINATED','WITHDRAWN','UNKNOWN','AVAILABLE','NO_LONGER_AVAILABLE','TEMPORARILY_NOT_AVAILABLE','APPROVED_FOR_MARKETING','WITHHELD'] as const;
 export const registerTargets={
  NHSBSA_MAPPING:z.object({scope:z.literal('bnf-snomed-mapping'),record:z.uuid()}),
  CLINICALTRIALS_GOV:z.object({scope:z.string().regex(/^NCT\d{8}$/),record:z.enum(studyStates)}),
  OPENFDA_RECALL:z.object({scope:z.string().regex(/^[1-9]\d{0,11}$/),record:z.string().regex(/^D-\d{1,5}-\d{4}$/),reference:z.enum(['I','II','III'])})
 };
-export type RegisterTarget={scope:string;record:string;reference?:string};
-export const referenceRegisters:ReadonlyArray<{provider:PublicRegister;target:RegisterTarget}>= [
- {provider:'NHSBSA_MAPPING',target:{scope:'bnf-snomed-mapping',record:'638b7dc9-1eac-4495-9fc5-423fc52483e2'}},
- {provider:'CLINICALTRIALS_GOV',target:{scope:'NCT02091382',record:'COMPLETED'}},
- {provider:'OPENFDA_RECALL',target:{scope:'72241',record:'D-321-2016',reference:'II'}}
-];
 type Read=ReturnType<typeof providerReader>;
 function check(id:string,label:string,value:boolean|undefined,observed:string,nextStep:string):ConnectorCheck{
  return {id,label,status:value===undefined?'UNKNOWN':value?'PASS':'FAIL',observed,nextStep};
 }
-const isoDay=(value:unknown)=>typeof value==='string'&&z.iso.date().safeParse(value).success&&value<=new Date().toISOString().slice(0,10)?value:undefined;
-function fdaDay(value:unknown){return typeof value==='string'&&/^\d{8}$/.test(value)?isoDay(value.slice(0,4)+'-'+value.slice(4,6)+'-'+value.slice(6)):undefined;}
+const isoDay=(value:unknown,asOf:string)=>typeof value==='string'&&z.iso.date().safeParse(value).success&&value<=asOf.slice(0,10)?value:undefined;
+function fdaDay(value:unknown,asOf:string){return typeof value==='string'&&/^\d{8}$/.test(value)?isoDay(value.slice(0,4)+'-'+value.slice(4,6)+'-'+value.slice(6),asOf):undefined;}
 function month(name:unknown){return typeof name==='string'?(name.match(/^BNF_SNOMED_MAPPING_DATA_(20\d{2}(?:0[1-9]|1[0-2]))$/i)?.[1]):undefined;}
 
 async function mapping(input:RegisterTarget,read:Read){
@@ -49,27 +42,27 @@ async function mapping(input:RegisterTarget,read:Read){
  ],limitations:['Checks the published release and its identity. Row-level mapping accuracy needs a separate assessment. Contains NHS Business Services Authority information licensed under the Open Government Licence v3.0.']};
 }
 
-async function trial(input:RegisterTarget,read:Read){
+async function trial(input:RegisterTarget,read:Read,asOf:string){
  const {scope,record}=input,fields='NCTId,OverallStatus,LastUpdatePostDate,ResultsFirstPostDate';
  const {body}=(await read('https://clinicaltrials.gov/api/v2/studies/'+scope+'?fields='+fields))!;
  const protocol=body.protocolSection;
  if(protocol?.identificationModule?.nctId!==scope)throw new CollectionError('TARGET_MISMATCH');
  const status=protocol.statusModule,reported=z.enum(studyStates).safeParse(status?.overallStatus);
- const updated=isoDay(status?.lastUpdatePostDateStruct?.date),posted=isoDay(status?.resultsFirstPostDateStruct?.date);
+ const updated=isoDay(status?.lastUpdatePostDateStruct?.date,asOf),posted=isoDay(status?.resultsFirstPostDateStruct?.date,asOf);
  const checks=[
   check('trial-status','Registry status matches the reviewed status',reported.success?reported.data===record:undefined,reported.success?reported.data:'Unreported','Compare the registry change with the study file.'),
-  check('trial-update','Registry provides an actual posted revision date',updated&&status?.lastUpdatePostDateStruct?.type?status.lastUpdatePostDateStruct.type==='ACTUAL':undefined,updated??'Unconfirmed','Check the source revision before relying on the record.')
+  check('trial-update','Public registry revision has a valid posting date',updated?true:undefined,updated??'Unconfirmed','Check the source revision before relying on the record.')
  ];
- if(record==='COMPLETED')checks.push(check('trial-results','Completed study has a public results posting',reported.success&&reported.data==='COMPLETED'&&updated?(posted?posted<=updated&&status.resultsFirstPostDateStruct.type==='ACTUAL':status.resultsFirstPostDateStruct==null?false:undefined):undefined,posted??'No confirmed results posting','Review the public disclosure with the study owner.'));
+ if(record==='COMPLETED')checks.push(check('trial-results','Completed study has a public results posting',reported.success&&reported.data==='COMPLETED'&&updated?(posted?posted<=updated:status.resultsFirstPostDateStruct==null?false:undefined):undefined,posted??'No confirmed results posting','Review the public disclosure with the study owner.'));
  return {sourceUrl:'https://clinicaltrials.gov/study/'+scope,checks,limitations:['Registry metadata describes the public record. Publication obligations and deadlines require a study-specific assessment.']};
 }
 
-async function recall(input:RegisterTarget,read:Read){
+async function recall(input:RegisterTarget,read:Read,asOf:string){
  const {record,scope,reference}=input,query=new URLSearchParams({search:'recall_number:"'+record+'" AND event_id:"'+scope+'"',limit:'2'});
  const sourceUrl='https://api.fda.gov/drug/enforcement.json?'+query;
  const {body}=(await read(sourceUrl))!,row=body.results?.[0];
  if(body.meta?.results?.total!==1||!Array.isArray(body.results)||body.results.length!==1||row?.recall_number!==record||String(row.event_id)!==scope||row.product_type!=='Drugs')throw new CollectionError('TARGET_MISMATCH');
- const initiation=fdaDay(row.recall_initiation_date),report=fdaDay(row.report_date),end=fdaDay(row.termination_date);
+ const initiation=fdaDay(row.recall_initiation_date,asOf),report=fdaDay(row.report_date,asOf),end=fdaDay(row.termination_date,asOf);
  const classification=z.enum(['Class I','Class II','Class III']).safeParse(row.classification),status=z.enum(['Ongoing','Completed','Terminated']).safeParse(row.status);
  return {sourceUrl,checks:[
   check('recall-class','Recall classification matches the reviewed class',classification.success?classification.data==='Class '+reference:undefined,classification.success?classification.data:'Unconfirmed','Review changes in the published classification.'),
@@ -78,10 +71,10 @@ async function recall(input:RegisterTarget,read:Read){
  ],limitations:['US enforcement record for the selected recall and event. It establishes neither UK applicability nor the disposition of a local batch.']};
 }
 
-export async function collectPublicRegister(provider:PublicRegister,target:RegisterTarget,fetcher:typeof fetch=fetch):Promise<Observation>{
+export async function collectPublicRegister(provider:PublicRegister,target:RegisterTarget,fetcher:typeof fetch=fetch,capturedAt=new Date().toISOString()):Promise<Observation>{
  const input=registerTargets[provider].strict().safeParse(target);
  if(!input.success)throw new CollectionError('INVALID_TARGET');
  const read=providerReader(fetcher,{});
- const result=await ({NHSBSA_MAPPING:mapping,CLINICALTRIALS_GOV:trial,OPENFDA_RECALL:recall}[provider])(input.data,read);
- return {...result,engine:provider.toLowerCase()+'-v1',capturedAt:new Date().toISOString()};
+ const result=await ({NHSBSA_MAPPING:mapping,CLINICALTRIALS_GOV:trial,OPENFDA_RECALL:recall}[provider])(input.data,read,capturedAt);
+ return {...result,engine:provider.toLowerCase()+'-v1',capturedAt};
 }

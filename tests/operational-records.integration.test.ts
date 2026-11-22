@@ -230,3 +230,30 @@ test('customer model proof requires active ownership, generation, repeated colle
   const events=await db.auditEvent.findMany({where:{entityId:next.id}});assert.doesNotMatch(JSON.stringify(events),/fictional-connector-token/);
  }finally{globalThis.fetch=original;await f.cleanup();}
 });
+
+test('each public pharmaceutical register can be enrolled without a secret, collected and exported from its owning workspace',async()=>{
+ const {referenceRegisters}=await import('../lib/connectors/pharma-registers');
+ const f=await assuranceFixture(),original=globalThis.fetch;
+ Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:'true',REGPILOT_CONNECTORS_ENABLED:'true',REGPILOT_CONNECTOR_ENCRYPTION_KEY:'dc'.repeat(32),SUPABASE_URL:'https://auth.invalid',SUPABASE_PUBLISHABLE_KEY:'fictional'});
+ try{
+  const programme=await db.programmeImport.create({data:{organizationId:f.a.id,createdById:f.o.userId,inputHash:f.a.id,method:'SEARCH',status:'ACCEPTED',evidenceManifest:[]}});
+  const control=await db.managedControl.create({data:{organizationId:f.a.id,importId:programme.id,proposalKey:'registers',title:'Pharmaceutical register monitoring',description:'Review identified public releases',testProcedure:'Review current source records',theme:'quality',ownerId:f.editor.id,scheduledById:f.owner.id,intervalDays:30,nextReviewAt:new Date()}});
+  const [nhs,trial,fda]=referenceRegisters,pkgId='2aab7706-8c93-42f6-9f49-39a53cfdaa1c';
+  const resource={id:nhs.target.record,package_id:pkgId,state:'active',format:'CSV',name:'BNF_SNOMED_MAPPING_DATA_202609'};
+  globalThis.fetch=async(raw,req)=>{
+   assert.equal(new Headers(req?.headers).has('Authorization'),false);
+   const url=new URL(String(raw));
+   if(url.host==='opendata.nhsbsa.net')return Response.json({success:true,result:url.pathname.endsWith('package_show')?{id:pkgId,name:nhs.target.scope,num_resources:1,state:'active',resources:[resource]}:resource});
+   if(url.host==='clinicaltrials.gov')return Response.json({protocolSection:{identificationModule:{nctId:trial.target.scope},statusModule:{overallStatus:'COMPLETED',lastUpdatePostDateStruct:{date:'2025-09-10'},resultsFirstPostDateStruct:{date:'2025-08-10'}}}});
+   assert.equal(url.host,'api.fda.gov');return Response.json({meta:{results:{total:1}},results:[{event_id:fda.target.scope,recall_number:fda.target.record,product_type:'Drugs',classification:'Class II',status:'Terminated',report_date:'20250304',recall_initiation_date:'20250301',termination_date:'20250401'}]});
+  };
+  for(const {provider,target} of referenceRegisters){
+   const input={provider,...target,controlId:control.id,consent:true,enabled:true,intervalHours:24,version:0};
+   await assert.rejects(saveConnector(f.o,{...input,token:'unexpected-customer-secret'}));
+   const saved=await saveConnector(f.o,input),result=await verifyConnectorNow(f.o,saved.id,saved.version);
+   assert.equal(result.outcome,'OBSERVED',provider);
+   const run=await db.connectorRun.findFirstOrThrow({where:{connectorId:saved.id}});assert.equal((await exportConnectorRun(f.o,run.id)).currentAtExport,true);
+   await assert.rejects(exportConnectorRun(f.out,run.id),rejects(404));
+  }
+ }finally{globalThis.fetch=original;await f.cleanup();}
+});

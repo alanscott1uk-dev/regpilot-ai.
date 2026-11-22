@@ -17,7 +17,7 @@ async function main(){
  }));
  const accepted=runs.flatMap(r=>r.status==='fulfilled'?[r.value]:[]);
  await writeFile('live-pharma-registers.json',JSON.stringify({accepted,scope:'Acceptance reads from the public APIs. Interval-qualified monitoring is tracked separately.'},null,2));
- const failures=runs.flatMap((r,i)=>r.status==='rejected'?[referenceRegisters[i].provider+': '+String(r.reason)]:[]);
+ const failures=runs.flatMap((r,i)=>r.status==='rejected'?[referenceRegisters[i].provider+': '+String(r.reason?.code??r.reason)]:[]);
  if(failures.length)throw Error(failures.join('\n'));
 }
 main().catch(e=>{console.error(e.message);process.exitCode=1;});
