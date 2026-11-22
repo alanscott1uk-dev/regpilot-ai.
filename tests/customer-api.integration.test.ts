@@ -12,7 +12,7 @@ import {db} from '../lib/server/db';
 import {assuranceFixture,rejects,future} from './helpers/assurance-fixture';
 import {CUSTOMER_API_SCOPES,type CustomerApiScope} from '../lib/customer-api';
 import {authenticateCustomerApi,secretHash,type CustomerApiSession} from '../lib/server/customer-api-auth';
-import {createCustomerCredential,changeCustomerCredential,developerWorkspace,groupObservationFollowUps,listCustomerApiResource,submitCustomerApiObservation,reviewCustomerApiObservation} from '../lib/server/customer-api-service';
+import {searchPartnerReports,createCustomerCredential,changeCustomerCredential,developerWorkspace,groupObservationFollowUps,listCustomerApiResource,submitCustomerApiObservation,reviewCustomerApiObservation} from '../lib/server/customer-api-service';
 import {hashValue} from '../lib/regulatory/intelligence';
 import {GET as getControls} from '../app/api/v1/controls/route';
 import {GET as getObservations,POST as postObservation} from '../app/api/v1/observations/route';
@@ -142,6 +142,10 @@ test('partner receipts retain revision history through credential rotation, retr
   assert.equal(first.current,true);assert.equal(first.reportedOutcome,'REPORTED_PASS');assert.match(first.receiptHash,/^[a-f0-9]{64}$/);
   await assert.rejects(()=>reviewCustomerApiObservation(x.o,first.id,{decision:'ACKNOWLEDGE',version:1,notes,confirm:true,requestKey:randomUUID()}),rejects(403));
   await reviewCustomerApiObservation(x.ad,first.id,{decision:'ACKNOWLEDGE',version:1,notes,confirm:true,requestKey:randomUUID()});
+  const lookup=(ctx:typeof x.o)=>db.$transaction(tx=>searchPartnerReports(tx,ctx,'tier two supply chain','primary'));
+  const matched=await lookup(x.o);assert.equal(matched[0].id,first.id);assert.equal(matched[0].receiptHash,first.receiptHash);
+  assert.ok(!JSON.stringify(matched).includes(x.foreign.email));assert.deepEqual(await lookup(x.out),[]);
+  await assert.rejects(()=>lookup(x.ed),rejects(403));
   const file=await x.file(),room=await createAuditRoom(x.o,{title:'Buyer fixture share',purpose:'Validate explicitly consented partner source records in this named room.',expiresAt:new Date(Date.now()+86400000).toISOString(),evidenceIds:[file.id]});
   await changeAuditRoom(x.o,room.id,{action:'PUBLISH',version:1,manifestHash:room.manifestHash,acknowledgeDisclosure:true});
   const g=await changeAuditRoom(x.o,room.id,{action:'INVITE',version:2,email:x.foreign.email}) as {id:string},wrong=await changeAuditRoom(x.o,room.id,{action:'INVITE',version:2,email:x.staff.email}) as {id:string};
@@ -160,6 +164,7 @@ test('partner receipts retain revision history through credential rotation, retr
   const attempts=await Promise.all([submitCustomerApiObservation(active,randomUUID(),next),submitCustomerApiObservation(active,randomUUID(),next)]);
   assert.equal(attempts[0].id,attempts[1].id);assert.equal(attempts[0].current,false);
   assert.equal((await openAuditRoom(b,g.id)).partnerRecords.length,0);
+  assert.deepEqual(await lookup(x.o),[]);
   const list=await developerWorkspace(x.o,{all:true});assert.match(list.observations.find(v=>v.id===first.id)!.reason,/superseded/);
   assert.match(list.observations.find(v=>v.id===attempts[0].id)!.reason,/disputed/);
   await assert.rejects(()=>reviewCustomerApiObservation(x.ad,first.id,{decision:'ACKNOWLEDGE',notes,version:1,requestKey:randomUUID(),confirm:true}),rejects(409));
@@ -231,6 +236,10 @@ test('group follow-up is atomic across controls, survives retries and links a ca
   assert.notEqual(done.reused,replay.reused);assert.equal(await count(),2);
   const rows=(await developerWorkspace(x.o,{all:true})).observations;
   const taskId=rows.find(r=>r.id===first.id)!.followUpTaskId!;
+  const bySite=(site:string)=>db.$transaction(tx=>searchPartnerReports(tx,x.ad,'temperature food hazard',site));
+  const reports=await bySite('site1');assert.equal(reports.length,2);assert.ok(reports.every(r=>r.taskId===taskId&&r.outcome==='REPORTED_FAILURE'));
+  assert.match(reports.find(r=>r.id===first.id)!.summary,/10 °C/);
+  assert.deepEqual(await bySite('site10'),[]);
   assert.equal(rows.find(r=>r.id===second.id)!.followUpTaskId,taskId);assert.notEqual(rows.find(r=>r.id===third.id)!.followUpTaskId,taskId);
   assert.deepEqual((await workTask(x.o,taskId)).integrationReceipts.map(r=>r.id).sort(),[first.id,second.id].sort());assert.deepEqual((await workTask(x.st,taskId)).integrationReceipts,[]);
   await assert.rejects(()=>groupObservationFollowUps(x.ad,{...input,notes:notes+' Revised.'}),rejects(409));

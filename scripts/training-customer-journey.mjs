@@ -88,6 +88,13 @@ export async function trainingCustomerJourney({qualityCaseId,upload,review,db,ap
  assert.equal(incident.receipt.training.outcome,'PASSED');assert.equal(incident.receipt.training.publishedRevision,1);
  const afterRevision=await captureAssignment(current.id,incident.key);
  assert.equal(afterRevision.receipt.training.outcome,'NO_DECISION');assert.equal(afterRevision.receipt.training.publishedRevision,2);
+ await panel.locator('summary').filter({hasText:'Incident ·'}).first().click();
+ await panel.getByLabel('Reason for retraining',{exact:true}).fill('Complete revision two as corrective training for this incident.');
+ const issuedResponse=review.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/api/workspace/quality');
+ await panel.getByRole('button',{name:'Assign retraining',exact:true}).click();
+ const issued=await issuedResponse,issuedBody=await issued.json();assert.equal(issued.status(),200,issuedBody.error);
+ assert.equal(issuedBody.training.issuedFromCase,true);assert.equal(issuedBody.training.assignmentId,current.id);
+ await panel.locator('summary').filter({hasText:'Retraining ·'}).nth(1).waitFor();
  const [inspection]=await Promise.all([review.waitForEvent('download'),review.getByRole('button',{name:'Download inspection summary',exact:true}).click()]);
  const summary=await readFile(await inspection.path(),'utf8');
  assert.ok(summary.includes(incident.key)&&summary.includes(original.sha256)&&summary.includes(revised.sha256)&&summary.includes(evidenceId));

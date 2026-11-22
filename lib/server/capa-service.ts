@@ -1,5 +1,5 @@
 import {qualityTrainingInput,trainingFindingSchema,type CaseTrainingRecord} from '../quality-training';
-import {trainingAtTime} from './training-service';
+import {trainingAtTime,issueCaseRetraining} from './training-service';
 import {Prisma,type QualityCase,type QualityEffectiveness} from '@prisma/client';
 import {z} from 'zod';
 import {db} from './db';
@@ -69,22 +69,29 @@ export async function linkQualityTraining(ctx:AuthorizedContext,id:string,input:
   const row=await record(tx,ctx,id),prior=await replay(tx,ctx,data.requestKey,'LINK_TRAINING',id,hash);
   if(prior)return prior;
   unchanged(row,data.version);
-  const asOf=data.purpose==='INCIDENT'?new Date(data.asOf):new Date();
+  let asOf=data.purpose==='INCIDENT'?new Date(data.asOf):new Date();
   if(asOf>new Date()||data.purpose==='INCIDENT'&&asOf.toISOString().slice(0,10)!==row.occurredAt.toISOString().slice(0,10))
    throw new IntelligenceError('Choose a past UTC time on the recorded occurrence date');
   const records=await qualityTrainingRecords(tx,ctx,id);
   if(records.length>=100)throw new IntelligenceError('This case has reached its 100 training record limit',409);
-  const facts=await trainingAtTime(tx,ctx,data.assignmentId,asOf);
-  if(data.purpose==='RETRAINING'){
-   const parent=records.find(entry=>entry.key===data.incidentKey&&entry.cycle===row.cycle&&entry.finding.purpose==='INCIDENT');
-   if(!parent||parent.finding.learnerId!==facts.learnerId||parent.finding.policyId!==facts.policyId||
-    facts.assignmentId===parent.finding.assignmentId||facts.assignedAt<=parent.finding.asOf)
+  const parent=data.purpose==='INCIDENT'?null:records.find(entry=>entry.key===data.incidentKey&&entry.cycle===row.cycle&&entry.finding.purpose==='INCIDENT');
+  if(data.purpose!=='INCIDENT'&&!parent)throw new IntelligenceError('Choose an incident record from this investigation cycle',409);
+  let assignmentId:string;
+  if(data.purpose==='ISSUE_RETRAINING'){
+   if(records.some(entry=>entry.finding.issuedFromCase&&entry.finding.incidentKey===data.incidentKey))throw new IntelligenceError('Retraining has already been issued for this incident record',409);
+   assignmentId=await issueCaseRetraining(tx,ctx,parent!.finding.assignmentId,parent!.finding.asOf,id);
+   asOf=new Date();
+  }else assignmentId=data.assignmentId;
+  const facts=await trainingAtTime(tx,ctx,assignmentId,asOf);
+  if(data.purpose!=='INCIDENT'&&(parent!.finding.learnerId!==facts.learnerId||parent!.finding.policyId!==facts.policyId||
+    facts.assignmentId===parent!.finding.assignmentId||facts.assignedAt<=parent!.finding.asOf))
     throw new IntelligenceError('Choose a later assignment for the same operator and procedure as the incident record',409);
-  }
   await supersede(tx,ctx,id);
   const saved=await tx.qualityCase.update({where:{id,organizationId:ctx.organizationId},data:{version:{increment:1},
    ...(row.status==='EFFECTIVENESS_DUE'?{status:'ACTIONS_OPEN'}:{})}});
-  const training={...facts,purpose:data.purpose,asOf:asOf.toISOString(),incidentKey:data.purpose==='RETRAINING'?data.incidentKey:null,notes:data.notes};
+  const training={...facts,purpose:data.purpose==='ISSUE_RETRAINING'?'RETRAINING' as const:data.purpose,
+   ...(data.purpose==='ISSUE_RETRAINING'?{issuedFromCase:true}:{}),asOf:asOf.toISOString(),
+   incidentKey:data.purpose==='INCIDENT'?null:data.incidentKey,notes:data.notes};
   await event(tx,ctx,'training_linked',id,{cycle:row.cycle,purpose:data.purpose,version:saved.version});
   return remember(tx,ctx,data.requestKey,'LINK_TRAINING',hash,{...result(saved),training});
  });

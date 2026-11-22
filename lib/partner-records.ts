@@ -60,3 +60,25 @@ export function partnerOutcome(record:PartnerRecord,observedAt:string):'PASS'|'F
   case 'FOOD_HAZARD':return r.result==='CONTROLLED'?'PASS':r.result==='DEVIATION'?'FAIL':'UNKNOWN';
  }
 }
+
+export const partnerTopics:Record<PartnerRecord['record']['kind'],string>={
+ SUPPLIER_RELATION:'tier two supply chain dependency fourth party',
+ SUPPLIER_ASSESSMENT:'supplier security ESG sustainability assessment',
+ MODEL_CHANGE:'AI model vendor inventory approval model change',
+ SPECIALIST_ATTESTATION:'privacy ethics resilience specialist attestation',
+ PRODUCT_EVENT:'product batch release device change registration',
+ CALIBRATED_READING:'temperature humidity sensor calibration excursion',
+ FOOD_HAZARD:'food safety allergen hazard corrective action'
+};
+
+export function partnerFinding(record:PartnerRecord['record']){
+ switch(record.kind){
+  case 'CALIBRATED_READING':return `${record.sensorRef} at ${record.siteRef}: ${record.reading} ${record.unit==='CELSIUS'?'°C':'% RH'} (limits ${record.minimum}–${record.maximum}). Calibration ${record.calibrationRef}.`;
+  case 'FOOD_HAZARD':return `${record.hazardRef} at ${record.siteRef}: ${record.result}. Corrective action ${record.correctiveActionRef??'unrecorded'}.`;
+  case 'PRODUCT_EVENT':return `${record.productRef}: ${record.event} · ${record.decision} · Decision ${record.decisionRef}.`;
+  case 'MODEL_CHANGE':return `${record.systemRef} uses ${record.vendorRef} / ${record.modelRef} ${record.modelVersion}. Approval: ${record.approval}.`;
+  case 'SPECIALIST_ATTESTATION':return `${record.subject} · ${record.scopeRef}: ${record.decision} · Decision ${record.decisionRef}.`;
+  case 'SUPPLIER_RELATION':return `${record.buyerRef} sources from ${record.supplierRef}, which names ${record.upstreamRef} upstream.`;
+  case 'SUPPLIER_ASSESSMENT':return `${record.supplierRef} · ${record.assessment} assessment ${record.assessmentRef}: ${record.result}.`;
+ }
+}

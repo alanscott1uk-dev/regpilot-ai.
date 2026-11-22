@@ -90,6 +90,33 @@ async function submissionBasis(tx:Tx,ctx:AuthorizedContext,row:Assignment,eviden
 }
 function submissionHash(row:TrainingAttempt){return hashValue({id:row.id,organizationId:row.organizationId,assignmentId:row.assignmentId,learnerId:row.learnerId,requestKey:row.requestKey,observedAt:row.observedAt.toISOString().slice(0,10),statement:row.statement,evidence:row.evidenceManifest,answers:row.quizAnswers,quizScore:row.quizScore,quizPassed:row.quizPassed,contextHash:row.contextHash});}
 function decisionHash(row:TrainingAttempt){return hashValue({id:row.id,submissionHash:row.submissionHash,status:row.status,reviewerId:row.reviewerId,reviewNotes:row.reviewNotes,criteria:row.criterionResults,reviewedAt:row.reviewedAt?.toISOString()});}
+export async function issueCaseRetraining(tx:Tx,ctx:AuthorizedContext,incidentAssignmentId:string,incidentAt:string,caseId:string){
+ await requireMember(tx,ctx,ADMIN);
+ const incident=await assignment(tx,ctx,incidentAssignmentId);
+ const requirement=incident.requirement,enrollment=incident.enrollment;
+ const latest=await tx.trainingAssignment.findFirst({where:{
+  organizationId:ctx.organizationId,enrollmentId:enrollment.id,enrollmentVersion:enrollment.version,
+  requirementId:requirement.id,requirementVersion:requirement.version,revisionId:requirement.preparedRevisionId,
+  learnerId:incident.learnerId
+ },orderBy:{cycle:'desc'},include:assignmentInclude});
+ if(!latest||latest.revision.status!=='PUBLISHED')throw new IntelligenceError('Confirm the current published procedure and training requirement before assigning retraining',409);
+ const state=await baseState(tx,ctx,latest);
+ if(state.blockers.length)throw new IntelligenceError(state.blockers[0],409);
+ // Reuse outstanding work issued after the incident, including work created by an SOP change.
+ if(latest.id!==incident.id&&latest.createdAt.toISOString()>incidentAt&&['ASSIGNED','SUBMITTED','RETRAIN'].includes(latest.status))return latest.id;
+ if(latest.cycle>=50)throw new IntelligenceError('The procedure has reached its training renewal limit',409);
+ const dueAt=new Date();dueAt.setUTCDate(dueAt.getUTCDate()+requirement.dueDays);
+ await tx.trainingAttempt.updateMany({where:{organizationId:ctx.organizationId,assignmentId:latest.id,status:'PENDING'},data:{status:'SUPERSEDED',version:{increment:1}}});
+ await tx.trainingAssignment.update({where:{id:latest.id,organizationId:ctx.organizationId},data:{status:'SUPERSEDED',version:{increment:1}}});
+ const next=await tx.trainingAssignment.create({data:{
+  organizationId:ctx.organizationId,curriculumId:latest.curriculumId,requirementId:requirement.id,enrollmentId:enrollment.id,
+  learnerId:latest.learnerId,revisionId:latest.revisionId,releaseId:latest.releaseId,cycle:latest.cycle+1,dueAt,
+  requirementVersion:latest.requirementVersion,enrollmentVersion:latest.enrollmentVersion,
+  requirementSnapshot:json(savedRequirement(latest)),requirementHash:latest.requirementHash
+ }});
+ await event(tx,ctx,'assigned',next.id,{reason:'QUALITY_CASE',caseId,revisionId:next.revisionId,cycle:next.cycle},'TrainingAssignment');
+ return next.id;
+}
 /** Reconstruct dated facts for this exact assignment without treating today's status as historical authority. */
 export async function trainingAtTime(tx:Tx,ctx:AuthorizedContext,id:string,asOf:Date){
  await requireMember(tx,ctx,ADMIN);

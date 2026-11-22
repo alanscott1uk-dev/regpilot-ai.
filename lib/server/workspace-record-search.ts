@@ -62,6 +62,8 @@ export async function searchWorkspaceRecords(tx:Prisma.TransactionClient,org:str
   SELECT *,setweight(to_tsvector('english',title),'A')||setweight(to_tsvector('english',kind),'B')||to_tsvector('english',detail) AS words FROM records
  ), matched AS (
   SELECT indexed.*,ts_rank(words,q) AS score FROM indexed CROSS JOIN to_tsquery('english',${query}) AS q WHERE words @@ q
+   AND (${siteFilter}='' OR kind IN ('Supplier','Quality case','Pending handover') OR
+    position((' '||${siteFilter}||' ') in (' '||regexp_replace(lower(concat_ws(' ',title,detail)),'[^[:alnum:]]+',' ','g')||' '))>0)
  ), grouped AS (
   SELECT *,row_number() OVER(PARTITION BY kind ORDER BY score DESC,title,id) AS position FROM matched
  )

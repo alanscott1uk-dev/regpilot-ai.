@@ -1,3 +1,4 @@
+import {searchPartnerReports} from './customer-api-service';
 import {researchRequirements} from './requirement-research';
 import {supplierResearch} from "./vendor-service";
 import {connectionEvidence} from "./connector-health-service";
@@ -254,12 +255,13 @@ export async function researchWorkspaceQuestion(c:AuthorizedContext,input:unknow
     policies.set(id,{title:revision.policy.title,number:revision.number});
    }
   }
+  const partnerReports=productId?[]:await searchPartnerReports(tx,c,question,asset);
   const records=productId?[]:await searchWorkspaceRecords(tx,c.organizationId,question,asset);
   const requirements=await researchRequirements(tx,c,question,{asset,productId,nation});
   const passages=supportingPassages(question,asset,current.chunks,policies);
   const connections=productId?[]:relevantConnections(question,asset,(await connectionEvidence(tx,c.organizationId,true)).items);
   const suppliers=await supplierResearch(tx,c,records.filter(r=>r.kind==="Supplier").map(r=>r.id),asset);
   const clarifications=operatorQuestions(question,asset,!!passages.procedures.length,!!passages.evidence.length,connections);
-  return {organizationId:c.organizationId,productId,asset,question,nation:nation||null,records,documents:current.documents,official,connections,suppliers,requirements,clarifications,...passages};
+  return {organizationId:c.organizationId,productId,asset,question,nation:nation||null,records,partnerReports,documents:current.documents,official,connections,suppliers,requirements,clarifications,...passages};
  });
 }

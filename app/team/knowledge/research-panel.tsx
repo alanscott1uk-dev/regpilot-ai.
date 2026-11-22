@@ -10,7 +10,11 @@ type Passage=Result['evidence'][number];
 function Citations({hits,empty,organizationId}:{hits:Passage[];empty:string;organizationId:string}){
  return hits.length?<ul>{hits.map(hit=><li key={hit.evidenceId}><strong>{hit.policy?hit.policy.title+' · revision '+hit.policy.number:hit.filename}</strong>{hit.policy&&hit.namedAsset===false&&<span> · site applicability needs confirmation</span>}<details><summary>{hit.filename} · {hit.unitKind} {hit.unit} · view passage</summary><blockquote>{hit.quote}</blockquote><small>Characters {hit.start}–{hit.end}</small><p><a href={workspaceHref('/team/evidence',organizationId,{evidenceId:hit.evidenceId})}>Open reviewed file</a></p></details></li>)}</ul>:<p>{empty}</p>;
 }
-export function ResearchPanel({workspace,productId,scopeName}:{workspace:ReturnType<typeof useWorkspaceContext>;productId:string;scopeName:string}){
+type ResearchProps={workspace:ReturnType<typeof useWorkspaceContext>;productId:string;scopeName:string};
+export function ResearchPanel(props:ResearchProps){
+ return <ScopedResearch key={props.workspace.revision+':'+props.workspace.organizationId+':'+props.productId} {...props}/>;
+}
+function ScopedResearch({workspace,productId,scopeName}:ResearchProps){
  const [question,setQuestion]=useState(''),[nation,setNation]=useState(''),[asset,setAsset]=useState(''),[result,setResult]=useState<Result|null>(null);
  const [busy,setBusy]=useState(false),[error,setError]=useState('');
  const pending=useRef<AbortController|null>(null);
@@ -55,6 +59,14 @@ export function ResearchPanel({workspace,productId,scopeName}:{workspace:ReturnT
     {c.findings.length>0&&<details><summary>Provider checks ({c.findings.length} of {c.checksSeen})</summary>{c.findings.map(f=><p key={f.id}><strong>{f.label}</strong> · {f.status} · {f.observed} {f.sourceUrl&&<a href={f.sourceUrl} rel="noreferrer">Source record</a>}</p>)}</details>}
     {c.openTasks.map(t=><p key={t.id}><a href={workspaceHref("/team/work",result.organizationId,{taskId:t.id})}>{t.title}</a> · {t.ownerName}</p>)}
   </li>)}</ul></>}
+  {!!result.partnerReports?.length&&<section><h3>Reviewed partner reports</h3>{result.partnerReports.map(r=><article key={r.id}>
+   <h4><a href={workspaceHref('/team/developers',result.organizationId,{observationId:r.id})}>{r.kind} · {r.recordId}</a></h4>
+   <p>{r.summary}</p><p>{r.outcome?.replaceAll('_',' ').toLowerCase()} · Reported by {r.source} · Responsible party {r.owner}</p>
+   <details><summary>Source and review dates</summary><p>Observed {r.observedAt} · Reviewed {r.reviewedAt} · Valid until {r.validUntil}</p>
+    <p>Source version {r.sourceVersion} · Report revision {r.revision} · Receipt {r.receiptHash}</p>
+    {r.sourceUrl&&<a href={r.sourceUrl} rel="noreferrer">Open source record</a>}</details>
+   {r.taskId&&<a href={workspaceHref('/team/work',result.organizationId,{taskId:r.taskId})}>Open follow-up task</a>}
+  </article>)}</section>}
   {result.suppliers.length>0&&<><h3>Supplier reviews and public records</h3>{result.suppliers.map(s=><div key={s.id}>
     <p><a href={workspaceHref("/team/vendors",result.organizationId,{vendorId:s.id})}>{s.name}</a>{s.premises&&<> · {s.activity} at {s.premises}</>}</p>
     <p>{s.number&&<>UK WDA(H) {s.number} · </>}{s.reviewState.replaceAll("_"," ")}{s.recommendation?" · "+s.recommendation:""} · Owner {s.owner}</p>

@@ -28,7 +28,8 @@ test('paired process comparisons stop the server timer, bind the timing evidence
    environment:'PARTNER_SANDBOX',ukExternal:true,intendedUse:'Compare unaided recovery from a failed connection.'};
   const {id}=await recordTrial(f.ed,plan);
   const finish={action:'FINISH',id,results:[{step:'help',outcome:'PASS',notes:'Recovered using the approved support guide.',evidenceId:file.id,unsupported:0,edits:1,assisted:false}],
-   comparison:{method:'Existing support process',elapsedSeconds:210,edits:3,evidenceId:baseline.id,sameTasks:true}};
+   comparison:{productId:'S001',method:'Vanta pilot support configuration',elapsedSeconds:210,edits:3,evidenceId:baseline.id,sameTasks:true}};
+  await assert.rejects(()=>recordTrial(f.ed,{...finish,comparison:{...finish.comparison,productId:'no-such-product'}},f.store));
   await assert.rejects(()=>recordTrial(f.ed,finish,f.store),rejects(409));
   await assert.rejects(()=>recordTrial(f.ad,{action:'STOP',id}),rejects(403));
   await Promise.all([recordTrial(f.ed,{action:'STOP',id}),recordTrial(f.ed,{action:'STOP',id})]);

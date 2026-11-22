@@ -82,6 +82,17 @@ test('quality inspection freezes the exact assignment and assessed decision at i
   assert.equal(first.training?.assessorId,f.reviewer.userId);assert.equal(first.training?.evidence[0].id,d.proof.id);
   await assert.rejects(()=>linkQualityTraining(f.owner,created.id,{...posted,notes:'Different inspection rationale for the same request.'}),status(409));
   await assert.rejects(()=>linkQualityTraining(f.owner,created.id,{requestKey:randomUUID(),purpose:'RETRAINING',incidentKey:input.requestKey,assignmentId:d.assignment.id,version:first.caseVersion,notes}),status(409));
+  const order={purpose:'ISSUE_RETRAINING',requestKey:randomUUID(),version:first.caseVersion,incidentKey:input.requestKey,notes};
+  await assert.rejects(()=>linkQualityTraining(f.learner,created.id,order),status(403));
+  const issued=await linkQualityTraining(f.owner,created.id,order);
+  assert.equal(issued.training?.issuedFromCase,true);assert.equal(issued.training?.outcome,'NO_DECISION');
+  assert.equal((await linkQualityTraining(f.owner,created.id,order)).reused,true);
+  const task=await db.trainingAssignment.findUniqueOrThrow({where:{id:issued.training!.assignmentId}});
+  assert.equal(task.cycle,d.assignment.cycle+1);assert.equal(task.learnerId,d.assignment.learnerId);
+  assert.equal(task.status,'ASSIGNED');assert.equal(task.revisionId,d.assignment.revisionId);
+  assert.equal((await trainingWorkspace(f.learner,{trainingId:task.id})).selected?.qualified,false);
+  assert.equal((await trainingWorkspace(f.learner,{trainingId:d.assignment.id})).selected?.qualified,false);
+  await assert.rejects(()=>linkQualityTraining(f.owner,created.id,{...order,requestKey:randomUUID(),version:issued.caseVersion}),status(409));
   const privateReport=await exportQualityCase(f.owner,created.id),summary=qualityInspectionText(privateReport);
   assert.ok(summary.includes(first.training!.procedureSha256)&&summary.includes(d.proof.id)&&summary.includes(cut.toISOString()));
   const limited=await exportQualityCase(f.viewer,created.id);

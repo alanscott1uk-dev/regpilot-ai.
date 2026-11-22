@@ -1,5 +1,6 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
+import {benchmarkProducts,benchmarkProductById} from '../../../lib/benchmark-products';
 import WorkspaceNav from '../../components/workspace-nav';
 import EmailSignIn from '../../components/email-sign-in';
 import {useWorkspaceContext} from '../../../lib/client/workspace-context';
@@ -44,22 +45,28 @@ function Trials({w}:{w:Workspace}){
  {view?.canManage&&<Coverage view={view}/>}
  {view?.trials.length===0&&<p>No recorded runs in this workspace.</p>}{view?.trials.map(t=><Run key={t.id} t={t} view={view} busy={busy} save={save}/>)}{view?.limited&&<button type="button" disabled={busy} onClick={()=>void older()}>Load earlier trials</button>}</>;
 }
+function ComparatorOptions(){
+ return <>{[...new Set(benchmarkProducts.map(p=>p.category))].map(category=><optgroup key={category} label={category}>
+  {benchmarkProducts.filter(p=>p.category===category).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+ </optgroup>)}</>;
+}
 function Run({t,view,busy,save}:{t:Trial;view:View;busy:boolean;save:(d:Record<string,unknown>)=>Promise<void>}){
  const [outcomes,choose]=useState<Record<string,string>>({});
  const [compare,setCompare]=useState(false);
  return <article className={ui.card}><h2>{trialTracks[t.track].title}</h2><p>{envText[t.environment]} · {t.release.slice(0,10)} · {new Date(t.startedAt).toLocaleString('en-GB')}</p><p>{t.intendedUse}</p>
  {t.canFinish&&!t.stoppedAt&&<button disabled={busy} onClick={()=>void save({action:'STOP',id:t.id})}>Task complete · stop timer</button>}
  {t.canFinish&&t.stoppedAt&&<p>Timer stopped at {new Date(t.stoppedAt).toLocaleTimeString('en-GB')}. Enter the observed results below.</p>}
- {t.canFinish&&<form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void save({action:'FINISH',id:t.id,...(compare?{comparison:{method:f.get('method'),elapsedSeconds:Number(f.get('seconds')),edits:Number(f.get('baselineEdits')),evidenceId:f.get('baselineEvidence'),sameTasks:true}}:{}),results:t.steps.map(step=>({step,outcome:outcomes[step]||'UNOBSERVED',notes:f.get(step+'-notes'),evidenceId:f.get(step+'-file')||null,unsupported:Number(f.get(step+'-claims')),edits:Number(f.get(step+'-edits')),assisted:f.get(step+'-assist')==='on'}))});}}><fieldset disabled={busy}><legend>Record observed results</legend>{t.steps.map(step=><section key={step}><h3>{moduleFor(step).title}</h3><label>Result<select value={outcomes[step]||'UNOBSERVED'} onChange={e=>choose({...outcomes,[step]:e.target.value})}><option>UNOBSERVED</option><option>PASS</option><option>FAIL</option></select></label><label>Observed result and source references<textarea name={step+'-notes'} required minLength={10} maxLength={600}/></label><label>Reviewed evidence<select name={step+'-file'} required={outcomes[step]==='PASS'}><option value="">Choose a file</option>{view.evidence.map(e=><option key={e.id} value={e.id}>{e.filename}</option>)}</select></label><label>Unsupported claims<input name={step+'-claims'} type="number" min="0" max="1000" defaultValue="0"/></label><label>Reviewer edits<input name={step+'-edits'} type="number" min="0" max="1000" defaultValue="0"/></label><label><input type="checkbox" name={step+'-assist'}/> Human assistance was needed</label></section>)}<label><input type="checkbox" disabled={!t.stoppedAt} checked={compare} onChange={e=>setCompare(e.target.checked)}/> Compare the same tasks with the participant’s existing process</label>
+ {t.canFinish&&<form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void save({action:'FINISH',id:t.id,...(compare?{comparison:{...(f.get('productId')?{productId:f.get('productId')}:{}),method:f.get('method'),elapsedSeconds:Number(f.get('seconds')),edits:Number(f.get('baselineEdits')),evidenceId:f.get('baselineEvidence'),sameTasks:true}}:{}),results:t.steps.map(step=>({step,outcome:outcomes[step]||'UNOBSERVED',notes:f.get(step+'-notes'),evidenceId:f.get(step+'-file')||null,unsupported:Number(f.get(step+'-claims')),edits:Number(f.get(step+'-edits')),assisted:f.get(step+'-assist')==='on'}))});}}><fieldset disabled={busy}><legend>Record observed results</legend>{t.steps.map(step=><section key={step}><h3>{moduleFor(step).title}</h3><label>Result<select value={outcomes[step]||'UNOBSERVED'} onChange={e=>choose({...outcomes,[step]:e.target.value})}><option>UNOBSERVED</option><option>PASS</option><option>FAIL</option></select></label><label>Observed result and source references<textarea name={step+'-notes'} required minLength={10} maxLength={600}/></label><label>Reviewed evidence<select name={step+'-file'} required={outcomes[step]==='PASS'}><option value="">Choose a file</option>{view.evidence.map(e=><option key={e.id} value={e.id}>{e.filename}</option>)}</select></label><label>Unsupported claims<input name={step+'-claims'} type="number" min="0" max="1000" defaultValue="0"/></label><label>Reviewer edits<input name={step+'-edits'} type="number" min="0" max="1000" defaultValue="0"/></label><label><input type="checkbox" name={step+'-assist'}/> Human assistance was needed</label></section>)}<label><input type="checkbox" disabled={!t.stoppedAt} checked={compare} onChange={e=>setCompare(e.target.checked)}/> Compare the same tasks with the participant’s existing process</label>
  {compare&&<fieldset><legend>Existing process measurement</legend>
-  <label>Process or tool<input name="method" minLength={3} maxLength={120} required/></label>
+  <label>Product or service tested<select name="productId" aria-label="Product or service tested"><option value="">Existing process or other tool</option><ComparatorOptions/></select></label>
+  <label>Tested process, edition or configuration<input name="method" minLength={3} maxLength={120} required/></label>
   <label>Elapsed seconds<input name="seconds" type="number" min={1} max={2592000} required/></label>
   <label>Corrections across the selected tasks<input name="baselineEdits" type="number" min={0} max={6000} required/></label>
   <label>Reviewed timing and correction record<select name="baselineEvidence" required><option value="">Choose a file</option>{view.evidence.map(e=><option key={e.id} value={e.id}>{e.filename}</option>)}</select></label>
   <label><input type="checkbox" required/> I checked that the record covers the same tasks and scope.</label>
  </fieldset>}<button>{t.stoppedAt?'Save observed results':'Finish run and stop timer'}</button></fieldset></form>}
  {t.elapsedSeconds!==null&&<><p>{t.elapsedSeconds} seconds · {t.reviewCount} of {t.required} independent decisions · {t.current?'Evidence current':'Evidence needs review'}</p>{t.results.map(r=><p key={r.step}><strong>{r.outcome} · {moduleFor(r.step).id}</strong> {r.notes} · {r.unsupported} unsupported claims · {r.edits} edits · {r.assisted?'assisted':'unaided'} {r.evidenceId&&<a href={'/team/evidence?'+new URLSearchParams({organizationId:view.organizationId,evidenceId:r.evidenceId})}>Review exact supporting file</a>}</p>)}{t.reviewDecisions.length>0&&<p>Recorded decisions {t.reviewDecisions.join(', ')}</p>}</>}
- {t.comparison&&t.elapsedSeconds!==null&&<section><h3>Same-task comparison</h3>
+ {t.comparison&&t.elapsedSeconds!==null&&<section><h3>Same-task comparison</h3>{t.comparison.productId&&<p>{benchmarkProductById.get(t.comparison.productId)?.name}</p>}
   <p>{t.comparison.method} took {t.comparison.elapsedSeconds} seconds and required {t.comparison.edits} corrections. RegPilot took {t.elapsedSeconds} seconds and required {t.results.reduce((n,r)=>n+r.edits,0)} corrections.</p>
   <p>{t.accepted?'Independently accepted':t.current?(t.reviewCount>=t.required?'Review rejected':'Awaiting independent review'):'Evidence needs review'} · <a href={'/team/evidence?'+new URLSearchParams({organizationId:view.organizationId,evidenceId:t.comparison.evidenceId})}>Open original timing record</a></p>
  </section>}
@@ -67,13 +74,16 @@ function Run({t,view,busy,save}:{t:Trial;view:View;busy:boolean;save:(d:Record<s
 }
 
 function Coverage({view}:{view:View}){
- const [release,setRelease]=useState('');
+ const [release,setRelease]=useState(''),[productId,chooseProduct]=useState('');
+ const product=benchmarkProductById.get(productId);
  const releases=[...new Set(view.trials.map(t=>t.release))],current=releases.includes(release)?release:releases[0];
  return <details className={ui.card}><summary>Evidence against the 22 workbook criteria</summary>
  {current&&<label>Release under review<select value={current} onChange={e=>setRelease(e.target.value)}>{releases.map(r=><option key={r}>{r}</option>)}</select></label>}
+ <label>Comparison baseline<select aria-label="Comparison baseline" value={productId} onChange={e=>chooseProduct(e.target.value)}><option value="">All eligible trials</option><ComparatorOptions/></select></label>
+ {product&&<p>{product.name} · {product.category} · <a href={product.source} rel="noreferrer">Workbook source</a></p>}
  <table><thead><tr><th>Criterion</th><th>Accepted external participants</th><th>Observed failures</th><th>Evidence status</th></tr></thead><tbody>{Object.values(trialTracks).flatMap(t=>t.steps).sort((a,b)=>a.row-b.row).map(s=>{
-  const runs=view.trials.filter(t=>t.release===current&&t.steps.includes(s.id)&&t.ukExternal&&t.environment!=='FIXTURE'&&(s.id!=='hosted'||t.environment==='PROTECTED_PILOT'));
-  const people=new Set(runs.filter(t=>t.accepted&&t.results.some(r=>r.step===s.id&&r.outcome==='PASS'&&(s.id!=='help'||!r.assisted))).map(t=>t.participantId)),failed=runs.filter(t=>t.current&&t.results.some(r=>r.step===s.id&&r.outcome==='FAIL')).length,needed=['onboard','help'].includes(s.id)?5:1;
+  const runs=view.trials.filter(t=>t.release===current&&(!productId||t.comparison?.productId===productId)&&t.steps.includes(s.id)&&t.ukExternal&&t.environment!=='FIXTURE'&&(s.id!=='hosted'||t.environment==='PROTECTED_PILOT'));
+  const people=new Set(runs.filter(t=>t.accepted&&t.results.some(r=>r.step===s.id&&r.outcome==='PASS'&&(!['onboard','help'].includes(s.id)||!r.assisted)&&(s.id!=='answer'||r.unsupported===0))).map(t=>t.participantId)),failed=runs.filter(t=>t.current&&t.results.some(r=>r.step===s.id&&r.outcome==='FAIL')).length,needed=['onboard','help'].includes(s.id)?5:1;
   return <tr key={s.row}><td>{s.row} · {s.title}</td><td>{people.size} / {needed}</td><td>{failed}</td><td>{failed?'Failure recorded':view.limited?'History incomplete':people.size>=needed?'Evidence for assessment':people.size?'Partial evidence':'Awaiting evidence'}</td></tr>;
  })}</tbody></table>{view.limited&&<p>Earlier trials are available. Load them to include older evidence and failures.</p>}</details>;
 }

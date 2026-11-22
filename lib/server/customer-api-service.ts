@@ -1,4 +1,6 @@
-import {partnerValidity} from '../partner-records';
+import {scopeWords} from '../operator-answer';
+import {searchTerms} from '../retrieval/bm25';
+import {partnerTopics,partnerFinding,partnerLabels,partnerValidity} from '../partner-records';
 import {Prisma,type CustomerApiObservation} from '@prisma/client';
 import {z} from 'zod';
 import {CUSTOMER_API_LIMITS,CUSTOMER_API_SCOPES,CUSTOMER_API_VERSION,createCustomerCredentialInput,changeCustomerCredentialInput,groupFollowUpInput,customerObservationInput,reviewCustomerObservationInput,reportedObservationOutcome,type CustomerApiScope} from '../customer-api';
@@ -205,4 +207,38 @@ export async function buyerPartnerReceipt(tx:Tx,organizationId:string,id:string,
 export async function internalPartnerView(tx:Tx,organizationId:string,id:string){
  const row=await tx.customerApiObservation.findFirst({where:{id,organizationId,partnerKey:{not:null}},include:rowInclude});
  return row?(await observationsView(tx,{organizationId},[row]))[0]:null;
+}
+
+/** Shortlist only reviewed reports in the selected company. Recheck each receipt and its source grant before disclosure. */
+export async function searchPartnerReports(tx:Tx,c:AuthorizedContext,question:string,asset:string){
+ await requireMember(tx,c,ADMIN);
+ const noise=new Set(['show','find','our','current','latest','company','records','reports','evidence','what','which','does','report','record']);
+ const terms=[...new Set(searchTerms(question))].filter(t=>!noise.has(t)).slice(0,24);
+ if(!terms.length)return [];
+ const named=scopeWords(asset);
+ const candidates=await tx.$queryRaw<{id:string}[]>`
+  WITH records AS (
+   SELECT id,"observedAt" AS observed,payload->'partnerRecord' AS src,payload->'partnerRecord'->'record' AS detail
+   FROM "CustomerApiObservation" WHERE "organizationId"=${c.organizationId}::uuid
+    AND "partnerKey" IS NOT NULL AND "supersededAt" IS NULL AND "purgedAt" IS NULL
+    AND status IN ('ACKNOWLEDGED','FOLLOW_UP') AND "validUntil">now() AND ("retentionEndsAt" IS NULL OR "retentionEndsAt">now())
+  ), indexed AS (
+   SELECT id,observed,to_tsvector('simple',concat_ws(' ', src->>'sourceSystem',src->>'recordId',
+    ${JSON.stringify(partnerTopics)}::jsonb->>(detail->>'kind'),
+    (SELECT string_agg(value,' ') FROM jsonb_each_text(detail-'permittedBuyers') f WHERE key NOT IN ('consentExpiresAt','retainUntil')))) AS doc
+   FROM records WHERE ${named}='' OR EXISTS (
+    SELECT 1 FROM jsonb_each_text(detail) f WHERE key IN ('siteRef','sensorRef','scopeRef','productRef','systemRef','supplierRef','upstreamRef','vendorRef','hazardRef')
+    AND trim(regexp_replace(lower(value),'[^[:alnum:]]+',' ','g'))=${named})
+  ) SELECT id FROM indexed,to_tsquery('simple',${terms.join(' | ')}) q WHERE doc @@ q
+    ORDER BY ts_rank(doc,q) DESC,observed DESC,id LIMIT 30`;
+ const rows=await tx.customerApiObservation.findMany({where:{organizationId:c.organizationId,id:{in:candidates.map(row=>row.id)}},include:rowInclude});
+ const views=new Map((await observationsView(tx,c,rows)).map(row=>[row.id,row]));
+ return candidates.flatMap(({id})=>{
+  const view=views.get(id),source=view?.payload?.partnerRecord;
+  if(!view?.current||!source||!view.reviewerId||!view.reviewedAt)return [];
+  return [{id,kind:partnerLabels[source.record.kind],summary:partnerFinding(source.record),source:source.sourceSystem,
+   recordId:source.recordId,revision:source.revision,sourceVersion:source.sourceVersion,sourceUrl:source.sourceUrl??null,
+   observedAt:view.observedAt,validUntil:view.validUntil,reviewedAt:view.reviewedAt,owner:source.decisionOwnerRef,
+   outcome:view.reportedOutcome,receiptHash:view.receiptHash,taskId:view.followUpTaskId}];
+ }).slice(0,8);
 }

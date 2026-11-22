@@ -37,6 +37,7 @@ export function qualityInspectionText(record: CaseExport) {
     `Latest published revision by that time: ${r.publishedRevision??'None recorded'}`,
     `Assignment ${r.assignmentId} · Created ${r.assignedAt} · Acknowledged by that time: ${r.acknowledgedAt??'No'}`,
     `Assessment: ${trainingOutcome[r.outcome]}`,r.notes,`Recorded by ${recordedBy} at ${recordedAt}`);
+   if(r.issuedFromCase)lines.push('Retraining assigned through this quality case.');
    if(r.incidentKey)lines.push('Follow-up to incident record '+r.incidentKey);
    if(r.attemptId)lines.push(`Attempt ${r.attemptId} · Assessor ${r.assessorId} · Decided ${r.decisionAt} · Valid until ${r.validUntil??'N/A'}`);
    for(const file of r.evidence)lines.push(`Assessment evidence: ${file.filename} · ${file.id} · SHA-256 ${file.sha256}`);

@@ -32,6 +32,13 @@ export default function TrainingRecords({records,organizationId,occurredAt,cycle
    <p>{r.asOf} · {trainingOutcome[r.outcome]}{r.validUntil&&' · Valid until '+r.validUntil}</p>
    <p>Latest published revision at that time: {r.publishedRevision??'None recorded'}. Assignment revision: {r.revision}.</p>
    <p>Reading acknowledgement: {r.acknowledgedAt??'None recorded by that time'}. {r.decisionAt&&'Assessed '+r.decisionAt+'.'}</p>
+   {r.issuedFromCase&&<p>Assigned through this quality case.</p>}
+   {editable&&r.purpose==='INCIDENT'&&recordCycle===cycle&&!records.some(entry=>entry.finding.issuedFromCase&&entry.finding.incidentKey===key)&&
+    <form onSubmit={e=>{e.preventDefault();save({purpose:'ISSUE_RETRAINING',incidentKey:key,notes:String(new FormData(e.currentTarget).get('reason'))});}}>
+     <fieldset disabled={blocked}><legend>Assign current procedure to this operator</legend>
+      <label>Reason for retraining<textarea name="reason" required minLength={10} maxLength={800}/></label>
+      <button>Assign retraining</button></fieldset>
+    </form>}
    <p>{r.notes}</p><p>Recorded {recordedAt} · <a href={workspaceHref('/team/training',organizationId,{trainingId:r.assignmentId})}>Open exact training assignment</a></p>
   </details>)}
   {editable&&<details className={css.form}><summary>Link operator training evidence</summary>
