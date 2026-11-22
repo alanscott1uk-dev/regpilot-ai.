@@ -1,5 +1,5 @@
 import {connectorScopeHash,credentialChanged} from './connector-verification';
-import {applyLoggerCalibration} from './logger-calibration';
+import {applyLoggerCalibration,calibrationStillCurrent} from './logger-calibration';
 import {isRecordProvider} from "../connectors/record-catalogue";
 import {collectOperationalRecord,readRecordKeys,recordKeys,recordTargets} from "../connectors/operational-records";
 import {workforceTarget,workforceCredentials,workforceKeys,readWorkforceKeys} from "../connectors/workforce-target";
@@ -10,7 +10,7 @@ import {collectOkta,oktaTarget,oktaConnections,nangoConfig} from "../connectors/
 import {registerProviders} from "./vendor-signals";
 import {awsTarget,awsOrganizationTarget} from "../connectors/aws-target";
 import {collectGleif,gleifTarget} from "../connectors/gleif";
-import {PROVIDERS,requiresStoredSecret} from "../connectors/capacity";
+import {PROVIDERS,requiresStoredSecret,maxWorkspaceConnectorTargets} from "../connectors/capacity";
 import {verifiedObservation} from './connector-observation';
 import {enqueueConnectorObservationDelivery,enqueueConnectorFailureDelivery} from './integration-delivery-events';
 import {connectorRecovery} from "../connectors/recovery";
@@ -181,7 +181,7 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
   if(targetChanged&&v.provider==="WORKFORCE_LEAVER"&&!addingBambooCompany)throw new IntelligenceError("Create a separate connection for a different leaver, ticket or directory identity",409);
   if(targetChanged&&registerProviders.includes(v.provider)&&await tx.vendor.findFirst({where:{organizationId:ctx.organizationId,signalConnectorId:old.id},select:{id:true}}))throw new IntelligenceError("This register is linked to a supplier. Create a connection for the new legal entity and select it in the supplier review.",409);
   if(targetChanged&&credentialRequired&&!v.token)throw new IntelligenceError("Supply a newly scoped credential when changing target");
-  if(!old&&await tx.evidenceConnector.count({where:{organizationId:ctx.organizationId}})>=20)throw new IntelligenceError("Connector limit reached",429);
+  if(!old&&await tx.evidenceConnector.count({where:{organizationId:ctx.organizationId}})>=maxWorkspaceConnectorTargets)throw new IntelligenceError("The workspace has reached its "+maxWorkspaceConnectorTargets+" saved connection limit",429);
   const id=old?.id||randomUUID();const data={provider:v.provider,controlId:v.controlId,repository,branch:v.branch,configuredById:ctx.userId,enabled:v.enabled,intervalHours:v.intervalHours,encryptedSecret:v.token?encryptConnectorSecret(v.token,ctx.organizationId,id):old?.encryptedSecret??null,encryptedWebhookSecret:old&&old.repository===repository&&old.branch===v.branch?old.encryptedWebhookSecret:null,webhookVersion:old?(old.repository===repository&&old.branch===v.branch?old.webhookVersion:old.webhookVersion+1):0,nextRunAt:new Date(),leaseToken:null,leaseUntil:null,attempts:0,failureCode:null};
   if(!old&&await tx.evidenceConnector.findUnique({where:{organizationId_repository_branch:{organizationId:ctx.organizationId,repository:data.repository,branch:data.branch}}}))throw new IntelligenceError("This target already has a connector",409);
   const saved=old?await tx.evidenceConnector.update({where:{id},data:{...data,version:{increment:1}}}):await tx.evidenceConnector.create({data:{id,organizationId:ctx.organizationId,...data}});
@@ -326,8 +326,7 @@ export async function exportConnectorRun(ctx:AuthorizedContext,id:string){
   const observation=verifiedObservation(row);
   let current=!!observation&&connectorProviderEnabled(row.connector.provider)&&observationCurrent(row,row.connector,latest?.id===row.id);
   if(current&&observation&&row.connector.provider==="UBIBOT"){
-   const latestCalibration=await applyLoggerCalibration(tx,row.connector,observation);
-   current=hashValue(latestCalibration.checks)===hashValue(observation.checks);
+   current=await calibrationStillCurrent(tx,row.connector,observation);
   }
   return {format:"regpilot-connector-observation-v1",id:row.id,capturedAt:row.capturedAt,result:row.result,resultHash:row.resultHash,currentAtExport:!!current,limitation:"Integrity hash is not a digital signature. A point-in-time observation does not establish compliance."};
  });

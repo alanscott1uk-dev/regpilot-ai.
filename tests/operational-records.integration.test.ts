@@ -137,8 +137,30 @@ test('self-service provisions an eligible provider once for the requesting organ
   await marketplaceAction(f.o,{action:'ENABLE',slug:'example'},fetcher);
   assert.equal(creates,1);
   const a=await marketplaceAction(f.o,{action:'AVAILABLE'},fetcher),b=await marketplaceAction(f.out,{action:'AVAILABLE'},fetcher);
-  assert.ok('integrations' in a&&'integrations' in b);
+  assert.ok('integrations' in a&&Array.isArray(a.integrations)&&'integrations' in b&&Array.isArray(b.integrations));
   assert.deepEqual(a.integrations.map(s=>s.integration),[expected]);
   assert.deepEqual(b.integrations.map(s=>s.integration),[foreign]);
+ }finally{await f.cleanup();}
+});
+
+test('an organisation can manage 500 targets and retrieve a connection outside the recent history window',async()=>{
+ const {operationsWorkspace}=await import('../lib/server/operations-service');
+ const {maxWorkspaceConnectorTargets}=await import('../lib/connectors/capacity');
+ const f=await assuranceFixture();
+ Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:'true',REGPILOT_CONNECTORS_ENABLED:'true',REGPILOT_UBIBOT_ENABLED:'true',REGPILOT_CONNECTOR_ENCRYPTION_KEY:'dc'.repeat(32),SUPABASE_URL:'https://auth.invalid',SUPABASE_PUBLISHABLE_KEY:'fictional'});
+ try{
+  const programme=await db.programmeImport.create({data:{organizationId:f.a.id,createdById:f.o.userId,inputHash:f.a.id,method:'SEARCH',status:'ACCEPTED',evidenceManifest:[]}});
+  const control=await db.managedControl.create({data:{organizationId:f.a.id,importId:programme.id,proposalKey:'fleet',title:'Site devices',description:'Monitor the site equipment',testProcedure:'Verify the current source',theme:'quality',ownerId:f.editor.id,scheduledById:f.owner.id,intervalDays:30,nextReviewAt:new Date()}});
+  const base={organizationId:f.a.id,controlId:control.id,configuredById:f.o.userId,provider:'GITHUB',branch:'main'};
+  const oldest=await db.evidenceConnector.create({data:{...base,repository:'example/oldest',createdAt:new Date('2020-01-01T00:00:00Z')}});
+  await db.evidenceConnector.createMany({data:Array.from({length:maxWorkspaceConnectorTargets-2},(_,i)=>({...base,repository:'example/fleet-'+i}))});
+  const input={provider:'GITHUB',repository:'example/last',branch:'main',controlId:control.id,version:0,enabled:false,intervalHours:24,token:'github_pat_'+'F'.repeat(22)};
+  await saveConnector(f.o,input);
+  await assert.rejects(saveConnector(f.o,{...input,repository:'example/over-limit'}),rejects(429));
+  const overview=await operationsWorkspace(f.o);
+  assert.equal(overview.connectionDirectory.length,500);assert.equal(overview.connectors.length,20);
+  assert.equal(overview.connectors.some(c=>c.id===oldest.id),false);
+  assert.deepEqual((await operationsWorkspace(f.ad,undefined,oldest.id)).connectors.map(row=>row.id),[oldest.id]);
+  assert.equal((await operationsWorkspace(f.out,undefined,oldest.id)).connectors.length,0);
  }finally{await f.cleanup();}
 });

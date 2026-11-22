@@ -1,5 +1,8 @@
 import {recordProviders} from "./record-catalogue";
 
+export const maxWorkspaceConnectorTargets=500;
+export const connectorHistoryPageSize=20;
+
 // Keep this order stable: the provider index identifies its database advisory lock.
 export const PROVIDERS=['GITHUB','MICROSOFT365','GOOGLE_WORKSPACE','GITLAB','CLOUDFLARE','COMPANIES_HOUSE','VERCEL','SUPABASE','OKTA','INTUNE','OPENSSF_SCORECARD','AWS','GLEIF','WORKFORCE_LEAVER','AWS_ORGANIZATIONS',...recordProviders] as const;
 export const providersWithoutStoredSecrets=["OPENSSF_SCORECARD","AWS","GLEIF","AWS_ORGANIZATIONS","NANGO_SYNC"] as const;
