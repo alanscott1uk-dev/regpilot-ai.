@@ -43,6 +43,19 @@ export function qualityInspectionText(record: CaseExport) {
    for(const file of r.evidence)lines.push(`Assessment evidence: ${file.filename} · ${file.id} · SHA-256 ${file.sha256}`);
   }
  }
+ if(record.stockRecords?.length){
+  lines.push('', 'Controlled-stock reconciliation');
+  for(const {key,cycle,actor,at,count,totals,files,review} of record.stockRecords){
+   lines.push(`Cycle ${cycle} · Count ${key} · Recorded by ${actor} at ${at}`,
+    `${count.site} · ${count.product} · Batch ${count.batch} · Unit ${count.unit}`,
+    `Opening at ${count.openedAt}: ${count.opening} · Received ${totals.received} · Supplied ${totals.supplied}`,
+    `Counted at ${count.countedAt}: expected ${totals.expected}, physical ${count.physical}, difference ${totals.difference} ${count.unit}`,
+    `Result: ${totals.matched?'Matched':'Discrepancy'}${totals.negative?' · Negative running balance':''}`,count.notes);
+   for(const m of count.movements)lines.push(`Movement ${m.reference} · ${m.at} · ${m.direction} ${m.quantity} ${count.unit}`);
+   for(const f of files)lines.push(`${f.id===count.registerId?'Register extract':'Physical count'}: ${f.filename} · ${f.id} · SHA-256 ${f.sha256}`);
+   lines.push(review?`Independent review: ${review.decision} · ${review.actor} · ${review.at} · ${review.notes}`:'Independent review pending.');
+  }
+ }
  lines.push('', 'Effectiveness reviews');
  for (const review of record.reviews ?? []) {
   lines.push(`Cycle ${review.cycle} · ${review.status} · Observed ${timestamp(review.observedAt).slice(0,10)} · Author ${review.authorId}`,

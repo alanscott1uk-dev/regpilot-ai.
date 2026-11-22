@@ -5,7 +5,7 @@ import {db} from '../lib/server/db';
 import type {AuthorizedContext} from '../lib/server/authorization';
 import {searchWorkspaceRecords} from '../lib/server/workspace-record-search';
 import {qualityInspectionText} from '../lib/quality-inspection';
-import {changeQualityHandover,createQualityCase,investigateQualityCase,addQualityAction,prepareQualityEffectiveness,decideQualityEffectiveness,reopenQualityCase,qualityWorkspace,exportQualityCase} from '../lib/server/capa-service';
+import {saveStockReconciliation,changeQualityHandover,createQualityCase,investigateQualityCase,addQualityAction,prepareQualityEffectiveness,decideQualityEffectiveness,reopenQualityCase,qualityWorkspace,exportQualityCase} from '../lib/server/capa-service';
 import {createEvidence,reviewEvidence} from '../lib/server/evidence-service';
 import {workCompletion,completeWork} from '../lib/server/work-completion-service';
 import {workTask} from '../lib/server/work-hub-service';
@@ -152,5 +152,53 @@ test('transferring a case back preserves the receiving owner’s involvement in 
   await assert.rejects(()=>decideQualityEffectiveness(f.reviewer,prepared.id,decision(prepared.version,prepared.caseVersion),{storage:f.storage}),status(403));
   const closure=await decideQualityEffectiveness(f.owner,prepared.id,decision(prepared.version,prepared.caseVersion),{storage:f.storage});
   assert.equal(closure.status,'PASSED');
+ }finally{await f.clean();}
+});
+
+test('independent controlled-stock review retains discrepancies and every recount in the case export',async()=>{
+ const f=await setup();
+ try{
+  const created=await createQualityCase(f.editor,fields(f.editor.userId));
+  const action=await addQualityAction(f.editor,created.id,actionInput(created.version,f.editor.userId));
+  async function source(label:string){
+   const file=await createEvidence(f.editor,action.taskId!,'stock-'+label+'.pdf',fixturePdf([['Fictional stock evidence',label]]),
+    {storage:f.storage,scan:async()=>({status:'CLEAN',engine:'fixture'})});
+   await reviewEvidence(f.reviewer,file.id,{decision:'APPROVED',version:1,notes},f.storage);
+   return file.id;
+  }
+  const registerId=await source('register'),countId=await source('physical count');
+  const count={site:'Fixture site',product:'Fixture packs',batch:'LOT-1',unit:'packs',opening:'10',physical:'7',
+   openedAt:'2025-06-01T08:00:00.000Z',countedAt:'2025-06-01T10:00:00.000Z',registerId,countId,
+   movements:[{reference:'Register line 12',direction:'OUT',quantity:'2',at:'2025-06-01T09:00:00.000Z'}],notes:'Compared receipts, movements and the physical count.'};
+  const input={count,version:action.version,requestKey:randomUUID()};
+  const save=(who:AuthorizedContext,command:'RECORD_STOCK'|'REVIEW_STOCK',body:unknown)=>saveStockReconciliation(who,created.id,command,body,f.storage);
+  await assert.rejects(()=>save(f.viewer,'RECORD_STOCK',input),status(403));
+  await assert.rejects(()=>save(f.foreign,'RECORD_STOCK',input),status(404));
+  const first=await save(f.owner,'RECORD_STOCK',input);
+  assert.equal((await save(f.owner,'RECORD_STOCK',input)).reused,true);
+  await assert.rejects(()=>save(f.owner,'RECORD_STOCK',{...input,count:{...count,physical:'8'}}),status(409));
+  const review={requestKey:randomUUID(),version:first.version,review:{countKey:input.requestKey,decision:'VERIFIED',notes:'Both source records confirm the missing pack.'}};
+  await assert.rejects(()=>save(f.owner,'REVIEW_STOCK',review),status(403));
+  const stored=await db.evidence.findUniqueOrThrow({where:{id:countId}}),bytes=f.objects.get(stored.storageKey)!;
+  f.objects.set(stored.storageKey,new Uint8Array([9,1,9]));
+  await assert.rejects(()=>save(f.reviewer,'REVIEW_STOCK',review),status(409));
+  f.objects.set(stored.storageKey,bytes);
+  const reviewed=await save(f.reviewer,'REVIEW_STOCK',review);
+  const interim=await exportQualityCase(f.owner,created.id);
+  assert.equal(interim.stockRecords?.[0].totals.difference,'-1');
+  assert.ok(interim.blockers?.some(message=>message.includes('stock discrepancy')));
+  assert.equal((await exportQualityCase(f.viewer,created.id)).stockRecords,null);
+  const newCount={...count,countedAt:'2025-06-01T11:00:00.000Z',physical:'8',countId:await source('signed recount'),notes:'The segregated pack was located and included in the new count.'};
+  const repeat={requestKey:randomUUID(),version:reviewed.version,count:newCount};
+  await assert.rejects(()=>save(f.owner,'RECORD_STOCK',{...repeat,count:{...newCount,batch:'Other'}}),status(409));
+  const second=await save(f.owner,'RECORD_STOCK',repeat);
+  await save(f.reviewer,'REVIEW_STOCK',{requestKey:randomUUID(),version:second.version,review:{countKey:repeat.requestKey,decision:'VERIFIED',notes:'Verified the later count and the original register.'}});
+  const report=await exportQualityCase(f.owner,created.id);
+  assert.deepEqual(report.stockRecords?.map(r=>r.totals.difference),['-1','0']);
+  assert.ok(!report.blockers?.some(message=>/stock reconciliation|stock discrepancy/i.test(message)));
+  const text=qualityInspectionText(report);
+  for(const term of ['Register line 12','difference -1 packs','difference 0 packs',f.reviewer.userId,'SHA-256'])assert.ok(text.includes(term));
+  await db.evidence.update({where:{id:newCount.countId},data:{reviewVersion:{increment:1}}});
+  assert.ok((await exportQualityCase(f.owner,created.id)).blockers?.some(message=>message.includes('stock evidence has changed')));
  }finally{await f.clean();}
 });

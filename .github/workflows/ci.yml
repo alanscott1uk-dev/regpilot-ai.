@@ -74,6 +74,7 @@ jobs:
       - run: npx prisma db execute --file prisma/changes/capa.sql --schema prisma/schema.prisma
       - run: npx prisma db execute --file prisma/changes/quality-handovers.sql --schema prisma/schema.prisma
       - run: npx prisma db execute --file prisma/changes/quality-training-links.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file prisma/changes/quality-stock-reconciliation.sql --schema prisma/schema.prisma
       - run: npx prisma db execute --file prisma/changes/questionnaire-retries.sql --schema prisma/schema.prisma
       - run: npx prisma db execute --file prisma/changes/training.sql --schema prisma/schema.prisma
       - run: npx prisma db execute --file prisma/changes/customer-api.sql --schema prisma/schema.prisma
