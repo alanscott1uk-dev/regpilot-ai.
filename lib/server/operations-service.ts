@@ -9,7 +9,6 @@ import {getSourceImpact} from "./intelligence-service";
 import {webhooksEnabled} from "./connector-webhooks";
 import {programmeConfigured,programmeAiEnabled} from "./programme-service";
 import {signalChanges,observationCurrent,type Observation} from "../connectors/observation";
-import {connectorProviderEnabled} from "./connector-flags";
 import {recordProviders} from "../connectors/record-catalogue";
 import {connectorsEnabled,microsoft365Enabled,googleWorkspaceEnabled,gitlabEnabled,cloudflareEnabled,companiesHouseEnabled,vercelEnabled,supabaseEnabled,oktaEnabled,intuneEnabled,scorecardEnabled,awsEnabled,gleifEnabled,workforceEnabled,awsOrganizationEnabled} from "./connector-service";
 export async function operationsWorkspace(ctx:AuthorizedContext,importId?:string){
