@@ -15,10 +15,9 @@ type Trial=View['trials'][number];
 const moduleFor=(id:string)=>Object.values(trialTracks).flatMap(t=>t.steps).find(s=>s.id===id)!;
 const envText={FIXTURE:'Internal test',PARTNER_SANDBOX:'Authorised partner sandbox',PROTECTED_PILOT:'Protected customer pilot'};
 export default function Page(){
- const w=useWorkspaceContext(),[destination,setDestination]=useState('/team/trials');
- useEffect(()=>{const p=new URLSearchParams(window.location.search),r=p.get('participant'),sha=p.get('release');if((r==='operator'||r==='assessor')&&sha&&/^[a-f0-9]{40}$/.test(sha))setDestination('/team/trials?'+new URLSearchParams({participant:r,release:sha}));},[]);
+ const w=useWorkspaceContext();
  return <div className={shell.app}><WorkspaceNav/><main className={shell.main}><div className={ui.body}><header className={ui.intro}><div><h1>Capability trials</h1><p>Time an operating task, attach its evidence and record an independent decision against the release you tested.</p></div></header>
- {w.loading?<p>Loading…</p>:!w.signedIn?<EmailSignIn destination={destination}/>:<><label>Workspace<select aria-label="Workspace" value={w.organizationId} onChange={e=>w.chooseOrganization(e.target.value)}>{w.organisations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></label>{w.organizationId&&<Trials key={w.revision} w={w}/>}</>}</div></main></div>;
+ {w.loading?<p>Loading…</p>:!w.signedIn?<EmailSignIn destination="/team/trials"/>:<><label>Workspace<select aria-label="Workspace" value={w.organizationId} onChange={e=>w.chooseOrganization(e.target.value)}>{w.organisations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></label>{w.organizationId&&<Trials key={w.revision} w={w}/>}</>}</div></main></div>;
 }
 function Trials({w}:{w:Workspace}){
  const [view,setView]=useState<View|null>(null),[track,choose]=useState('systems'),[busy,lock]=useState(false),[message,tell]=useState(''),[environment,setEnv]=useState<keyof typeof envText>('FIXTURE');

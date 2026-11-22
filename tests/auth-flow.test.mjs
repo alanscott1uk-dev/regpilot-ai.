@@ -161,3 +161,18 @@ test('questionnaire answer review returns retain exact company and parent record
  assert.deepEqual(workspaceReturnIntent('/team/operations',new URLSearchParams({organizationId,questionnaireId,questionId,answerId}).toString(),'a@example.invalid').values,{organizationId});
  assert.deepEqual(workspaceReturnIntent('/team/trust',new URLSearchParams({organizationId,questionnaireId,questionId,answerId}).toString(),'a@example.invalid').values,{organizationId,questionnaireId});
 });
+
+test('a participant returns to their assigned trial and release after a same-browser sign-in',async()=>{
+ const {workspaceReturnIntent,workspaceReturnPath}=await import('../lib/auth-flow.mjs');
+ const release='a'.repeat(40),email='first@example.test',path='/team/trials';
+ for(const participant of ['operator','assessor']){
+  const query=new URLSearchParams({participant,release}).toString();
+  const intent=workspaceReturnIntent(path,query,email,100);
+  assert.equal(workspaceReturnPath(intent,email,200),path+'?'+query);
+  assert.equal(workspaceReturnPath(intent,'other@example.test',200),null);
+  assert.equal(workspaceReturnPath(intent,email,3600200),null);
+  assert.equal(workspaceReturnIntent(path,query+'&participant=assessor',email,100),null);
+  assert.equal(signInDestination(path),path);
+ }
+ assert.equal(workspaceReturnIntent(path,'participant=operator&release=other',email,100),null);
+});
