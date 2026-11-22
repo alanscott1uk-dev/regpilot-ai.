@@ -2,6 +2,8 @@
 import argparse
 import hashlib
 import json
+import math
+from decimal import Decimal, InvalidOperation
 import os
 import re
 import selectors
@@ -63,7 +65,7 @@ def read_frames(proc, consume):
         raise CollectionError("Source command failed. Check the connector version, access and stream selection.")
 
 
-def protocol(pinned, network, config, command, handler, catalog=None):
+def protocol(pinned, network, config, command, handler, catalog=None, decimal_records=False):
     name = "regpilot-source-" + uuid4().hex
     argv = ["docker", "run", "--rm", "--pull=never", "--name", name, "--log-driver=none",
             "--network", network, "--cap-drop=ALL", "--security-opt=no-new-privileges",
@@ -79,7 +81,7 @@ def protocol(pinned, network, config, command, handler, catalog=None):
         if not raw.lstrip().startswith(b"{"):
             return
         try:
-            obj = json.loads(raw)
+            obj = json.loads(raw, parse_float=Decimal if decimal_records else float)
             if not isinstance(obj, dict):
                 raise ValueError()
         except (UnicodeError, ValueError):
@@ -106,6 +108,38 @@ def local_json(folder, name, value):
     # Only this file is mounted. The enclosing temporary directory is owner-only.
     path.chmod(0o444)
     return path
+
+
+def rule_path(field, pointer):
+    if field is not None and pointer is None and re.fullmatch(r"[\w.-]{1,100}", field):
+        return [field]
+    if field is not None or not pointer or len(pointer)>180 or not pointer.startswith("/") or re.search(r"~(?![01])|[\x00-\x1f\x7f]",pointer):
+        raise CollectionError("Select one field name or a valid JSON Pointer.")
+    return [part.replace("~1","/").replace("~0","~") for part in pointer[1:].split("/")]
+
+
+def lookup(record, parts):
+    value = record
+    for key in parts:
+        if isinstance(value,dict):
+            value = value.get(key)
+        elif isinstance(value,list) and re.fullmatch(r"0|[1-9][0-9]{0,8}",key) and int(key)<len(value):
+            value = value[int(key)]
+        else:
+            return None
+    return value
+
+
+def numeric_bounds(minimum, maximum):
+    if minimum is None or maximum is None:
+        raise CollectionError("Supply both inclusive numeric limits.")
+    try:
+        bounds = (Decimal(minimum),Decimal(maximum))
+        if not all(v.is_finite() for v in bounds) or bounds[0]>bounds[1]:
+            raise ValueError()
+        return bounds
+    except (InvalidOperation,ValueError):
+        raise CollectionError("Supply finite numeric limits in ascending order.") from None
 
 
 def run(args):
@@ -147,12 +181,24 @@ def run(args):
             return [{"stream": s["name"], "namespace": s.get("namespace"),
                      "fields": sorted(s.get("json_schema", {}).get("properties", {}))}
                     for s in streams if "full_refresh" in s.get("supported_sync_modes", [])]
-        if not args.stream or not args.field or not args.control or args.expected is None or not args.output:
-            raise CollectionError("Collection requires a stream, field, expected JSON scalar, control UUID and output file.")
+        if not args.stream or not args.control or not args.output:
+            raise CollectionError("Collection requires a stream, control UUID and output file.")
         control = str(UUID(args.control))
-        expected = json.loads(args.expected)
-        if type(expected) not in (str, bool, int, float) or not re.fullmatch(r"[\w.-]{1,100}", args.field):
-            raise CollectionError("Choose a top-level field and a JSON string, number or boolean.")
+        parts = rule_path(args.field,args.pointer)
+        selector = args.field if args.field is not None else args.pointer
+        bounds = None
+        if args.minimum is not None or args.maximum is not None:
+            if args.expected is not None:
+                raise CollectionError("Select equality or a numeric range.")
+            bounds = numeric_bounds(args.minimum,args.maximum)
+            policy = ["range",parts,str(bounds[0]),str(bounds[1])]
+            description = "Inclusive numeric limits on "+selector
+        else:
+            expected = json.loads(args.expected) if args.expected is not None else None
+            if type(expected) not in (str,bool,int,float) or (type(expected) is float and not math.isfinite(expected)):
+                raise CollectionError("Supply an expected JSON string, finite number or boolean.")
+            policy = [args.field,expected] if args.field else ["pointer",parts,expected]
+            description = "Typed equality on "+selector
         chosen = [s for s in streams if s["name"] == args.stream and s.get("namespace") == args.namespace
                   and "full_refresh" in s.get("supported_sync_modes", [])]
         if len(chosen) != 1:
@@ -160,23 +206,30 @@ def run(args):
         selected = local_json(folder, "catalog.json", {"streams": [{"stream": chosen[0], "sync_mode": "full_refresh",
                               "destination_sync_mode": "append"}]})
         counts = {"matched": 0, "different": 0, "missing": 0}
+        if bounds:
+            counts["invalid"] = 0
         def checked(msg):
             if msg.get("type") != "RECORD":
                 return
             row = msg["record"]
             if row["stream"] != args.stream or row.get("namespace") != args.namespace or not isinstance(row["data"], dict):
                 raise CollectionError("A record differed from the selected stream.")
-            actual = row["data"].get(args.field)
+            actual = lookup(row["data"],parts)
             if actual is None:
                 counts["missing"] += 1
+            elif bounds:
+                if type(actual) not in (int,Decimal) or not Decimal(actual).is_finite():
+                    counts["invalid"] += 1
+                else:
+                    counts["matched" if bounds[0] <= actual <= bounds[1] else "different"] += 1
             elif type(actual) is type(expected) and actual == expected:
                 counts["matched"] += 1
             else:
                 counts["different"] += 1
-        protocol(pinned, args.network, config, "read", checked, selected)
+        protocol(pinned, args.network, config, "read", checked, selected, decimal_records=bounds is not None)
     total = sum(counts.values())
-    status = "FAIL" if counts["different"] else "UNKNOWN" if not total or counts["missing"] else "PASS"
-    rule = json.dumps([args.namespace, args.stream, args.field, expected], ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
+    status = "FAIL" if counts["different"] else "UNKNOWN" if not total or counts["missing"] or counts.get("invalid") else "PASS"
+    rule = json.dumps([args.namespace, args.stream, *policy], ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
     fingerprint = hashlib.sha256(rule).hexdigest()
     key, now = str(uuid4()), datetime.now(timezone.utc)
     stamp = lambda dt: dt.isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -188,7 +241,7 @@ def run(args):
                            {"key": "stream-population", "label": "Selected stream population", "status": "PASS" if total else "UNKNOWN",
                             "observed": str(total), "detail": "Records returned by a completed full refresh."},
                            {"key": "row-rule", "label": "Configured field comparison", "status": status, "observed": json.dumps(counts),
-                            "detail": "Typed equality on " + args.field + ". Rule and stream SHA-256 " + fingerprint + "."}]}}
+                            "detail": description + ". Rule and stream SHA-256 " + fingerprint + "."}]}}
     payload = json.dumps(envelope, allow_nan=False, indent=2).encode()
     # Publish a complete new envelope without overwriting a previous retry key.
     with tempfile.NamedTemporaryFile(dir=args.output.parent, delete=False) as stage:
@@ -213,7 +266,7 @@ if __name__ == "__main__":
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--list-streams", action="store_true")
     mode.add_argument("--check-access", action="store_true")
-    for flag in ("stream", "namespace", "field", "expected", "control"):
+    for flag in ("stream", "namespace", "field", "pointer", "expected", "minimum", "maximum", "control"):
         parser.add_argument("--" + flag)
     parser.add_argument("--output", type=Path)
     try:

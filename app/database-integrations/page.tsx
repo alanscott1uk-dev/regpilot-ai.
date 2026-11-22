@@ -28,7 +28,7 @@ export default async function Sources({searchParams}:{searchParams:Promise<Recor
       {data.acceptance.map(a=><tr key={a.id}><td>{a.name} {a.version}</td><td>{a.before_different} held of {a.before_matched+a.before_different}</td><td>{a.after_matched} accepted of {a.after_matched}</td>
       <td><a href={'https://github.com/alanscott1uk-dev/regpilot-ai./actions/runs/'+a.run+'/job/'+a.job}>View test · {a.completed_at.toISOString().slice(0,10)}</a></td></tr>)}
     </tbody></table></div></section>}
-    <section className={css.panel}><h2>Run a manual collection</h2><p>Use a read-only source account and an approved connector image. The runner discovers streams, reads the one you select and records how many rows meet your control rule. Credentials and row values stay on the collection host.</p>
+    <section className={css.panel}><h2>Run a manual collection</h2><p>Use a read-only source account and an approved connector image. The runner discovers streams, reads the one you select and checks a field or nested value against your expected result or numeric limits. The receipt records aggregate counts. Credentials and row values stay on the collection host.</p>
     <p><a href="/database-bridge/setup.txt">Set up a collection</a> · <a href="/database-bridge/collect.py" download>Download the runner</a> · <a href="/instrument-bridge/deliver.py" download>Download the delivery tool</a></p>
     <p>Workspace submissions go to an administrator for review. The <a href="/integration-benchmark">monitoring benchmark</a> tracks separate evidence of repeated live collection.</p></section></main>;
 }

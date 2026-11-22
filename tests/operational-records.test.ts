@@ -238,3 +238,32 @@ test('the public evidence benchmark counts a product once after independent dail
  }
  assert.equal((await registerBenchmark([current,prior],now+day+1800001)).qualified,0);
 });
+
+test('publication sources distinguish changed, withdrawn and incomplete public records',async()=>{
+ const {collectPublicRegister,referenceRegisters}=await import('../lib/connectors/pharma-registers');
+ const [label,paper,guide]=referenceRegisters.slice(3);
+ const read=(source:typeof label,body:unknown)=>collectPublicRegister(source.provider,source.target,async()=>Response.json(body),'2026-11-22T12:00:00Z');
+ const signal=(obs:Awaited<ReturnType<typeof read>>,id:string)=>obs.checks.find(c=>c.id===id)?.status;
+ const data={spl:{setid:label.target.scope},history:[{spl_version:35,published_date:'Jun 15, 2026'},{spl_version:36,published_date:'Jul 01, 2026'}]};
+ const metadata={current_page:1,total_pages:1,total_elements:2};
+ const changed=await read(label,{data,metadata});
+ assert.equal(signal(changed,'label-reviewed'),'PASS');
+ assert.equal(signal(changed,'label-current'),'FAIL');
+ assert.equal(signal(changed,'label-chronology'),'PASS');
+ await assert.rejects(read(label,{data,metadata:{...metadata,total_elements:5}}),{code:'INVALID_RESPONSE'});
+ await assert.rejects(read(label,{data:{...data,spl:{setid:guide.target.record}},metadata}),{code:'TARGET_MISMATCH'});
+ const article={id:paper.target.scope,source:'MED',pmid:paper.target.scope,doi:paper.target.reference,dateOfRevision:'2025-03-10',
+  pubTypeList:{pubType:['Journal Article']},commentCorrectionList:{commentCorrection:[{type:'Erratum in'}]}};
+ const articleRead=(fields:object)=>read(paper,{hitCount:1,resultList:{result:[{...article,...fields}]}});
+ const revised=await articleRead({});
+ assert.equal(signal(revised,'publication-revision'),'FAIL');
+ assert.equal(signal(revised,'publication-notices'),'FAIL');
+ assert.equal(signal(await articleRead({commentCorrectionList:{}}),'publication-notices'),'UNKNOWN');
+ await assert.rejects(articleRead({pmid:'12345'}),{code:'TARGET_MISMATCH'});
+ const guidance={base_path:'/guidance/'+guide.target.scope,content_id:guide.target.record,document_type:'detailed_guide',
+  public_updated_at:'2024-05-13T15:41:54+01:00',withdrawn_notice:{},links:{primary_publishing_organisation:[{content_id:'240f72bd-9a4d-4f39-94d9-77235cadde8e'}]}};
+ assert.equal(signal(await read(guide,guidance),'guidance-revision'),'PASS');
+ assert.equal(signal(await read(guide,{...guidance,withdrawn_notice:{withdrawn_at:'2025-02-01'}}),'guidance-active'),'FAIL');
+ assert.equal(signal(await read(guide,{...guidance,withdrawn_notice:null}),'guidance-active'),'UNKNOWN');
+ assert.equal(signal(await read(guide,{...guidance,public_updated_at:'2030-01-01T00:00:00Z'}),'guidance-revision'),'UNKNOWN');
+});

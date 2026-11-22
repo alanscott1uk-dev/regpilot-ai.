@@ -1,6 +1,7 @@
 """Start isolated databases for the source collection acceptance tests."""
 import json
 import os
+import re
 import secrets
 import subprocess
 import time
@@ -81,23 +82,33 @@ def mongodb(network, host, first, second):
     image = "mongo:7.0"
     admin = secrets.token_hex(24)
     volume = "regpilot-mongo-"+secrets.token_hex(8)
+    data = volume+"-data"
     docker("volume","create",volume)
+    docker("volume","create",data)
     try:
         docker("run","--rm","-i","--entrypoint","sh","-v",volume+":/secret",image,"-c",
                "umask 077; cat > /secret/key && chown mongodb:mongodb /secret/key && chmod 400 /secret/key",
                input_text=secrets.token_hex(64))
-        docker("run","-d","--name",host,"--hostname",host,"--network",network,"-v",volume+":/secret:ro",
-               "-e","MONGO_INITDB_ROOT_USERNAME=fixture_admin","-e","MONGO_INITDB_ROOT_PASSWORD",image,
-               "mongod","--replSet","rs0","--bind_ip_all","--keyFile","/secret/key",
-               env=dict(os.environ,MONGO_INITDB_ROOT_PASSWORD=admin))
         def js(statement, auth=False, required=True):
-            auth_js = "if (!db.getSiblingDB('admin').auth('fixture_admin',"+json.dumps(admin)+").ok) quit(3);\n" if auth else ""
-            # mongosh file mode reports script failures through the exit code.
-            return docker("exec","-i",host,"mongosh","--quiet","--host","localhost","--file","/dev/stdin",
-                          input_text=auth_js+statement,required=required)
-        wait_for(lambda: js("if (db.adminCommand({getCmdLineOpts:1}).parsed?.replication?.replSetName !== 'rs0') quit(2);", True, False).returncode==0)
-        js("const r=db.adminCommand({replSetInitiate:{_id:'rs0',members:[{_id:0,host:'"+host+
-           ":27017'}]}}); if(!r.ok) quit(4);",True)
+            login = "db.getSiblingDB('admin').auth('fixture_admin',"+json.dumps(admin)+");" if auth else ""
+            program = login+statement
+            script = "try { eval(process.env.REGPILOT_MONGO_TEST_JS) } catch(e) { print('fixture-code:'+String(e.codeName || e.code || e.name)); quit(1) }"
+            result = docker("exec","-e","REGPILOT_MONGO_TEST_JS",host,"mongosh","mongodb://127.0.0.1:27017/admin?directConnection=true",
+                            "--quiet","--eval",script,env=dict(os.environ,REGPILOT_MONGO_TEST_JS=program),required=False)
+            if required and result.returncode:
+                code = re.search(r"fixture-code:([A-Za-z0-9_-]+)",result.stdout)
+                raise RuntimeError("MongoDB fixture failed: "+(code[1] if code else "shell exit "+str(result.returncode)))
+            return result
+        # Provision the fixture administrator through loopback before starting the authenticated replica.
+        docker("run","-d","--name",host,"--network","none","-v",data+":/data/db",image,"mongod","--bind_ip","127.0.0.1")
+        wait_for(lambda: js("if(!db.adminCommand({ping:1}).ok) quit(2)",required=False).returncode==0)
+        js("db.getSiblingDB('admin').createUser({user:'fixture_admin',pwd:"+json.dumps(admin)+",roles:['root']});")
+        docker("stop","-t","30",host)
+        docker("rm",host)
+        docker("run","-d","--name",host,"--hostname",host,"--network",network,"-v",volume+":/secret:ro","-v",data+":/data/db",
+               image,"mongod","--replSet","rs0","--bind_ip_all","--keyFile","/secret/key")
+        wait_for(lambda: js("if(!db.adminCommand({getCmdLineOpts:1}).ok) quit(2);",True,False).returncode==0)
+        js("const r=db.adminCommand({replSetInitiate:{_id:'rs0',members:[{_id:0,host:'"+host+":27017'}]}}); if(!r.ok) quit(4);",True)
         wait_for(lambda: js("if(!db.hello().isWritablePrimary) quit(2);",True,False).returncode==0)
         js("db.getSiblingDB('admin').createUser({user:'source_reader',pwd:"+json.dumps(first)+
            ",roles:[{role:'read',db:'evidence'}]}); db.getSiblingDB('evidence').release_gate.insertMany("
@@ -111,3 +122,4 @@ def mongodb(network, host, first, second):
     finally:
         docker("rm","-f",host,required=False)
         docker("volume","rm",volume,required=False)
+        docker("volume","rm",data,required=False)

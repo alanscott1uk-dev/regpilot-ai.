@@ -113,6 +113,10 @@ try:
         control = str(uuid4())
         old = read("before")
         assert old == {"rows": 3, "status": "FAIL", "counts": {"matched": 2, "different": 1, "missing": 0}}, old
+        if kind == "postgres":
+            band = command(*command_base, "--stream","release_gate",*qualifier,"--pointer","/id","--minimum","1","--maximum","2",
+                           "--control",control,"--output",str(folder/"range.json"),capture_output=True)
+            assert json.loads(band.stdout) == {"rows":3,"status":"FAIL","counts":{"matched":2,"different":1,"missing":0,"invalid":0}}
         if kind in extra:
             rotate()
         elif pg:

@@ -23,3 +23,5 @@ Retry a delivery using the same envelope. A later manual read requires a new out
 The catalogue API is GET /api/database-integrations with optional q, kind and page parameters. Each available plan link pins the catalogue version. When a version changes, download and review the new plan and digest before running it.
 
 Download all currently checked plans from /api/database-integrations/manifest. Pass the manifest as --plan and choose one definition UUID with --source. Each entry includes the checked Linux image digest, version, configuration field names and required fields.
+
+For nested fields, replace --field with a JSON Pointer such as --pointer /instrument/readings/0/value. Escape a slash inside a key as ~1 and a tilde as ~0. To apply an approved numeric range, replace --expected with --minimum and --maximum. Both limits are inclusive. For example, --pointer /instrument/readings/0/value --minimum 2 --maximum 8 checks the selected value in each record. Select the stream and units covered by your control. A numeric excursion produces FAIL. Missing or nonnumeric values produce UNKNOWN when there are no excursions. Receipts contain aggregate counts.
