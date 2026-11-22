@@ -1,7 +1,5 @@
 """Start isolated databases for the source collection acceptance tests."""
-import json
 import os
-import re
 import secrets
 import subprocess
 import time
@@ -79,47 +77,53 @@ def cockroachdb(network, host, first, second):
 
 @contextmanager
 def mongodb(network, host, first, second):
+    from pymongo import MongoClient
+    from pymongo.errors import PyMongoError
+
     image = "mongo:7.0"
     admin = secrets.token_hex(24)
-    volume = "regpilot-mongo-"+secrets.token_hex(8)
-    data = volume+"-data"
-    docker("volume","create",volume)
-    docker("volume","create",data)
+    key_volume = "regpilot-mongo-"+secrets.token_hex(8)
+    data_volume = key_volume+"-data"
+    def client():
+        address = docker("port",host,"27017/tcp").stdout.strip()
+        port = int(address.split(":")[-1])
+        return MongoClient("127.0.0.1",port,username="fixture_admin",password=admin,authSource="admin",
+                           directConnection=True,serverSelectionTimeoutMS=2000,connectTimeoutMS=2000)
+    def ready(c, primary=False):
+        try:
+            c.admin.command("connectionStatus")
+            return not primary or c.admin.command("hello").get("isWritablePrimary") is True
+        except PyMongoError:
+            return False
+    mount = ["-v",data_volume+":/data/db","-p","127.0.0.1::27017"]
+    docker("volume","create",key_volume)
+    docker("volume","create",data_volume)
     try:
-        docker("run","--rm","-i","--entrypoint","sh","-v",volume+":/secret",image,"-c",
+        docker("run","--rm","-i","--entrypoint","sh","-v",key_volume+":/secret",image,"-c",
                "umask 077; cat > /secret/key && chown mongodb:mongodb /secret/key && chmod 400 /secret/key",
                input_text=secrets.token_hex(64))
-        def js(statement, auth=False, required=True):
-            login = "db.getSiblingDB('admin').auth('fixture_admin',"+json.dumps(admin)+");" if auth else ""
-            program = login+statement
-            script = "try { eval(process.env.REGPILOT_MONGO_TEST_JS) } catch(e) { print('fixture-code:'+String(e.codeName || e.code || e.name)); quit(1) }"
-            result = docker("exec","-e","REGPILOT_MONGO_TEST_JS",host,"mongosh","mongodb://127.0.0.1:27017/admin?directConnection=true",
-                            "--quiet","--eval",script,env=dict(os.environ,REGPILOT_MONGO_TEST_JS=program),required=False)
-            if required and result.returncode:
-                code = re.search(r"fixture-code:([A-Za-z0-9_-]+)",result.stdout)
-                raise RuntimeError("MongoDB fixture failed: "+(code[1] if code else "shell exit "+str(result.returncode)))
-            return result
-        # Provision the fixture administrator through loopback before starting the authenticated replica.
-        docker("run","-d","--name",host,"--network","none","-v",data+":/data/db",image,"mongod","--bind_ip","127.0.0.1")
-        wait_for(lambda: js("if(!db.adminCommand({ping:1}).ok) quit(2)",required=False).returncode==0)
-        js("db.getSiblingDB('admin').createUser({user:'fixture_admin',pwd:"+json.dumps(admin)+",roles:['root']});")
+        # The image provisions its first administrator before accepting connections on the container network.
+        docker("run","-d","--name",host,"--network",network,*mount,"-e","MONGO_INITDB_ROOT_USERNAME=fixture_admin",
+               "-e","MONGO_INITDB_ROOT_PASSWORD",image,env=dict(os.environ,MONGO_INITDB_ROOT_PASSWORD=admin))
+        with client() as standalone:
+            wait_for(lambda: ready(standalone))
         docker("stop","-t","30",host)
         docker("rm",host)
-        docker("run","-d","--name",host,"--hostname",host,"--network",network,"-v",volume+":/secret:ro","-v",data+":/data/db",
-               image,"mongod","--replSet","rs0","--bind_ip_all","--keyFile","/secret/key")
-        wait_for(lambda: js("if(!db.adminCommand({getCmdLineOpts:1}).ok) quit(2);",True,False).returncode==0)
-        js("const r=db.adminCommand({replSetInitiate:{_id:'rs0',members:[{_id:0,host:'"+host+":27017'}]}}); if(!r.ok) quit(4);",True)
-        wait_for(lambda: js("if(!db.hello().isWritablePrimary) quit(2);",True,False).returncode==0)
-        js("db.getSiblingDB('admin').createUser({user:'source_reader',pwd:"+json.dumps(first)+
-           ",roles:[{role:'read',db:'evidence'}]}); db.getSiblingDB('evidence').release_gate.insertMany("
-           "[{_id:1,decision:'accepted'},{_id:2,decision:'accepted'},{_id:3,decision:'hold'}]);",True)
-        def rotate():
-            js("db.getSiblingDB('evidence').release_gate.updateOne({_id:3},{$set:{decision:'accepted'}}); "
-               "db.getSiblingDB('admin').changeUserPassword('source_reader',"+json.dumps(second)+");",True)
-        yield (lambda password: {"database_config":{"cluster_type":"SELF_MANAGED_REPLICA_SET",
-                 "connection_string":"mongodb://"+host+":27017/?replicaSet=rs0","databases":["evidence"],
-                 "username":"source_reader","password":password,"auth_source":"admin","schema_enforced":True}},rotate)
+        docker("run","-d","--name",host,"--hostname",host,"--network",network,*mount,"-v",key_volume+":/secret:ro",image,
+               "mongod","--replSet","rs0","--bind_ip_all","--keyFile","/secret/key")
+        with client() as replica:
+            wait_for(lambda: ready(replica))
+            replica.admin.command("replSetInitiate",{"_id":"rs0","members":[{"_id":0,"host":host+":27017"}]})
+            wait_for(lambda: ready(replica,primary=True))
+            replica.admin.command("createUser","source_reader",pwd=first,roles=[{"role":"read","db":"evidence"}])
+            table=replica.evidence.release_gate
+            table.insert_many([{"_id":1,"decision":"accepted"},{"_id":2,"decision":"accepted"},{"_id":3,"decision":"hold"}])
+            def rotate():
+                assert table.update_one({"_id":3},{"$set":{"decision":"accepted"}}).modified_count==1
+                replica.admin.command("updateUser","source_reader",pwd=second)
+            yield (lambda password: {"database_config":{"cluster_type":"SELF_MANAGED_REPLICA_SET",
+                     "connection_string":"mongodb://"+host+":27017/?replicaSet=rs0","databases":["evidence"],
+                     "username":"source_reader","password":password,"auth_source":"admin","schema_enforced":True}},rotate)
     finally:
-        docker("rm","-f",host,required=False)
-        docker("volume","rm",volume,required=False)
-        docker("volume","rm",data,required=False)
+        docker("rm","-f","-v",host,required=False)
+        docker("volume","rm",key_volume,data_volume,required=False)
