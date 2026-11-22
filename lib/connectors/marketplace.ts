@@ -41,10 +41,15 @@ async function get(path:string,key:string,fetcher:typeof fetch,headers:Record<st
  if(!r.ok){await r.body?.cancel();throw new CollectionError(r.status===401||r.status===403?'ACCESS_DENIED':'PROVIDER_UNAVAILABLE');}
  return readBoundedJson(r,2_000_000);
 }
-export async function enabledIntegrations(key:string,fetcher:typeof fetch=fetch){
+export function workspaceIntegrationId(org:string,slug:string){
+ const prefix='rpw-'+z.uuid().parse(org).replaceAll('-','')+'-';
+ const digest=createHash('sha256').update(brokerId.parse(slug)).digest('hex').slice(0,16);
+ return prefix+slug.slice(0,40)+'-'+digest;
+}
+export async function enabledIntegrations(key:string,fetcher:typeof fetch=fetch,org?:string){
  const data=(await get('/integrations',key,fetcher)).data;
  if(!Array.isArray(data)||data.length>5000)throw new CollectionError('SCOPE_LIMIT');
- return data.filter(v=>brokerId.safeParse(v?.unique_key).success&&v.unique_key.startsWith('regpilot-')&&brokerId.safeParse(v?.provider).success)
+ return data.filter(v=>brokerId.safeParse(v?.unique_key).success&&brokerId.safeParse(v?.provider).success&&(v.unique_key.startsWith('regpilot-')||!!org&&v.unique_key===workspaceIntegrationId(org,v.provider)))
   .map(v=>({integration:String(v.unique_key),provider:String(v.provider),name:String(v.display_name||v.provider).slice(0,150),models:modelChoices(v.unique_key),aiModels:aiModels(v.provider)}));
 }
 export type Integration=Awaited<ReturnType<typeof enabledIntegrations>>[number];
@@ -73,7 +78,21 @@ export async function readSync(org:string,source:Integration,id:string,model:str
   const cursor=z.string().min(1).max(4096).parse(result.next_cursor);
   if(seen.has(cursor))throw new CollectionError('INVALID_RESPONSE');seen.add(cursor);q.set('cursor',cursor);
  }
+ if(new Set(items.map(i=>i.id)).size!==items.length)throw new CollectionError('INVALID_RESPONSE');
  const sorted=items.sort((a,b)=>a.id.localeCompare(b.id)||a.changed.localeCompare(b.changed));
  return {count:items.length,limited:more,deleted:items.filter(r=>r.action==='DELETED').length,lastChanged:items.map(r=>new Date(r.changed).toISOString()).sort().at(-1)??null,
   digest:createHash('sha256').update(JSON.stringify(sorted)).digest('hex')};
+}
+
+export async function managedSyncObservation(org:string,target:{scope:string;record:string;reference?:string},fetcher:typeof fetch=fetch):Promise<import('./observation').Observation>{
+ const key=brokerKey();if(!key)throw new CollectionError('PROVIDER_DISABLED');
+ const [integration,connectionId]=target.scope.split('/');
+ const source=(await enabledIntegrations(key,fetcher,org)).find(s=>s.integration===integration&&s.provider===target.reference);
+ if(!source)throw new CollectionError('TARGET_MISMATCH');
+ const sample=await readSync(org,source,connectionId,target.record,key,fetcher);
+ await checkGrant(org,source,connectionId,key,fetcher);
+ return {engine:'managed-sync-metadata-v1',capturedAt:new Date().toISOString(),sourceUrl:'https://nango.dev/docs/api-integrations/'+source.provider,
+  checks:[{id:'sync-coverage',label:'Synced record metadata available',status:sample.count&&!sample.limited?'PASS':'UNKNOWN',observed:sample.count+' records · '+(sample.limited?'truncated':'end of returned pages'),nextStep:'Compare the model and its sync scope with the source system.'},
+   {id:'sync-sample',label:'Version of the sampled record identities and modification times',status:sample.count?'PASS':'UNKNOWN',observed:sample.digest+' · last change '+(sample.lastChanged??'unknown')+' · '+sample.deleted+' deleted',nextStep:'Inspect changed records in the provider before relying on the control.'}],
+  limitations:['The broker cache is read on this collection. Provider-side sync completeness, last successful source poll and a specific control outcome require separate evidence.']};
 }

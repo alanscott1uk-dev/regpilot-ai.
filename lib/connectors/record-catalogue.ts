@@ -1,4 +1,4 @@
-export const recordProviders = ["JIRA", "SERVICENOW", "AZURE_DEVOPS", "CONFLUENCE", "SAFETYCULTURE", "UBIBOT", "BENCHLING"] as const;
+export const recordProviders = ["JIRA", "SERVICENOW", "AZURE_DEVOPS", "CONFLUENCE", "SAFETYCULTURE", "UBIBOT", "BENCHLING", "NANGO_SYNC"] as const;
 export type RecordProvider = typeof recordProviders[number];
 export function isRecordProvider(provider: unknown): provider is RecordProvider {
   return recordProviders.some(value => value === provider);
@@ -6,6 +6,7 @@ export function isRecordProvider(provider: unknown): provider is RecordProvider 
 
 type Definition = {name: string; scope: string; record: string; reference?: string; hint: string; credential: string; docs: string};
 export const recordCatalogue: Record<RecordProvider, Definition> = {
+  NANGO_SYNC: {name:"Managed provider sync",scope:"Enabled integration ID / connection ID",record:"Configured sync model",reference:"Provider slug",credential:"Hosted authorisation",hint:"Choose a connection from the integration directory. Each run reads the configured sync model and compares bounded record metadata. Manage renewal in the directory.",docs:"https://nango.dev/docs/reference/backend/http-api/sync/records-list"},
   UBIBOT: {name:"UbiBot logger reading",scope:"Channel ID",record:"Logger serial",reference:"Calibration and operating limits",credential:"Channel read-only API key",hint:"Use a channel whose internal field1 sensor reports Celsius. Link its serial to the reviewed calibration certificate and approved limits. Each run checks the latest sample.",docs:"https://www.ubibot.com/app-platform-api/8236/view-channel-2/"},
   BENCHLING: {name:"Benchling laboratory result and entry review",scope:"Benchling tenant name",record:"Assay result ID",reference:"Entry ID / authorised reviewer ID",credential:"Read-only Benchling OAuth token",hint:"Use the exact result, entry and assigned reviewer. RegPilot checks the laboratory review and retains decision references. This does not authorise batch release.",docs:"https://docs.benchling.com/docs/api/v2/benchling-api/entries/get-entry"},
   JIRA: {name: "Jira Cloud issue", scope: "Atlassian cloud ID", record: "Issue key", credential: "Scoped service-account API token", hint: "Use a service account with read access to the project and issue. Checks cover assignment, workflow status and recorded resolution.", docs: "https://support.atlassian.com/user-management/docs/manage-api-tokens-for-service-accounts/"},

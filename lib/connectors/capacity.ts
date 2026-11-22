@@ -2,7 +2,7 @@ import {recordProviders} from "./record-catalogue";
 
 // Keep this order stable: the provider index identifies its database advisory lock.
 export const PROVIDERS=['GITHUB','MICROSOFT365','GOOGLE_WORKSPACE','GITLAB','CLOUDFLARE','COMPANIES_HOUSE','VERCEL','SUPABASE','OKTA','INTUNE','OPENSSF_SCORECARD','AWS','GLEIF','WORKFORCE_LEAVER','AWS_ORGANIZATIONS',...recordProviders] as const;
-export const providersWithoutStoredSecrets=["OPENSSF_SCORECARD","AWS","GLEIF","AWS_ORGANIZATIONS"] as const;
+export const providersWithoutStoredSecrets=["OPENSSF_SCORECARD","AWS","GLEIF","AWS_ORGANIZATIONS","NANGO_SYNC"] as const;
 export function requiresStoredSecret(provider:string){return !(providersWithoutStoredSecrets as readonly string[]).includes(provider);}
 export type ProviderLimits={maxConcurrent:number;perWorkspace:number};
 /** Deployment configuration only. This neither enables a provider nor purchases capacity. */

@@ -45,6 +45,7 @@ const googleSchema=googleTarget.extend({provider:z.literal("GOOGLE_WORKSPACE"),c
 const microsoftSchema=microsoftTarget.extend({provider:z.enum(["MICROSOFT365","INTUNE"]),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:z.string().min(16).max(512).regex(/^[^\r\n\0]+$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)});
 const extraFields={controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().refine(validCredential).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)};
 const extraSchema=z.discriminatedUnion("provider",[
+ recordTargets.NANGO_SYNC.extend({...extraFields,provider:z.literal("NANGO_SYNC")}).omit({token:true}).strict(),
  recordTargets.UBIBOT.extend({...extraFields,provider:z.literal("UBIBOT")}).strict(),
  recordTargets.BENCHLING.extend({...extraFields,provider:z.literal("BENCHLING")}).strict(),
  recordTargets.JIRA.extend({...extraFields,provider:z.literal("JIRA")}).strict(),
@@ -67,6 +68,7 @@ const extraSchema=z.discriminatedUnion("provider",[
 type ConnectorSettings=z.infer<typeof schema>|z.infer<typeof googleSchema>|z.infer<typeof microsoftSchema>|z.infer<typeof extraSchema>;
 function storedTarget(settings:ConnectorSettings):{repository:string;branch:string;token?:string}{
  switch(settings.provider){
+  case "NANGO_SYNC":return recordKeys(settings.provider,settings);
   case "BENCHLING":
   case "UBIBOT":
   case "JIRA":
@@ -99,6 +101,11 @@ export const collectConfiguredConnector:Collector=async(target,secret)=>{
  if(!connectorProviderEnabled(target.provider||"GITHUB"))throw new CollectionError("PROVIDER_DISABLED");
  if(isRecordProvider(target.provider)){
   const configured=readRecordKeys(target.provider,target.repository,target.branch);
+  if(target.provider==="NANGO_SYNC"){
+   if(!target.organizationId)throw new CollectionError("WORKSPACE_REQUIRED");
+   const {managedSyncObservation}=await import("../connectors/marketplace");
+   return managedSyncObservation(target.organizationId,configured);
+  }
   let certificateHash:string|undefined;
   if(target.provider==="UBIBOT"&&target.organizationId){
    const [id,version]=configured.reference!.split("/");

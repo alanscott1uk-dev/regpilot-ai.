@@ -18,8 +18,9 @@ export const calibrationBasis=z.string().max(120).refine(value=>{
  return !extra.length&&z.uuid().safeParse(file).success&&/^[1-9]\d{0,6}$/.test(version)&&z.iso.date().safeParse(from).success&&z.iso.date().safeParse(until).success&&from<until&&numeric(low)&&numeric(high)&&Number(low)<Number(high)&&/^[1-9]\d{0,3}$/.test(age)&&Number(age)<=1440;
 });
 export const recordTargets = {
+  NANGO_SYNC:z.object({scope:z.string().max(201).regex(/^(?:regpilot-|rpw-)[A-Za-z0-9._-]{1,92}\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/),record:z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,79}$/),reference:z.string().regex(/^[a-z0-9][a-z0-9_-]{0,79}$/)}),
   UBIBOT:z.object({scope:number,record:z.string().regex(/^[A-Za-z0-9_-]{3,60}$/),reference:calibrationBasis}),
-  BENCHLING:z.object({scope:slug,record:z.string().regex(/^(?:[a-z]{1,5}_[A-Za-z0-9]{1,48}|[a-f0-9-]{36})$/),reference:z.string().regex(/^etr_[A-Za-z0-9]{1,48}\/ent?_[A-Za-z0-9]{1,48}$|^etr_[A-Za-z0-9]{1,48}\/usr_[A-Za-z0-9]{1,48}$/)}),
+  BENCHLING:z.object({scope:slug,record:z.string().regex(/^(?:[a-z]{1,8}_[A-Za-z0-9]{1,48}|[a-f0-9-]{36})$/),reference:z.string().regex(/^etr_[A-Za-z0-9]{1,48}\/ent_[A-Za-z0-9]{1,48}$|^etr_[A-Za-z0-9]{1,48}\/usr_[A-Za-z0-9]{1,48}$/)}),
   JIRA: z.object({scope: guid, record: z.string().toUpperCase().regex(/^[A-Z][A-Z0-9_]{1,19}-[1-9]\d{0,10}$/)}),
   SERVICENOW: z.object({scope: slug, record: z.string().toLowerCase().regex(/^[a-f0-9]{32}$/)}),
   AZURE_DEVOPS: z.object({scope: azureScope, record: number, reference: z.string().toLowerCase().regex(/^[0-9a-f]{40}$/)}),
@@ -29,12 +30,15 @@ export const recordTargets = {
 
 type Target = {scope: string; record: string; reference?: string};
 export function recordKeys(provider: RecordProvider, target: Target) {
+  if(provider==="NANGO_SYNC"){const [integration,connection]=target.scope.split("/");if((target.reference?.length??0)+1+target.record.length>120)throw new CollectionError("INVALID_TARGET");return {repository:"nango_sync:"+integration+":"+connection,branch:target.reference+":"+target.record};}
   return {repository: [provider.toLowerCase(), target.scope, target.record].join(":"), branch: target.reference ?? "record"};
 }
 export function readRecordKeys(provider: RecordProvider, repository: string, branch: string): Target {
   const [prefix, scope, record, ...extra] = repository.split(":");
   if (prefix !== provider.toLowerCase() || extra.length) throw new CollectionError("INVALID_TARGET");
-  const result = recordTargets[provider].strict().safeParse({scope, record, ...(branch === "record" ? {} : {reference: branch})});
+  const [slug,model,...rest]=branch.split(":");
+  if(provider==="NANGO_SYNC"&&rest.length)throw new CollectionError("INVALID_TARGET");
+  const result = recordTargets[provider].strict().safeParse(provider==="NANGO_SYNC"?{scope:scope+"/"+record,record:model,reference:slug}:{scope, record, ...(branch === "record" ? {} : {reference: branch})});
   if (!result.success) throw new CollectionError("INVALID_TARGET");
   return result.data;
 }
@@ -65,6 +69,7 @@ export async function collectOperationalRecord(provider: RecordProvider, target:
   const get = providerReader(fetcher, {Authorization: auth});
 
   switch (provider) {
+    case "NANGO_SYNC":throw new CollectionError("WORKSPACE_REQUIRED");
     case "UBIBOT": {
       const source="https://webapi.ubibot.com/channels/"+scope;
       const data=(await providerReader(fetcher,{})(source+"?"+new URLSearchParams({api_key:token})))!.body;
@@ -93,10 +98,15 @@ export async function collectOperationalRecord(provider: RecordProvider, target:
       if(entry?.id!==entryId)throw new CollectionError("TARGET_MISMATCH");
       const review=entry.reviewRecord,processes=Array.isArray(review?.reviewProcesses)?review.reviewProcesses:[],assigned=Array.isArray(entry.assignedReviewers)?entry.assignedReviewers.some((r:{id?:string})=>r?.id===reviewer):undefined;
       const independent=Array.isArray(entry.authors)&&entry.authors.length&&typeof result.creator?.id==="string"?result.creator.id!==reviewer&&!entry.authors.some((r:{id?:string})=>r?.id===reviewer):undefined;
-      const matched=processes.find((p:any)=>p?.completionStatus==="APPROVED"&&Array.isArray(p.stages)&&p.stages.some((s:any)=>s.actionLabel==="APPROVE"&&Array.isArray(s.reviewers)&&s.reviewers.some((r:any)=>r.id===reviewer&&["APPROVED","ACCEPTED"].includes(r.status))));
+      const matched=processes.find((p:any)=>p?.completionStatus==="APPROVED"&&Array.isArray(p.stages)&&p.stages.some((s:any)=>s.actionLabel==="APPROVE"&&Array.isArray(s.reviewers)&&s.reviewers.some((r:any)=>r.id===reviewer&&r.status==="FINISHED")));
+      const changes=z.array(z.object({id:z.string().min(1).max(100),createdAt:z.iso.datetime({offset:true}),action:z.string()})).min(1).max(500).safeParse(review?.reviewChanges);
+      const history=changes.success?[...changes.data].sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt)):[];
+      const decision=history[0],unique=decision&&(!history[1]||Date.parse(history[1].createdAt)!==Date.parse(decision.createdAt));
+      const afterResult=unique&&validTime(decision.createdAt)&&validTime(result.modifiedAt)?decision.action==="ACCEPT"&&Date.parse(decision.createdAt)>=Date.parse(result.modifiedAt):undefined;
       return observation("benchling-result-review",base+"/assay-results/"+record,[
        check("lab-result","Result is reviewed and active",typeof result.isReviewed==="boolean"?result.isReviewed&&!result.archiveRecord:undefined,"Check the result and any archive decision."),
        check("lab-entry","Linked entry has an accepted review",typeof review?.status==="string"?review.status==="ACCEPTED"&&!entry.archiveRecord:undefined,"Inspect the current notebook decision.",entryId+" · "+(review?.status??"unavailable")),
+       check("lab-decision","Latest approval follows the result revision",afterResult,"Review the latest decision and timestamp against the result modification.",decision?decision.id+" · "+decision.action+" · "+decision.createdAt:"No decision confirmed"),
        check("lab-authority","Named independent reviewer approved the linked entry",assigned===false||independent===false?false:assigned===true&&independent===true?(processes.length?!!matched:undefined):undefined,"Verify the assigned reviewer, stage and source decision.",reviewer+" · process "+(matched?.id??"unconfirmed"))
       ],"Only the identified result and notebook review are traced. The provider's recorded review is distinct from product or batch release.");
     }

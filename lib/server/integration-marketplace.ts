@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import {brokerId,brokerOrigin,hostedConnectSession} from '../connectors/hosted-oauth';
-import {aiProvider,brokerKey,enabledIntegrations,checkGrant,workspaceGrants,readSync,publicDirectory,sourceModel} from '../connectors/marketplace';
+import {aiProvider,workspaceIntegrationId,brokerKey,enabledIntegrations,checkGrant,workspaceGrants,readSync,publicDirectory,sourceModel} from '../connectors/marketplace';
 import {checkedJson} from '../services/http';
 import {transaction,IntelligenceError} from './intelligence-service';
 import type {AuthorizedContext} from './authorization';
@@ -8,6 +8,7 @@ import {ADMIN,WRITER,requireMember} from './workspace-member';
 import {hashValue} from '../regulatory/intelligence';
 const fields={integration:brokerId,connectionId:brokerId};
 const actions=z.discriminatedUnion('action',[
+ z.object({action:z.literal('ENABLE'),slug:brokerId}).strict(),
  z.object({action:z.literal('DIRECTORY')}).strict(),z.object({action:z.literal('AVAILABLE')}).strict(),
  z.object({action:z.enum(['CONNECT','GRANTS']),integration:brokerId}).strict(),
  z.object({action:z.literal('RENEW'),...fields}).strict(),
@@ -40,9 +41,22 @@ export async function marketplaceAction(ctx:AuthorizedContext,raw:unknown,fetche
  if(d.action==='UNLINK_AI')return saveBinding(ctx,null,d.previous);
  if(d.action==='DIRECTORY'){const entries=await publicDirectory(fetcher);await allow();return {entries,checkedAt:new Date().toISOString()};}
  const key=brokerKey();
- if(d.action==='AVAILABLE'){const integrations=key?await enabledIntegrations(key,fetcher):[];await allow();return {integrations,ai:await aiChoice(ctx),enabled:!!key};}
+ if(d.action==='ENABLE'){
+  if(!key||process.env.REGPILOT_MARKETPLACE_SELF_SERVICE_ENABLED!=='true')throw new IntelligenceError('Workspace provider setup awaits broker configuration.',503);
+  const entries=await publicDirectory(fetcher),match=entries.find(e=>e.slug===d.slug);
+  if(!match||match.auth!=='API_KEY')throw new IntelligenceError('This provider requires a preconfigured integration.',400);
+  const integration=workspaceIntegrationId(ctx.organizationId,match.slug),list=()=>enabledIntegrations(key,fetcher,ctx.organizationId);
+  const existing=(await list()).find(s=>s.integration===integration);if(existing)return {source:existing};
+  await allow();
+  const response=await fetcher(brokerOrigin+'/integrations',{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify({provider:match.slug,unique_key:integration}),cache:'no-store',redirect:'error',signal:AbortSignal.timeout(8000)});
+  const accepted=response.ok;await response.body?.cancel();
+  const source=(await list()).find(s=>s.integration===integration&&s.provider===match.slug);
+  if(!source)throw new IntelligenceError(accepted?'Refresh after the hosted integration becomes available.':'The broker did not enable this provider.',502);
+  await allow();return {source};
+ }
+ if(d.action==='AVAILABLE'){const integrations=key?await enabledIntegrations(key,fetcher,ctx.organizationId):[];await allow();return {integrations,ai:await aiChoice(ctx),enabled:!!key,selfService:!!key&&process.env.REGPILOT_MARKETPLACE_SELF_SERVICE_ENABLED==='true'};}
  if(!key)throw new IntelligenceError('Managed integrations await configuration.',503);
- const sources=await enabledIntegrations(key,fetcher),source=sources.find(s=>s.integration===d.integration);
+ const sources=await enabledIntegrations(key,fetcher,ctx.organizationId),source=sources.find(s=>s.integration===d.integration);
  if(!source)throw new IntelligenceError('This integration is unavailable.',404);
  const tags={regpilot_integration:source.integration},config={key,integration:source.integration};
  if(d.action==='CONNECT'||d.action==='RENEW'){
@@ -76,7 +90,7 @@ export async function marketplaceAction(ctx:AuthorizedContext,raw:unknown,fetche
 export async function resolveCustomerAi(ctx:AuthorizedContext,version:string,fetcher:typeof fetch=fetch){
  const key=brokerKey(),state=await currentBinding(ctx),b=state.binding;
  if(!key||!b||state.version!==version)throw new IntelligenceError('Refresh your organisation’s AI connection.',409);
- const sources=await enabledIntegrations(key,fetcher);
+ const sources=await enabledIntegrations(key,fetcher,ctx.organizationId);
  const source=sources.find(s=>s.integration===b.integration&&s.provider===b.provider&&s.aiModels.includes(b.model));
  if(!source)throw new IntelligenceError('The selected model is unavailable.',409);
  await checkGrant(ctx.organizationId,source,b.connectionId,key,fetcher);
