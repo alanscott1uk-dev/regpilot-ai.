@@ -1,4 +1,4 @@
-export const recordProviders = ["JIRA", "SERVICENOW", "AZURE_DEVOPS", "CONFLUENCE", "SAFETYCULTURE", "UBIBOT", "BENCHLING", "NANGO_SYNC","GITHUB_WORKFLOW","KEYCLOAK_REALM","OPENAI_PROJECT_MODEL","PRIVATE_AI_MODEL","NHSBSA_MAPPING","CLINICALTRIALS_GOV","OPENFDA_RECALL"] as const;
+export const recordProviders = ["JIRA", "SERVICENOW", "AZURE_DEVOPS", "CONFLUENCE", "SAFETYCULTURE", "UBIBOT", "BENCHLING", "NANGO_SYNC","GITHUB_WORKFLOW","KEYCLOAK_REALM","OPENAI_PROJECT_MODEL","PRIVATE_AI_MODEL","NHSBSA_MAPPING","CLINICALTRIALS_GOV","OPENFDA_RECALL","DAILYMED_LABEL","EUROPE_PMC","MHRA_GUIDANCE"] as const;
 export type RecordProvider = typeof recordProviders[number];
 export function isRecordProvider(provider: unknown): provider is RecordProvider {
   return recordProviders.some(value => value === provider);
@@ -6,6 +6,9 @@ export function isRecordProvider(provider: unknown): provider is RecordProvider 
 
 type Definition = {name: string; scope: string; record: string; reference?: string; hint: string; credential: string; docs: string};
 export const recordCatalogue: Record<RecordProvider, Definition> = {
+  DAILYMED_LABEL:{name:"DailyMed label history",scope:"Label set UUID",record:"Reviewed SPL version number",credential:"Public register",hint:"Check whether the reviewed US label version is current in the publisher’s history.",docs:"https://dailymed.nlm.nih.gov/dailymed/app-support-web-services.cfm"},
+  EUROPE_PMC:{name:"Europe PMC publication monitoring",scope:"PubMed identifier",record:"Reviewed metadata revision (YYYY-MM-DD)",reference:"Reviewed DOI",credential:"Public register",hint:"Monitor the indexed revision, DOI and listed correction or retraction signals for a cited publication.",docs:"https://europepmc.org/RestfulWebService"},
+  MHRA_GUIDANCE:{name:"MHRA guidance on GOV.UK",scope:"GOV.UK guidance slug",record:"Content UUID",reference:"Reviewed public update time (ISO 8601)",credential:"Public register",hint:"Track the publishing organisation, withdrawal notice and reviewed guidance revision.",docs:"https://content-api.publishing.service.gov.uk/reference.html"},
   NHSBSA_MAPPING:{name:"NHSBSA medicines mapping",scope:"Dataset slug (bnf-snomed-mapping)",record:"Reviewed CSV resource UUID",credential:"Public register",hint:"Compare the reviewed BNF–SNOMED monthly release with the publisher’s active CSV releases.",docs:"https://opendata.nhsbsa.net/dataset/bnf-snomed-mapping"},
   CLINICALTRIALS_GOV:{name:"ClinicalTrials.gov study disclosure",scope:"NCT study identifier",record:"Reviewed registry status (e.g. COMPLETED)",credential:"Public register",hint:"Check the study status and dated registry revision. Completed studies also report whether results have been posted.",docs:"https://clinicaltrials.gov/data-api/api"},
   OPENFDA_RECALL:{name:"openFDA drug recalls",scope:"FDA event number",record:"Drug recall number (e.g. D-321-2016)",reference:"Reviewed FDA class (I, II or III)",credential:"Public register",hint:"Review the linked enforcement event, classification, dates and recorded termination.",docs:"https://open.fda.gov/apis/drug/enforcement/"},

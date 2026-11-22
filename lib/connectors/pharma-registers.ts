@@ -1,3 +1,4 @@
+import {publicationTargets,labelHistory,publication,guidance} from './publication-registers';
 import {z} from 'zod';
 import {providerReader} from './bounded-http';
 import {CollectionError} from './collection-error';
@@ -8,6 +9,7 @@ import type {PublicRegister,RegisterTarget} from './register-targets';
 export {publicRegisters,referenceRegisters,type PublicRegister,type RegisterTarget} from './register-targets';
 const studyStates=['NOT_YET_RECRUITING','RECRUITING','ENROLLING_BY_INVITATION','ACTIVE_NOT_RECRUITING','COMPLETED','SUSPENDED','TERMINATED','WITHDRAWN','UNKNOWN','AVAILABLE','NO_LONGER_AVAILABLE','TEMPORARILY_NOT_AVAILABLE','APPROVED_FOR_MARKETING','WITHHELD'] as const;
 export const registerTargets={
+ ...publicationTargets,
  NHSBSA_MAPPING:z.object({scope:z.literal('bnf-snomed-mapping'),record:z.uuid()}),
  CLINICALTRIALS_GOV:z.object({scope:z.string().regex(/^NCT\d{8}$/),record:z.enum(studyStates)}),
  OPENFDA_RECALL:z.object({scope:z.string().regex(/^[1-9]\d{0,11}$/),record:z.string().regex(/^D-\d{1,5}-\d{4}$/),reference:z.enum(['I','II','III'])})
@@ -79,6 +81,6 @@ export async function collectPublicRegister(provider:PublicRegister,target:Regis
  const input=registerTargets[provider].strict().safeParse(target);
  if(!input.success)throw new CollectionError('INVALID_TARGET');
  const read=providerReader(fetcher,{});
- const result=await ({NHSBSA_MAPPING:mapping,CLINICALTRIALS_GOV:trial,OPENFDA_RECALL:recall}[provider])(input.data,read,capturedAt);
+ const result=await ({NHSBSA_MAPPING:mapping,CLINICALTRIALS_GOV:trial,OPENFDA_RECALL:recall,DAILYMED_LABEL:labelHistory,EUROPE_PMC:publication,MHRA_GUIDANCE:guidance}[provider])(input.data,read,capturedAt,check);
  return {...result,engine:provider.toLowerCase()+'-v1',capturedAt};
 }

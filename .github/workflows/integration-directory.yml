@@ -18,7 +18,7 @@ jobs:
           node-version: '22'
       - run: npm ci --no-audit --no-fund
       - run: node --import tsx scripts/check-live-integration-directory.ts
-      - name: Read and evaluate three public pharmaceutical registers twice
+      - name: Read and evaluate public pharmaceutical registers twice
         run: node --import tsx scripts/check-live-pharma-registers.ts
       - name: Read GLEIF and OpenSSF public source records twice
         run: node --import tsx scripts/check-live-public-evidence.ts

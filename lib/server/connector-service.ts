@@ -51,6 +51,9 @@ const extraSchema=z.discriminatedUnion("provider",[
  recordTargets.NHSBSA_MAPPING.extend({...extraFields,provider:z.literal("NHSBSA_MAPPING")}).omit({token:true}).strict(),
  recordTargets.CLINICALTRIALS_GOV.extend({...extraFields,provider:z.literal("CLINICALTRIALS_GOV")}).omit({token:true}).strict(),
  recordTargets.OPENFDA_RECALL.extend({...extraFields,provider:z.literal("OPENFDA_RECALL")}).omit({token:true}).strict(),
+ recordTargets.DAILYMED_LABEL.extend({...extraFields,provider:z.literal("DAILYMED_LABEL")}).omit({token:true}).strict(),
+ recordTargets.EUROPE_PMC.extend({...extraFields,provider:z.literal("EUROPE_PMC")}).omit({token:true}).strict(),
+ recordTargets.MHRA_GUIDANCE.extend({...extraFields,provider:z.literal("MHRA_GUIDANCE")}).omit({token:true}).strict(),
  recordTargets.OPENAI_PROJECT_MODEL.extend({...extraFields,provider:z.literal("OPENAI_PROJECT_MODEL")}).strict(),
  recordTargets.PRIVATE_AI_MODEL.extend({...extraFields,provider:z.literal("PRIVATE_AI_MODEL")}).strict(),
  recordTargets.KEYCLOAK_REALM.extend({...extraFields,provider:z.literal("KEYCLOAK_REALM")}).strict(),
@@ -82,7 +85,7 @@ function storedTarget(settings:ConnectorSettings):{repository:string;branch:stri
    if(settings.clientId&&!settings.token)throw new IntelligenceError("Enter the app secret with its client ID");
    return {...recordKeys(settings.provider,settings),token:settings.clientId&&settings.token?benchlingCredential(settings.clientId,settings.token):settings.token};
   }
-  case "NHSBSA_MAPPING":case "CLINICALTRIALS_GOV":case "OPENFDA_RECALL":
+  case "NHSBSA_MAPPING":case "CLINICALTRIALS_GOV":case "OPENFDA_RECALL":case "DAILYMED_LABEL":case "EUROPE_PMC":case "MHRA_GUIDANCE":
   case "NANGO_SYNC":return recordKeys(settings.provider,settings);
   case "OPENAI_PROJECT_MODEL":case "PRIVATE_AI_MODEL":
   case "KEYCLOAK_REALM":

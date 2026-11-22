@@ -73,7 +73,7 @@ function validTime(value: unknown): value is string {
 export async function collectOperationalRecord(provider: RecordProvider, target: Target, token: string, fetcher: typeof fetch = fetch, certificateHash?:string): Promise<Observation> {
   const parsed = recordTargets[provider].strict().safeParse(target);
   if (!parsed.success)throw new CollectionError("INVALID_TARGET");
-  if(provider==="NHSBSA_MAPPING"||provider==="CLINICALTRIALS_GOV"||provider==="OPENFDA_RECALL")return collectPublicRegister(provider,parsed.data as Target,fetcher);
+  if(provider==="NHSBSA_MAPPING"||provider==="CLINICALTRIALS_GOV"||provider==="OPENFDA_RECALL"||provider==="DAILYMED_LABEL"||provider==="EUROPE_PMC"||provider==="MHRA_GUIDANCE")return collectPublicRegister(provider,parsed.data as Target,fetcher);
   if (!(provider==="BENCHLING"&&token.startsWith('{')?token.length<=1200:validCredential(token))) throw new CollectionError("INVALID_TARGET");
   const {scope, record, reference} = parsed.data as Target;
   if(provider==="BENCHLING")token=await benchlingAccess(scope,token,fetcher);

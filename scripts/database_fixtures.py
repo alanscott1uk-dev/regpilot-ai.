@@ -86,17 +86,19 @@ def mongodb(network, host, first, second):
         docker("run","--rm","-i","--entrypoint","sh","-v",volume+":/secret",image,"-c",
                "umask 077; cat > /secret/key && chown mongodb:mongodb /secret/key && chmod 400 /secret/key",
                input_text=secrets.token_hex(64))
-        docker("run","-d","--name",host,"--network",network,"-v",volume+":/secret:ro",image,
-               "mongod","--replSet","rs0","--bind_ip_all","--keyFile","/secret/key")
+        docker("run","-d","--name",host,"--hostname",host,"--network",network,"-v",volume+":/secret:ro",
+               "-e","MONGO_INITDB_ROOT_USERNAME=fixture_admin","-e","MONGO_INITDB_ROOT_PASSWORD",image,
+               "mongod","--replSet","rs0","--bind_ip_all","--keyFile","/secret/key",
+               env=dict(os.environ,MONGO_INITDB_ROOT_PASSWORD=admin))
         def js(statement, auth=False, required=True):
-            auth_js = "db.getSiblingDB('admin').auth('fixture_admin',"+json.dumps(admin)+");\n" if auth else ""
+            auth_js = "if (!db.getSiblingDB('admin').auth('fixture_admin',"+json.dumps(admin)+").ok) quit(3);\n" if auth else ""
             # mongosh file mode reports script failures through the exit code.
             return docker("exec","-i",host,"mongosh","--quiet","--host","localhost","--file","/dev/stdin",
                           input_text=auth_js+statement,required=required)
-        wait_for(lambda: js("db.runCommand({ping:1})",required=False).returncode==0)
-        js("assert.commandWorked(rs.initiate({_id:'rs0',members:[{_id:0,host:'"+host+":27017'}]}));")
-        wait_for(lambda: js("if(!db.hello().isWritablePrimary) quit(2);",required=False).returncode==0)
-        js("db.getSiblingDB('admin').createUser({user:'fixture_admin',pwd:"+json.dumps(admin)+",roles:['root']});")
+        wait_for(lambda: js("if (db.adminCommand({getCmdLineOpts:1}).parsed?.replication?.replSetName !== 'rs0') quit(2);", True, False).returncode==0)
+        js("const r=db.adminCommand({replSetInitiate:{_id:'rs0',members:[{_id:0,host:'"+host+
+           ":27017'}]}}); if(!r.ok) quit(4);",True)
+        wait_for(lambda: js("if(!db.hello().isWritablePrimary) quit(2);",True,False).returncode==0)
         js("db.getSiblingDB('admin').createUser({user:'source_reader',pwd:"+json.dumps(first)+
            ",roles:[{role:'read',db:'evidence'}]}); db.getSiblingDB('evidence').release_gate.insertMany("
            "[{_id:1,decision:'accepted'},{_id:2,decision:'accepted'},{_id:3,decision:'hold'}]);",True)
