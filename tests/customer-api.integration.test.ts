@@ -333,7 +333,7 @@ test('site reader delivers a real encrypted OPC UA excursion through authenticat
   });
   await new Promise<void>(resolve=>server!.listen(0,'127.0.0.1',resolve));
   const addr=server.address();assert.ok(addr&&typeof addr==='object');
-  const send=(token:string)=>exec('python',['public/instrument-bridge/deliver.py',envelope,'--workspace','https://127.0.0.1:'+addr.port],{env:{...process.env,SSL_CERT_FILE:pem,REGPILOT_OBSERVATION_TOKEN:token}});
+  const send=(token:string)=>exec(process.env.REGPILOT_INSTRUMENT_PYTHON!,['public/instrument-bridge/deliver.py',envelope,'--workspace','https://127.0.0.1:'+addr.port],{env:{...process.env,SSL_CERT_FILE:pem,REGPILOT_OBSERVATION_TOKEN:token}});
   const unauthorised=await x.create(['observations:write'],[x.ungranted.id]);
   await assert.rejects(send(unauthorised.secret!),/HTTP 404/);
   const writer=await x.create(['observations:write'],[x.primary.id]);

@@ -109,7 +109,18 @@ export async function collectOperationalRecord(provider: RecordProvider, target:
       if(entry?.id!==entryId)throw new CollectionError("TARGET_MISMATCH");
       const review=entry.reviewRecord,processes=Array.isArray(review?.reviewProcesses)?review.reviewProcesses:[],assigned=Array.isArray(entry.assignedReviewers)?entry.assignedReviewers.some((r:{id?:string})=>r?.id===reviewer):undefined;
       const independent=Array.isArray(entry.authors)&&entry.authors.length>0&&entry.authors.every((r:{id?:string})=>typeof r?.id==="string"&&!!r.id)&&typeof result.creator?.id==="string"?result.creator.id!==reviewer&&!entry.authors.some((r:{id?:string})=>r?.id===reviewer):undefined;
-      const matched=processes.find((p:any)=>p?.completionStatus==="APPROVED"&&Array.isArray(p.stages)&&p.stages.some((s:any)=>s.actionLabel==="APPROVE"&&Array.isArray(s.reviewers)&&s.reviewers.some((r:any)=>r.id===reviewer&&r.status==="FINISHED")));
+      const process=processes.length===1?processes[0]:undefined;
+      const approvalStages=Array.isArray(process?.stages)?process.stages.filter((s:any)=>s?.actionLabel==="APPROVE"):[];
+      const approvers=new Set<string>();
+      let stagesReadable=approvalStages.length>0;
+      for(const stage of approvalStages){
+        if(!Array.isArray(stage.reviewers)){stagesReadable=false;continue;}
+        for(const person of stage.reviewers){
+          if(!person?.id||typeof person.status!=="string")stagesReadable=false;
+          else if(person.status==="FINISHED")approvers.add(person.id);
+        }
+      }
+      const matched=stagesReadable&&process?.type!=="SELF_REVIEW"&&process?.completionStatus==="APPROVED"&&approvers.size===1&&approvers.has(reviewer)?process:undefined;
       const changes=z.array(z.object({id:z.string().min(1).max(100),createdAt:z.iso.datetime({offset:true}),action:z.string(),esigned:z.boolean().nullish()})).min(1).max(500).safeParse(review?.reviewChanges);
       const history=changes.success?[...changes.data].sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt)):[];
       const decision=history[0],unique=decision&&(!history[1]||Date.parse(history[1].createdAt)!==Date.parse(decision.createdAt));
@@ -121,7 +132,7 @@ export async function collectOperationalRecord(provider: RecordProvider, target:
        check("lab-result","Result is reviewed and active",typeof result.isReviewed==="boolean"?result.isReviewed&&!result.archiveRecord:undefined,"Check the result and any archive decision."),
        check("lab-entry","Linked entry has an accepted review",typeof review?.status==="string"?review.status==="ACCEPTED"&&!entry.archiveRecord:undefined,"Inspect the current notebook decision.",entryId+" · "+(review?.status??"unavailable")),
        check("lab-decision","Latest approval follows the result revision",afterResult,"Review the latest decision and timestamp against the result modification.",decision?decision.id+" · "+decision.action+" · "+decision.createdAt+" · e-signature "+(decision.esigned===true?"recorded":decision.esigned===false?"absent":"unreported"):"No decision confirmed"),
-       check("lab-authority","Named independent reviewer approved the linked entry",assigned===false||independent===false?false:assigned===true&&independent===true?(processes.length===1?!!matched:undefined):undefined,"Verify the assigned reviewer, stage and source decision.",reviewer+" · process "+(matched?.id??"unconfirmed"))
+       check("lab-authority","Named independent reviewer approved the linked entry",assigned===false||independent===false?false:assigned===true&&independent===true?(processes.length===1&&stagesReadable&&approvers.size<=1?!!matched:undefined):undefined,"Verify the assigned reviewer, stage and source decision.",reviewer+" · process "+(matched?.id??"unconfirmed"))
       ],"Only the identified result and notebook review are traced. The provider's recorded review is distinct from product or batch release.");
     }
     case "JIRA": {

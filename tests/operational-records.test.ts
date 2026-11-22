@@ -65,6 +65,11 @@ test('Benchling links a result to its exact entry and independent named review s
  const good=await read();assert.equal(observationOutcome(good),'OBSERVED');assert.doesNotMatch(JSON.stringify(good),/discard-me/);
  assert.equal(observationOutcome(await read({},{modifiedAt:'2025-07-02T10:00:00Z'})),'FOLLOW_UP');
  assert.equal(observationOutcome(await read({authors:[{id:'usr_qa'}]})),'FOLLOW_UP');
+ const process=entry.reviewRecord.reviewProcesses[0];
+ const reviewWith=(p:object)=>({reviewRecord:{...entry.reviewRecord,reviewProcesses:[p]}});
+ assert.equal((await read(reviewWith({...process,type:'SELF_REVIEW'}))).checks.find(c=>c.id==='lab-authority')?.status,'FAIL');
+ const ambiguous={...process,stages:[{actionLabel:'APPROVE',reviewers:[{id:'usr_qa',status:'FINISHED'},{id:'usr_other',status:'FINISHED'}]}]};
+ assert.equal((await read(reviewWith(ambiguous))).checks.find(c=>c.id==='lab-authority')?.status,'UNKNOWN');
  assert.equal(observationOutcome(await read({reviewRecord:{status:'IN_PROGRESS'}})),'FOLLOW_UP');
  await assert.rejects(read({},{entryId:'etr_other'}),{code:'TARGET_MISMATCH'});
 });

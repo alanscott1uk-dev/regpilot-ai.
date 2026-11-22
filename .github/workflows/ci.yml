@@ -94,6 +94,9 @@ jobs:
       - run: npx prisma db execute --file security/test-role-setup.sql --schema prisma/schema.prisma
       - run: npx prisma db execute --file security/supabase-private-tables.sql --schema prisma/schema.prisma
       - run: node --import tsx --test tests/private-tables.integration.test.ts
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Install instrument acceptance dependency
         run: python -m venv "$RUNNER_TEMP/opcua-env" && "$RUNNER_TEMP/opcua-env/bin/python" -m pip install asyncua==1.1.8
       - run: npm run test:integration

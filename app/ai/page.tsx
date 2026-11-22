@@ -221,7 +221,9 @@ export default function AiStudio(){
   const requestedEvidence=params.get("evidenceId");
   if(requestedEvidence&&/^[a-f0-9-]{36}$/i.test(requestedEvidence)){setMode("document");setEvidenceId(requestedEvidence);setSelectedDocument("Private evidence from the organisation vault");}
   const requestedSource=params.get("sourceId");
-  if(requestedSource&&REGULATORY_SOURCES.some(s=>s.id===requestedSource))setSourceId(requestedSource);
+  const publication=REGULATORY_SOURCES.find(s=>s.id===requestedSource);
+  if(publication?.refreshMode==="manual")setMessage("This publication is available for manual review at the publisher. Use source research to open it.");
+  else if(publication)setSourceId(publication.id);
   const requestedDoc=params.get("documentId");
   if(requestedDoc){
    try{
@@ -272,7 +274,7 @@ export default function AiStudio(){
      <form onSubmit={run} className={ui.form}>
       {orgId&&<><label>AI account<select aria-label="AI account" disabled={working} value={useOwn?'customer':'platform'} onChange={e=>{setOwn(e.target.value==='customer');setConsent(false);setResult(null);}}><option value="platform">RegPilot AI Gateway</option>{own?.org===orgId&&<option value="customer">{own.provider} / {own.model} · organisation account</option>}</select></label><a href={'/team/developers?'+new URLSearchParams({organizationId:orgId})}>Link an AI provider or a private ChatGPT GPT</a></>}
       <label>UK business context (fictional)<textarea rows={2} maxLength={2500} value={businessContext} onChange={e=>setBusinessContext(e.target.value)} placeholder="Example: Small wholesale business reviewing supplier procedures."/></label>
-      <label>Official UK publication<select value={sourceId} onChange={e=>setSourceId(e.target.value)} required={mode==="change"}><option value="">{mode==="assistant"?"Find official passages from my question":"No official source selected"}</option>{REGULATORY_SOURCES.map(s=><option key={s.id} value={s.id}>{s.agency}: {s.title}</option>)}</select></label>
+      <label>Official UK publication<select value={sourceId} onChange={e=>setSourceId(e.target.value)} required={mode==="change"}><option value="">{mode==="assistant"?"Find official passages from my question":"No official source selected"}</option>{REGULATORY_SOURCES.map(s=><option key={s.id} value={s.id} disabled={s.refreshMode==="manual"}>{s.agency}: {s.title}{s.refreshMode==="manual"?" (manual review at publisher)":""}</option>)}</select></label>
       {(mode==="document"||mode==="assistant")&&<label>{mode==="document"?"Policy/document text (fictional)":"Relevant policy or context (optional)"}<textarea rows={5} maxLength={16000} value={documentText} onChange={e=>setDocumentText(e.target.value)} placeholder="Paste non-sensitive example policy text…"/></label>}
       {mode==="document"&&evidenceId&&<p className={ui.hint}>Private organisation evidence selected (up to 2 MB). RegPilot retrieves and verifies the stored bytes server-side after checking your membership; no public file URL is issued. <button type="button" onClick={()=>setEvidenceId("")}>Clear selection</button></p>}
       {mode==="document"&&selectedDocument&&<p className={ui.hint}>Selected document from demo library: <strong>{selectedDocument}</strong>. Review the content before sending it to an external model provider.</p>}
