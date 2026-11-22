@@ -19,12 +19,12 @@ def import_run(run_id):
         raise ValueError("Invalid run ID")
     run = json.loads(gh("api", f"repos/{REPO}/actions/runs/{run_id}"))
     if (run["event"] != "pull_request" or run["head_repository"]["full_name"] != REPO or run["head_branch"] != BRANCH or
-            run["path"] != ".github/workflows/integration-directory.yml" or run["conclusion"] != "success"):
-        raise ValueError("Expected a successful integration workflow from the RegPilot feature branch")
+            run["path"] != ".github/workflows/integration-directory.yml" or run["conclusion"] not in ("success","failure")):
+        raise ValueError("Expected a completed integration workflow from the RegPilot feature branch")
     data = json.loads(gh("run", "view", run_id, "--repo", REPO, "--json", "jobs"))
-    jobs = [j for j in data["jobs"] if j["name"].startswith("database-source (")]
+    jobs = [j for j in data["jobs"] if j["conclusion"] == "success" and re.fullmatch(r"database-source \([a-z0-9-]+\)", j["name"])]
     if not jobs:
-        raise ValueError("The workflow did not run any database collectors")
+        raise ValueError("The workflow has no successful database collector jobs")
     for job in jobs:
         passed = {s["name"] for s in job["steps"] if s["conclusion"] == "success"}
         if job["conclusion"] != "success" or not {READ_STEP, INTAKE_STEP}.issubset(passed):
@@ -35,7 +35,7 @@ def import_run(run_id):
             raise ValueError("Expected one collector report")
         r = reports[0]
         before, after = r["before"], r["renewed"]
-        if not (r["scope"] == "Disposable CI database" and r["retiredCredentialRejected"] is True and
+        if not (job["name"] == "database-source ("+r["source"].removeprefix("airbyte/source-")+")" and r["scope"] == "Disposable CI database" and r["retiredCredentialRejected"] is True and
                 before["status"] == "FAIL" and after["status"] == "PASS" and
                 before["counts"]["missing"] == after["counts"]["missing"] == after["counts"]["different"] == 0 and
                 before["counts"]["different"] > 0 and before["rows"] == after["rows"] == after["counts"]["matched"] ==

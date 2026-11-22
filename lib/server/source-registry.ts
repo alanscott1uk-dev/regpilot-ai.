@@ -13,30 +13,34 @@ export function registryFilters(params:URLSearchParams) {
   return {
     term:(params.get('q') || '').trim().slice(0,120),
     kind:sourceKinds.some(value => value === kind) ? kind : '',
+    tested:params.get('tested')==='1',
     page:Number.isSafeInteger(page) && page > 0 ? page : 1
   };
 }
 
 export async function sourceCatalogue(filters:ReturnType<typeof registryFilters>) {
   if (!registerStagingEnabled()) return null;
-  const {term,kind} = filters;
+  const {term,kind,tested} = filters;
   const size = 25;
   return db.$transaction(async tx => {
     const [counts] = await tx.$queryRaw<Counts[]>`
       SELECT count(*)::int AS total, count(*) FILTER (WHERE plan_available AND artifact_verified)::int AS plans,
         count(*) FILTER (WHERE kind='database')::int AS databases, max(refreshed_at) AS refreshed,
-        count(*) FILTER (WHERE (${kind}='' OR kind=${kind}) AND strpos(lower(name),lower(${term}))>0)::int AS matches
-      FROM regpilot_verification.source_collection_plans`;
+        count(*) FILTER (WHERE (${kind}='' OR kind=${kind}) AND strpos(lower(name),lower(${term}))>0
+          AND (NOT ${tested} OR EXISTS (SELECT 1 FROM regpilot_verification.tested_database_sources a WHERE a.id=p.id)))::int AS matches
+      FROM regpilot_verification.source_collection_plans p`;
     const pages = Math.max(1,Math.ceil(counts.matches/size));
     const page = Math.min(filters.page,pages);
     const entries = await tx.$queryRaw<SourceSummary[]>`
-      SELECT id,name,kind,version,plan_available,artifact_verified FROM regpilot_verification.source_collection_plans
+      SELECT id,name,kind,version,plan_available,artifact_verified FROM regpilot_verification.source_collection_plans p
       WHERE (${kind}='' OR kind=${kind}) AND strpos(lower(name),lower(${term}))>0
+        AND (NOT ${tested} OR EXISTS (SELECT 1 FROM regpilot_verification.tested_database_sources a WHERE a.id=p.id))
       ORDER BY lower(name),id LIMIT ${size} OFFSET ${(page-1)*size}`;
     const acceptance=await tx.$queryRaw<DatabaseAcceptance[]>`
       SELECT id,name,version,run,job,completed_at,before_matched,before_different,after_matched
       FROM regpilot_verification.tested_database_sources ORDER BY lower(name),id`;
-    return {counts,entries,page,pages,acceptance};
+    const testedIds=new Set(acceptance.map(a=>a.id));
+    return {counts,entries:entries.map(row=>({...row,workspace_tested:testedIds.has(row.id)})),page,pages,acceptance};
   },{isolationLevel:'RepeatableRead'});
 }
 

@@ -155,6 +155,11 @@ jobs:
         env:
           REGPILOT_DATABASE_ACCEPTANCE_ENVELOPES: database-acceptance-envelopes.json
         run: node --import tsx --test --test-name-pattern='database connector receipts' tests/customer-api.integration.test.ts
+      - name: Trace three live publication changes into a private workspace
+        if: matrix.engine == 'postgres'
+        env:
+          REGPILOT_PUBLIC_REGISTER_ACCEPTANCE: 'true'
+        run: node --import tsx --test --test-name-pattern='live publication changes' tests/operational-records.integration.test.ts
       - uses: actions/upload-artifact@v4
         with:
           name: database-source-${{ matrix.engine }}

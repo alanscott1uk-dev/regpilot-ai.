@@ -257,3 +257,32 @@ test('each public pharmaceutical register can be enrolled without a secret, coll
   }
  }finally{globalThis.fetch=original;await f.cleanup();}
 });
+
+test('live publication changes reach a private workspace control and its follow-up',
+ {skip:process.env.REGPILOT_PUBLIC_REGISTER_ACCEPTANCE!=='true'},async()=>{
+  const {referenceRegisters}=await import('../lib/connectors/register-targets');
+  const f=await assuranceFixture();
+  Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:'true',REGPILOT_CONNECTORS_ENABLED:'true',
+    REGPILOT_CONNECTOR_ENCRYPTION_KEY:'dc'.repeat(32),SUPABASE_URL:'https://auth.invalid',SUPABASE_PUBLISHABLE_KEY:'fixture'});
+  try {
+    const programme=await db.programmeImport.create({data:{organizationId:f.a.id,createdById:f.o.userId,
+      inputHash:f.a.id,method:'SEARCH',status:'ACCEPTED',evidenceManifest:[]}});
+    const control=await db.managedControl.create({data:{organizationId:f.a.id,importId:programme.id,
+      proposalKey:'public-revisions',title:'Reviewed public source revisions',description:'Identify an update requiring review',
+      testProcedure:'Compare the real publisher revision with the baseline',theme:'quality',ownerId:f.editor.id,
+      scheduledById:f.owner.id,intervalDays:30,nextReviewAt:new Date()}});
+    const baselines={DAILYMED_LABEL:{record:'34'},EUROPE_PMC:{record:'2021-01-01'},MHRA_GUIDANCE:{reference:'2020-01-01T00:00:00Z'}} as const;
+    for(const [provider,baseline] of Object.entries(baselines)){
+      const source=referenceRegisters.find(r=>r.provider===provider)!;
+      const input={provider,...source.target,...baseline,controlId:control.id,version:0,consent:true,enabled:true,intervalHours:24};
+      await assert.rejects(saveConnector(f.out,input),rejects(404));
+      const connection=await saveConnector(f.o,input);
+      const observed=await verifyConnectorNow(f.o,connection.id,connection.version);
+      assert.equal(observed.outcome,'FOLLOW_UP',provider);
+      const run=await db.connectorRun.findFirstOrThrow({where:{connectorId:connection.id}});
+      assert.equal((await exportConnectorRun(f.o,run.id)).currentAtExport,true);
+      await assert.rejects(exportConnectorRun(f.out,run.id),rejects(404));
+      assert.equal(await db.obligation.count({where:{organizationId:f.a.id,connectorId:connection.id,status:{not:'COMPLETE'}}}),1);
+    }
+  } finally {await f.cleanup();}
+});
