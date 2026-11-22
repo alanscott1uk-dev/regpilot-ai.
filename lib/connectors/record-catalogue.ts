@@ -1,4 +1,4 @@
-export const recordProviders = ["JIRA", "SERVICENOW", "AZURE_DEVOPS", "CONFLUENCE", "SAFETYCULTURE", "UBIBOT", "BENCHLING", "NANGO_SYNC","GITHUB_WORKFLOW","KEYCLOAK_REALM","OPENAI_PROJECT_MODEL","PRIVATE_AI_MODEL"] as const;
+export const recordProviders = ["JIRA", "SERVICENOW", "AZURE_DEVOPS", "CONFLUENCE", "SAFETYCULTURE", "UBIBOT", "BENCHLING", "NANGO_SYNC","GITHUB_WORKFLOW","KEYCLOAK_REALM","OPENAI_PROJECT_MODEL","PRIVATE_AI_MODEL","NHSBSA_MAPPING","CLINICALTRIALS_GOV","OPENFDA_RECALL"] as const;
 export type RecordProvider = typeof recordProviders[number];
 export function isRecordProvider(provider: unknown): provider is RecordProvider {
   return recordProviders.some(value => value === provider);
@@ -6,6 +6,9 @@ export function isRecordProvider(provider: unknown): provider is RecordProvider 
 
 type Definition = {name: string; scope: string; record: string; reference?: string; hint: string; credential: string; docs: string};
 export const recordCatalogue: Record<RecordProvider, Definition> = {
+  NHSBSA_MAPPING:{name:"NHSBSA medicines mapping",scope:"Dataset slug (bnf-snomed-mapping)",record:"Reviewed CSV resource UUID",credential:"Public register",hint:"Compare the reviewed BNF–SNOMED monthly release with the publisher’s active CSV releases.",docs:"https://opendata.nhsbsa.net/dataset/bnf-snomed-mapping"},
+  CLINICALTRIALS_GOV:{name:"ClinicalTrials.gov study disclosure",scope:"NCT study identifier",record:"Reviewed registry status (e.g. COMPLETED)",credential:"Public register",hint:"Check the study status and dated registry revision. Completed studies also report whether results have been posted.",docs:"https://clinicaltrials.gov/data-api/api"},
+  OPENFDA_RECALL:{name:"openFDA drug recalls",scope:"FDA event number",record:"Drug recall number (e.g. D-321-2016)",reference:"Reviewed FDA class (I, II or III)",credential:"Public register",hint:"Review the linked enforcement event, classification, dates and recorded termination.",docs:"https://open.fda.gov/apis/drug/enforcement/"},
   OPENAI_PROJECT_MODEL:{name:"OpenAI project model",scope:"OpenAI project ID (proj_…)",record:"Exact model ID",credential:"Project API key",hint:"Verify model access in your OpenAI API project. To use it for drafting, bind this connection in Company integrations. Pay-per-use generation requires separate activation.",docs:"https://developers.openai.com/api/reference/resources/models/methods/retrieve/"},
   PRIVATE_AI_MODEL:{name:"Private AI model server",scope:"Approved server hostname",record:"Exact model ID",credential:"Server bearer credential",hint:"Use an administrator-approved HTTPS server with a protected OpenAI-compatible model list and chat completion API.",docs:"https://github.com/ggml-org/llama.cpp/tree/master/tools/server"},
   KEYCLOAK_REALM:{name:"Keycloak realm policy",scope:"Approved Keycloak hostname",record:"Realm name",reference:"Read-only service client ID",credential:"Service client secret",hint:"Use a service account with view-realm and view-events on the approved host. RegPilot exchanges its secret for a fresh access token at collection time.",docs:"https://www.keycloak.org/docs-api/latest/rest-api/index.html"},

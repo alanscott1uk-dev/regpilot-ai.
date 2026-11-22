@@ -190,3 +190,28 @@ test('direct OpenAI access pins the project and exact model and discards other r
  assert.doesNotMatch(JSON.stringify(result),/fictional-connector-token|confidential-identifier/);
  await assert.rejects(collectModelAccess('OPENAI_PROJECT_MODEL',target,token,async()=>Response.json({id:'other-model',object:'model'})),{code:'TARGET_MISMATCH'});
 });
+
+test('public pharmaceutical registers bind the exact records and flag material drift and incomplete data',async()=>{
+ const {collectPublicRegister,referenceRegisters}=await import('../lib/connectors/pharma-registers');
+ const [mapping,trial,recall]=referenceRegisters;
+ const id=mapping.target.record,pkgId='2aab7706-8c93-42f6-9f49-39a53cfdaa1c';
+ const item={id,name:'BNF_SNOMED_MAPPING_DATA_202609',state:'active',format:'CSV',package_id:pkgId};
+ const pkg={id:pkgId,name:mapping.target.scope,state:'active',num_resources:2,resources:[item,{...item,id:'other',name:'BNF_SNOMED_MAPPING_DATA_202610'}]};
+ const readMapping=(packageBody:object,resource:object)=>collectPublicRegister(mapping.provider,mapping.target,async(url,init)=>{
+  assert.equal(new URL(String(url)).hostname,'opendata.nhsbsa.net');assert.equal(new Headers(init?.headers).has('Authorization'),false);
+  return Response.json({success:true,result:String(url).includes('package_show')?packageBody:resource});});
+ const signal=(r:{checks:{id:string;status:string}[]},id:string)=>r.checks.find(c=>c.id===id)?.status;
+ assert.equal(signal(await readMapping(pkg,item),'mapping-release'),'FAIL');
+ assert.equal(signal(await readMapping({...pkg,num_resources:9},item),'mapping-release'),'UNKNOWN');
+ await assert.rejects(readMapping(pkg,{...item,package_id:'other'}),{code:'TARGET_MISMATCH'});
+ const readTrial=(id:string,status:object)=>collectPublicRegister(trial.provider,trial.target,async()=>Response.json({protocolSection:{identificationModule:{nctId:id},statusModule:status}}));
+ const status={overallStatus:'COMPLETED',lastUpdatePostDateStruct:{type:'ACTUAL',date:'2025-10-10'}};
+ assert.equal(signal(await readTrial(trial.target.scope,status),'trial-results'),'FAIL');
+ assert.equal(signal(await readTrial(trial.target.scope,{...status,resultsFirstPostDateStruct:{type:'ACTUAL',date:'2025-10-09'}}),'trial-results'),'PASS');
+ await assert.rejects(readTrial('NCT12345678',status),{code:'TARGET_MISMATCH'});
+ const row={recall_number:recall.target.record,event_id:recall.target.scope,product_type:'Drugs',classification:'Class I',status:'Ongoing',recall_initiation_date:'20250101',report_date:'20250120'};
+ const readRecall=(total:number,record:object)=>collectPublicRegister(recall.provider,recall.target,async()=>Response.json({meta:{results:{total}},results:[record]}));
+ const current=await readRecall(1,row);assert.equal(signal(current,'recall-class'),'FAIL');assert.equal(signal(current,'recall-closure'),'FAIL');
+ assert.equal(signal(await readRecall(1,{...row,status:'Terminated',termination_date:'20250230'}),'recall-closure'),'UNKNOWN');
+ await assert.rejects(readRecall(2,row),{code:'TARGET_MISMATCH'});await assert.rejects(readRecall(1,{...row,event_id:'other'}),{code:'TARGET_MISMATCH'});
+});

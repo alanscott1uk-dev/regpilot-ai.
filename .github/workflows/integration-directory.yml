@@ -18,6 +18,8 @@ jobs:
           node-version: '22'
       - run: npm ci --no-audit --no-fund
       - run: node --import tsx scripts/check-live-integration-directory.ts
+      - name: Read and evaluate three public pharmaceutical registers twice
+        run: node --import tsx scripts/check-live-pharma-registers.ts
       - name: Read GLEIF and OpenSSF public source records twice
         run: node --import tsx scripts/check-live-public-evidence.ts
       - name: Read actual repository workflow decisions and jobs
@@ -28,6 +30,7 @@ jobs:
         with:
           name: public-provider-evidence
           path: |
+            live-pharma-registers.json
             live-public-evidence.json
             live-workflow-evidence.json
           retention-days: 14

@@ -1,5 +1,6 @@
 "use client";
 import {recordProviders,isRecordProvider,recordCatalogue} from "../../../lib/connectors/record-catalogue";
+import {requiresStoredSecret} from "../../../lib/connectors/capacity";
 import {AwsFields,GleifFields} from "./aws-gleif-fields";
 import {WorkforceFields,workforceFormData} from "./workforce-fields";
 import {OktaFields} from "./okta-fields";
@@ -14,7 +15,7 @@ export function ConnectorForm({organizationId,controls,connection,busy,enabled,m
  const [,scopePart,recordPart]=(connection?.repository||"").split(":");
  const savedScope=provider==="NANGO_SYNC"&&connection?scopePart+"/"+recordPart:scopePart,savedRecord=provider==="NANGO_SYNC"?connection?.branch.split(":")[1]:recordPart;
  const workforce=provider==="WORKFORCE_LEAVER";
- const needsCredential=provider!=="NANGO_SYNC"&&!workforce&&!okta&&!scorecard&&!aws&&!gleif;
+ const needsCredential=requiresStoredSecret(provider)&&!workforce&&!okta;
  const vercel=provider==="VERCEL",supabase=provider==="SUPABASE";
  const gitlab=provider==="GITLAB",cloudflare=provider==="CLOUDFLARE",registry=provider==="COMPANIES_HOUSE",extra=!!definition||workforce||aws||gleif||intune||scorecard||gitlab||cloudflare||registry||vercel||supabase||okta;
  const google=provider==="GOOGLE_WORKSPACE",microsoft=provider==="MICROSOFT365",active=enabled&&(!definition||extraEnabled.recordProviders?.includes(provider))&&(!workforce||extraEnabled.workforce)&&(!aws||extraEnabled.aws)&&(!awsOrg||extraEnabled.awsOrganization)&&(!gleif||extraEnabled.gleif)&&(!intune||extraEnabled.intune)&&(!scorecard||extraEnabled.scorecard)&&(!okta||extraEnabled.okta)&&(!microsoft||microsoftEnabled)&&(!google||googleEnabled)&&(!gitlab||extraEnabled.gitlab)&&(!cloudflare||extraEnabled.cloudflare)&&(!registry||extraEnabled.companiesHouse)&&(!vercel||extraEnabled.vercel)&&(!supabase||extraEnabled.supabase);

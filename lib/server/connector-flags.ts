@@ -17,6 +17,7 @@ export const gleifEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_GLEIF_EN
 export const awsEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_AWS_ENABLED==="true"&&brokerRole.safeParse(process.env.REGPILOT_AWS_BROKER_ROLE_ARN).success;
 export const awsOrganizationEnabled=()=>awsEnabled()&&process.env.REGPILOT_AWS_ORGANIZATIONS_ENABLED==="true";
 const providerGates=new Map<string,()=>boolean>(Object.entries({
+ NHSBSA_MAPPING:connectorsEnabled,CLINICALTRIALS_GOV:connectorsEnabled,OPENFDA_RECALL:connectorsEnabled,
  OPENAI_PROJECT_MODEL:()=>connectorsEnabled(),
  PRIVATE_AI_MODEL:()=>connectorsEnabled()&&!!process.env.REGPILOT_PRIVATE_MODEL_HOST,
  KEYCLOAK_REALM:()=>connectorsEnabled()&&!!process.env.REGPILOT_KEYCLOAK_HOST,
