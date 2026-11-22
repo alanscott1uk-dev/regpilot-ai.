@@ -1,5 +1,5 @@
 'use client';
-import {useState, type FormEvent} from 'react';
+import {useRef, useState, type FormEvent} from 'react';
 
 type Source = {id: string; name: string; version: string};
 
@@ -7,12 +7,38 @@ export default function TestBuilder({sources}: {sources: Source[]}) {
   const [kind, setKind] = useState('text');
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
-  if (!sources.length) return null;
+  const [imported, setImported] = useState<Source | null>(null);
+  const [selection, setSelection] = useState(sources[0]?.id ?? '');
+  const importSequence = useRef(0);
+  const choices = imported ? [imported, ...sources.filter(s => s.id !== imported.id)] : sources;
+  async function importPlan(file?: File) {
+    const sequence = ++importSequence.current;
+    setSaved(false);
+    setError('');
+    setImported(null);
+    setSelection(sources[0]?.id ?? '');
+    if (!file) return;
+    try {
+      if (file.size > 65536) throw Error('Choose one source plan under 64 KiB.');
+      const plan = JSON.parse(await file.text());
+      if (plan?.format !== 'regpilot-airbyte-source-v1' ||
+          !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(plan.definitionId) ||
+          !/^sha256:[0-9a-f]{64}$/.test(plan.artifactDigest) || typeof plan.name !== 'string' ||
+          !plan.name.length || plan.name.length > 200 || typeof plan.version !== 'string' ||
+          !/^[0-9]+\.[0-9]+\.[0-9]+([.-][a-zA-Z0-9.-]+)?$/.test(plan.version))
+        throw Error('Choose an individual source plan downloaded from the catalogue.');
+      if (sequence !== importSequence.current) return;
+      setImported({id: plan.definitionId, name: plan.name, version: plan.version});
+      setSelection(plan.definitionId);
+    } catch (problem) {
+      if (sequence === importSequence.current) setError(problem instanceof Error ? problem.message : 'Could not read this source plan.');
+    }
+  }
   function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const fields = new FormData(event.currentTarget);
     const read = (key: string) => String(fields.get(key) ?? '').trim();
-    const source = sources.find(item => item.id === read('source'));
+    const source = choices.find(item => item.id === read('source'));
     if (!source) return;
     try {
       const pointer = (name: string) => {
@@ -45,8 +71,9 @@ export default function TestBuilder({sources}: {sources: Source[]}) {
   }
   return <details><summary>Create a custom monitoring test</summary>
     <form onSubmit={save} onChange={() => {setSaved(false); setError('');}}>
-      <p>Choose a source from these search results. Use the stream and field names returned by source discovery.</p>
-      <p><label>Source <select name="source">{sources.map(s => <option key={s.id} value={s.id}>{s.name} {s.version}</option>)}</select></label></p>
+      <p>Choose a source from the search results or open a downloaded plan. Use the stream and field names returned by discovery.</p>
+      <p><label>Open a source plan <input type="file" accept=".json,application/json" onChange={e => void importPlan(e.target.files?.[0])}/></label></p>
+      <p><label>Source <select name="source" value={selection} required onChange={e => setSelection(e.target.value)}>{choices.map(s => <option key={s.id} value={s.id}>{s.name} {s.version}</option>)}</select></label></p>
       <p><label>Test name <input name="name" maxLength={100} required /></label></p>
       <p><label>Workspace control UUID <input name="control" pattern="[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}" required /></label></p>
       <p><label>Stream <input name="stream" maxLength={150} required /></label>{' '}<label>Namespace (optional) <input name="namespace" maxLength={150} /></label></p>
@@ -62,7 +89,7 @@ export default function TestBuilder({sources}: {sources: Source[]}) {
       <p><label>Resource ID field (optional) <input name="identity" placeholder="/id" maxLength={180} /></label>{' '}
         <label>Source instance <input name="instance" placeholder="warehouse-east" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,79}" /></label></p>
       <p>Choosing an ID field includes those identifiers in your private workspace receipts.</p>
-      <button type="submit">Download test definition</button>
+      <button type="submit" disabled={!selection}>Download test definition</button>
       {error && <p role="alert">{error}</p>}
       {saved && <p role="status">Downloaded source-test.json. Run it with the matching source plan and the <a href="/database-bridge/setup.txt">collection instructions</a>.</p>}
     </form>

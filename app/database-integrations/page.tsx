@@ -23,8 +23,9 @@ export default async function Sources({searchParams}:{searchParams:Promise<Recor
     <p>{data.counts.matches} matching definitions{data.counts.refreshed&&<> · Imported {data.counts.refreshed.toISOString().slice(0,16).replace('T',' ')} UTC</>}</p>
     {data.entries.length>0?<div className={css.scroll}><table><thead><tr><th>Source</th><th>Type</th><th>Version</th><th>Collection plan</th></tr></thead><tbody>
     {data.entries.map(row=><tr key={row.id}><td>{row.name}{row.workspace_tested&&<> · <a href={'#test-'+row.id}>View collection test</a></>}</td><td>{kinds[row.kind]||row.kind}</td><td>{row.version}</td><td>{row.artifact_verified?<a href={planPath(row.id,row.version)} aria-label={'Download '+row.name+' plan'}>Download JSON</a>:row.plan_available?'Image check pending or unavailable':'Provider-managed'}</td></tr>)}</tbody></table></div>:<p>No matching source. <a href="/database-integrations">Clear filters</a></p>}
-    <TestBuilder sources={data.entries.filter(row=>row.artifact_verified).map(({id,name,version})=>({id,name,version}))}/>
+    
     {data.pages>1&&<nav className={css.pages} aria-label="Source pages">{data.page>1&&<a href={href(data.page-1)}>Previous</a>}<span>Page {data.page} of {data.pages}</span>{data.page<data.pages&&<a href={href(data.page+1)}>Next</a>}</nav>}</>:<p role="status">The staging source catalogue is unavailable.</p>}</section>
+    <section className={css.panel}><TestBuilder sources={(data?.entries ?? []).filter(row=>row.artifact_verified).map(({id,name,version})=>({id,name,version}))}/></section>
     {data&&data.acceptance.length>0&&<section className={css.panel}><h2>Database collection tests</h2>
     <p>These tests use disposable databases. Each test reads a held record, rotates the source credential, checks the retired credential is rejected and submits both collection receipts to a private test workspace.</p>
     <div className={css.scroll}><table><thead><tr><th>Database</th><th>First read</th><th>After correction</th><th>Test record</th></tr></thead><tbody>

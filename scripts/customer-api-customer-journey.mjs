@@ -71,6 +71,55 @@ export async function customerApiCustomerJourney({upload,review,db,app,org,edito
  for(const report of related)await review.getByRole('dialog').getByRole('link',{name:report.externalId,exact:true}).waitFor();
  passed('Two separately attributed source reports on one control produced one investigation. Both original receipts open from the task.');
 
+ await checkpoint('trace a resource finding and download its matching private receipts');
+ const definition=randomUUID(), series='dbsync/'+definition+'/'+'c'.repeat(32)+'/', itemKey='item-'+'f'.repeat(64);
+ await review.goto(app+'/database-integrations');
+ await review.getByText('Create a custom monitoring test',{exact:true}).click();
+ await review.getByLabel('Open a source plan').setInputFiles({name:'source.json',mimeType:'application/json',
+  buffer:Buffer.from(JSON.stringify({format:'regpilot-airbyte-source-v1',definitionId:definition,name:'Fixture database',
+   version:'1.0.0',artifactDigest:'sha256:'+'a'.repeat(64)}))});
+ await review.getByLabel('Test name',{exact:true}).fill('Release decision');
+ await review.getByLabel('Workspace control UUID').fill(control.id);
+ await review.getByLabel('Stream',{exact:true}).fill('release_gate');
+ await review.getByLabel('Field path',{exact:true}).fill('/decision');
+ await review.getByLabel('Expected value',{exact:true}).fill('accepted');
+ await review.getByLabel('Resource ID field (optional)',{exact:true}).fill('/id');
+ await review.getByLabel('Source instance',{exact:true}).fill('test-store');
+ const testReady=review.waitForEvent('download');
+ await review.getByRole('button',{name:'Download test definition'}).click();
+ const testFile=await testReady,testStream=await testFile.createReadStream(),testChunks=[];
+ for await(const chunk of testStream)testChunks.push(chunk);
+ const policy=JSON.parse(Buffer.concat(testChunks).toString('utf8'));
+ assert.deepEqual(policy,{format:'regpilot-source-test-v1',name:'Release decision',definitionId:definition,version:'1.0.0',
+  stream:'release_gate',namespace:null,control:control.id,pointer:'/decision',expected:'"accepted"',resourcePointer:'/id',instance:'test-store'});
+ const sampleStart=Date.now()-10000, sampleIds=[];
+ for(const [index,status] of ['FAIL','PASS'].entries()){
+  const externalId=series+randomUUID();
+  const response=await machine(token,'observations','POST',{...payload,externalId,
+   observedAt:new Date(sampleStart+index*1000).toISOString(),checks:[{key:itemKey,label:'Resource demo-3',
+    status,observed:status==='PASS'?'The record met the rule.':'The record failed the rule.',detail:'Controlled browser fixture.'}]},randomUUID());
+  assert.equal(response.status(),201);
+  sampleIds.push((await response.json()).id);
+ }
+ await review.goto(app+'/team/developers'+query+'&observationId='+sampleIds[1]);
+ const resourcePanel=review.getByRole('region',{name:'Resource remediation history'});
+ await resourcePanel.getByRole('button',{name:'Inspect affected resources'}).click();
+ await resourcePanel.getByRole('combobox',{name:'Show resources'}).selectOption('recovered');
+ await resourcePanel.getByText('Resource demo-3 · PASS · passed after failure',{exact:true}).click();
+ const links=resourcePanel.getByRole('link');
+ assert.equal(await links.count(),2);
+ for(const [index,id] of sampleIds.entries())assert.equal(new URL(await links.nth(index).getAttribute('href'),app).searchParams.get('observationId'),id);
+ const downloadReady=review.waitForEvent('download');
+ await resourcePanel.getByRole('button',{name:'Download findings and receipt history'}).click();
+ const download=await downloadReady;
+ const stream=await download.createReadStream(),chunks=[];
+ for await(const chunk of stream)chunks.push(chunk);
+ const findings=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+ assert.equal(findings.selectedId,sampleIds[1]);
+ assert.deepEqual(findings.rows[0].history.map(e=>e.receiptId),sampleIds);
+ assert.deepEqual(findings.rows[0].history.map(e=>e.status),['FAIL','PASS']);
+ passed('A workspace administrator filtered recovered resources, opened the dated findings and downloaded the exact failure and subsequent pass receipts.');
+
  await checkpoint('recover a lost rotation acknowledgement, explicitly replace its unavailable secret, and revoke access');
  await review.goto(app+'/team/developers'+query+'&credentialId='+created.id+'&observationId='+observation.id);const credential=review.getByRole('article',{name:'Selected API credential',exact:true});await credential.getByRole('button',{name:'Rotate secret',exact:true}).click();await credential.getByRole('checkbox',{name:'I authorise invalidating the previous secret and creating one replacement.',exact:true}).check();const credentialPath='/api/workspace/developers/credentials/'+created.id;let rotations=0;await review.route('**'+credentialPath+'?*',async route=>{if(route.request().method()!=='PATCH'){await route.continue();return;}rotations++;const response=await route.fetch();assert.equal(response.status(),200);await route.abort('failed');},{times:1});await credential.getByRole('button',{name:'Confirm secret rotation',exact:true}).click();await uncertain.waitFor();await uncertain.getByRole('button',{name:'Check saved operation',exact:true}).click();await uncertain.waitFor({state:'hidden'});assert.equal(rotations,1);assert.equal((await db.customerApiCredential.findUniqueOrThrow({where:{id:created.id}})).version,2);assert.equal(await secretPanel.count(),0);assert.equal((await machine(token,'controls')).status(),401);
  await credential.getByRole('button',{name:'Rotate secret',exact:true}).click();await credential.getByRole('checkbox',{name:'I authorise invalidating the previous secret and creating one replacement.',exact:true}).check();const replacement=await action(review,credentialPath,'PATCH',()=>credential.getByRole('button',{name:'Confirm secret rotation',exact:true}).click());assert.equal(replacement.version,3);token=replacement.secret;assert.ok(typeof token==='string');await secretPanel.getByRole('button',{name:'I saved the secret',exact:true}).click();await secretPanel.waitFor({state:'hidden'});assert.equal((await machine(token,'controls')).status(),200);assert.equal((await (await machine(token,'observations?requestKey='+requestKey)).json()).data[0].current,true);
