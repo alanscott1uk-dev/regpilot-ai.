@@ -41,6 +41,7 @@ jobs:
       - run: npm audit --audit-level=high
       - run: npm run test
       - run: python -m unittest discover -s tests -p 'test_worker_invoker.py'
+      - run: python -m unittest discover -s tests -p 'test_database_bridge.py'
       - run: npm run db:validate
       - run: npm run db:generate
       - run: npx tsc --noEmit

@@ -110,6 +110,15 @@ def local_json(folder, name, value):
 
 def run(args):
     plan = json.loads(args.plan.read_text())
+    if plan.get("format") == "regpilot-airbyte-manifest-v1":
+        if not args.source:
+            raise CollectionError("Select a definition UUID with --source when using a bulk manifest.")
+        candidates = [p for p in plan["plans"] if p.get("definitionId") == str(UUID(args.source))]
+        if len(candidates) != 1:
+            raise CollectionError("The selected source is missing or ambiguous in this manifest.")
+        plan = candidates[0]
+    elif args.source and str(UUID(args.source)) != plan.get("definitionId"):
+        raise CollectionError("The selected source differs from the downloaded plan.")
     pinned = pin_image(plan, args.digest)
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}", args.network) or args.network in ("host", "none"):
         raise CollectionError("Select a bridge network with authorised source access.")
@@ -198,6 +207,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     for flag in ("plan", "config"):
         parser.add_argument("--" + flag, type=Path, required=True)
+    parser.add_argument("--source", help="Definition UUID in a downloaded bulk manifest")
     parser.add_argument("--digest", required=True)
     parser.add_argument("--network", default="bridge")
     mode = parser.add_mutually_exclusive_group()

@@ -21,3 +21,5 @@ python3 deliver.py observation.json --workspace https://YOUR-REGPILOT-WORKSPACE
 Retry a delivery using the same envelope. A later manual read requires a new output path. Source observations enter the existing review queue. A workspace reviewer can open a follow-up for failed checks.
 
 The catalogue API is GET /api/database-integrations with optional q, kind and page parameters. Each available plan link pins the catalogue version. When a version changes, download and review the new plan and digest before running it.
+
+Download all currently checked plans from /api/database-integrations/manifest. Pass the manifest as --plan and choose one definition UUID with --source. Each entry includes the checked Linux image digest, version, configuration field names and required fields.
