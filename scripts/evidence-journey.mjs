@@ -13,6 +13,7 @@ import {fixturePdf} from '../tests/helpers/pdf-fixture.mjs';
 import {createCustomerWorkspace,sourceToReportJourney} from './customer-journey.mjs';
 import {starterProgrammeCustomerJourney,riskCustomerJourney} from './starter-risk-customer-journey.mjs';
 import {questionnaireCustomerJourney} from './questionnaire-customer-journey.mjs';
+import {guidedStockJourney} from './guided-stock-journey.mjs';
 import {capaCustomerJourney} from './capa-customer-journey.mjs';
 import {productKnowledgeCustomerJourney} from './product-knowledge-customer-journey.mjs';
 import {runQuestionnaireFormatJourney} from './questionnaire-format-customer-journey.mjs';
@@ -502,6 +503,8 @@ try{
  report.auditorSync=await auditorSyncJourney({review,guest:firm,app,org,db,evidenceId:rereviewed.id,email:firmEmail,checkpoint,passed});
 
  report.awsGleif=await awsGleifJourney({review,app,org,db,passed,checkpoint});
+
+ report.guidedStock=await guidedStockJourney({upload,review,db,app,org,editor,submitEvidence,checkpoint,passed});
 
  await checkpoint('unavailable organisation isolation');
  await review.goto(app+'/team/evidence?'+new URLSearchParams({organizationId:randomUUID(),taskId:task.id}));

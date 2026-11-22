@@ -9,28 +9,37 @@ const step = z.object({
  at: z.iso.datetime()
 }).strict();
 
-export const stockCountSchema = z.object({
- site: label, product: label, batch: label, unit: z.enum(units),
- openedAt: z.iso.datetime(), countedAt: z.iso.datetime(), opening: quantity, physical: quantity,
- movements: z.array(step).max(40), registerId: z.uuid(), countId: z.uuid(),
- notes: z.string().trim().min(10).max(800)
-}).strict().superRefine((data, issue) => {
- const reject = (message:string) => issue.addIssue({code:'custom', message});
- if (data.registerId === data.countId) reject('Choose separate movement and physical count records.');
- const start = Date.parse(data.openedAt), end = Date.parse(data.countedAt);
- if (start >= end) reject('The opening balance must precede the physical count.');
- let previous = start;
- const references = new Set<string>();
- for (const movement of data.movements) {
-  const at = Date.parse(movement.at), reference = movement.reference.toLowerCase();
-  if (at < previous || at <= start || at > end) reject('List movements after the opening balance in time order, up to the count.');
-  if (references.has(reference)) reject('Give each movement its own register line reference.');
-  if (scaled(movement.quantity) === 0) reject('Enter a movement quantity greater than zero.');
-  previous = at;
+const registerFields = z.object({
+ site:label, product:label, batch:label, unit:z.enum(units), openedAt:z.iso.datetime(),
+ opening:quantity, movements:z.array(step).max(40)
+}).strict();
+function checkRegister(data:z.infer<typeof registerFields>, issue:z.RefinementCtx) {
+ const reject=(message:string)=>issue.addIssue({code:'custom',message});
+ const start=Date.parse(data.openedAt), references=new Set<string>();
+ let previous=start;
+ for(const movement of data.movements){
+  const at=Date.parse(movement.at), reference=movement.reference.toLowerCase();
+  if(at<previous || at<=start)reject('List movements in time order after the opening balance.');
+  if(references.has(reference))reject('Give each movement its own register line reference.');
+  if(scaled(movement.quantity)===0)reject('Enter a movement quantity greater than zero.');
+  previous=at;
   references.add(reference);
  }
- if (['packs','units'].includes(data.unit) && [data.opening,data.physical,...data.movements.map(m=>m.quantity)].some(n=>scaled(n)%1000 !== 0))
+ if(['packs','units'].includes(data.unit) && [data.opening,...data.movements.map(m=>m.quantity)].some(n=>scaled(n)%1000!==0))
   reject('Use whole numbers for packs and individual units.');
+}
+export const stockRegisterSchema=registerFields.superRefine(checkRegister);
+export const stockCountSchema=registerFields.extend({
+ countedAt:z.iso.datetime(), physical:quantity, registerId:z.uuid(), countId:z.uuid(),
+ notes:z.string().trim().min(10).max(800)
+}).strict().superRefine((data,issue)=>{
+ checkRegister(data,issue);
+ const reject=(message:string)=>issue.addIssue({code:'custom',message});
+ if(data.registerId===data.countId)reject('Choose separate movement and physical count records.');
+ const end=Date.parse(data.countedAt);
+ if(Date.parse(data.openedAt)>=end)reject('The opening balance must precede the physical count.');
+ if(data.movements.some(m=>Date.parse(m.at)>end))reject('The physical count must cover the last movement entered.');
+ if(['packs','units'].includes(data.unit) && scaled(data.physical)%1000!==0)reject('Use whole numbers for packs and individual units.');
 });
 
 function scaled(value:string) {
