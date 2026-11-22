@@ -1,6 +1,8 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
 import {benchmarkProducts,benchmarkProductById} from '../../../lib/benchmark-products';
+import SiteDecision from './site-decision';
+import {protocolTemplate,type ProtocolTemplate} from '../../../lib/site-qualification';
 import WorkspaceNav from '../../components/workspace-nav';
 import EmailSignIn from '../../components/email-sign-in';
 import {useWorkspaceContext} from '../../../lib/client/workspace-context';
@@ -22,6 +24,17 @@ export default function Page(){
 function Trials({w}:{w:Workspace}){
  const [view,setView]=useState<View|null>(null),[track,choose]=useState('systems'),[busy,lock]=useState(false),[message,tell]=useState(''),[environment,setEnv]=useState<keyof typeof envText>('FIXTURE');
  const [initialRelease,setInitialRelease]=useState('');
+ const [siteSteps,setSiteSteps]=useState(['stock-count']);
+ const isSite=track==='site_qualification';
+ const [template,setTemplate]=useState<ProtocolTemplate|null>(null),[templateVersion,newTemplate]=useState(0);
+ async function importProtocol(file:File){
+  const valid=w.capture();
+  try{
+   if(file.size>24000)throw new Error();
+   const data=protocolTemplate.parse(JSON.parse(await file.text()));
+   if(valid()){setTemplate(data);setSiteSteps(data.criteria.map(c=>c.step));newTemplate(n=>n+1);tell('Protocol loaded. Review the criteria and identify the site and configuration for this run.');}
+  }catch{if(valid())tell('Choose a RegPilot protocol template with supported site tests and acceptance criteria.');}
+ }
  useEffect(()=>{const p=new URLSearchParams(window.location.search),choice=p.get('participant');if(choice==='operator'||choice==='assessor'){choose(choice+'_pilot');setEnv('PARTNER_SANDBOX');}const commit=p.get('release');if(commit&&/^[a-f0-9]{40}$/.test(commit))setInitialRelease(commit);},[]);
  const [release,filter]=useState(''),[releaseInput,setReleaseInput]=useState('');
  const historyEpoch=useRef(0),inFlight=useRef(false);
@@ -39,23 +52,48 @@ function Trials({w}:{w:Workspace}){
 
  useEffect(()=>{const valid=w.capture(),epoch=++historyEpoch.current;setView(null);void w.request(path).then(v=>{if(valid()&&epoch===historyEpoch.current)setView(v);}).catch(e=>{if(valid()&&epoch===historyEpoch.current)tell(e.message);});return ()=>{historyEpoch.current++;};},[w.capture,w.request,path]);
  async function save(d:Record<string,unknown>){const valid=w.capture();lock(true);tell('');try{await w.request(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});const v=await w.request(path);if(valid()){setView(v);tell('Saved.');}}catch(e){if(valid())tell(e instanceof Error?e.message:'Trial unavailable.');}finally{if(valid())lock(false);}}
- return <>{view&&track==='operator_pilot'&&(!view.hasActiveControl||!view.canManage)&&<section className={ui.card}><h2>Before you start the timer</h2>{!view.hasActiveControl&&<p>A workspace administrator needs to assign an active test control for the connection. <a href={'/team/programmes?organizationId='+view.organizationId}>Open starter programmes</a></p>}{!view.canManage&&<p>Your current workspace role cannot configure a connection. Select the assigned pilot workspace or record this as a blocker in your trial.</p>}</section>}{message&&<p role="status">{message}</p>}<form className={ui.card} onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void save({action:'START',requestKey:crypto.randomUUID(),track,environment,release:f.get('release'),intendedUse:f.get('use'),steps:f.getAll('steps'),...(track==='operator_pilot'?{firstTime:f.get('firstTime')==='on'}:{}),ukExternal:environment!=='FIXTURE'&&f.get('external')==='on'});}}><fieldset disabled={busy}><legend>Start a timed run</legend><label>Trial track<select aria-label="Trial track" value={track} onChange={e=>choose(e.target.value)}>{Object.entries(trialTracks).map(([id,t])=><option key={id} value={id}>{t.title}</option>)}</select></label><label>Release commit<input key={initialRelease} name="release" defaultValue={initialRelease} pattern="[a-f0-9]{40}" required maxLength={40} placeholder="Full Git commit SHA"/></label><label>Intended use and test scope<input key={track} name="use" defaultValue={track==='operator_pilot'?'First-time setup, failed-check review and exact reading export in staging.':track==='assessor_pilot'?'Independent review of isolated access, recovery and excursion evidence in staging.':''} required minLength={15} maxLength={360}/></label><label>Environment<select aria-label="Environment" value={environment} onChange={e=>setEnv(e.target.value as keyof typeof envText)}>{trialEnvironments.map(e=><option key={e} value={e}>{envText[e]}</option>)}</select></label>{environment!=='FIXTURE'&&<label><input name="external" type="checkbox"/> I am an independent UK operator participating in an authorised trial.</label>} {track==='operator_pilot'&&<label><input name="firstTime" type="checkbox" required/>This is my first attempt at the operator pilot.</label>}<div key={track}>{trialTracks[track].steps.map(s=><label key={s.id}><input type="checkbox" name="steps" value={s.id} defaultChecked/> {s.title}</label>)}</div><button>Start timer</button></fieldset></form>
+ return <>{view&&track==='operator_pilot'&&(!view.hasActiveControl||!view.canManage)&&<section className={ui.card}><h2>Before you start the timer</h2>{!view.hasActiveControl&&<p>A workspace administrator needs to assign an active test control for the connection. <a href={'/team/programmes?organizationId='+view.organizationId}>Open starter programmes</a></p>}{!view.canManage&&<p>Your current workspace role cannot configure a connection. Select the assigned pilot workspace or record this as a blocker in your trial.</p>}</section>}{message&&<p role="status">{message}</p>}<form className={ui.card} onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void save({action:'START',requestKey:crypto.randomUUID(),track,environment,release:f.get('release'),intendedUse:f.get('use'),steps:f.getAll('steps'),...(isSite?{siteProtocol:{
+ operator:f.get('operator'),site:f.get('site'),licence:f.get('licence'),configuration:f.get('configuration'),
+ criteria:f.getAll('steps').map(step=>({step,expected:f.get('expected-'+step)}))}}:{}),...(track==='operator_pilot'?{firstTime:f.get('firstTime')==='on'}:{}),ukExternal:environment!=='FIXTURE'&&f.get('external')==='on'});}}><fieldset disabled={busy}><legend>Start a timed run</legend><label>Trial track<select aria-label="Trial track" value={track} onChange={e=>choose(e.target.value)}>{Object.entries(trialTracks).map(([id,t])=><option key={id} value={id}>{t.title}</option>)}</select></label><label>Release commit<input key={isSite?'site-'+view?.deployedRelease:initialRelease} name="release" defaultValue={isSite?view?.deployedRelease??'':initialRelease} readOnly={isSite} pattern="[a-f0-9]{40}" required maxLength={40} placeholder="Full Git commit SHA"/></label>
+ {isSite&&<fieldset><legend>Site protocol</legend>
+ <label>Reuse a test protocol<input type="file" accept=".json,application/json" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void importProtocol(file);}}/></label>
+ <label>Licensed operator or company<input name="operator" minLength={3} maxLength={240} required/></label>
+ <label>Site name and address<input name="site" minLength={3} maxLength={240} required/></label>
+ <label>Applicable licence reference<input name="licence" minLength={3} maxLength={240} required/></label>
+ <label>Configuration or controlled document revision<input name="configuration" minLength={3} maxLength={240} required/></label>
+ {!view?.deployedRelease&&<p role="status">Site protocols require a deployment with an identified Git commit.</p>}
+ </fieldset>}<label>Intended use and test scope<input key={isSite?'site-use-'+templateVersion:track} name="use" defaultValue={isSite?template?.intendedUse??'':track==='operator_pilot'?'First-time setup, failed-check review and exact reading export in staging.':track==='assessor_pilot'?'Independent review of isolated access, recovery and excursion evidence in staging.':''} required minLength={15} maxLength={360}/></label><label>Environment<select aria-label="Environment" value={environment} onChange={e=>setEnv(e.target.value as keyof typeof envText)}>{trialEnvironments.map(e=><option key={e} value={e}>{envText[e]}</option>)}</select></label>{environment!=='FIXTURE'&&<label><input name="external" type="checkbox"/> I am an independent UK operator participating in an authorised trial.</label>} {track==='operator_pilot'&&<label><input name="firstTime" type="checkbox" required/>This is my first attempt at the operator pilot.</label>}<div key={track}>{trialTracks[track].steps.map(s=>isSite?<div key={s.id}>
+ <label><input name="steps" type="checkbox" value={s.id} checked={siteSteps.includes(s.id)} onChange={e=>{const checked=e.currentTarget.checked;setSiteSteps(old=>checked?[...old,s.id]:old.filter(id=>id!==s.id));}}/> {s.title}</label>
+ {siteSteps.includes(s.id)&&<label>Acceptance criterion for this test<textarea key={templateVersion} defaultValue={template?.criteria.find(c=>c.step===s.id)?.expected??''} name={'expected-'+s.id} required minLength={15} maxLength={500}/></label>}
+ </div>:<label key={s.id}><input type="checkbox" name="steps" value={s.id} defaultChecked/> {s.title}</label>)}</div><button disabled={isSite&&(!view?.deployedRelease||!siteSteps.length)}>Start timer</button></fieldset></form>
  <form className={ui.card} onSubmit={e=>{e.preventDefault();filter(releaseInput.trim());}}>
   <label>Filter trials by release<input value={releaseInput} onChange={e=>setReleaseInput(e.target.value)} pattern="[a-f0-9]{40}" placeholder="Full Git commit SHA"/></label>
   <button disabled={busy}>Show release history</button>{release&&<button type="button" disabled={busy} onClick={()=>{setReleaseInput('');filter('');}}>Show all releases</button>}
  </form>
  {view?.canManage&&<Coverage view={view}/>}
- {view?.trials.length===0&&<p>No recorded runs in this workspace.</p>}{view?.trials.map(t=><Run key={t.id} t={t} view={view} busy={busy} save={save}/>)}{view?.limited&&<button type="button" disabled={busy} onClick={()=>void older()}>Load earlier trials</button>}</>;
+ {view?.trials.length===0&&<p>No recorded runs in this workspace.</p>}{view?.trials.map(t=><Run key={t.id} w={w} t={t} view={view} busy={busy} save={save}/>)}{view?.limited&&<button type="button" disabled={busy} onClick={()=>void older()}>Load earlier trials</button>}</>;
 }
 function ComparatorOptions(){
  return <>{[...new Set(benchmarkProducts.map(p=>p.category))].map(category=><optgroup key={category} label={category}>
   {benchmarkProducts.filter(p=>p.category===category).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
  </optgroup>)}</>;
 }
-function Run({t,view,busy,save}:{t:Trial;view:View;busy:boolean;save:(d:Record<string,unknown>)=>Promise<void>}){
+function Run({t,view,busy,save,w}:{w:Workspace;t:Trial;view:View;busy:boolean;save:(d:Record<string,unknown>)=>Promise<void>}){
  const [outcomes,choose]=useState<Record<string,string>>({});
  const [compare,setCompare]=useState(false);
  return <article className={ui.card}><h2>{trialTracks[t.track].title}</h2><p>{envText[t.environment]} · {t.release.slice(0,10)} · {new Date(t.startedAt).toLocaleString('en-GB')}</p><p>{t.intendedUse}</p>
+ {t.siteProtocol&&<section><h3>Site protocol</h3><p>{t.siteProtocol.operator} · {t.siteProtocol.site} · {t.siteProtocol.licence}</p>
+ <p>Configuration {t.siteProtocol.configuration}</p>
+ <ul>{t.siteProtocol.criteria.map(c=><li key={c.step}><strong>{moduleFor(c.step).title}</strong> {c.expected}</li>)}</ul>
+ <button type="button" onClick={()=>{
+  const contents=protocolTemplate.parse({format:'regpilot-site-protocol-v1',intendedUse:t.intendedUse,criteria:t.siteProtocol!.criteria});
+  const url=URL.createObjectURL(new Blob([JSON.stringify(contents,null,2)],{type:'application/json'})),link=document.createElement('a');
+  link.href=url;link.download='regpilot-site-protocol.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+ }}>Download reusable test protocol</button>
+ <p>The template contains the intended use and test criteria. Review their wording before sharing.</p>
+ <a href={'/team/quality?'+new URLSearchParams({organizationId:view.organizationId})} target="_blank" rel="noopener noreferrer">Open quality cases</a>
+ {view.canManage&&<SiteDecision key={t.id+'-'+t.reviewCount+'-'+t.elapsedSeconds} w={w} id={t.id} files={view.evidence} participant={w.userId===t.participantId}/>}
+ </section>}
  {t.track==='operator_pilot'&&<p><a target="_blank" rel="noopener noreferrer" href={'/team/operations?'+new URLSearchParams({view:'connections',register:'DAILYMED_LABEL',organizationId:view.organizationId})}>Connect the test label</a> · <a target="_blank" rel="noopener noreferrer" href={'/team/work?'+new URLSearchParams({view:'sources',organizationId:view.organizationId})}>Open source follow-ups</a></p>}
  {t.track==='assessor_pilot'&&<p><a target="_blank" rel="noopener noreferrer" href={'/team/developers?organizationId='+view.organizationId+'#source-verification'}>Inspect monitoring evidence</a> · <a target="_blank" rel="noopener noreferrer" href={'/team/quality?organizationId='+view.organizationId}>Open quality cases</a></p>}
  {t.canFinish&&!t.stoppedAt&&['operator_pilot','assessor_pilot'].includes(t.track)&&<form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void save({action:'CHECKPOINT',id:t.id,key:crypto.randomUUID(),step:f.get('step'),kind:f.get('kind'),note:f.get('note')});}}><fieldset disabled={busy}><legend>Record what happened while the timer is running</legend>

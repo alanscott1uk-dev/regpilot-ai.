@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {assuranceFixture,future,rejects} from './helpers/assurance-fixture';
 import {db} from '../lib/server/db';
+import {siteQualification,recordSiteDecision} from '../lib/server/site-qualification-service';
+import {protocolTemplate} from '../lib/site-qualification';
 import {recordTrial,trialWorkspace} from '../lib/server/capability-trial-service';
 import {helpMaintenance,changeHelp} from '../lib/server/help-support';
 import {groupRiskReport} from '../lib/server/group-risk-report';
@@ -108,4 +110,64 @@ test('a first-time operator logs help and task completion on the server clock be
   await recordTrial(f.ad,{action:'REVIEW',id,decision:'ACCEPT',notes:'Reviewed this fictional setup result and its recorded help.'},f.store);
   assert.equal((await trialWorkspace(f.ed)).trials.find(t=>t.id===id)?.accepted,true);
  }finally{await f.cleanup();}
+});
+
+test('a site decision binds the live build, the named configuration, reviewed tests and signatory authority',async()=>{
+ const f=await assuranceFixture(),priorRelease=process.env.VERCEL_GIT_COMMIT_SHA,release='e'.repeat(40);
+ process.env.VERCEL_GIT_COMMIT_SHA=release;
+ try{
+  const plan={action:'START',requestKey:randomUUID(),track:'site_qualification',steps:['stock-count'],release,
+   intendedUse:'Reconcile a controlled stock balance for the approved test location.',environment:'PROTECTED_PILOT',ukExternal:true,
+   siteProtocol:{operator:'Fictional distributor',site:'Fixture warehouse A',licence:'TEST-WDA-001',configuration:'Stock SOP revision 3',
+    criteria:[{step:'stock-count',expected:'A reviewer can retrieve the discrepancy, physical count, and attributed recount.'}]}};
+  await assert.rejects(()=>recordTrial(f.ed,{...plan,release:'0'.repeat(40)}),rejects(409));
+  await assert.rejects(()=>recordTrial(f.ed,{...plan,steps:['site-access']}),rejects(400));
+  const template=protocolTemplate.parse({format:'regpilot-site-protocol-v1',intendedUse:plan.intendedUse,criteria:plan.siteProtocol.criteria});
+  assert.equal(protocolTemplate.safeParse({...template,decisions:['APPROVE']}).success,false);
+  assert.equal(protocolTemplate.safeParse({...template,criteria:[...template.criteria,...template.criteria]}).success,false);
+  const {id}=await recordTrial(f.ed,plan);
+  const proof=await f.file(),decision=await f.file(),delegation=await f.file(),withdrawal=await f.file();
+  let pack=await siteQualification(f.o,id);
+  assert.equal(pack.status,'AWAITING_DECISION');assert.deepEqual(pack.protocol.criteria,template.criteria);
+  await assert.rejects(()=>siteQualification(f.out,id),rejects(404));
+  await assert.rejects(()=>siteQualification(f.ed,id),rejects(403));
+  const oldHash=pack.basisHash;
+  await recordTrial(f.ed,{action:'FINISH',id,results:[{step:'stock-count',notes:'The exact original count and attributed recount were retrieved.',evidenceId:proof.id,outcome:'PASS',unsupported:0,edits:0,assisted:false}]},f.store);
+  const input={requestKey:randomUUID(),decision:'APPROVE',signatory:'Fictional quality lead',role:'Responsible Person',
+   rationale:'Confirmed the expected result and restricted the decision to the identified configuration.',
+   decisionFile:decision.id,authorityFile:delegation.id,confirmed:true};
+  pack=await siteQualification(f.o,id);
+  await assert.rejects(()=>recordSiteDecision(f.o,id,{...input,basisHash:pack.basisHash},f.store),rejects(409));
+  await recordTrial(f.ad,{action:'REVIEW',id,decision:'ACCEPT',notes:'Verified the source count and signed recount against the acceptance criterion.'},f.store);
+  pack=await siteQualification(f.o,id);const signed={...input,basisHash:pack.basisHash};
+  assert.equal(pack.currentRelease,release);assert.equal(pack.finishRelease,release);assert.deepEqual(pack.blockers,[]);
+  await assert.rejects(()=>recordSiteDecision(f.o,id,{...signed,basisHash:oldHash},f.store),rejects(409));
+  await assert.rejects(()=>recordSiteDecision(f.o,id,{...signed,decisionFile:proof.id},f.store),rejects(409));
+  const stored=await db.evidence.findUniqueOrThrow({where:{id:proof.id}}),bytes=f.objects.get(stored.storageKey)!;
+  f.objects.set(stored.storageKey,new Uint8Array([77]));
+  await assert.rejects(()=>recordSiteDecision(f.o,id,signed,f.store),rejects(409));f.objects.set(stored.storageKey,bytes);
+  const receipts=await Promise.all([recordSiteDecision(f.o,id,signed,f.store),recordSiteDecision(f.o,id,signed,f.store)]);
+  assert.deepEqual(receipts[0],receipts[1]);
+  pack=await siteQualification(f.o,id);assert.equal(pack.status,'APPROVED_FOR_SITE_USE');
+  assert.equal(pack.decisions.length,1);assert.equal(pack.decisions[0].basisHash,pack.basisHash);assert.equal(pack.testFiles[0].id,proof.id);
+  process.env.VERCEL_GIT_COMMIT_SHA='f'.repeat(40);assert.equal((await siteQualification(f.o,id)).status,'REASSESSMENT_REQUIRED');
+  process.env.VERCEL_GIT_COMMIT_SHA=release;
+  await db.evidence.update({where:{id:decision.id},data:{reviewVersion:{increment:1}}});
+  assert.equal((await siteQualification(f.o,id)).status,'REASSESSMENT_REQUIRED');
+  await recordSiteDecision(f.o,id,{...signed,requestKey:randomUUID(),decision:'WITHDRAW',decisionFile:withdrawal.id},f.store);
+  pack=await siteQualification(f.o,id);assert.equal(pack.status,'WITHDRAWN');assert.deepEqual(pack.decisions.map(d=>d.input.decision),['APPROVE','WITHDRAW']);
+  await assert.rejects(()=>recordSiteDecision(f.o,id,{...signed,requestKey:randomUUID()},f.store),rejects(409));
+  const {id:sandbox}=await recordTrial(f.o,{...plan,requestKey:randomUUID(),environment:'PARTNER_SANDBOX'});
+  await recordTrial(f.o,{action:'FINISH',id:sandbox,results:[{step:'stock-count',notes:'No site count was available during the test.',evidenceId:null,outcome:'UNOBSERVED',unsupported:0,edits:0,assisted:false}]},f.store);
+  await recordTrial(f.ad,{action:'REVIEW',id:sandbox,decision:'ACCEPT',notes:'The reported missing input accurately describes this trial.'},f.store);
+  const incomplete=await siteQualification(f.o,sandbox);
+  assert.ok(incomplete.blockers.some(s=>s.includes('protected customer')));assert.ok(incomplete.blockers.some(s=>s.includes('passing observation')));
+  const hold={...input,requestKey:randomUUID(),decision:'WITHHOLD',basisHash:incomplete.basisHash,decisionFile:withdrawal.id};
+  await assert.rejects(()=>recordSiteDecision(f.o,sandbox,hold,f.store),rejects(403));
+  await assert.rejects(()=>recordSiteDecision(f.ad,sandbox,{...hold,decision:'APPROVE'},f.store),rejects(409));
+  await recordSiteDecision(f.ad,sandbox,hold,f.store);assert.equal((await siteQualification(f.ad,sandbox)).status,'WITHHELD');
+ }finally{
+  if(priorRelease===undefined)delete process.env.VERCEL_GIT_COMMIT_SHA;else process.env.VERCEL_GIT_COMMIT_SHA=priorRelease;
+  await f.cleanup();
+ }
 });
