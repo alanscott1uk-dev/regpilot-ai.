@@ -154,7 +154,7 @@ def resource_reference(value):
 class ResourceFindings:
     limit = 16
 
-    def __init__(self, pointer, instance, tracked, definition, control, rule):
+    def __init__(self, pointer, instance, tracked, definition, control, rule, remediation_days=None):
         self.path = rule_path(None, pointer)
         if not instance or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", instance):
             raise CollectionError("Supply a stable source instance name with --instance.")
@@ -162,7 +162,13 @@ class ResourceFindings:
         if (None in self.tracked or len(self.tracked) > self.limit or
                 len(set(self.tracked)) != len(self.tracked)):
             raise CollectionError("Select up to 16 distinct string or integer resource IDs.")
-        scope = json.dumps([definition, control, instance, self.path, rule], ensure_ascii=False,
+        if remediation_days is not None and (type(remediation_days) is not int or not 1 <= remediation_days <= 365):
+            raise CollectionError("Set a remediation target between 1 and 365 whole days.")
+        self.remediation_days = remediation_days
+        scope_fields = [definition, control, instance, self.path, rule]
+        if remediation_days is not None:
+            scope_fields.append({"remediationDays": remediation_days})
+        scope = json.dumps(scope_fields, ensure_ascii=False,
                            separators=(",", ":"), allow_nan=False).encode()
         self.scope = hashlib.sha256(scope).hexdigest()[:32]
         self.results = {}
@@ -192,6 +198,8 @@ class ResourceFindings:
         omitted = len(self.results) - shown
         summary = {"identified": len(self.results), "shown": shown, "omitted": omitted,
                    "unidentifiedRows": self.unidentified, "duplicateIds": len(self.duplicates)}
+        if self.remediation_days is not None:
+            summary["remediationDays"] = self.remediation_days
         checks = [{"key": "resource-coverage", "label": "Resource identification and display coverage",
                    "status": "UNKNOWN" if self.unidentified or self.duplicates or not self.results else "PASS",
                    "observed": json.dumps(summary),
@@ -223,18 +231,19 @@ def apply_test_definition(args, plan):
     mapping = {"stream":"stream", "namespace":"namespace", "control":"control", "pointer":"pointer",
                "expected":"expected", "minimum":"minimum", "maximum":"maximum",
                "instance":"instance", "resourcePointer":"resource_pointer"}
-    if set(test) - (set(mapping) | {"definitionId", "format", "version", "name"}):
+    if set(test) - (set(mapping) | {"definitionId", "format", "version", "name", "remediationDays"}):
         raise CollectionError("Unknown test definition option.")
     name = test.get("name")
     if not isinstance(name, str) or not name.strip() or len(name) > 100 or not name.isprintable():
         raise CollectionError("Enter a printable test name of up to 100 characters.")
-    if args.check_access or args.list_streams or args.field is not None or any(getattr(args, key, None) is not None for key in mapping.values()):
+    if getattr(args, "remediation_days", None) is not None or args.check_access or args.list_streams or args.field is not None or any(getattr(args, key, None) is not None for key in mapping.values()):
         raise CollectionError("Use a test definition or individual rule settings.")
     for field, attribute in mapping.items():
         value = test.get(field)
         if value is not None and (not isinstance(value, str) or len(value) > 600):
             raise CollectionError("Invalid value in test definition.")
         setattr(args, attribute, value)
+    args.remediation_days = test.get("remediationDays")
     args.test_name = name.strip()
 
 
@@ -312,9 +321,10 @@ def run(args):
         pointer = getattr(args, "resource_pointer", None)
         instance = getattr(args, "instance", None)
         tracked = getattr(args, "track", None) or []
-        if not pointer and (instance or tracked):
-            raise CollectionError("--instance and --track require --resource-pointer.")
-        findings = ResourceFindings(pointer, instance, tracked, plan["definitionId"], control, policy_scope) if pointer else None
+        remediation_days = getattr(args, "remediation_days", None)
+        if not pointer and (instance or tracked or remediation_days is not None):
+            raise CollectionError("Resource tracking and remediation targets require --resource-pointer.")
+        findings = ResourceFindings(pointer, instance, tracked, plan["definitionId"], control, policy_scope, remediation_days) if pointer else None
         def checked(msg):
             if msg.get("type") != "RECORD":
                 return
@@ -386,6 +396,7 @@ if __name__ == "__main__":
     mode.add_argument("--check-access", action="store_true")
     for flag in ("stream", "namespace", "field", "pointer", "expected", "minimum", "maximum", "control"):
         parser.add_argument("--" + flag)
+    parser.add_argument("--remediation-days", type=int, help="Target in days from first observed resource failure.")
     parser.add_argument("--test-definition", type=Path, help="Run a monitoring test downloaded from the source catalogue.")
     parser.add_argument("--resource-pointer", help="Opt in to reporting resource IDs from this JSON Pointer.")
     parser.add_argument("--instance", help="Stable name for this source account or installation.")

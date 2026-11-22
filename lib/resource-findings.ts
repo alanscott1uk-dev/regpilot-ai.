@@ -11,7 +11,17 @@ type Reading = {
   available: boolean;
 };
 
-export function findingRows(readings: Reading[]) {
+export function remediationTarget(observed?: string): number | null {
+  if (!observed) return null;
+  try {
+    const days: unknown = JSON.parse(observed)?.remediationDays;
+    return typeof days === 'number' && Number.isInteger(days) && days >= 1 && days <= 365 ? days : null;
+  } catch {
+    return null;
+  }
+}
+
+export function findingRows(readings: Reading[], remediationDays: number | null = null) {
   const items = new Map<string, {label: string; events: {index: number; status: Outcome}[]}>();
   readings.forEach((reading, index) => {
     if (!reading.available) return;
@@ -35,7 +45,10 @@ export function findingRows(readings: Reading[]) {
     const afterPass = events.find(event => event.status === 'FAIL' && event.index > (lastPass?.index ?? -1));
     const firstInEpisode = afterPass ? readings[afterPass.index] : null;
     const passedAfterFailure = status === 'PASS' && !!lastFail && readings[latest.index].at > readings[lastFail.index].at;
-    return {key, label: item.label, status, passedAfterFailure,
+    const deadline = firstInEpisode && remediationDays ? Date.parse(firstInEpisode.at) + remediationDays * 86400000 : null;
+    const overdueAtReading = status === 'FAIL' && deadline !== null && Date.parse(readings[latestIndex].at) >= deadline;
+    return {key, label: item.label, status, passedAfterFailure, overdueAtReading,
+      dueAt: deadline !== null ? new Date(deadline).toISOString() : null,
       firstFailureAt: firstFail ? readings[firstFail.index].at : null,
       lastFailureAt: lastFail ? readings[lastFail.index].at : null,
       unresolvedSince: firstInEpisode?.at ?? null,
@@ -43,6 +56,6 @@ export function findingRows(readings: Reading[]) {
         hash: readings[event.index].hash, status: event.status}))};
   });
   const order: Record<string, number> = {FAIL: 0, UNKNOWN: 1, UNOBSERVED: 2, PASS: 3};
-  return rows.sort((a, b) => order[a.status] - order[b.status] ||
+  return rows.sort((a, b) => Number(b.overdueAtReading) - Number(a.overdueAtReading) || order[a.status] - order[b.status] ||
     (a.unresolvedSince ?? '').localeCompare(b.unresolvedSince ?? '') || a.label.localeCompare(b.label));
 }

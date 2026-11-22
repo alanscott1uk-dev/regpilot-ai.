@@ -39,3 +39,5 @@ To build the rule in RegPilot, search the source catalogue, expand Create a cust
 python3 collect.py --plan plan.json --config config.json --digest DIGEST --network source-network --test-definition source-test.json --output observation.json
 
 For a bulk manifest add --source DEFINITION_UUID. The runner checks the test's source and version against the plan before collection.
+
+Set an optional remediation target in the test builder or use --remediation-days 7 with a resource selector. At each reading, overdue findings appear first. The first observed failure in the available history sets the deadline. An explicit later pass ends that failure period. Missing readings keep the last known failure visible.

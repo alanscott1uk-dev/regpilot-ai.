@@ -53,9 +53,12 @@ export default function TestBuilder({sources}: {sources: Source[]}) {
       const resourcePointer = pointer('identity');
       const instance = read('instance');
       if (!!resourcePointer !== !!instance) throw Error('For resource findings, enter both the identity field and a stable source instance.');
+      const target = read('target');
+      if (target && (!resourcePointer || !Number.isInteger(Number(target)) || Number(target) < 1 || Number(target) > 365))
+        throw Error('Choose a resource ID field and a remediation target of 1 to 365 whole days.');
       const definition = {format: 'regpilot-source-test-v1', definitionId: source.id, version: source.version,
         name: read('name'), stream: read('stream'), namespace: read('namespace') || null, control: read('control'),
-        pointer: pointer('pointer'), ...rule, ...(resourcePointer ? {resourcePointer, instance} : {})};
+        pointer: pointer('pointer'), ...rule, ...(resourcePointer ? {resourcePointer, instance} : {}), ...(target ? {remediationDays: Number(target)} : {})};
       const url = URL.createObjectURL(new Blob([JSON.stringify(definition, null, 2)], {type: 'application/json'}));
       const link = document.createElement('a');
       link.href = url;
@@ -88,6 +91,7 @@ export default function TestBuilder({sources}: {sources: Source[]}) {
           <input key={kind} type={kind === 'number' ? 'number' : 'text'} step={kind === 'number' ? 'any' : undefined} name="expected" maxLength={200} required />}</label></p>}
       <p><label>Resource ID field (optional) <input name="identity" placeholder="/id" maxLength={180} /></label>{' '}
         <label>Source instance <input name="instance" placeholder="warehouse-east" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,79}" /></label></p>
+      <p><label>Remediation target in days (optional) <input name="target" type="number" min="1" max="365" step="1" /></label></p>
       <p>Choosing an ID field includes those identifiers in your private workspace receipts.</p>
       <button type="submit" disabled={!selection}>Download test definition</button>
       {error && <p role="alert">{error}</p>}

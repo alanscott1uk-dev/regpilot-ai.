@@ -99,7 +99,7 @@ try:
         control = str(uuid4())
         test_file = folder / "source-test.json"
         test_file.write_text(json.dumps({"format":"regpilot-source-test-v1","definitionId":definition,
-            "version":version,"name":"Release decision","stream":"release_gate","namespace":matches[0]["namespace"],
+            "version":version,"name":"Release decision","remediationDays":7,"stream":"release_gate","namespace":matches[0]["namespace"],
             "resourcePointer":"/_id" if kind == "mongodb" else "/id","instance":"fixture-" + kind,
             "pointer":"/decision","expected":'"accepted"',"control":control}))
         def read(label):

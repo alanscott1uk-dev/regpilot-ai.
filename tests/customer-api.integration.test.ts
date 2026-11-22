@@ -372,6 +372,7 @@ test('database connector receipts reach the control review queue and recover ide
       assert.equal(review.observations[0].receiptHash,receipt.receiptHash);
       await assert.rejects(()=>developerWorkspace(x.out,{observationId:receipt.id}),rejects(404));
       const findings=await resourceFindingReport(x.ad,receipt.id);
+      assert.equal(findings.targetDays,7);
       assert.equal(findings.rows.length,3);
       assert.equal(findings.reads.length,index+1);
       assert.equal(findings.rows.filter(row=>row.status==='FAIL').length,index===0?1:0);

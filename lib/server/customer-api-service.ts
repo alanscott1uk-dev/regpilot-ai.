@@ -1,4 +1,4 @@
-import {resourceSeries, findingRows} from '../resource-findings';
+import {resourceSeries, findingRows, remediationTarget} from '../resource-findings';
 import {scopeWords} from '../operator-answer';
 import {searchTerms} from '../retrieval/bm25';
 import {partnerTopics,partnerFinding,partnerLabels,partnerValidity} from '../partner-records';
@@ -76,9 +76,10 @@ export async function resourceFindingReport(ctx: AuthorizedContext, id: string) 
    return {id: v.id, at: v.observedAt, hash: v.receiptHash, available,
     checks: available ? v.payload!.checks : []};
   });
+  const targetDays = remediationTarget(anchor.payload.checks.find(check => check.key === "resource-coverage")?.observed);
   return {organizationId: ctx.organizationId, controlId: selected.controlId, credentialId: selected.credentialId,
    selectedId: id, selectedCurrent: anchor.current, reason: anchor.reason, limited: older.length === 50,
-   unavailable: reads.filter(r => !r.available).length, rows: findingRows(reads),
+   unavailable: reads.filter(r => !r.available).length, targetDays, rows: findingRows(reads, targetDays),
    reads: reads.map(({checks, ...read}) => read)};
  });
 }

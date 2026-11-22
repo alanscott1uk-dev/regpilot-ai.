@@ -35,7 +35,7 @@ export default function ResourceFindings({workspace, id}: {workspace: Workspace;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
-  const rows = report?.rows.filter(row => filter === 'all' || (filter === 'recovered' ? row.passedAfterFailure : row.status === filter)) ?? [];
+  const rows = report?.rows.filter(row => filter === 'all' || (filter === 'recovered' ? row.passedAfterFailure : filter === 'overdue' ? row.overdueAtReading : row.status === filter)) ?? [];
   return <section aria-label="Resource remediation history"><h4>Resource remediation history</h4>
     <button type="button" disabled={busy} onClick={() => void load()}>{busy ? 'Loading findings…' : report ? 'Refresh findings' : 'Inspect affected resources'}</button>
     {error && <p role="alert">{error}</p>}
@@ -43,15 +43,17 @@ export default function ResourceFindings({workspace, id}: {workspace: Workspace;
       <p>{report.reads.length} comparable submissions through this reading. Times are UTC.
         {report.limited && ' Showing the latest 50. Earlier failures may exist.'}
         {report.unavailable > 0 && ' Unusable readings in this window: ' + report.unavailable + '.'}</p>
+      {report.targetDays && <p>Remediation target: {report.targetDays} days from the first recorded failure in this window. Deadlines are evaluated at the selected reading.</p>}
       {!report.selectedCurrent && <p>This is a historical submission. {report.reason}</p>}
       <label>Show resources <select value={filter} onChange={e => setFilter(e.target.value)}>
-        <option value="all">All</option><option value="FAIL">Failed</option><option value="UNKNOWN">Unknown</option>
+        <option value="all">All</option><option value="overdue">Overdue at this reading</option><option value="FAIL">Failed</option><option value="UNKNOWN">Unknown</option>
         <option value="UNOBSERVED">Omitted from selected reading</option><option value="recovered">Passed after failure</option>
       </select></label>{' '}<button type="button" onClick={() => download(report)}>Download findings and receipt history</button>
       {!rows.length && <p>No resources match this view.</p>}
       {rows.map(row => <details key={row.key}><summary>{row.label} · {row.status === 'UNOBSERVED' ? 'Unobserved' : row.status}
-        {row.passedAfterFailure ? ' · passed after failure' : ''}</summary>
+        {row.overdueAtReading ? ' · overdue' : ''}{row.passedAfterFailure ? ' · passed after failure' : ''}</summary>
         {row.unresolvedSince && <p>First failure since the last observed pass in this window: {date(row.unresolvedSince)} UTC.</p>}
+        {row.dueAt && <p>Remediation due {date(row.dueAt)} UTC.</p>}
         <ul>{row.history.map(event => <li key={event.receiptId}><a href={workspaceHref('/team/developers', workspace.organizationId, {observationId: event.receiptId})}>
           {date(event.at)} UTC · {event.status}</a></li>)}</ul></details>)}
     </>}

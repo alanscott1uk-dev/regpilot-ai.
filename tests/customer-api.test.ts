@@ -40,7 +40,7 @@ test('OpenAPI publishes the exact limited observation contract without machine a
 });
 
 test('resource findings retain gaps, confirmed recovery and a repeat failure as separate observations',async()=>{
- const {findingRows,resourceSeries}=await import('../lib/resource-findings');
+ const {findingRows,resourceSeries,remediationTarget}=await import('../lib/resource-findings');
  const prefix='dbsync/'+randomUUID()+'/'+'a'.repeat(32)+'/';
  assert.equal(resourceSeries(prefix+randomUUID()),prefix);
  assert.equal(resourceSeries('dbsync/'+randomUUID()+'/'+randomUUID()),null);
@@ -48,6 +48,12 @@ test('resource findings retain gaps, confirmed recovery and a repeat failure as 
    at:'2026-11-'+String(day).padStart(2,'0')+'T10:00:00Z',hash:'hash-'+day,available,
    checks: status?[{key:'item-'+'b'.repeat(64),label:'Resource 7',status}]:[]});
  const start=[check(1,'FAIL'),check(2,'UNKNOWN'),check(3,null)];
+ assert.equal(remediationTarget('{"remediationDays":7}'),7);
+ assert.equal(remediationTarget('{"remediationDays":-1}'),null);
+ const due=findingRows([check(1,'FAIL'),check(3,'FAIL')],2)[0];
+ assert.equal(due.overdueAtReading,true);
+ assert.equal(due.dueAt,'2026-11-03T10:00:00.000Z');
+ assert.equal(findingRows(start,1)[0].overdueAtReading,false);
  assert.equal(findingRows(start)[0].status,'UNOBSERVED');
  assert.equal(findingRows(start)[0].unresolvedSince,start[0].at);
  assert.equal(findingRows([...start,check(4,'PASS',false)])[0].passedAfterFailure,false);

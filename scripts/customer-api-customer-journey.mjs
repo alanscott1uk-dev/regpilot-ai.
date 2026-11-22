@@ -85,13 +85,14 @@ export async function customerApiCustomerJourney({upload,review,db,app,org,edito
  await review.getByLabel('Expected value',{exact:true}).fill('accepted');
  await review.getByLabel('Resource ID field (optional)',{exact:true}).fill('/id');
  await review.getByLabel('Source instance',{exact:true}).fill('test-store');
+ await review.getByLabel('Remediation target in days (optional)',{exact:true}).fill('7');
  const testReady=review.waitForEvent('download');
  await review.getByRole('button',{name:'Download test definition'}).click();
  const testFile=await testReady,testStream=await testFile.createReadStream(),testChunks=[];
  for await(const chunk of testStream)testChunks.push(chunk);
  const policy=JSON.parse(Buffer.concat(testChunks).toString('utf8'));
  assert.deepEqual(policy,{format:'regpilot-source-test-v1',name:'Release decision',definitionId:definition,version:'1.0.0',
-  stream:'release_gate',namespace:null,control:control.id,pointer:'/decision',expected:'"accepted"',resourcePointer:'/id',instance:'test-store'});
+  stream:'release_gate',namespace:null,control:control.id,pointer:'/decision',expected:'"accepted"',resourcePointer:'/id',instance:'test-store',remediationDays:7});
  const sampleStart=Date.now()-10000, sampleIds=[];
  for(const [index,status] of ['FAIL','PASS'].entries()){
   const externalId=series+randomUUID();
