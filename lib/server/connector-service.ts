@@ -45,6 +45,8 @@ const googleSchema=googleTarget.extend({provider:z.literal("GOOGLE_WORKSPACE"),c
 const microsoftSchema=microsoftTarget.extend({provider:z.enum(["MICROSOFT365","INTUNE"]),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:z.string().min(16).max(512).regex(/^[^\r\n\0]+$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)});
 const extraFields={controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().refine(validCredential).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)};
 const extraSchema=z.discriminatedUnion("provider",[
+ recordTargets.UBIBOT.extend({...extraFields,provider:z.literal("UBIBOT")}).strict(),
+ recordTargets.BENCHLING.extend({...extraFields,provider:z.literal("BENCHLING")}).strict(),
  recordTargets.JIRA.extend({...extraFields,provider:z.literal("JIRA")}).strict(),
  recordTargets.SERVICENOW.extend({...extraFields,provider:z.literal("SERVICENOW")}).strict(),
  recordTargets.AZURE_DEVOPS.extend({...extraFields,provider:z.literal("AZURE_DEVOPS")}).strict(),
@@ -65,6 +67,8 @@ const extraSchema=z.discriminatedUnion("provider",[
 type ConnectorSettings=z.infer<typeof schema>|z.infer<typeof googleSchema>|z.infer<typeof microsoftSchema>|z.infer<typeof extraSchema>;
 function storedTarget(settings:ConnectorSettings):{repository:string;branch:string;token?:string}{
  switch(settings.provider){
+  case "BENCHLING":
+  case "UBIBOT":
   case "JIRA":
   case "SERVICENOW":
   case "AZURE_DEVOPS":
@@ -93,7 +97,16 @@ function storedTarget(settings:ConnectorSettings):{repository:string;branch:stri
 type Collector=(target:{provider?:string;organizationId?:string;repository:string;branch:string},secret:string)=>Promise<Observation>;
 export const collectConfiguredConnector:Collector=async(target,secret)=>{
  if(!connectorProviderEnabled(target.provider||"GITHUB"))throw new CollectionError("PROVIDER_DISABLED");
- if(isRecordProvider(target.provider))return collectOperationalRecord(target.provider,readRecordKeys(target.provider,target.repository,target.branch),secret);
+ if(isRecordProvider(target.provider)){
+  const configured=readRecordKeys(target.provider,target.repository,target.branch);
+  let certificateHash:string|undefined;
+  if(target.provider==="UBIBOT"&&target.organizationId){
+   const [id,version]=configured.reference!.split("/");
+   const file=await db.evidence.findFirst({where:{id,organizationId:target.organizationId,reviewVersion:Number(version),reviewStatus:"APPROVED",scanStatus:"CLEAN"},select:{uploadedById:true,reviewerId:true,reviewedAt:true,sha256:true}});
+   if(file?.reviewedAt&&file.reviewerId&&file.uploadedById!==file.reviewerId)certificateHash=file.sha256;
+  }
+  return collectOperationalRecord(target.provider,configured,secret,fetch,certificateHash);
+ }
  if(target.provider==="WORKFORCE_LEAVER"){
   const scope=readWorkforceKeys(target.repository,target.branch);
   if(!scope)throw new CollectionError("INVALID_TARGET");

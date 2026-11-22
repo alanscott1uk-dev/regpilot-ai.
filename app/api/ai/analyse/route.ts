@@ -1,7 +1,9 @@
 import {searchOfficialPublications} from "../../../../lib/server/publication-research";
 import {IntelligenceError} from "../../../../lib/server/intelligence-service";
 import {NextResponse} from "next/server";
-import {aiConfigured,workspaceConfigured,AccessError,authorisedAiContext} from "../../../../lib/server/ai-auth";
+import {resolveCustomerAi} from "../../../../lib/server/integration-marketplace";
+import {brokerKey} from "../../../../lib/connectors/marketplace";
+import {aiProcessingAllowed,aiConfigured,workspaceConfigured,AccessError,authorisedAiContext} from "../../../../lib/server/ai-auth";
 import {reserveAiRequest,DailyLimitError} from "../../../../lib/server/ai-meter";
 import {loadOfficialSource,SourceUnavailable} from "../../../../lib/server/ai-sources";
 import {runRegPilotAi} from "../../../../lib/server/ai-model";
@@ -27,11 +29,13 @@ async function limitedBody(request:Request){
  return JSON.parse(Buffer.concat(chunks.map(x=>Buffer.from(x))).toString("utf8"));
 }
 export async function GET(){
- return json({enabled:aiConfigured(),workspaceEnabled:workspaceConfigured(),mode:"private-pilot",privacy:"Use fictional or non-sensitive working drafts only. Model processing may occur outside the UK.",requiresAuth:true,intendedUse:aiBoundarySummary()});
+ return json({enabled:aiConfigured(),customerEnabled:aiProcessingAllowed()&&!!brokerKey(),workspaceEnabled:workspaceConfigured(),mode:"private-pilot",privacy:"Use fictional or non-sensitive working drafts only. Model processing may occur outside the UK.",requiresAuth:true,intendedUse:aiBoundarySummary()});
 }
 export async function POST(request:Request){
- if(!aiConfigured())return json({error:"Private AI pilot not configured"},503);
- if(!process.env.AI_GATEWAY_API_KEY&&!process.env.VERCEL_OIDC_TOKEN)return json({error:"AI Gateway authentication not configured"},503);
+ const choice=request.headers.get('x-regpilot-ai-binding');
+ if(choice&&!/^[a-f0-9-]{36}$/i.test(choice))return json({error:'Invalid AI connection'},400);
+ if(choice?!aiProcessingAllowed()||!brokerKey():!aiConfigured())return json({error:"Private AI pilot not configured"},503);
+ if(!choice&&!process.env.AI_GATEWAY_API_KEY&&!process.env.VERCEL_OIDC_TOKEN)return json({error:"AI Gateway authentication not configured"},503);
  const contentType=request.headers.get("content-type")||"";
  if(contentType.toLowerCase().split(";")[0].trim()!=="application/json")return json({error:"Send application/json"},415);
  const size=Number(request.headers.get("content-length")||"0");
@@ -56,8 +60,9 @@ export async function POST(request:Request){
    aiInput={...input,fileBytes:Uint8Array.from(stored.bytes),fileFormat:stored.filename.toLowerCase().endsWith(".docx")?"DOCX":"PDF"};
   }
   if(aiInput.fileBytes){const extracted=await extractDocument(aiInput.fileBytes,aiInput.fileFormat==="DOCX"?"input.docx":"input.pdf",{allowEmpty:true});aiInput={...aiInput,fileBytes:extracted.format==="DOCX"?null:aiInput.fileBytes,documentUnitKind:extracted.unitKind,documentPages:extracted.pages,documentCoverage:{...coverageOf(extracted),unreadablePages:extracted.skippedPages}};}
+  const account=choice?await resolveCustomerAi(ctx,choice):undefined;
   requestId=await reserveAiRequest(ctx,input.mode,input.useDeclaration);
-  const ai=await runRegPilotAi(aiInput,official,research);
+  const ai=await runRegPilotAi(aiInput,official,research,account);
   let reviewId:string|null=null,storageWarning:string|null=null;
   if(input.retainDraft){
    try{

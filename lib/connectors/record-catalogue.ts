@@ -1,4 +1,4 @@
-export const recordProviders = ["JIRA", "SERVICENOW", "AZURE_DEVOPS", "CONFLUENCE", "SAFETYCULTURE"] as const;
+export const recordProviders = ["JIRA", "SERVICENOW", "AZURE_DEVOPS", "CONFLUENCE", "SAFETYCULTURE", "UBIBOT", "BENCHLING"] as const;
 export type RecordProvider = typeof recordProviders[number];
 export function isRecordProvider(provider: unknown): provider is RecordProvider {
   return recordProviders.some(value => value === provider);
@@ -6,6 +6,8 @@ export function isRecordProvider(provider: unknown): provider is RecordProvider 
 
 type Definition = {name: string; scope: string; record: string; reference?: string; hint: string; credential: string; docs: string};
 export const recordCatalogue: Record<RecordProvider, Definition> = {
+  UBIBOT: {name:"UbiBot logger reading",scope:"Channel ID",record:"Logger serial",reference:"Calibration and operating limits",credential:"Channel read-only API key",hint:"Use a channel whose internal field1 sensor reports Celsius. Link its serial to the reviewed calibration certificate and approved limits. Each run checks the latest sample.",docs:"https://www.ubibot.com/app-platform-api/8236/view-channel-2/"},
+  BENCHLING: {name:"Benchling laboratory result and entry review",scope:"Benchling tenant name",record:"Assay result ID",reference:"Entry ID / authorised reviewer ID",credential:"Read-only Benchling OAuth token",hint:"Use the exact result, entry and assigned reviewer. RegPilot checks the laboratory review and retains decision references. This does not authorise batch release.",docs:"https://docs.benchling.com/docs/api/v2/benchling-api/entries/get-entry"},
   JIRA: {name: "Jira Cloud issue", scope: "Atlassian cloud ID", record: "Issue key", credential: "Scoped service-account API token", hint: "Use a service account with read access to the project and issue. Checks cover assignment, workflow status and recorded resolution.", docs: "https://support.atlassian.com/user-management/docs/manage-api-tokens-for-service-accounts/"},
   SERVICENOW: {name: "ServiceNow incident", scope: "Instance name before .service-now.com", record: "Incident sys_id", credential: "Read-only OAuth access token", hint: "Grant incident read access to sys_id, active, assigned_to and closed_at. Replace the access token when it expires.", docs: "https://www.servicenow.com/docs/r/api-reference/rest-apis/c_TableAPI.html"},
   AZURE_DEVOPS: {name: "Azure DevOps build", scope: "Organisation name / project UUID (without spaces)", record: "Build ID", reference: "Expected 40-character Git commit", credential: "Build (Read) personal access token", hint: "Use an expiring token scoped to this project for the pilot. RegPilot compares the build revision and completed result with the expected commit.", docs: "https://learn.microsoft.com/en-us/rest/api/azure/devops/build/builds/get?view=azure-devops-rest-7.1"},

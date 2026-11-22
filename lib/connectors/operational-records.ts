@@ -12,7 +12,14 @@ const azureScope = z.string().toLowerCase().refine(value => {
   const [org, project, ...rest] = value.split("/");
   return !rest.length && slug.safeParse(org).success && guid.safeParse(project).success;
 });
+export const calibrationBasis=z.string().max(120).refine(value=>{
+ const [file,version,from,until,low,high,age,...extra]=value.split("/");
+ const numeric=(s:string)=>/^-?\d{1,3}(?:\.\d{1,3})?$/.test(s);
+ return !extra.length&&z.uuid().safeParse(file).success&&/^[1-9]\d{0,6}$/.test(version)&&z.iso.date().safeParse(from).success&&z.iso.date().safeParse(until).success&&from<until&&numeric(low)&&numeric(high)&&Number(low)<Number(high)&&/^[1-9]\d{0,3}$/.test(age)&&Number(age)<=1440;
+});
 export const recordTargets = {
+  UBIBOT:z.object({scope:number,record:z.string().regex(/^[A-Za-z0-9_-]{3,60}$/),reference:calibrationBasis}),
+  BENCHLING:z.object({scope:slug,record:z.string().regex(/^(?:[a-z]{1,5}_[A-Za-z0-9]{1,48}|[a-f0-9-]{36})$/),reference:z.string().regex(/^etr_[A-Za-z0-9]{1,48}\/ent?_[A-Za-z0-9]{1,48}$|^etr_[A-Za-z0-9]{1,48}\/usr_[A-Za-z0-9]{1,48}$/)}),
   JIRA: z.object({scope: guid, record: z.string().toUpperCase().regex(/^[A-Z][A-Z0-9_]{1,19}-[1-9]\d{0,10}$/)}),
   SERVICENOW: z.object({scope: slug, record: z.string().toLowerCase().regex(/^[a-f0-9]{32}$/)}),
   AZURE_DEVOPS: z.object({scope: azureScope, record: number, reference: z.string().toLowerCase().regex(/^[0-9a-f]{40}$/)}),
@@ -50,7 +57,7 @@ function validTime(value: unknown): value is string {
   return typeof value === "string" && z.iso.datetime({offset:true}).safeParse(value).success && Date.parse(value) <= Date.now();
 }
 
-export async function collectOperationalRecord(provider: RecordProvider, target: Target, token: string, fetcher: typeof fetch = fetch): Promise<Observation> {
+export async function collectOperationalRecord(provider: RecordProvider, target: Target, token: string, fetcher: typeof fetch = fetch, certificateHash?:string): Promise<Observation> {
   const parsed = recordTargets[provider].strict().safeParse(target);
   if (!parsed.success || !validCredential(token)) throw new CollectionError("INVALID_TARGET");
   const {scope, record, reference} = parsed.data as Target;
@@ -58,6 +65,41 @@ export async function collectOperationalRecord(provider: RecordProvider, target:
   const get = providerReader(fetcher, {Authorization: auth});
 
   switch (provider) {
+    case "UBIBOT": {
+      const source="https://webapi.ubibot.com/channels/"+scope;
+      const data=(await providerReader(fetcher,{})(source+"?"+new URLSearchParams({api_key:token})))!.body;
+      const channel=Array.isArray(data?.channels)&&data.channels.length===1?data.channels[0]:data?.channel;
+      if(data?.result!=="success"||String(channel?.channel_id)!==scope||channel?.serial!==record)throw new CollectionError("TARGET_MISMATCH");
+      const [file,version,from,until,low,high,maxMinutes]=reference!.split("/");
+      let values=channel.last_values;
+      if(typeof values==="string"){try{values=JSON.parse(values);}catch{throw new CollectionError("INVALID_RESPONSE");}}
+      const sample=values?.field1,value=sample?.value,stamp=sample?.created_at;
+      const celsius=typeof value==="number"&&Number.isFinite(value)?value:undefined;
+      const ms=typeof stamp==="number"&&Number.isInteger(stamp)&&stamp>0&&stamp<1e11?stamp*1000:NaN;
+      const now=Date.now(),when=Number.isFinite(ms)?new Date(ms).toISOString():undefined;
+      const calibrated=when&&certificateHash?from<=when.slice(0,10)&&when.slice(0,10)<until:undefined;
+      return observation("ubibot-temperature",source,[
+       check("logger-fresh","Reading within approved age",when?ms<=now&&now-ms<=Number(maxMinutes)*60000:undefined,"Check connectivity and collection interval.",when),
+       check("logger-temperature","Latest internal temperature within limits",celsius===undefined?undefined:celsius>=Number(low)&&celsius<=Number(high),"Investigate excursions against the site procedure.",celsius===undefined?undefined:celsius+" °C · limits "+low+" to "+high+" °C"),
+       check("logger-calibration","Reviewed certificate and calibration interval cover the reading",calibrated,"Check certificate identity, review revision and calibration dates.",file+" v"+version+" · "+(certificateHash??"certificate unavailable")+" · "+from+" to "+until)
+      ],"Point reading for serial "+record+" from field1. The site binds the certificate and limits. Continuous interval coverage requires a logger window.");
+    }
+    case "BENCHLING": {
+      const [entryId,reviewer]=reference!.split("/"),base="https://"+scope+".benchling.com/api/v2";
+      const result=(await get(base+"/assay-results/"+record))!.body;
+      if(result?.id!==record||result.entryId!==entryId)throw new CollectionError("TARGET_MISMATCH");
+      const body=(await get(base+"/entries/"+entryId+"?returning=id,assignedReviewers,authors,archiveRecord,reviewRecord"))!.body;
+      const entry=body?.entry??body;
+      if(entry?.id!==entryId)throw new CollectionError("TARGET_MISMATCH");
+      const review=entry.reviewRecord,processes=Array.isArray(review?.reviewProcesses)?review.reviewProcesses:[],assigned=Array.isArray(entry.assignedReviewers)?entry.assignedReviewers.some((r:{id?:string})=>r?.id===reviewer):undefined;
+      const independent=Array.isArray(entry.authors)&&entry.authors.length&&typeof result.creator?.id==="string"?result.creator.id!==reviewer&&!entry.authors.some((r:{id?:string})=>r?.id===reviewer):undefined;
+      const matched=processes.find((p:any)=>p?.completionStatus==="APPROVED"&&Array.isArray(p.stages)&&p.stages.some((s:any)=>s.actionLabel==="APPROVE"&&Array.isArray(s.reviewers)&&s.reviewers.some((r:any)=>r.id===reviewer&&["APPROVED","ACCEPTED"].includes(r.status))));
+      return observation("benchling-result-review",base+"/assay-results/"+record,[
+       check("lab-result","Result is reviewed and active",typeof result.isReviewed==="boolean"?result.isReviewed&&!result.archiveRecord:undefined,"Check the result and any archive decision."),
+       check("lab-entry","Linked entry has an accepted review",typeof review?.status==="string"?review.status==="ACCEPTED"&&!entry.archiveRecord:undefined,"Inspect the current notebook decision.",entryId+" · "+(review?.status??"unavailable")),
+       check("lab-authority","Named independent reviewer approved the linked entry",assigned===false||independent===false?false:assigned===true&&independent===true?(processes.length?!!matched:undefined):undefined,"Verify the assigned reviewer, stage and source decision.",reviewer+" · process "+(matched?.id??"unconfirmed"))
+      ],"Only the identified result and notebook review are traced. The provider's recorded review is distinct from product or batch release.");
+    }
     case "JIRA": {
       const source = "https://api.atlassian.com/ex/jira/" + scope + "/rest/api/3/issue/" + record;
       const issue = (await get(source + "?fields=project,status,resolution,assignee"))!.body;

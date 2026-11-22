@@ -23,11 +23,18 @@ function dueIn(days:number){const d=new Date();d.setDate(d.getDate()+days);retur
 function toBase64(bytes:Uint8Array){let binary="";for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(binary);}
 export default function AiStudio(){
  const [feature,setFeature]=useState<boolean|null>(null);
+ const [ownEnabled,setOwnEnabled]=useState(false),[useOwn,setOwn]=useState(false),[own,setAccount]=useState<{org:string;version:string;provider:string;model:string}|null>(null);
  const [workspaceFeature,setWorkspaceFeature]=useState<boolean|null>(null);
  const [authReady,setAuthReady]=useState(false);
  const [user,setUser]=useState<{email:string;id:string}|null>(null);
  const [organisations,setOrganisations]=useState<Org[]>([]);
  const [orgId,setOrgId]=useState("");
+ useEffect(()=>{let active=true;setOwn(false);setAccount(null);setConsent(false);
+  if(user&&orgId&&ownEnabled)void (async()=>{const token=(await browserAuth().auth.getSession()).data.session?.access_token;if(!token)return;
+   const r=await fetch('/api/workspace/integration-directory?'+new URLSearchParams({organizationId:orgId}),{headers:{authorization:'Bearer '+token},cache:'no-store'});
+   if(!r.ok)return;const value=await r.json();if(active&&value.provider&&value.version)setAccount({...value,org:orgId});})().catch(()=>{});
+  return ()=>{active=false;};
+ },[orgId,user?.id,ownEnabled]);
  const [company,setCompany]=useState("RegPilot pilot business");
  const [mode,setMode]=useState<Mode>("document");
  const [documentText,setDocumentText]=useState("");
@@ -75,7 +82,7 @@ export default function AiStudio(){
  },[]);
  useEffect(()=>{
   let active=true;
-  void fetch("/api/ai/analyse",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(active){setFeature(j.enabled===true);setWorkspaceFeature(j.workspaceEnabled===true)}}).catch(()=>{if(active){setFeature(false);setWorkspaceFeature(false)}});
+  void fetch("/api/ai/analyse",{cache:"no-store"}).then(r=>r.json()).then(j=>{if(active){setFeature(j.enabled===true);setOwnEnabled(j.customerEnabled===true);setWorkspaceFeature(j.workspaceEnabled===true)}}).catch(()=>{if(active){setFeature(false);setWorkspaceFeature(false)}});
   const {data}=browserAuthSafe();
   if(data?.auth){const {data:listener}=data.auth.onAuthStateChange(()=>{setTimeout(()=>void loadSession(),0)});void loadSession();return()=>{active=false;listener.subscription.unsubscribe();}}
   setAuthReady(true);return()=>{active=false};
@@ -167,9 +174,10 @@ export default function AiStudio(){
    if(!consent||!scopeConfirmed)throw new Error("Confirm the intended-use boundary, data classification and independent human review before external AI processing");
    const token=(await browserAuth().auth.getSession()).data.session?.access_token;
    if(!token)throw new Error("You are not signed in");
+   if(useOwn&&(!own||own.org!==orgId))throw new Error('Refresh the selected organisation AI connection.');
    let pdfBase64="",docxBase64="";
    if(file&&!evidenceId){if(!/\.(pdf|docx)$/i.test(file.name)||file.size>2_000_000||file.size<30)throw new Error("Choose a PDF or Word document smaller than 2 MB");const encoded=toBase64(new Uint8Array(await file.arrayBuffer()));if(file.name.toLowerCase().endsWith(".docx"))docxBase64=encoded;else pdfBase64=encoded;}
-   const response=await fetch("/api/ai/analyse",{method:"POST",headers:{"Content-Type":"application/json",authorization:"Bearer "+token},body:JSON.stringify({organizationId:orgId,mode,documentText,question,businessContext,sourceId,pdfBase64,docxBase64,evidenceId,consent:true,retainDraft,purpose:"business-compliance-assistance",dataCategory,recordPurpose:"working-draft",humanReviewAcknowledged:scopeConfirmed,solelyAutomatedDecision:false,externalProcessingAcknowledged:consent})});
+   const response=await fetch("/api/ai/analyse",{method:"POST",headers:{"Content-Type":"application/json",authorization:"Bearer "+token,...(useOwn&&own?.org===orgId?{"x-regpilot-ai-binding":own.version}:{})},body:JSON.stringify({organizationId:orgId,mode,documentText,question,businessContext,sourceId,pdfBase64,docxBase64,evidenceId,consent:true,retainDraft,purpose:"business-compliance-assistance",dataCategory,recordPurpose:"working-draft",humanReviewAcknowledged:scopeConfirmed,solelyAutomatedDecision:false,externalProcessingAcknowledged:consent})});
    const json=await response.json();
    if(!response.ok)throw new Error(json.error||"AI request could not complete");
    setResult(json.ai as Result);setRequestId(json.requestId||"");
@@ -230,7 +238,7 @@ export default function AiStudio(){
   }
  },[]);
  const working=busy||!authReady;
- const canRun=user&&orgId&&feature===true;
+ const canRun=user&&orgId&&(useOwn?ownEnabled&&own?.org===orgId:feature===true);
  return <div className={shell.app}>
   <aside className={shell.sidebar}>
    <a href="/workbench" className={shell.logo}><span className={shell.logoMark}>R</span><span>RegPilot <b>AI</b><small>INTELLIGENCE &amp; OPERATIONS</small></span></a>
@@ -251,7 +259,7 @@ export default function AiStudio(){
    <PublicationResearch/>
    <div className={shell.warning}><strong>Private AI pilot — no sensitive information.</strong> The private drafting tools below send supplied text and documents to an external model provider, potentially outside the UK. Do not send genuine patient, staff, supplier, confidential or regulated records. No legal or regulatory conclusion is provided.</div>
    {message&&<div className={ui.alert} role="status">{message}<button type="button" onClick={()=>setMessage("")} aria-label="Dismiss">×</button></div>}
-   {feature===false&&<div className={ui.setup}><strong>AI integration is installed but not activated.</strong><p>Verified Supabase login, an invite allowlist, a migrated database and Gateway credentials are required. The server intentionally refuses AI requests until configured.</p></div>}
+   {feature===false&&!ownEnabled&&<div className={ui.setup}><strong>AI integration is installed but not activated.</strong><p>Verified Supabase login, an invite allowlist, a migrated database and Gateway credentials are required. The server intentionally refuses AI requests until configured.</p></div>}
    <div className={ui.layout}>
     <section className={ui.controls}>
      <div className={ui.sectionHead}><span>01 / ACCESS</span><h2>Secure pilot session</h2></div>
@@ -262,6 +270,7 @@ export default function AiStudio(){
      <div className={ui.sectionHead}><span>02 / AI WORKFLOW</span><h2>What should RegPilot review?</h2></div>
      <div className={ui.modes}>{([{id:"document",name:"Review a policy"},{id:"change",name:"Assess regulatory impact"},{id:"assistant",name:"Ask RegPilot"}] as const).map(m=><button type="button" key={m.id} className={mode===m.id?ui.modeActive:ui.mode} onClick={()=>{setMode(m.id);setResult(null);}}>{m.name}</button>)}</div>
      <form onSubmit={run} className={ui.form}>
+      {orgId&&<><label>AI account<select aria-label="AI account" disabled={working} value={useOwn?'customer':'platform'} onChange={e=>{setOwn(e.target.value==='customer');setConsent(false);setResult(null);}}><option value="platform">RegPilot AI Gateway</option>{own?.org===orgId&&<option value="customer">{own.provider} / {own.model} · organisation account</option>}</select></label><a href={'/team/developers?'+new URLSearchParams({organizationId:orgId})}>Link an AI provider or a private ChatGPT GPT</a></>}
       <label>UK business context (fictional)<textarea rows={2} maxLength={2500} value={businessContext} onChange={e=>setBusinessContext(e.target.value)} placeholder="Example: Small wholesale business reviewing supplier procedures."/></label>
       <label>Official UK publication<select value={sourceId} onChange={e=>setSourceId(e.target.value)} required={mode==="change"}><option value="">{mode==="assistant"?"Find official passages from my question":"No official source selected"}</option>{REGULATORY_SOURCES.map(s=><option key={s.id} value={s.id}>{s.agency}: {s.title}</option>)}</select></label>
       {(mode==="document"||mode==="assistant")&&<label>{mode==="document"?"Policy/document text (fictional)":"Relevant policy or context (optional)"}<textarea rows={5} maxLength={16000} value={documentText} onChange={e=>setDocumentText(e.target.value)} placeholder="Paste non-sensitive example policy text…"/></label>}
@@ -279,7 +288,7 @@ export default function AiStudio(){
       <label className={ui.check}><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/><span>I am authorised to share this non-sensitive material with the external AI provider and acknowledge its processing. This acknowledgment does not replace a lawful basis, DPIA or supplier agreement.</span></label>
       <label className={ui.check}><input type="checkbox" checked={retainDraft} onChange={e=>setRetainDraft(e.target.checked)}/><span>Optionally retain this generated AI draft in our organisation's private review inbox. Output may contain short document excerpts; original document/text is not saved by the review service.</span></label>
       <button type="submit" className={ui.run} disabled={!canRun||working||!consent||!scopeConfirmed}>{busy?"Running secure analysis…":"Run AI review →"}</button>
-      <p className={ui.hint}>A daily user/organisation limit is enforced by the database. AI Gateway spend must also be capped in Vercel. Your document contents are not stored by this route.</p>
+      <p className={ui.hint}>A daily user/organisation limit is enforced by the database. Provider charges use the AI account selected for this review. Your document contents are not stored by this route.</p>
      </form>
     </section>
     <section className={ui.results}>

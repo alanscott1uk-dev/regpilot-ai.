@@ -17,6 +17,8 @@ export const gleifEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_GLEIF_EN
 export const awsEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_AWS_ENABLED==="true"&&brokerRole.safeParse(process.env.REGPILOT_AWS_BROKER_ROLE_ARN).success;
 export const awsOrganizationEnabled=()=>awsEnabled()&&process.env.REGPILOT_AWS_ORGANIZATIONS_ENABLED==="true";
 const providerGates=new Map<string,()=>boolean>(Object.entries({
+ UBIBOT:()=>connectorsEnabled()&&process.env.REGPILOT_UBIBOT_ENABLED==="true",
+ BENCHLING:()=>connectorsEnabled()&&process.env.REGPILOT_BENCHLING_ENABLED==="true",
  JIRA:()=>connectorsEnabled()&&process.env.REGPILOT_JIRA_ENABLED==="true",
  SERVICENOW:()=>connectorsEnabled()&&process.env.REGPILOT_SERVICENOW_ENABLED==="true",
  AZURE_DEVOPS:()=>connectorsEnabled()&&process.env.REGPILOT_AZURE_DEVOPS_ENABLED==="true",

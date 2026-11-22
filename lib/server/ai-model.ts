@@ -1,3 +1,4 @@
+import {generateCustomerDraft,type ModelAccount} from '../connectors/customer-model';
 import {generateText,Output} from "ai";
 import {groundResearchDraft} from "../ai/research-grounding";
 import type {ResearchResult} from "../regulatory/research";
@@ -56,8 +57,8 @@ function instructions(mode:AiInput["mode"]){
   "Return short concise structured output. The findings severity is a triage suggestion, never an authoritative risk classification."
  ].join("\n");
 }
-export async function runRegPilotAi(input:AiInput,official:Official,research?:ResearchResult){
- const model=safeModelName(process.env.REGPILOT_AI_MODEL||"");
+export async function runRegPilotAi(input:AiInput,official:Official,research?:ResearchResult,account?:ModelAccount){
+ const model=safeModelName(account?account.provider+"/"+account.model:process.env.REGPILOT_AI_MODEL||"");
  const sourceInfo=official?{id:official.id,title:official.title,url:official.url,updatedAt:official.updatedAt,revisionAt:official.revisionAt}:null;
  const text=[
   "MODE: "+input.mode,
@@ -65,11 +66,11 @@ export async function runRegPilotAi(input:AiInput,official:Official,research?:Re
   "USER QUESTION:\n"+(input.question||"Review this material and prepare a concise findings report."),
   "OFFICIAL SOURCE METADATA:\n"+(sourceInfo?JSON.stringify(sourceInfo):research?"Retrieved publications follow. Put each answer point in findings and copy one exact supporting quotation per point. Territorial tags describe catalogue scope; confirm applicability.":"No primary source selected. Do not infer official requirements."),
   "OFFICIAL SOURCE TEXT START\n"+(research?JSON.stringify(research.citations.map(c=>({title:c.title,sourceId:c.sourceId,jurisdictions:c.jurisdictions,quote:c.quote}))):official?.text||"[NO VERIFIED SOURCE EXCERPT]")+"\nOFFICIAL SOURCE TEXT END",
-  "INPUT DOCUMENT START\n"+(input.documentUnitKind==="block"?JSON.stringify({coverage:input.documentCoverage,blocks:input.documentPages}):input.documentText|| (input.fileBytes?"[PDF attached; read file content as input]":"[NO DOCUMENT PROVIDED]"))+"\nINPUT DOCUMENT END"
+  "INPUT DOCUMENT START\n"+((input.documentUnitKind==="block"||account&&input.documentPages?.length)?JSON.stringify({coverage:input.documentCoverage,blocks:input.documentPages}):input.documentText|| (input.fileBytes?"[PDF attached; read file content as input]":"[NO DOCUMENT PROVIDED]"))+"\nINPUT DOCUMENT END"
  ].join("\n\n");
  const content:Array<{type:"text";text:string}|{type:"file";data:Uint8Array;mediaType:"application/pdf"}>=[{type:"text",text}];
  if(input.fileBytes)content.push({type:"file",data:input.fileBytes,mediaType:"application/pdf"});
- const result=await generateText({
+ const result=account?await generateCustomerDraft(account,instructions(input.mode),text,z.toJSONSchema(outputSchema)):await generateText({
   model,
   system:instructions(input.mode),
   messages:[{role:"user",content}],
@@ -78,7 +79,7 @@ export async function runRegPilotAi(input:AiInput,official:Official,research?:Re
   maxRetries:0,
   abortSignal:AbortSignal.timeout(research?30000:45000)
  });
- return {...annotateDraft(input, official, result.output, research),model,source:sourceInfo,
+ return {...annotateDraft(input, official, outputSchema.parse(result.output), research),model,source:sourceInfo,
   usage:{inputTokens:result.usage?.inputTokens??null,outputTokens:result.usage?.outputTokens??null},
   generatedAt:new Date().toISOString()
  };
