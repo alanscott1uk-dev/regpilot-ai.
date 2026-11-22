@@ -3,7 +3,7 @@ import {useState} from 'react';
 import type {Integration} from '../../../lib/connectors/marketplace';
 import type {useWorkspaceContext} from '../../../lib/client/workspace-context';
 
-type Entry={slug:string;name:string;auth:string;category:string};
+type Entry={slug:string;name:string;auth:string;category:string;docs?:string};
 type Choice={provider:string|null;model:string|null;version:string|null};
 export default function IntegrationDirectory({workspace,locked}:{workspace:ReturnType<typeof useWorkspaceContext>;locked:boolean}){
  const [selfService,setSelfService]=useState(false);
@@ -40,7 +40,7 @@ export default function IntegrationDirectory({workspace,locked}:{workspace:Retur
  return <section><h2>Integration directory and AI accounts</h2><fieldset disabled={busy||locked}><legend>Provider catalogue</legend>
  <button type="button" onClick={()=>void act('DIRECTORY')}>Refresh provider catalogue</button> <button type="button" onClick={()=>void act('AVAILABLE')}>Refresh enabled integrations</button>
  {entries.length>0&&<><label>Find a provider or category <input value={search} onChange={e=>{filter(e.target.value);page(0);}}/></label><p>{matches.length} matching providers. Hosted authorisation is available for configured integrations.</p>
- <ul>{matches.slice(offset,offset+15).map(e=><li key={e.slug}><a href={'https://nango.dev/docs/api-integrations/'+e.slug} target="_blank" rel="noreferrer">{e.name}</a> · {e.auth} · {e.category} {available.some(s=>s.provider===e.slug)?'· enabled':selfService&&e.auth==='API_KEY'?<button type="button" onClick={()=>void act('ENABLE',e.slug)}>Enable {e.name} for this organisation</button>:null}</li>)}</ul>
+ <ul>{matches.slice(offset,offset+15).map(e=><li key={e.slug}><a href={e.docs??'https://nango.dev/docs/api-integrations/'+e.slug} target="_blank" rel="noreferrer">{e.name}</a> · {e.auth} · {e.category} {available.some(s=>s.provider===e.slug)?'· enabled':selfService&&e.auth==='API_KEY'?<button type="button" onClick={()=>void act('ENABLE',e.slug)}>Enable {e.name} for this organisation</button>:null}</li>)}</ul>
  <button type="button" disabled={offset===0} onClick={()=>page(offset-15)}>Previous providers</button> <button type="button" disabled={offset+15>=matches.length} onClick={()=>page(offset+15)}>More providers</button></>}</fieldset>
  {available.length>0&&<fieldset disabled={locked||busy}><legend>Connect or reauthorise a provider</legend><label>Enabled integration <select aria-label="Enabled integration" value={sourceId} onChange={e=>selectSource(available.find(s=>s.integration===e.target.value))}>{available.map(s=><option key={s.integration} value={s.integration}>{s.name} · {s.integration}</option>)}</select></label>
  <button type="button" onClick={()=>void act('CONNECT')}>Start hosted authorisation</button> <button type="button" onClick={()=>void act('GRANTS')}>Check organisation connections</button>

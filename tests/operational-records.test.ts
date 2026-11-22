@@ -90,6 +90,9 @@ test('managed sync samples respect tenant, provider and connection boundaries, l
  const id=workspaceIntegrationId(org,'example');assert.notEqual(workspaceIntegrationId(other,'example'),id);
  const target={scope:id+'/a-long-connected-tenant',record:'Contact',reference:'example'},stored=recordKeys('NANGO_SYNC',target);
  assert.deepEqual(readRecordKeys('NANGO_SYNC',stored.repository,stored.branch),target);
+ const documented=parseDirectory('| `anthropic` | Anthropic | API_KEY | [docs](https://nango.dev/docs/integrations/all/anthropic.md) | | | productivity |');
+ assert.equal(documented[0].docs,'https://nango.dev/docs/integrations/all/anthropic');
+ assert.equal(parseDirectory('| `example` | Example | API_KEY | [docs](https://foreign.example/provider.md) | | | sales |')[0].docs,undefined);
  assert.deepEqual(parseDirectory('| `example` | Example | API_KEY | docs | connect | | sales |')[0],{slug:'example',name:'Example',auth:'API_KEY',category:'sales'});
 });
 test('customer model routes pin the broker and provider, disable provider storage where available, and reject partial output',async()=>{

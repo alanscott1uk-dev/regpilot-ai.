@@ -20,11 +20,12 @@ export function aiModels(provider:string){
  return value.split(',').map(s=>s.trim()).filter(s=>/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(s)).slice(0,20);
 }
 export function parseDirectory(text:string){
- const rows=new Map<string,{slug:string;name:string;auth:string;category:string}>();
+ const rows=new Map<string,{slug:string;name:string;auth:string;category:string;docs?:string}>();
  for(const line of text.split('\n')){
   const fields=line.split('|').map(s=>s.trim());
   const slug=/^`([a-z0-9][a-z0-9_-]{0,99})`$/.exec(fields[1]??'')?.[1];
-  if(slug&&fields[2]&&fields[3]&&!rows.has(slug))rows.set(slug,{slug,name:fields[2].slice(0,150),auth:fields[3].slice(0,60),category:(fields[7]??'').slice(0,120)});
+  const docs=/^\[docs\]\((https:\/\/nango\.dev\/docs\/(?:api-integrations|integrations\/all)\/[a-z0-9_-]+)\.md\)$/.exec(fields[4]??'')?.[1];
+  if(slug&&fields[2]&&fields[3]&&!rows.has(slug))rows.set(slug,{slug,name:fields[2].slice(0,150),auth:fields[3].slice(0,60),category:(fields[7]??'').slice(0,120),...(docs?{docs}:{})});
  }
  if(!rows.size||rows.size>5000)throw new CollectionError('INVALID_RESPONSE');
  return [...rows.values()];
