@@ -32,9 +32,9 @@ export default function BillCheck({workspace,riskId,version}:{workspace:ReturnTy
  }
  return <details><summary>Link a treatment bill from accounting</summary><p>Choose a bill whose full gross amount belongs to this risk. Refreshing the same bill replaces its previous observation.</p>
  <p><a href={'/team/accounting?'+new URLSearchParams({organizationId})}>Manage accounting connections</a></p>
- <fieldset disabled={busy}><legend>Source bill</legend><label>Package <select value={provider} onChange={e=>{choose(e.target.value);setGrants([]);select('');setBill('');tell('');}}><option value="xero">Xero</option><option value="quickbooks">QuickBooks Online</option></select></label>
+ <fieldset disabled={busy}><legend>Source bill</legend><label>Package <select aria-label="Package" value={provider} onChange={e=>{choose(e.target.value);setGrants([]);select('');setBill('');tell('');}}><option value="xero">Xero</option><option value="quickbooks">QuickBooks Online</option></select></label>
  <button type="button" onClick={()=>void run('connections')}>Refresh verified connections</button>
- {grants.length>0&&<><label>Business <select value={connection} onChange={e=>{select(e.target.value);setBill('');tell('');}}>{grants.map(g=><option key={g.id} value={g.id}>{g.name} · {g.reference} · {g.id}</option>)}</select></label>
+ {grants.length>0&&<><label>Business <select aria-label="Business" value={connection} onChange={e=>{select(e.target.value);setBill('');tell('');}}>{grants.map(g=><option key={g.id} value={g.id}>{g.name} · {g.reference} · {g.id}</option>)}</select></label>
  <label>{provider==='xero'?'Xero purchase bill UUID':'QuickBooks bill ID'} <input value={bill} maxLength={100} onChange={e=>{setBill(e.target.value);tell('');}}/></label><button type="button" disabled={!bill.trim()} onClick={()=>void run('bill')}>Check and link whole bill</button></>}</fieldset>
  {message&&<p role="status">{message}</p>}</details>;
 }

@@ -16,10 +16,10 @@ export default function SiteProfiles({sites,version,disabled,save}:{sites:SitePr
  }
  return <details><summary>Manage site facts ({sites.length}/12)</summary><p>Each site has its own activities and UK nation. Workforce, turnover, VAT registration and company status come from the organisation profile.</p>
  <form onSubmit={e=>{e.preventDefault();void submit();}}><fieldset disabled={disabled||busy}><legend>Site profile</legend>
- <label>Site <select value={id} onChange={e=>open(e.target.value)}><option value="">New site</option>{sites.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+ <label>Site <select aria-label="Site" value={id} onChange={e=>open(e.target.value)}><option value="">New site</option>{sites.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
  <label>Site name <input required minLength={2} maxLength={80} value={name} onChange={e=>setName(e.target.value)}/></label>
- <label>UK nation <select required value={nation} onChange={e=>setNation(e.target.value)}><option value="">Choose a nation</option>{siteNations.map(n=><option key={n}>{n}</option>)}</select></label>
- {siteFactKeys.map(k=><label key={k}>{factDefinitions[k].label} <select value={facts[k]==null?'':String(facts[k])} onChange={e=>setFacts({...facts,[k]:e.target.value===''?null:e.target.value==='true'})}><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>)}
+ <label>UK nation <select aria-label="UK nation" required value={nation} onChange={e=>setNation(e.target.value)}><option value="">Choose a nation</option>{siteNations.map(n=><option key={n}>{n}</option>)}</select></label>
+ {siteFactKeys.map(k=><label key={k}>{factDefinitions[k].label} <select aria-label={factDefinitions[k].label} value={facts[k]==null?'':String(facts[k])} onChange={e=>setFacts({...facts,[k]:e.target.value===''?null:e.target.value==='true'})}><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>)}
  <button disabled={!id&&sites.length>=12}>Save site facts</button>{id&&<details><summary>Archive this site</summary><p>Archiving removes the site from future comparisons. Its earlier register revisions remain recorded.</p><button type="button" onClick={()=>void submit(true)}>Archive {sites.find(s=>s.id===id)?.name}</button></details>}
  </fieldset></form>{message&&<p role="alert">{message}</p>}</details>;
 }
