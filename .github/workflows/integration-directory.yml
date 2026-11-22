@@ -119,15 +119,35 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        engine: [postgres, mysql]
+        engine: [postgres, mysql, clickhouse]
     permissions:
       contents: read
+    services:
+      workspace-db:
+        image: postgres:17
+        env:
+          POSTGRES_USER: regpilot
+          POSTGRES_PASSWORD: acceptance-only
+          POSTGRES_DB: regpilot
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U regpilot" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DATABASE_URL: postgresql://regpilot:acceptance-only@localhost:5432/regpilot?schema=public
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - name: Read real database rows and rotate the source credential
         run: python3 scripts/check-database-source.py ${{ matrix.engine }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+      - run: npx prisma db push
+      - name: Admit the real collector receipts through the RegPilot observations API
+        env:
+          REGPILOT_DATABASE_ACCEPTANCE_ENVELOPES: database-acceptance-envelopes.json
+        run: node --import tsx --test --test-name-pattern='database connector receipts' tests/customer-api.integration.test.ts
       - uses: actions/upload-artifact@v4
         with:
           name: database-source-${{ matrix.engine }}

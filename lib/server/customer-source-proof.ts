@@ -1,3 +1,4 @@
+import {maxWorkspaceConnectorTargets} from '../connectors/capacity';
 import {z} from 'zod';
 import {ADMIN,requireMember} from './workspace-member';
 import {IntelligenceError,transaction} from './intelligence-service';
@@ -19,7 +20,7 @@ const where=(organizationId:string,id:string)=>({organizationId,entityType:'Evid
 export async function proofTargets(ctx:AuthorizedContext){
  return transaction(ctx,async tx=>{
   await requireMember(tx,ctx,ADMIN);
-  return tx.evidenceConnector.findMany({where:{organizationId:ctx.organizationId,provider:{in:sources}},select:{id:true,provider:true,repository:true,version:true,enabled:true},orderBy:{id:'asc'},take:500});
+  return tx.evidenceConnector.findMany({where:{organizationId:ctx.organizationId,provider:{in:sources}},select:{id:true,provider:true,repository:true,version:true,enabled:true},orderBy:{id:'asc'},take:maxWorkspaceConnectorTargets});
  });
 }
 export async function declareSource(ctx:AuthorizedContext,input:z.infer<typeof declaration>){

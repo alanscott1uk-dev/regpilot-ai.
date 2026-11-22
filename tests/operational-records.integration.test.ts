@@ -170,7 +170,7 @@ test('self-service provisions an eligible provider once for the requesting organ
  }finally{await f.cleanup();}
 });
 
-test('an organisation can manage 500 targets and retrieve a connection outside the recent history window',async()=>{
+test('an organisation can manage 1,000 targets and retrieve a connection outside the recent history window',async()=>{
  const {operationsWorkspace}=await import('../lib/server/operations-service');
  const {maxWorkspaceConnectorTargets}=await import('../lib/connectors/capacity');
  const f=await assuranceFixture();
@@ -185,7 +185,7 @@ test('an organisation can manage 500 targets and retrieve a connection outside t
   await saveConnector(f.o,input);
   await assert.rejects(saveConnector(f.o,{...input,repository:'example/over-limit'}),rejects(429));
   const overview=await operationsWorkspace(f.o);
-  assert.equal(overview.connectionDirectory.length,500);assert.equal(overview.connectors.length,20);
+  assert.equal(overview.connectionDirectory.length,1000);assert.equal(overview.connectors.length,20);
   assert.equal(overview.connectors.some(c=>c.id===oldest.id),false);
   assert.deepEqual((await operationsWorkspace(f.ad,undefined,oldest.id)).connectors.map(row=>row.id),[oldest.id]);
   assert.equal((await operationsWorkspace(f.out,undefined,oldest.id)).connectors.length,0);

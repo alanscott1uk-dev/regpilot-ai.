@@ -1,0 +1,23 @@
+Manual database and API collection
+
+1. Download a JSON plan from /database-integrations. Review the connector licence, version and configuration instructions at the documentation URL in the plan. Install the approved vendor image on an authorised Linux host with Python 3.10+ and Docker. Verify the image digest through your approved software supply process. The runner requires the local image tag, the independently approved repository digest and the digest in the checked plan to match.
+
+2. Create a local source config from the vendor documentation using a read-only source credential. Limit the account to the data you need. Keep the config owner-readable only. Use a dedicated Docker network with access to the specific upstream service. Credentials are supplied only to the installed vendor connector.
+
+3. Download collect.py. Use --check-access to test the source credential. List full-refresh streams, namespaces and field names. Replace DIGEST with sha256: followed by the approved 64-character image digest.
+
+python3 collect.py --plan plan.json --config config.json --digest DIGEST --network source-network --list-streams
+
+4. Choose a stream, a top-level control field and a JSON scalar to compare. Supply the exact namespace reported by discovery. Omit --namespace when the source reports null. This example checks whether all decision values are the string approved.
+
+python3 collect.py --plan plan.json --config config.json --digest DIGEST --network source-network --stream release_gate --namespace public --field decision --expected '"approved"' --control CONTROL_UUID --output observation.json
+
+The rule compares JSON type and value. A different value produces FAIL. Missing values or an empty stream without any failures produce UNKNOWN. An incomplete or rejected read exits without publishing a receipt. A successful envelope contains aggregate counts, the image digest and a fingerprint of the stream, namespace, field and expected value. Keep the control specification and approvals for the rule in your workspace. Each command has a five-minute limit and a 128 MiB output limit. Scope large databases to an approved reporting view or a smaller stream.
+
+5. Create an observations:write credential for the target control in the private workspace. Submit the saved envelope with deliver.py. It prompts for the credential or reads REGPILOT_OBSERVATION_TOKEN.
+
+python3 deliver.py observation.json --workspace https://YOUR-REGPILOT-WORKSPACE
+
+Retry a delivery using the same envelope. A later manual read requires a new output path. Source observations enter the existing review queue. A workspace reviewer can open a follow-up for failed checks.
+
+The catalogue API is GET /api/database-integrations with optional q, kind and page parameters. Each available plan link pins the catalogue version. When a version changes, download and review the new plan and digest before running it.

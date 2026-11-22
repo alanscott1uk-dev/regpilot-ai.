@@ -1,3 +1,4 @@
+import {maxWorkspaceConnectorTargets} from '../connectors/capacity';
 import {z} from 'zod';
 import {isModelConnector,collectModelAccess} from '../connectors/direct-model';
 import {readRecordKeys} from '../connectors/operational-records';
@@ -16,7 +17,7 @@ export type DirectBinding=z.infer<typeof directBinding>;
 export async function modelConnections(ctx:AuthorizedContext){
  return transaction(ctx,async tx=>{
   await requireMember(tx,ctx,ADMIN);
-  const rows=await tx.evidenceConnector.findMany({where:{organizationId:ctx.organizationId,enabled:true,control:{enabled:true},provider:{in:['OPENAI_PROJECT_MODEL','PRIVATE_AI_MODEL']}},select:{id:true,version:true,repository:true,branch:true,provider:true},orderBy:{id:'asc'},take:500});
+  const rows=await tx.evidenceConnector.findMany({where:{organizationId:ctx.organizationId,enabled:true,control:{enabled:true},provider:{in:['OPENAI_PROJECT_MODEL','PRIVATE_AI_MODEL']}},select:{id:true,version:true,repository:true,branch:true,provider:true},orderBy:{id:'asc'},take:maxWorkspaceConnectorTargets});
   return rows.flatMap(row=>{
    if(!isModelConnector(row.provider)||!connectorProviderEnabled(row.provider))return [];
    const {scope,record}=readRecordKeys(row.provider,row.repository,row.branch);

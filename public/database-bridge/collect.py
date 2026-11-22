@@ -25,8 +25,8 @@ def pin_image(plan, digest):
     image, version = plan["image"], plan["version"]
     if not re.fullmatch(r"airbyte/source-[a-z0-9][a-z0-9.-]*", image) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+([.-][a-zA-Z0-9.-]+)?", version):
         raise CollectionError("Invalid source image or version.")
-    if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
-        raise CollectionError("Supply the approved image digest.")
+    if digest != plan.get("artifactDigest") or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        raise CollectionError("Supply the approved image digest matching the checked collection plan.")
     pinned = image + "@" + digest
     check = subprocess.run(["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image + ":" + version],
                            capture_output=True, timeout=30)
@@ -114,8 +114,19 @@ def run(args):
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}", args.network) or args.network in ("host", "none"):
         raise CollectionError("Select a bridge network with authorised source access.")
     with tempfile.TemporaryDirectory() as tmp:
-        folder = Path(tmp)
+        folder = Path(tmp).resolve()
+        if ":" in str(folder):
+            raise CollectionError("Select a temporary directory without a colon in its path.")
         config = local_json(folder, "config.json", json.loads(args.config.read_text()))
+        if args.check_access:
+            statuses = []
+            def connection(msg):
+                if msg.get("type") == "CONNECTION_STATUS":
+                    statuses.append(msg["connectionStatus"]["status"])
+            protocol(pinned, args.network, config, "check", connection)
+            if statuses != ["SUCCEEDED"]:
+                raise CollectionError("The source did not confirm access.")
+            return {"access": "confirmed"}
         streams = []
         def discovered(msg):
             if msg.get("type") == "CATALOG":
@@ -189,7 +200,9 @@ if __name__ == "__main__":
         parser.add_argument("--" + flag, type=Path, required=True)
     parser.add_argument("--digest", required=True)
     parser.add_argument("--network", default="bridge")
-    parser.add_argument("--list-streams", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--list-streams", action="store_true")
+    mode.add_argument("--check-access", action="store_true")
     for flag in ("stream", "namespace", "field", "expected", "control"):
         parser.add_argument("--" + flag)
     parser.add_argument("--output", type=Path)

@@ -4,7 +4,7 @@ import {z} from 'zod';
 export const CUSTOMER_API_VERSION='2026-11-20';
 export const CUSTOMER_API_SCOPES=['controls:read','tasks:read','regulatory:read','evidence:read','observations:read','observations:write'] as const;
 export type CustomerApiScope=typeof CUSTOMER_API_SCOPES[number];
-export const CUSTOMER_API_LIMITS={activeCredentials:20,controls:50,page:100,defaultPage:25,requestsPerKeyMinute:60,requestsPerCompanyMinute:300,credentialDays:90,observationDays:7,checks:20,pendingObservations:500,dailyObservations:200,bodyBytes:32768,cursorMinutes:60} as const;
+export const CUSTOMER_API_LIMITS={activeCredentials:20,controls:50,page:100,defaultPage:25,requestsPerKeyMinute:60,requestsPerCompanyMinute:300,credentialDays:90,observationDays:7,checks:20,pendingObservations:2000,dailyObservations:2000,bodyBytes:32768,cursorMinutes:60} as const;
 const scopes=z.array(z.enum(CUSTOMER_API_SCOPES)).min(1).max(CUSTOMER_API_SCOPES.length).refine(values=>new Set(values).size===values.length);
 export const createCustomerCredentialInput=z.object({name:z.string().trim().min(3).max(100),scopes,controlIds:z.array(z.uuid()).max(CUSTOMER_API_LIMITS.controls).refine(values=>new Set(values).size===values.length),expiresAt:z.iso.datetime(),requestKey:z.uuid(),confirm:z.literal(true)}).strict().superRefine((value,context)=>{if(value.scopes.some(scope=>scope!=='regulatory:read')&&!value.controlIds.length)context.addIssue({code:'custom',path:['controlIds'],message:'Select the controls this credential may access'});});
 export const changeCustomerCredentialInput=z.object({action:z.enum(['ROTATE','REVOKE']),version:z.number().int().positive(),requestKey:z.uuid(),confirm:z.literal(true)}).strict();

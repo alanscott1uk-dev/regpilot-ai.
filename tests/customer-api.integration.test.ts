@@ -8,6 +8,7 @@ import {purgeExpiredPartnerRecords} from '../lib/server/partner-retention';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {readFile} from 'node:fs/promises';
 import {db} from '../lib/server/db';
 import {assuranceFixture,rejects,future} from './helpers/assurance-fixture';
 import {CUSTOMER_API_SCOPES,type CustomerApiScope} from '../lib/customer-api';
@@ -19,10 +20,10 @@ import {GET as getObservations,POST as postObservation} from '../app/api/v1/obse
 
 type Created={id:string;version:number;requestKey:string;secret:string|null;reused:boolean;secretUnavailable:boolean};
 const notes='Independently inspect the customer-reported result and document the scope, exceptions and follow-up outcome.';
-async function fixture(){
+async function fixture(primaryId?:string){
  const x=await assuranceFixture();Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:'true',REGPILOT_CUSTOMER_API_ENABLED:'true',REGPILOT_EVIDENCE_ENABLED:'true',SUPABASE_URL:'https://example.invalid',SUPABASE_PUBLISHABLE_KEY:'fixture',SUPABASE_SECRET_KEY:'fixture',REGPILOT_EVIDENCE_BUCKET:'fixture',REGPILOT_CLAMD_HOST:'fixture'});
- async function control(organizationId=x.a.id,ownerId=x.ed.userId,creatorId=x.o.userId){const programme=await db.programmeImport.create({data:{organizationId,createdById:creatorId,inputHash:randomUUID(),method:'FIXTURE',status:'ACCEPTED',evidenceManifest:[]}});return db.managedControl.create({data:{organizationId,importId:programme.id,proposalKey:randomUUID(),title:'Fictional customer integration control',description:notes,testProcedure:notes,theme:'security',ownerId,scheduledById:creatorId,intervalDays:30,nextReviewAt:new Date(Date.now()+86400000)}});}
- const primary=await control(),ungranted=await control(),foreignControl=await control(x.b.id,x.out.userId,x.out.userId);
+ async function control(organizationId=x.a.id,ownerId=x.ed.userId,creatorId=x.o.userId,id?:string){const programme=await db.programmeImport.create({data:{organizationId,createdById:creatorId,inputHash:randomUUID(),method:'FIXTURE',status:'ACCEPTED',evidenceManifest:[]}});return db.managedControl.create({data:{id,organizationId,importId:programme.id,proposalKey:randomUUID(),title:'Fictional customer integration control',description:notes,testProcedure:notes,theme:'security',ownerId,scheduledById:creatorId,intervalDays:30,nextReviewAt:new Date(Date.now()+86400000)}});}
+ const primary=await control(x.a.id,x.ed.userId,x.o.userId,primaryId),ungranted=await control(),foreignControl=await control(x.b.id,x.out.userId,x.out.userId);
  const input=(scopes:readonly CustomerApiScope[]=CUSTOMER_API_SCOPES,controlIds=[primary.id])=>({name:'Fictional inventory client',scopes:[...scopes],controlIds,expiresAt:new Date(Date.now()+30*86400000).toISOString(),requestKey:randomUUID(),confirm:true});
  const create=async(scopes:readonly CustomerApiScope[]=CUSTOMER_API_SCOPES,controlIds=[primary.id])=>await createCustomerCredential(x.o,input(scopes,controlIds)) as Created;
  const request=(token:string,resource='controls')=>new Request('https://example.invalid/api/v1/'+resource,{headers:{authorization:'Bearer '+token}});
@@ -343,4 +344,33 @@ test('site reader delivers a real encrypted OPC UA excursion through authenticat
   assert.equal(stored.organizationId,x.a.id);assert.equal(stored.controlId,x.primary.id);
   assert.equal((stored.payload as typeof sample.body).checks.find((c:{key:string})=>c.key==='temperature-limits').status,'FAIL');
  }finally{server?.closeAllConnections();if(server?.listening)await new Promise<void>(resolve=>server!.close(()=>resolve()));await x.cleanup();await rm(folder,{recursive:true,force:true});}
+});
+
+test('database connector receipts reach the control review queue and recover idempotently',
+ {skip:!process.env.REGPILOT_DATABASE_ACCEPTANCE_ENVELOPES},async()=>{
+  const file=process.env.REGPILOT_DATABASE_ACCEPTANCE_ENVELOPES!;
+  const envelopes=JSON.parse(await readFile(file,'utf8')) as {idempotencyKey:string;body:{controlId:string;externalId:string}}[];
+  assert.equal(envelopes.length,2);
+  const x=await fixture(envelopes[0].body.controlId);
+  try {
+    const key=await x.create(['observations:read','observations:write']);
+    const headers={authorization:'Bearer '+key.secret!,'Content-Type':'application/json'};
+    for(const [index,envelope] of envelopes.entries()){
+      const send=()=>postObservation(new Request('https://example.invalid/api/v1/observations',{method:'POST',
+        headers:{...headers,'Idempotency-Key':envelope.idempotencyKey},body:JSON.stringify(envelope.body)}));
+      const first=await send();
+      assert.equal(first.status,201);
+      const receipt=await first.json();
+      assert.equal(receipt.reportedOutcome,index===0?'REPORTED_FAILURE':'REPORTED_PASS');
+      assert.equal(receipt.status,'PENDING');
+      assert.equal(receipt.controlId,x.primary.id);
+      assert.equal(receipt.externalId,envelope.body.externalId);
+      const replay=await (await send()).json();
+      assert.equal(replay.reused,true);
+      assert.equal(replay.id,receipt.id);
+      const review=await developerWorkspace(x.ad,{observationId:receipt.id});
+      assert.equal(review.observations[0].receiptHash,receipt.receiptHash);
+      await assert.rejects(()=>developerWorkspace(x.out,{observationId:receipt.id}),rejects(404));
+    }
+  } finally {await x.cleanup();}
 });

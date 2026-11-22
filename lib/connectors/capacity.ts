@@ -1,6 +1,6 @@
 import {recordProviders} from "./record-catalogue";
 
-export const maxWorkspaceConnectorTargets=500;
+export const maxWorkspaceConnectorTargets=1000;
 export const connectorHistoryPageSize=20;
 
 // Keep this order stable: the provider index identifies its database advisory lock.
