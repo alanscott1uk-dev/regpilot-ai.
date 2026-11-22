@@ -63,7 +63,7 @@ export async function guidedStockJourney({upload,review,db,app,org,editor,submit
  await checker.getByRole('heading',{name:'Review the submitted count'}).waitFor();
  const original=new URL(await checker.getByRole('link',{name:'Open physical count record',exact:false}).getAttribute('href'),app);
  assert.equal(original.searchParams.get('evidenceId'),files[1]);assert.equal(original.searchParams.get('organizationId'),org.id);
- await checker.getByLabel('Decision',{exact:true}).selectOption('VERIFIED');
+ await checker.getByRole('combobox',{name:'Stock review decision',exact:true}).selectOption('VERIFIED');
  await checker.getByLabel('Review findings').fill('The physical count sheet confirms a shortage of one pack.');
  await checker.getByRole('button',{name:'Record review',exact:true}).click();
  await checker.getByRole('heading',{name:'Stock discrepancy still open'}).waitFor();

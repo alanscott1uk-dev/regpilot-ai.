@@ -51,7 +51,7 @@ export default function StockReconciliation({records,files,organizationId,userId
   {canReview&&latest&&<form className={css.stockForm} onSubmit={e=>{e.preventDefault();const form=new FormData(e.currentTarget);
    save('REVIEW_STOCK',{review:{countKey:latest.key,decision:String(form.get('decision')),notes:String(form.get('reviewNotes'))}});}}>
    <fieldset disabled={busy}><legend>Independent stock review</legend>
-    <label>Decision<select required name="decision" defaultValue=""><option value="">Choose a decision</option><option value="VERIFIED">Verify figures against the source records</option><option value="RECOUNT">Request a recount</option></select></label>
+    <label><span id="stock-review-decision-label">Stock review decision</span><select aria-labelledby="stock-review-decision-label" required name="decision" defaultValue=""><option value="">Choose a decision</option><option value="VERIFIED">Verify figures against the source records</option><option value="RECOUNT">Request a recount</option></select></label>
     <label>Review findings<textarea required name="reviewNotes" minLength={15} maxLength={800}/></label>
     {!latest.totals.matched&&<p>Verifying these figures records the discrepancy. It stays open until a later count reconciles.</p>}
     <button>Record review</button>
