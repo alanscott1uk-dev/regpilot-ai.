@@ -1,5 +1,11 @@
 # RegPilot AI — November 2026 benchmark and next-stage product plan
 
+## Integration benchmark adopted 22 November 2026
+
+RegPilot’s target is **500 distinct, verified deep integrations**. Count each external product once across all tenants, accounts, endpoints and controls. A connector earns a place when RegPilot can retrieve identifiable source records from a live, authorised system, evaluate a meaningful control, and retain evidence a reviewer can trace back to the source. Verify repeat collection at the configured interval and credential renewal where the source requires credentials. For customer-controlled products, retain evidence of customer ownership and authorisation.
+
+Report the number of qualifying products **out of 500**, with links to the supporting receipts. Report catalogue listings, implemented connectors and staging demonstrations separately. The logger, Benchling decision and customer AI account form the first three customer pilots. The existing 500-target capacity per workspace measures how many connections one organisation can configure and has its own capacity test.
+
 Historical development notes follow. For the latest implemented workflow and measurable acceptance criteria, see [Coordinated change response](coordinated-change-response.md), [Audit periods and wider coverage](audit-period-and-coverage.md) and the current [release checklist](release-checklist.md). Earlier “not implemented” entries describe their original batch, not the current branch.
 
 **Current technical baseline — 20 November:** [Competitive technical specification](technical-spec-20261120.md) records the new file questionnaire, contextual answer reuse, evidence-grounded drafting and durable processing capabilities, plus the remaining advanced-feature and infrastructure requirements. The current user priority is advanced capabilities and infrastructure first, then workflow refinement. Historical snapshots below must not override that direction or be reused as current implementation status.
