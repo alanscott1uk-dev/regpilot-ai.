@@ -15,6 +15,7 @@ function save(name:string,type:string,content:string){
   link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 export function ApplicabilityStatement({organizationId,request}:{organizationId:string;request:(path:string,options?:RequestInit)=>Promise<Page>}){
+  const [on,setDate]=useState(()=>new Date().toISOString().slice(0,10));
   const [scope,setScope]=useState(''),[pages,setPages]=useState<Page[]>([]),[message,setMessage]=useState(''),[busy,setBusy]=useState(false),[index,setIndex]=useState(0);
   const pending=useRef<AbortController|null>(null);
   useEffect(()=>()=>pending.current?.abort(),[]);
@@ -25,7 +26,7 @@ export function ApplicabilityStatement({organizationId,request}:{organizationId:
       const collected:Page[]=[];
       let offset:number|null=0,inventory='',count=0;
       while(offset!==null){
-        const q=new URLSearchParams({organizationId,collection:scope.trim(),offset:String(offset)});
+        const q=new URLSearchParams({organizationId,on,collection:scope.trim(),offset:String(offset)});
         if(inventory)q.set('inventory',inventory);
         const response:Page=await request('/api/workspace/library/statement?'+q,{signal:controller.signal});
         if(controller.signal.aborted)return;
@@ -41,11 +42,11 @@ export function ApplicabilityStatement({organizationId,request}:{organizationId:
   }
   const rows=pages.flatMap(p=>p.rows);
   function downloadCsv(){
-    const table=[['Collection','Reference','Revision','Requirement','Applicability','Rationale','Owner ID','Reviewer ID','Decision date','Source','Original source ID','Control','Mapping state','Cited evidence','Connected evidence','Checked at']];
+    const table=[['Collection','Reference','Revision','Requirement','Applicability','Rationale','Owner ID','Reviewer ID','Decision date','Source','Original source ID','Control','Mapping state','Cited evidence','Connected evidence','Scenario date','England','Scotland','Wales','Northern Ireland','Checked at']];
     for(const page of pages)for(const row of page.rows){
       const maps:Array<Row['mappings'][number]|undefined>=row.mappings.length?row.mappings:[undefined];
       for(const m of maps)table.push([row.collection,row.reference,String(row.revision),row.title,labels[row.state],row.rationale??row.reasons.join(' / '),row.ownerId??'',row.reviewerId??'',row.reviewedAt??'',row.source?.name??'',row.source?.id??'',m?.title??'',m?.reason??'',
-        m?.citations.map(c=>c.id+' '+c.location+' '+(c.sha256??'')).join(' / ')??'',m?.signals.map(s=>s.provider+' '+s.status+' '+(s.runId??'')+' '+(s.observedAt??'')).join(' / ')??'',page.checkedAt]);
+        m?.citations.map(c=>c.id+' '+c.location+' '+(c.sha256??'')).join(' / ')??'',m?.signals.map(s=>s.provider+' '+s.status+' '+(s.runId??'')+' '+(s.observedAt??'')).join(' / ')??'',page.assessmentDate,...['England','Scotland','Wales','Northern Ireland'].map(n=>row.territories.find(t=>t.nation===n)?.assessment.state??'UNKNOWN'),page.checkedAt]);
     }
     save('regpilot-applicability-statement.csv','text/csv;charset=utf-8','\uFEFF'+table.map(line=>line.map(csvCell).join(',')).join('\r\n'));
   }
@@ -53,16 +54,18 @@ export function ApplicabilityStatement({organizationId,request}:{organizationId:
     <h2>Applicability statement</h2><p>Review which requirements apply, why a requirement was excluded, and which controls and evidence support each decision.</p>
     <form className={ui.toolbar} onSubmit={e=>{e.preventDefault();void refresh();}}>
       <label>Collection <input placeholder="All collections" maxLength={100} value={scope} disabled={busy} onChange={e=>{setScope(e.target.value);setPages([]);setMessage('');}}/></label>
+      <label>Territorial assessment date <input type="date" required value={on} disabled={busy} onChange={e=>{setDate(e.target.value);setPages([]);setMessage('');}}/></label>
       <button disabled={busy}>{busy?'Checking requirements…':'Refresh statement'}</button>
     </form>
     {message&&<p role="status">{message}</p>}
     {rows.length>0&&<>
       <p>{rows.length} requirements. {rows.filter(r=>r.state==='APPLIES_MAPPED').length} with a current mapping. {rows.filter(r=>r.state==='EXCLUDED').length} excluded with a rationale.</p>
-      <p className={ui.hint}>Each page records when its evidence was checked. Control mappings describe the relationship to a requirement. Review the underlying signals before deciding whether the control operated effectively.</p>
+      <p className={ui.hint}>The four nation scenarios use the selected date, current approved source revision and the same saved business facts. The recorded human decision applies to the actual business. Each page records when its evidence was checked. Control mappings describe the relationship to a requirement. Review the underlying signals before deciding whether the control operated effectively.</p>
       <div className={ui.buttons}><button type="button" onClick={downloadCsv}>Download CSV</button><button type="button" onClick={()=>save('regpilot-applicability-evidence.json','application/json',JSON.stringify({format:'regpilot-applicability-evidence-v1',pages},null,2))}>Download evidence JSON</button></div>
       {pages[index]?.rows.map(row=><details key={row.id}><summary>{row.collection} · {row.reference} · {labels[row.state]}</summary>
         <p>{row.title} {row.revision?'· revision '+row.revision:''}</p>
         {row.rationale&&<p>{row.rationale}</p>}{row.reasons.map(s=><p key={s}>{s}</p>)}
+        {row.territories.length>0&&<details><summary>Compare UK nations on {pages[index].assessmentDate}</summary><ul>{row.territories.map(t=><li key={t.nation}><strong>{t.nation}</strong> · {t.assessment.state.replace('_',' ').toLowerCase()} · {t.assessment.explanation}{t.assessment.missing.length>0?' Missing facts: '+t.assessment.missing.join(', '):''}</li>)}</ul></details>}
         {row.revisionId&&<a href={'/team/library?'+new URLSearchParams({organizationId,revisionId:row.revisionId})}>Open requirement and decision history</a>}
         {row.mappings.map(m=><div key={m.decisionId}><strong>{m.title}</strong><p>{m.reason}. {m.citations.length} cited locations.</p>{m.rationale&&<p>{m.rationale}</p>}{m.signals.map(s=><p key={s.connectionId}>{s.provider} · {s.status} · {s.observedAt??'No observation'}</p>)}</div>)}
       </details>)}

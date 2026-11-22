@@ -75,3 +75,15 @@ test('logger CSV windows retain the input digest and cannot hide excursions, gap
  assert.throws(()=>withRecord({...complete.record,samples:[complete.record.samples[1],complete.record.samples[0]]}));
  assert.throws(()=>withRecord({...complete.record,rawFileSha256:'absent'}));
 });
+
+
+test('every market comparator has a sourced capability, an outstanding test and valid worksheet criteria',async()=>{
+ const {benchmarkProducts}=await import('../lib/benchmark-products');
+ const rows=new Set(Object.values(trialTracks).flatMap(t=>t.steps.map(s=>s.row)));
+ assert.equal(new Set(benchmarkProducts.map(p=>p.id)).size,79);
+ for(const p of benchmarkProducts){
+   assert.match(p.source,/^https:\/\//);assert.ok(p.implemented.length>12&&p.remaining.length>15,p.name);
+   assert.ok(p.criteria.length&&p.criteria.every(row=>rows.has(row)),p.name);
+   assert.equal(new Set(p.criteria).size,p.criteria.length,p.name);
+ }
+});

@@ -76,12 +76,15 @@ function Run({t,view,busy,save}:{t:Trial;view:View;busy:boolean;save:(d:Record<s
 function Coverage({view}:{view:View}){
  const [release,setRelease]=useState(''),[productId,chooseProduct]=useState('');
  const product=benchmarkProductById.get(productId);
+ const [allCriteria,setAllCriteria]=useState(false);
+ const relevant=new Set<number>(product?.criteria??[]);
+ const criteria=Object.values(trialTracks).flatMap(t=>t.steps).sort((a,b)=>a.row-b.row).filter(s=>!product||allCriteria||relevant.has(s.row));
  const releases=[...new Set(view.trials.map(t=>t.release))],current=releases.includes(release)?release:releases[0];
  return <details className={ui.card}><summary>Evidence against the 22 workbook criteria</summary>
  {current&&<label>Release under review<select value={current} onChange={e=>setRelease(e.target.value)}>{releases.map(r=><option key={r}>{r}</option>)}</select></label>}
- <label>Comparison baseline<select aria-label="Comparison baseline" value={productId} onChange={e=>chooseProduct(e.target.value)}><option value="">All eligible trials</option><ComparatorOptions/></select></label>
- {product&&<p>{product.name} · {product.category} · <a href={product.source} rel="noreferrer">Workbook source</a></p>}
- <table><thead><tr><th>Criterion</th><th>Accepted external participants</th><th>Observed failures</th><th>Evidence status</th></tr></thead><tbody>{Object.values(trialTracks).flatMap(t=>t.steps).sort((a,b)=>a.row-b.row).map(s=>{
+ <label>Comparison baseline<select aria-label="Comparison baseline" value={productId} onChange={e=>{chooseProduct(e.target.value);setAllCriteria(false);}}><option value="">All eligible trials</option><ComparatorOptions/></select></label>
+ {product&&<section><h3>{product.name}</h3><p>{product.implemented}.</p><p><strong>Remaining comparison</strong> · {product.remaining}</p><a href={product.source} rel="noreferrer">Published product or service</a><label><input type="checkbox" checked={allCriteria} onChange={e=>setAllCriteria(e.target.checked)}/> Show all 22 criteria</label></section>}
+ <table><thead><tr><th>Criterion</th><th>Accepted external participants</th><th>Observed failures</th><th>Evidence status</th></tr></thead><tbody>{criteria.map(s=>{
   const runs=view.trials.filter(t=>t.release===current&&(!productId||t.comparison?.productId===productId)&&t.steps.includes(s.id)&&t.ukExternal&&t.environment!=='FIXTURE'&&(s.id!=='hosted'||t.environment==='PROTECTED_PILOT'));
   const people=new Set(runs.filter(t=>t.accepted&&t.results.some(r=>r.step===s.id&&r.outcome==='PASS'&&(!['onboard','help'].includes(s.id)||!r.assisted)&&(s.id!=='answer'||r.unsupported===0))).map(t=>t.participantId)),failed=runs.filter(t=>t.current&&t.results.some(r=>r.step===s.id&&r.outcome==='FAIL')).length,needed=['onboard','help'].includes(s.id)?5:1;
   return <tr key={s.row}><td>{s.row} · {s.title}</td><td>{people.size} / {needed}</td><td>{failed}</td><td>{failed?'Failure recorded':view.limited?'History incomplete':people.size>=needed?'Evidence for assessment':people.size?'Partial evidence':'Awaiting evidence'}</td></tr>;

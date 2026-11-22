@@ -24,7 +24,7 @@ A separate logger CSV import covers a period of temperature or humidity monitori
 
 ## Shared controls and applicability statements
 
-The obligation library now builds a statement for a named collection or every collection in a workspace. It retains pending approvals, exclusions and their rationale, requirements with no current mapping, decision owners and reviewers, cited file versions and hashes, and the most recent signals for primary and shared controls. The CSV supports filtering. The JSON preserves the evidence chain and verification time for each page. A changed inventory or business profile interrupts preparation. A reviewer can refresh manually.
+The obligation library now builds a statement for a named collection or every collection in a workspace. It retains pending approvals, exclusions and their rationale, requirements with no current mapping, decision owners and reviewers, cited file versions and hashes, and the most recent signals for primary and shared controls. The CSV supports filtering. The JSON preserves the evidence chain and verification time for each page. A changed inventory or business profile interrupts preparation. A reviewer can refresh manually. Four nation scenarios hold the saved business facts constant and evaluate the approved scope rule and effective period on a selected date. The CSV and JSON carry these results alongside the recorded human decision.
 
 The statement covers requirements the workspace has registered. Framework completeness, operation of controls, auditor acceptance and permission to reuse licensed material remain separate questions. [Statement service](../lib/server/applicability-statement.ts) · [Workspace report and downloads](../app/team/library/applicability-statement.tsx)
 
@@ -59,7 +59,7 @@ The row numbers match the Capability gaps tab. The count is the number of compet
 
 ## All 79 competitors and buying alternatives
 
-The capability numbers below refer to worksheet row numbers. The branch column names a feature available for comparison. The last column records what a buyer or independent reviewer would still have to demonstrate. The linked vendor materials describe their offerings. The review used public evidence and the feature branch. It did not include paid trials of the 79 products.
+The capability numbers below refer to worksheet row numbers. The branch column names a feature available for comparison. The last column records what a buyer or independent reviewer would still have to demonstrate. The Capability trials screen also lets reviewers choose any named comparator to see its relevant criteria, current capability and remaining test. The linked vendor materials describe their offerings. The review used public evidence and the feature branch. It did not include paid trials of the 79 products.
 
 ### Compliance automation
 
@@ -97,7 +97,7 @@ The capability numbers below refer to worksheet row numbers. The branch column n
 
 | # | Comparator and vendor source | Gap rows | RegPilot capability today | Remaining integration or test |
 | ---: | --- | --- | --- | --- |
-| 23 | [CUBE RegPlatform](https://www.cube.global/products/regplatform) | 11, 12 | Territorial applicability and source-to-control tracking | Blind-test notices by nation, date and activity. Report missed applicable notices as well as false alarms. |
+| 23 | [CUBE RegPlatform](https://www.cube.global/products/regplatform) | 11, 12 | Four-nation, date-specific scope comparison and source-to-control tracking | Blind-test notices by nation, date and activity. Report missed applicable notices as well as false alarms. |
 | 24 | [Corlytics / Clausematch](https://www.corlytics.com/solutions/regulatory-monitoring/) | 11, 13 | Change actions, controlled documents and external page revision monitoring | Time one notice through policy amendment and reapproval. Check a reviewer can reconstruct the originating text. |
 | 25 | [Bloomberg Regology](https://regology.com/regulatory-change-agent) | 11 | UK source catalogue and applicability decisions | Distinguish proposal, final instrument and in-force provision on held-out cases split by UK territory. |
 | 26 | [RegASK](https://regask.com/regask-expands-ai-agents-to-automate-regulatory-action-across-160-markets/) | 11, 24 | Change records, training and product-event intake | Test an authorised regulatory-information-system event against the resulting SOP, affected roles and reviewed evidence. |

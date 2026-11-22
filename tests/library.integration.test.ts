@@ -60,6 +60,8 @@ test("obligation library: source registration, versioning, scope, cross-collecti
   const scope=(await current(rev)).contextHash;
   await decideApplicability(reviewer,rev,{contextHash:scope,version:0,decision:'NOT_APPLICABLE',rationale:notes,ownerId:null,scopeConfirmed:true});
   const exclusion=(await statement(intake.collection)).rows[0];
+  assert.deepEqual(exclusion.territories.map(t=>[t.nation,t.assessment.state]),[['England','NO_MATCH'],['Scotland','MATCH'],['Wales','NO_MATCH'],['Northern Ireland','NO_MATCH']]);
+  const selectedDate=await applicabilityStatementPage(reviewer,{collection:intake.collection,on:'2027-01-31'});assert.equal(selectedDate.assessmentDate,'2027-01-31');assert.equal(selectedDate.rows[0].state,'EXCLUDED');
   assert.equal(exclusion.state,'EXCLUDED');assert.equal(exclusion.rationale,notes);assert.equal(exclusion.reviewerId,reviewer.userId);
   assert.equal((await applicabilityStatementPage(outside,{collection:intake.collection})).total,0);
   await assert.rejects(applicabilityStatementPage({...outside,organizationId:maker.organizationId},{}),(e:any)=>e.status===403);

@@ -6,16 +6,18 @@ import {IntelligenceError} from './intelligence-service';
 import {revisionContext,activeOwner} from './library-service';
 import {coverageRunState} from './coverage-service';
 import type {CoverageResult} from '../library/coverage';
+import {evaluateDatedRule,factsSchema,type RuleResult} from '../library/applicability';
 import {hashValue} from '../regulatory/intelligence';
 import {verifiedObservation} from './connector-observation';
 import {observationCurrent} from '../connectors/observation';
 import {connectorProviderEnabled} from './connector-flags';
 
-const params=z.object({collection:z.string().trim().max(100).default(''),offset:z.number().int().min(0).max(1000).default(0),inventory:z.string().regex(/^[0-9a-f]{64}$/).optional()}).strict();
+const nations=['England','Scotland','Wales','Northern Ireland'] as const;
+const params=z.object({on:z.iso.date().optional(),collection:z.string().trim().max(100).default(''),offset:z.number().int().min(0).max(1000).default(0),inventory:z.string().regex(/^[0-9a-f]{64}$/).optional()}).strict();
 type Input=z.input<typeof params>;
 type Signal={provider:string;connectionId:string;runId:string|null;observedAt:string|null;hash:string|null;status:string};
 type Mapping={controlId:string;title:string;decisionId:string;reviewerId:string;reason:string;current:boolean;relation:string|null;rationale:string|null;citations:{id:string;location:string;sha256:string|null;reviewVersion:number|null}[];signals:Signal[]};
-type Row={id:string;collection:string;reference:string;revision:number;revisionId:string|null;title:string;state:string;reasons:string[];rationale:string|null;reviewedAt:string|null;ownerId:string|null;reviewerId:string|null;source:{name:string;id:string;url:string|null;fingerprint:string}|null;mappings:Mapping[]};
+type Row={id:string;collection:string;reference:string;revision:number;revisionId:string|null;title:string;state:string;reasons:string[];rationale:string|null;reviewedAt:string|null;ownerId:string|null;reviewerId:string|null;source:{name:string;id:string;url:string|null;fingerprint:string}|null;mappings:Mapping[];territories:{nation:string;assessment:RuleResult}[]};
 
 export async function applicabilityStatementPage(ctx:AuthorizedContext,input:Input){
   const query=params.parse(input);
@@ -24,8 +26,10 @@ export async function applicabilityStatementPage(ctx:AuthorizedContext,input:Inp
     const org=ctx.organizationId;
     const index=await tx.libraryRequirement.findMany({where:{organizationId:org,...(query.collection?{collection:query.collection}:{})},
       orderBy:[{collection:'asc'},{reference:'asc'},{id:'asc'}],select:{id:true,collection:true,reference:true,currentRevision:true,version:true}});
-    const profile=await tx.businessProfile.findUnique({where:{organizationId:org},select:{version:true}});
-    const inventory=hashValue({org,collection:query.collection,index,profile:profile?.version??0});
+    const profile=await tx.businessProfile.findUnique({where:{organizationId:org},select:{version:true,facts:true}});
+    const on=query.on??new Date().toISOString().slice(0,10);
+    const facts=factsSchema.safeParse(profile?.facts);
+    const inventory=hashValue({on,org,collection:query.collection,index,profile:profile?.version??0});
     if((query.offset>0&&!query.inventory)||(query.inventory&&query.inventory!==inventory)||query.offset>index.length)
       throw new IntelligenceError('The requirement inventory or business profile changed. Refresh the statement.',409);
     const page=index.slice(query.offset,query.offset+10);
@@ -56,12 +60,16 @@ export async function applicabilityStatementPage(ctx:AuthorizedContext,input:Inp
     for(const req of page){
       const id=revisionIds.get(req.id);
       const row:Row={id:req.id,collection:req.collection,reference:req.reference,revision:req.currentRevision,revisionId:id??null,title:'',state:'AWAITING_APPROVAL',
-        reasons:[],rationale:null,reviewedAt:null,ownerId:null,reviewerId:null,source:null,mappings:[]};
+        reasons:[],rationale:null,reviewedAt:null,ownerId:null,reviewerId:null,source:null,mappings:[],territories:[]};
       rows.push(row);
       if(!id){row.reasons.push('No approved revision is available.');continue;}
       const context=contexts.get(id)??await revisionContext(tx,ctx,id);
       contexts.set(id,context);
       const {applicability,provenance}=context;
+      if(context.current&&context.content&&facts.success){
+        const content=context.content;
+        row.territories=nations.map(nation=>({nation,assessment:evaluateDatedRule(content.rule,facts.data,[nation],on,content.effectivity)}));
+      }
       row.title=context.content?.title??'';
       row.reasons=context.reasons;
       row.source=provenance?{id:provenance.id,name:provenance.name,url:provenance.url,fingerprint:provenance.fingerprint}:null;
@@ -94,7 +102,7 @@ export async function applicabilityStatementPage(ctx:AuthorizedContext,input:Inp
       row.state=!context.current?'SOURCE_REVIEW':!applicability?'SCOPE_REVIEW':applicability.decision==='NOT_APPLICABLE'?'EXCLUDED':!ownerActive?'OWNER_REVIEW':
         row.mappings.some(m=>m.current)?'APPLIES_MAPPED':'APPLIES_UNMAPPED';
     }
-    return {format:'regpilot-applicability-statement-v1' as const,organizationId:org,collection:query.collection,inventory,total:index.length,checkedAt:checkedAt.toISOString(),offset:query.offset,
+    return {format:'regpilot-applicability-statement-v1' as const,organizationId:org,collection:query.collection,assessmentDate:on,inventory,total:index.length,checkedAt:checkedAt.toISOString(),offset:query.offset,
       nextOffset:query.offset+page.length<index.length?query.offset+page.length:null,rows};
   },{isolationLevel:'RepeatableRead',timeout:20000});
 }
