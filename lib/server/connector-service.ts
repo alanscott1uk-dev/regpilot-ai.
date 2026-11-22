@@ -213,7 +213,8 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
  });
 }
 export async function disconnectConnector(ctx:AuthorizedContext,id:string,version:number){return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const changed=await tx.evidenceConnector.updateMany({where:{id,organizationId:ctx.organizationId,version},data:{enabled:false,failureCode:null,encryptedSecret:null,encryptedWebhookSecret:null,webhookVersion:{increment:1},leaseToken:null,leaseUntil:null,version:{increment:1}}});if(!changed.count)throw new IntelligenceError("Connector changed",409);await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"connector.disconnected",entityType:"EvidenceConnector",entityId:id,details:{}}});return {id};});}
-export async function requestConnectorRun(ctx:AuthorizedContext,id:string,version:number){return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const row=await tx.evidenceConnector.findFirst({where:{id,organizationId:ctx.organizationId,version,enabled:true}});if(!row)throw new IntelligenceError("Active connector not found or changed",409);if(row.failureCode==="RATE_LIMITED"&&row.nextRunAt>new Date())throw new IntelligenceError("The provider requested a cooldown. Collection can resume after the scheduled retry time.",429);if(row.leaseUntil&&row.leaseUntil>new Date())throw new IntelligenceError("A collection is already running",409);if(row.lastSuccessAt&&Date.now()-row.lastSuccessAt.getTime()<300000)throw new IntelligenceError("Wait five minutes between successful collections",429);await tx.evidenceConnector.update({where:{id},data:{nextRunAt:new Date()}});return {id};});}
+export async function requestConnectorRun(ctx:AuthorizedContext,id:string,version:number){return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const row=await tx.evidenceConnector.findFirst({where:{id,organizationId:ctx.organizationId,version,enabled:true}});if(!row)throw new IntelligenceError("Active connector not found or changed",409);if(row.failureCode==="RATE_LIMITED"&&row.nextRunAt>new Date())throw new IntelligenceError("The provider requested a cooldown. Collection can resume after the scheduled retry time.",429);if(row.leaseUntil&&row.leaseUntil>new Date())throw new IntelligenceError("A collection is already running",409);if(row.lastSuccessAt&&Date.now()-row.lastSuccessAt.getTime()<300000)throw new IntelligenceError("Wait five minutes between successful collections",429);const due=new Date();await tx.evidenceConnector.update({where:{id},data:{nextRunAt:due}});
+ await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,entityType:'EvidenceConnector',entityId:id,action:'connector.manual_due',details:{version,due:due.toISOString()}}});return {id};});}
 /** Re-arm one failed paused connector without rotating secrets or erasing its incident. */
 export async function retryConnector(ctx:AuthorizedContext,id:string,version:number){
  if(!connectorsEnabled())throw new IntelligenceError("Evidence collectors await activation",503);
@@ -263,7 +264,7 @@ export async function verifyConnectorNow(ctx:AuthorizedContext,id:string,version
   if(claim.count!==1)throw new IntelligenceError("This connection is already being verified or was changed",409);
   return tx.evidenceConnector.findUniqueOrThrow({where:{id}});
  });
- const outcome=await executeConnector(job,collector);
+ const outcome=await executeConnector(job,collector,{manual:true});
  return {connectorId:id,version,observed:outcome==="OBSERVED"||outcome==="FOLLOW_UP"||outcome==="INCOMPLETE",
   outcome,verifiedAt:new Date().toISOString(),
   note:"Read-only observation only. Inspect the saved signals, collection limits, and required human review."};
@@ -282,7 +283,7 @@ async function assertJob(tx:Prisma.TransactionClient,job:EvidenceConnector){
  const control=await tx.managedControl.findFirst({where:{id:job.controlId,organizationId:job.organizationId,enabled:true},include:{owner:{select:{email:true}}}});if(!control)throw new IntelligenceError("Control is paused",403);
  const owner=await tx.membership.findUnique({where:{organizationId_userId:{organizationId:job.organizationId,userId:control.ownerId}}});if(!owner||owner.role==="VIEWER")throw new IntelligenceError("Control ownership needs review",403);return control;
 }
-async function collectConnectorJob(job:EvidenceConnector,collector:Collector){
+async function collectConnectorJob(job:EvidenceConnector,collector:Collector,manual:boolean){
  const ctx:AuthorizedContext={organizationId:job.organizationId,userId:job.configuredById,role:"ADMIN"};
  let permit:ProviderPermit|undefined,providerOutcome='NEUTRAL';
  try{
@@ -297,6 +298,10 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector){
   const secret=job.encryptedSecret?decryptConnectorSecret(job.encryptedSecret,job.organizationId,job.id):"";
   const result=await collector({provider:job.provider,organizationId:job.organizationId,repository:job.repository,branch:job.branch},secret).then(result=>reconcileObservation(result,null)).then(result=>{providerOutcome='SUCCESS';return result;},error=>{providerOutcome=error instanceof CollectionError?error.code:'NEUTRAL';throw error;});
   return await transaction(ctx,async tx=>{await assertJob(tx,job);
+   const due=job.nextRunAt.toISOString();
+   const requested=manual?true:!!await tx.auditEvent.findFirst({where:{organizationId:job.organizationId,entityType:'EvidenceConnector',entityId:job.id,action:'connector.manual_due',details:{path:['due'],equals:due}},select:{id:true}});
+   const collectionMode=requested?'MANUAL':job.eventRevision>job.collectedEventRevision?'EVENT':job.failureCode||job.attempts>1?'RETRY':
+    job.lastSuccessAt&&job.nextRunAt.getTime()>=job.lastSuccessAt.getTime()+job.intervalHours*3600000-1000?'SCHEDULED':'INITIAL';
    const previous=await tx.connectorRun.findFirst({where:{organizationId:job.organizationId,connectorId:job.id},orderBy:[{capturedAt:"desc"},{id:"desc"}]});
    const trustedPrevious=previous?.configVersion===job.version?verifiedObservation(previous):null;
    const checked=job.provider==="UBIBOT"?await applyLoggerCalibration(tx,job,result):result;
@@ -313,7 +318,7 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector){
    await enqueueConnectorObservationDelivery(tx,job,run);
    const current=await tx.evidenceConnector.findUniqueOrThrow({where:{id:job.id},select:{eventRevision:true}});
    await tx.evidenceConnector.update({where:{id:job.id},data:{leaseToken:null,leaseUntil:null,attempts:0,lastSuccessAt:new Date(),failureCode:null,collectedEventRevision:job.eventRevision,nextRunAt:new Date(Date.now()+(current.eventRevision>job.eventRevision?60000:job.intervalHours*3600000))}});
-   await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:"connector.evidence_collected",entityType:"EvidenceConnector",entityId:job.id,details:{outcome,resultHash:hashValue(reconciled),configVersion:job.version,changedChecks:changes.map(c=>c.id)}}});return outcome;
+   await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:"connector.evidence_collected",entityType:"EvidenceConnector",entityId:job.id,details:{runId:run.id,collectionMode,scopeHash:connectorScopeHash(job),outcome,resultHash:run.resultHash,configVersion:job.version,changedChecks:changes.map(c=>c.id)}}});return outcome;
   });
  }catch(error){
   if(error instanceof Superseded||!connectorProviderEnabled(job.provider))return "SUPERSEDED";
@@ -322,14 +327,14 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector){
   const paused=!throttled&&job.attempts>=3||code==="PERMISSION_REVOKED"||code==="AWS_TRUST_UNSCOPED"||code==="CREDENTIAL_REJECTED"||code==="RETRY_REQUIRES_REVIEW";
   return await transaction(ctx,async tx=>{const changed=await tx.evidenceConnector.updateMany({where:{id:job.id,organizationId:job.organizationId,enabled:true,version:job.version,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},data:{leaseToken:null,leaseUntil:null,failureCode:code,enabled:!paused,...(throttled?{attempts:Math.max(0,job.attempts-1)}:{}),nextRunAt:new Date(Date.now()+(throttled?Math.max(60,Math.min(7*86400,retryAfter||60))*1000:(job.attempts===1?5:30)*60000))}});if(!changed.count)return "SUPERSEDED";
    await enqueueConnectorEvent(tx,job,{kind:'CONNECTOR_FAILED',fingerprint:hashValue(code),reasonCode:code});
-   const audit=await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:"connector.collection_failed",entityType:"EvidenceConnector",entityId:job.id,details:{code,paused}}});await enqueueConnectorFailureDelivery(tx,job,audit.id,code,audit.createdAt);return paused?"ATTENTION":"RETRY_SCHEDULED";
+   const audit=await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:"connector.collection_failed",entityType:"EvidenceConnector",entityId:job.id,details:{code,paused,configVersion:job.version,scopeHash:connectorScopeHash(job)}}});await enqueueConnectorFailureDelivery(tx,job,audit.id,code,audit.createdAt);return paused?"ATTENTION":"RETRY_SCHEDULED";
   });
  }finally{try{if(permit)await settleProviderPermit(permit,providerOutcome);}finally{await releaseDispatchLease("CONNECTOR",job);}}
 }
 /** Evidence is committed before automation. A failed reaction remains durable for
  * another worker and must never turn a completed provider read into a failed read. */
-export async function executeConnector(job:EvidenceConnector,collector:Collector=collectConfiguredConnector,options:{deferAutomation?:boolean}={}){
- const outcome=await collectConnectorJob(job,collector);
+export async function executeConnector(job:EvidenceConnector,collector:Collector=collectConfiguredConnector,options:{deferAutomation?:boolean;manual?:boolean}={}){
+ const outcome=await collectConnectorJob(job,collector,options.manual===true);
  if(!options.deferAutomation)await processConnectorEvent(job).catch(()=>{});
  return outcome;
 }

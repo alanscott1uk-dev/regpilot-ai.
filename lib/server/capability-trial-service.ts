@@ -1,6 +1,6 @@
 import {Prisma} from '@prisma/client';
 import {z} from 'zod';
-import {trialAction,trialStart,trialFinish,trialReview,trialTracks} from '../capability-trials';
+import {trialAction,trialCheckpoint,trialStart,trialFinish,trialReview,allTrialTracks as trialTracks} from '../capability-trials';
 import {hashValue} from '../regulatory/intelligence';
 import {IntelligenceError,transaction} from './intelligence-service';
 import {requireMember,ADMIN} from './workspace-member';
@@ -16,7 +16,7 @@ async function load(tx:Tx,c:AuthorizedContext,id:string){
  const events=await tx.auditEvent.findMany({where:{organizationId:c.organizationId,entityType,entityId:id},orderBy:[{createdAt:'asc'},{id:'asc'}]});
  const start=events.find(e=>e.action==='trial.start'),finish=events.find(e=>e.action==='trial.finish');
  if(!start)throw new IntelligenceError('Trial unavailable in this workspace',404);
- return {start,stop:events.find(e=>e.action==='trial.stop'),plan:trialStart.parse(start.details),finish,result:finish?finishData.parse(finish.details):null,reviews:events.filter(e=>e.action==='trial.review')};
+ return {checkpoints:events.filter(e=>e.action==='trial.checkpoint'),start,stop:events.find(e=>e.action==='trial.stop'),plan:trialStart.parse(start.details),finish,result:finish?finishData.parse(finish.details):null,reviews:events.filter(e=>e.action==='trial.review')};
 }
 export async function trialWorkspace(c:AuthorizedContext,filter:{release?:string;before?:string}={}){
  const {release,before}=z.object({release:z.string().regex(/^[a-f0-9]{40}$/).optional(),before:z.uuid().optional()}).parse(filter);
@@ -30,7 +30,7 @@ export async function trialWorkspace(c:AuthorizedContext,filter:{release?:string
    {createdAt:{lt:anchor.createdAt}},{createdAt:anchor.createdAt,id:{lt:anchor.id}}
   ]}:{})},orderBy:[{createdAt:'desc'},{id:'desc'}],take:51});
   const ids=starts.slice(0,50).map(v=>v.entityId);
-  const events=await tx.auditEvent.findMany({where:{organizationId:c.organizationId,entityType,entityId:{in:ids},action:{in:['trial.stop','trial.finish','trial.review']}},select:{entityId:true,actorId:true,action:true,details:true,createdAt:true}});
+  const events=await tx.auditEvent.findMany({where:{organizationId:c.organizationId,entityType,entityId:{in:ids},action:{in:['trial.stop','trial.finish','trial.review','trial.checkpoint']}},orderBy:[{createdAt:'asc'},{id:'asc'}],select:{id:true,entityId:true,actorId:true,action:true,details:true,createdAt:true}});
   const evidence=await tx.evidence.findMany({where:{organizationId:c.organizationId,scanStatus:'CLEAN',reviewStatus:'APPROVED'},select:{id:true,filename:true},orderBy:{reviewedAt:'desc'},take:100});
   const trials=[];
   for(const s of starts.slice(0,50)){
@@ -43,7 +43,8 @@ export async function trialWorkspace(c:AuthorizedContext,filter:{release?:string
    if(result){try{await assertReviewedFiles(tx,c.organizationId,result.files);await requireMember(tx,{...c,userId:s.actorId});for(const r of reviews)await requireMember(tx,{...c,userId:r.actorId},ADMIN);}catch(e){if(!(e instanceof IntelligenceError))throw e;current=false;}}
    const concluded=reviews.length>=required,show=concluded||!!own||s.actorId===c.userId;
    const accepted=concluded&&current&&reviews.every(r=>trialReview.parse(r.details).decision==='ACCEPT');
-   trials.push({id:s.entityId,stoppedAt,track:plan.track,release:plan.release,environment:plan.environment,intendedUse:plan.intendedUse,ukExternal:plan.ukExternal,steps:plan.steps,participantId:s.actorId,startedAt:s.createdAt.toISOString(),elapsedSeconds:result?.elapsedSeconds??null,results:result?.input.results??[],comparison:result?.input.comparison??null,current,reviewCount:reviews.length,required,accepted,reviewDecisions:show?reviews.map(r=>trialReview.parse(r.details).decision):[],canReview:ADMIN.includes(m.role)&&!!result&&current&&s.actorId!==c.userId&&!own&&!concluded,canFinish:!result&&s.actorId===c.userId});
+   const checkpoints=events.filter(e=>e.entityId===s.entityId&&e.action==='trial.checkpoint').map(e=>{const p=trialCheckpoint.parse(e.details);return {id:e.id,step:p.step,kind:p.kind,note:p.note,at:e.createdAt.toISOString(),elapsedSeconds:Math.max(0,Math.floor((e.createdAt.getTime()-s.createdAt.getTime())/1000))};});
+   trials.push({firstTime:plan.firstTime===true,checkpoints,id:s.entityId,stoppedAt,track:plan.track,release:plan.release,environment:plan.environment,intendedUse:plan.intendedUse,ukExternal:plan.ukExternal,steps:plan.steps,participantId:s.actorId,startedAt:s.createdAt.toISOString(),elapsedSeconds:result?.elapsedSeconds??null,results:result?.input.results??[],comparison:result?.input.comparison??null,current,reviewCount:reviews.length,required,accepted,reviewDecisions:show?reviews.map(r=>trialReview.parse(r.details).decision):[],canReview:ADMIN.includes(m.role)&&!!result&&current&&s.actorId!==c.userId&&!own&&!concluded,canFinish:!result&&s.actorId===c.userId});
   }
   return {organizationId:c.organizationId,canManage:ADMIN.includes(m.role),trials,evidence,limited:starts.length>50,nextCursor:starts.length>50?starts[49].id:null};
  });
@@ -52,11 +53,20 @@ export async function recordTrial(c:AuthorizedContext,raw:unknown,store?:Evidenc
  const d=trialAction.parse(raw);
  if(d.action==='START')return transaction(c,async tx=>{
   await requireMember(tx,c);
+  if(d.track==='operator_pilot'&&d.firstTime!==true)throw new IntelligenceError('The participant must confirm this is their first operator run.',400);
   if(new Set(d.steps).size!==d.steps.length||d.steps.some(step=>!trialTracks[d.track].steps.some(s=>s.id===step))||d.environment==='FIXTURE'&&d.ukExternal)throw new IntelligenceError('Choose distinct tasks in this track and the actual environment',400);
   const prior=await tx.auditEvent.findFirst({where:{organizationId:c.organizationId,entityType,entityId:d.requestKey,action:'trial.start'}});
   if(prior){if(prior.actorId!==c.userId||hashValue(prior.details)!==hashValue(d))throw new IntelligenceError('This trial key is already in use',409);return {id:prior.entityId};}
   if(await tx.auditEvent.count({where:{organizationId:c.organizationId,entityType,action:'trial.start',createdAt:{gt:new Date(Date.now()-86400000)}}})>=60)throw new IntelligenceError('The daily trial limit has been reached',429);
   await tx.auditEvent.create({data:{organizationId:c.organizationId,actorId:c.userId,entityType,entityId:d.requestKey,action:'trial.start',details:data(d)}});return {id:d.requestKey};
+ });
+ if(d.action==='CHECKPOINT')return transaction(c,async tx=>{
+  await requireMember(tx,c);const t=await load(tx,c,d.id);
+  if(t.start.actorId!==c.userId||!t.plan.steps.includes(d.step))throw new IntelligenceError('Only this participant can log the selected task.',403);
+  const duplicate=await tx.auditEvent.findUnique({where:{id:d.key}});
+  if(duplicate){if(duplicate.organizationId!==c.organizationId||duplicate.entityType!==entityType||duplicate.entityId!==d.id||duplicate.actorId!==c.userId||duplicate.action!=='trial.checkpoint'||hashValue(duplicate.details)!==hashValue(d))throw new IntelligenceError('Checkpoint reference already used',409);return {id:d.id};}
+  if(t.stop||t.finish||t.checkpoints.length>=100)throw new IntelligenceError('The trial timer has stopped or the checkpoint limit has been reached.',409);
+  await tx.auditEvent.create({data:{id:d.key,organizationId:c.organizationId,entityType,entityId:d.id,actorId:c.userId,action:'trial.checkpoint',details:data(d)}});return {id:d.id};
  });
  if(d.action==='STOP')return transaction(c,async tx=>{
   await requireMember(tx,c);
@@ -73,6 +83,13 @@ export async function recordTrial(c:AuthorizedContext,raw:unknown,store?:Evidenc
   if(d.action==='FINISH'){
    if(t.start.actorId!==c.userId)throw new IntelligenceError('Only the participant can finish their trial',403);
    if(t.result){if(hashValue(t.result.input)!==hashValue(d))throw new IntelligenceError('A different result was already submitted',409);return {t,files:t.result.files,exists:true};}
+   if(['operator_pilot','assessor_pilot'].includes(t.plan.track)){
+    for(const r of d.results){
+     const marks=t.checkpoints.map(e=>trialCheckpoint.parse(e.details)).filter(p=>p.step===r.step);
+     if(r.outcome!=='UNOBSERVED'&&!marks.some(p=>p.kind===(r.outcome==='PASS'?'COMPLETED':'BLOCKED')))throw new IntelligenceError('Record a timed completion or blockage for each observed task.',409);
+     if(marks.some(p=>p.kind==='HELP')&&!r.assisted)throw new IntelligenceError('Include the help recorded during this task.',409);
+    }
+   }
    if(t.plan.steps.length!==d.results.length||t.plan.steps.some(k=>d.results.filter(r=>r.step===k).length!==1)||d.results.some(r=>r.outcome==='PASS'&&!r.evidenceId))throw new IntelligenceError('Record every selected task and attach reviewed evidence to each passing result',400);
    if(d.comparison&&!t.stop)throw new IntelligenceError('Stop the task timer before recording a comparison',409);
    const ids=[...new Set([...d.results.flatMap(r=>r.evidenceId?[r.evidenceId]:[]),...(d.comparison?[d.comparison.evidenceId]:[])])];return {t,files:await reviewedFiles(tx,c.organizationId,ids),exists:false};

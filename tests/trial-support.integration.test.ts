@@ -87,3 +87,25 @@ test('verified tenant invoice costs distinguish allocations, incomplete coverage
   await db.evidence.update({where:{id:file.id},data:{reviewVersion:{increment:1}}});assert.equal((await tenantCosts(f.o,month)).statement!.totalPence,null);
  }finally{await f.cleanup();}
 });
+
+test('a first-time operator logs help and task completion on the server clock before independent assessment',async()=>{
+ const f=await assuranceFixture();
+ try{
+  const plan={action:'START',requestKey:randomUUID(),release:'b'.repeat(40),environment:'PARTNER_SANDBOX',ukExternal:false,track:'operator_pilot',steps:['connect-first'],intendedUse:'Observe first-time setup on an approved sandbox connection.'};
+  await assert.rejects(recordTrial(f.ed,plan),rejects(400));
+  const {id}=await recordTrial(f.ed,{...plan,firstTime:true});
+  const mark={action:'CHECKPOINT',key:randomUUID(),id,step:'connect-first',kind:'HELP',note:'Needed help finding the read-only scope.'};
+  await assert.rejects(recordTrial(f.ad,mark),rejects(403));
+  await recordTrial(f.ed,mark);await recordTrial(f.ed,mark);
+  await recordTrial(f.ed,{...mark,key:randomUUID(),kind:'COMPLETED',note:'Found the first verified receipt.'});
+  await recordTrial(f.ed,{action:'STOP',id});
+  await assert.rejects(recordTrial(f.ed,{...mark,key:randomUUID()}),rejects(409));
+  const view=(await trialWorkspace(f.o)).trials.find(t=>t.id===id)!;
+  assert.equal(view.checkpoints.length,2);assert.ok(view.checkpoints[1].elapsedSeconds>=view.checkpoints[0].elapsedSeconds);
+  const evidence=await f.file(),r={step:'connect-first',outcome:'PASS',notes:'Completed with one recorded intervention.',evidenceId:evidence.id,unsupported:0,edits:0,assisted:false};
+  await assert.rejects(recordTrial(f.ed,{action:'FINISH',id,results:[r]},f.store),rejects(409));
+  await recordTrial(f.ed,{action:'FINISH',id,results:[{...r,assisted:true}]},f.store);
+  await recordTrial(f.ad,{action:'REVIEW',id,decision:'ACCEPT',notes:'Reviewed this fictional setup result and its recorded help.'},f.store);
+  assert.equal((await trialWorkspace(f.ed)).trials.find(t=>t.id===id)?.accepted,true);
+ }finally{await f.cleanup();}
+});

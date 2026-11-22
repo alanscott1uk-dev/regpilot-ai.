@@ -2,7 +2,7 @@
 
 import {useState} from 'react';
 import {workspaceHref,type useWorkspaceContext} from '../../../lib/client/workspace-context';
-import type {customerSourceProof,proofTargets} from '../../../lib/server/customer-source-proof';
+import type {customerBenchmarkPage,customerSourceProof,proofTargets} from '../../../lib/server/customer-source-proof';
 
 type Proof=Awaited<ReturnType<typeof customerSourceProof>>;
 type Targets=Awaited<ReturnType<typeof proofTargets>>;
@@ -11,6 +11,19 @@ const names:Record<string,string>={UBIBOT:'Calibrated UbiBot logger',BENCHLING:'
 export default function SourceVerification({workspace,locked}:{workspace:ReturnType<typeof useWorkspaceContext>;locked:boolean}){
  const [targets,setTargets]=useState<Targets|null>(null),[selected,select]=useState(''),[proof,show]=useState<Proof|null>(null);
  const [category,classify]=useState('UNCONFIRMED'),[confirmed,confirm]=useState(false),[busy,lock]=useState(false),[error,tell]=useState('');
+ type Page=Awaited<ReturnType<typeof customerBenchmarkPage>>;
+ const [score,setScore]=useState<Page['connections']|null>(null);
+ async function benchmark(){
+  const valid=workspace.capture(),rows:Page['connections']=[],seen=new Set<string>();let cursor:string|null=null;
+  lock(true);setScore(null);tell('');
+  try{do{
+   const params=new URLSearchParams({organizationId:org,benchmark:'1',...(cursor?{after:cursor}:{})});
+   const page:Page=await workspace.request(base+'?'+params);
+   if(!valid())return;
+   if(page.organizationId!==org||page.after&&seen.has(page.after))throw new Error('Refresh the benchmark to verify this workspace.');
+   rows.push(...page.connections);cursor=page.after;if(cursor)seen.add(cursor);
+  }while(cursor);setScore(rows);}catch(e){if(valid())tell(e instanceof Error?e.message:'Could not complete the customer benchmark.');}finally{if(valid())lock(false);}
+ }
  const base='/api/workspace/connectors/proof',org=workspace.organizationId;
  async function read(action:'list'|'proof'|'declare',id=selected){
   const valid=workspace.capture(),params=new URLSearchParams({organizationId:org});
@@ -32,14 +45,20 @@ export default function SourceVerification({workspace,locked}:{workspace:ReturnT
   }catch(e){if(valid())tell(e instanceof Error?e.message:'Unable to read verification records.');}finally{if(valid())lock(false);}
  }
  return <><h2>Customer source verification</h2>
- <p>Check the collection receipts for a logger, laboratory decision or AI account. Ownership is recorded separately for each workspace connection.</p>
+ <p>Inspect checks, scheduled reads and credential recovery for a connected product. Ownership is recorded separately for each workspace connection.</p>
  <fieldset disabled={busy||locked}><legend>Verification records</legend>
+ <button type="button" onClick={()=>void benchmark()}>Check customer monitoring coverage</button>
+ {score&&<p role="status">{new Set(score.filter(r=>r.qualified).map(r=>r.product)).size} of 500 distinct products qualified across {score.length} active workspace connections.</p>}
  <button type="button" onClick={()=>void read('list')}>Refresh verification records</button>
  {targets&&targets.length>0&&<label>Source connection <select value={selected} onChange={event=>{const id=event.target.value;select(id);void read('proof',id);}}>
- {targets.map(t=><option key={t.id} value={t.id}>{names[t.provider]} · {t.repository}{t.enabled?'':' (paused)'}</option>)}</select></label>}
- {targets?.length===0&&<p>No logger, laboratory or AI source is enrolled in this workspace.</p>}
+ {targets.map(t=><option key={t.id} value={t.id}>{names[t.provider]??t.provider} · {t.repository}{t.enabled?'':' (paused)'}</option>)}</select></label>}
+ {targets?.length===0&&<p>No source is enrolled in this workspace.</p>}
  {proof&&<><h3>{proof.customerVerified?'Customer source verified':'Evidence still needed'}</h3>
  <ul>{[[proof.current,'Current qualifying source receipt'],[proof.repeat,'Two qualifying reads at least '+proof.intervalHours+' hours apart'],[proof.rotated,'Successful reads before and after credential replacement'],[proof.category==='CUSTOMER','Customer ownership confirmed by a second workspace administrator'],...(proof.inference===null?[]:[[proof.inference,'Successful generation with the linked account']])].map(([met,label])=><li key={String(label)}>{met?'Confirmed':'Pending'} · {String(label)}</li>)}</ul>
+ <h4>Evidence for the 500-product target</h4>
+ <p>{proof.qualifies?'This customer connection meets the monitoring criteria.':'Awaiting qualifying customer monitoring evidence.'} {proof.depth.scheduledReads} scheduled reads · {proof.depth.failures.length} recorded collection failures · {proof.depth.recoveries.length} evidenced credential recoveries.</p>
+ <details><summary>Read history and checks</summary>{proof.depth.reads.map(r=><p key={r.id}>{r.at} · {r.mode.toLowerCase()} · {r.checks.map(c=>c.label+' ('+c.status+')').join(', ')}</p>)}{proof.depth.failures.map(f=><p key={f.id}>{f.at} · {f.code}</p>)}
+ <button type="button" onClick={()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(proof,null,2)],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download='regpilot-monitoring-'+proof.connectorId+'.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}}>Download monitoring evidence</button></details>
  <p>Checked {new Date(proof.checkedAt).toLocaleString('en-GB')}. Source classification: {proof.category.toLowerCase()}.</p>
  {proof.sourceReceiptId&&<p>Collection receipt {proof.sourceReceiptId}</p>}{proof.inferenceReceiptId&&<p>Generation receipt {proof.inferenceReceiptId}</p>}
  {proof.historyTruncated&&<p>This view covers the most recent 100 collections and 50 configuration changes.</p>}

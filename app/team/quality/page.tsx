@@ -7,6 +7,7 @@ import {workUuid} from '../../../lib/work-hub.mjs';
 import {QUALITY_SCOPE,qualityCanClose} from '../../../lib/capa';
 import shell from '../../workbench/workbench.module.css';
 import ui from '../programmes/programmes.module.css';
+import Excursion from './excursion';
 import TrainingRecords from './training-records';
 import type {CaseTrainingRecord} from '../../../lib/quality-training';
 import css from './quality.module.css';
@@ -92,6 +93,7 @@ export default function QualityPage(){
     {row.status==='CLOSED'&&<p className={selected.closureCurrent?ui.notice:ui.alert} role="status">{selected.closureCurrent?'Independent closure is recorded against current evidence metadata.':'Closure was recorded, but its evidence or responsible people have changed. Reopen for reassessment before relying on this decision.'}</p>}
     <div className={css.context}><div><h3>Impact and scope</h3><p>{row.impact}</p></div><div><h3>Containment</h3><p>{row.containment}</p></div></div>
     <div className={css.links}><button type="button" disabled={blocked} onClick={()=>void download()}>Download quality chronology</button><button type="button" disabled={blocked} onClick={()=>void download('text')}>Download inspection summary</button><a href={row.href}>Exact case link →</a><a href={href('/team/evidence')}>Supporting evidence →</a></div>
+    {row.kind==='DEVIATION'&&(selected.canEdit||selected.trainingRecords)&&<Excursion key={organizationId+row.id+row.cycle} organizationId={organizationId} caseId={row.id} version={row.version} files={data?.evidence??[]} request={request} canEdit={selected.canEdit} canDecide={!!selected.trainingRecords} onChange={()=>setRefresh(v=>v+1)}/>}
     {selected.trainingRecords&&<TrainingRecords key={organizationId+row.id+row.version} records={selected.trainingRecords} organizationId={organizationId}
      occurredAt={row.occurredAt} cycle={row.cycle} blocked={blocked} editable={selected.canEdit} request={request}
      save={fields=>void mutate('LINK_TRAINING',{caseId:row.id,version:row.version,...fields})}/>}

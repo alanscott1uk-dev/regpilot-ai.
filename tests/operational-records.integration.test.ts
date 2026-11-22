@@ -1,3 +1,6 @@
+import {randomUUID} from 'node:crypto';
+import {createQualityCase,investigateQualityCase} from '../lib/server/capa-service';
+import {excursionCommand,excursionWorkspace} from '../lib/server/excursion-pilot';
 import test from "node:test";
 import assert from "node:assert/strict";
 import {workInbox,workTask} from '../lib/server/work-hub-service';
@@ -55,6 +58,14 @@ test("five operational sources can be configured, collected and exported within 
       assert.equal(after.verifiedReadsInWindow,2);
       assert.ok(after.currentVersionRead&&after.credentialReplacements[0].after===after.currentVersionRead);
       if(row===records[0]){
+        const {customerSourceProof,customerBenchmarkPage,declareSource}=await import('../lib/server/customer-source-proof');
+        await declareSource(f.ad,{connectionId:saved.id,configVersion:renewed.version,confirm:true,category:'STAGING'});
+        const trace=await customerSourceProof(f.o,saved.id);
+        assert.equal(trace.qualifies,false);assert.equal(trace.depth.scheduledReads,0);assert.equal(trace.depth.recoveries.length,1);
+        assert.ok(trace.depth.reads.every(r=>r.mode==='MANUAL'&&r.checks.length>0));
+        assert.equal((await customerBenchmarkPage(f.o)).connections.find(r=>r.id===saved.id)?.qualified,false);
+        await assert.rejects(customerSourceProof(f.st,saved.id),rejects(403));
+
         const task=await db.obligation.findFirstOrThrow({where:{organizationId:f.a.id,connectorId:saved.id}});
         const query={view:'sources' as const,q:'',page:1};
         const inbox=await workInbox(f.ed,query);
@@ -156,8 +167,8 @@ test('repeated logger collection checks the physical serial, rotated key and cur
   const programme=await db.programmeImport.create({data:{organizationId:f.a.id,createdById:f.o.userId,inputHash:f.a.id,method:'SEARCH',status:'ACCEPTED',evidenceManifest:[]}});
   const control=await db.managedControl.create({data:{organizationId:f.a.id,importId:programme.id,proposalKey:'logger',title:'Logger calibration',description:'Check the current calibrated thermometer',testProcedure:'Read the current channel',theme:'quality',ownerId:f.editor.id,scheduledById:f.owner.id,intervalDays:30,nextReviewAt:new Date()}});
   const base={provider:'UBIBOT',scope:'812',record:'WS1-fixture',reference:[file.id,cert.reviewVersion,'2025-01-01','2030-01-01',2,8,15].join('/'),controlId:control.id,consent:true,enabled:true,intervalHours:24};
-  let expected=token;
-  globalThis.fetch=async raw=>{assert.equal(new URL(String(raw)).searchParams.get('api_key'),expected);return Response.json({result:'success',channels:[{channel_id:812,serial:'WS1-fixture',last_values:{field1:{value:4,created_at:Math.floor(Date.now()/1000)-30}}}]});};
+  let temperature=4,expected=token;
+  globalThis.fetch=async raw=>{assert.equal(new URL(String(raw)).searchParams.get('api_key'),expected);return Response.json({result:'success',channels:[{channel_id:812,serial:'WS1-fixture',last_values:{field1:{value:temperature,created_at:Math.floor(Date.now()/1000)-30}}}]});};
   const saved=await saveConnector(f.o,{...base,token,version:0});
   await assert.rejects(approveLoggerCalibration(f.o,saved.id,saved.version,true),rejects(403));
   await assert.rejects(approveLoggerCalibration(f.out,saved.id,saved.version,true),rejects(409));
@@ -171,6 +182,26 @@ test('repeated logger collection checks the physical serial, rotated key and cur
   assert.equal((await verifyConnectorNow(f.o,saved.id,updated.version)).outcome,'OBSERVED');
   const run=await db.connectorRun.findFirstOrThrow({where:{connectorId:saved.id},orderBy:{capturedAt:'desc'}});
   assert.equal((await exportConnectorRun(f.o,run.id)).currentAtExport,true);
+  temperature=10;await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
+  assert.equal((await verifyConnectorNow(f.o,saved.id,updated.version)).outcome,'FOLLOW_UP');
+  const excursion=await db.connectorRun.findFirstOrThrow({where:{connectorId:saved.id},orderBy:{capturedAt:'desc'}});
+  const today=new Date().toISOString().slice(0,10);
+  const q=await createQualityCase(f.ed,{title:'Fictional storage excursion',kind:'DEVIATION',classification:'MAJOR',requestKey:randomUUID(),
+   ownerId:f.ed.userId,occurredAt:today,impact:'The fictional affected lot was segregated pending a decision.',description:'The fixture logger reported a temperature above the site operating limit.',containment:'Segregate the identified stock at the test site until reviewed.'});
+  const stock=await f.file(),signed=await f.file(),authority=await f.file();
+  const attach={action:'LINK',requestKey:randomUUID(),version:q.version,runId:excursion.id,site:'Fictional cold room',stock:['TEST-001'],stockEvidenceId:stock.id};
+  await assert.rejects(excursionCommand(f.out,q.id,attach,f.store),rejects(404));
+  await assert.rejects(excursionCommand(f.ed,q.id,{...attach,runId:run.id},f.store),rejects(409));
+  const linked=await excursionCommand(f.ed,q.id,attach,f.store);assert.equal((await excursionCommand(f.ed,q.id,attach,f.store)).digest,linked.digest);
+  const assessed=await investigateQualityCase(f.ed,q.id,{requestKey:randomUUID(),version:q.version+1,ownerId:f.ed.userId,containment:'The identified fictional lot stays segregated pending independent review.',investigationNotes:'Compared the excursion timing against the stock and certificate in the fixture.',rootCause:'The fictional cold-room door was left open during a documented transfer.',effectivenessCriteria:'Verify the handover and logger condition on the next agreed review.',effectivenessDueAt:today});
+  const disposition={action:'DECIDE',requestKey:randomUUID(),version:assessed.version,sourceRef:'TEST-QD-1',signatory:'Fictional delegated decision maker',disposition:'QUARANTINE',decidedAt:new Date().toISOString(),rationale:'The signed fixture decision retains the affected lot in quarantine.',decisionEvidenceId:signed.id,authorityEvidenceId:authority.id,confirmed:true};
+  await excursionCommand(f.o,q.id,disposition,f.store);
+  const fetchRecord={action:'RETRIEVE',version:assessed.version+1,requestKey:randomUUID()};
+  await assert.rejects(excursionCommand(f.o,q.id,fetchRecord,f.store),rejects(403));
+  await db.membership.update({where:{organizationId_userId:{organizationId:f.a.id,userId:f.re.userId}},data:{role:'ADMIN'}});
+  const independent=await excursionCommand(f.re,q.id,fetchRecord,f.store);
+  assert.match(JSON.stringify(independent),/TEST-001/);assert.match(JSON.stringify(independent),/TEST-QD-1/);
+  assert.equal((await excursionWorkspace(f.re,q.id)).retrieved.length,1);
   await db.evidence.update({where:{id:file.id},data:{scanStatus:'QUARANTINED'}});
   assert.equal((await exportConnectorRun(f.o,run.id)).currentAtExport,false);
   await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
