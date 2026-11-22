@@ -43,3 +43,35 @@ test('reviewed effective dates handle both boundaries and a missing date rule pr
  assert.equal(evaluateDatedRule(rule,{},['Northern Ireland'],'2026-06-01',effective).state,'NO_MATCH');
  assert.equal(evaluateDatedRule(rule,{},[],'2026-06-01').state,'UNKNOWN');
 });
+
+test('logger CSV windows retain the input digest and cannot hide excursions, gaps or uncalibrated periods',async()=>{
+ const {loggerEnvelope}=await import('../public/examples/logger-csv.mjs');
+ const {assessLoggerWindow}=await import('../lib/logger-window');
+ const {createHash}=await import('node:crypto');
+ const config={...source,controlId:generic.controlId,siteRef:'storage',sensorRef:'s1',calibrationRef:'cert1',
+   calibratedAt:'2026-11-01T00:00:00Z',calibrationDue:'2027-01-01T00:00:00Z',unit:'CELSIUS',minimum:2,maximum:8,maxGapSeconds:300,
+   windowStart:'2026-11-19T10:00:00Z',windowEnd:'2026-11-19T10:10:00Z',validUntil:'2026-11-21T10:00:00Z'};
+ const first='2026-11-19T11:00:00+01:00,2', middle='2026-11-19T10:05:00Z,5', last='2026-11-19T10:10:00Z,8';
+ const input=(rows:string[],settings={})=>{
+   const bytes=Buffer.from(['timestamp,value',...rows].join('\r\n')+'\r\n');
+   const observation=customerObservationInput.parse(loggerEnvelope(bytes,{...config,...settings}).observation);
+   const record=observation.partnerRecord!.record;
+   if(record.kind!=='LOGGER_WINDOW')throw Error('Logger window missing');
+   assert.equal(record.rawFileSha256,createHash('sha256').update(bytes).digest('hex'));
+   return {observation,record,assessment:assessLoggerWindow(record),outcome:reportedObservationOutcome(observation)};
+ };
+ const complete=input([first,middle,last]);assert.equal(complete.outcome,'REPORTED_PASS');
+ assert.deepEqual([complete.assessment.samples,complete.assessment.gaps,complete.assessment.excursions],[3,0,0]);
+ const missing=input([first,last]);assert.equal(missing.outcome,'REPORTED_UNKNOWN');assert.equal(missing.assessment.longestGapSeconds,600);
+ assert.equal(input([first,middle,last],{calibrationDue:config.windowEnd}).outcome,'REPORTED_UNKNOWN');
+ assert.equal(input([]).outcome,'REPORTED_UNKNOWN');
+ const excursion=input([first,last.replace(',8',',9')]);assert.equal(excursion.outcome,'REPORTED_FAILURE');assert.equal(excursion.assessment.gaps,1);assert.equal(excursion.assessment.firstExcursion,'2026-11-19T10:10:00.000Z');
+ assert.throws(()=>input([first,middle,middle,last]));assert.throws(()=>input([last,first]));
+ assert.throws(()=>input([first,'2026-11-19T10:05:00Z,',last]));
+ assert.throws(()=>input(['2026-02-30T10:00:00Z,3']));
+ assert.throws(()=>input([first,'2026-11-19T10:05:00,3',last]));
+ assert.throws(()=>customerObservationInput.parse({...complete.observation,observedAt:config.validUntil}));
+ const withRecord=(record:unknown)=>customerObservationInput.parse({...complete.observation,partnerRecord:{...complete.observation.partnerRecord,record}});
+ assert.throws(()=>withRecord({...complete.record,samples:[complete.record.samples[1],complete.record.samples[0]]}));
+ assert.throws(()=>withRecord({...complete.record,rawFileSha256:'absent'}));
+});

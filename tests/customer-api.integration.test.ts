@@ -249,3 +249,21 @@ test('group follow-up is atomic across controls, survives retries and links a ca
   await assert.rejects(()=>partnerFollowUp(x.out,first.id),rejects(404));
  }finally{await x.cleanup();}
 });
+
+test('a logger window with missing samples reaches quality review with its original timestamps and digest',async()=>{
+ const f=await fixture();
+ try {
+  const key=await f.create(),session=await f.session(key.secret!,'observations:write');
+  const end=new Date(Date.now()-60000).toISOString(),start=new Date(Date.parse(end)-600000).toISOString();
+  const source={schemaVersion:1,revision:1,recordId:'logger-window-01',state:'CURRENT',sourceSystem:'Fictional storage logger',sourceVersion:'csv1',decisionOwnerRef:'quality',
+    record:{kind:'LOGGER_WINDOW',siteRef:'warehouse',sensorRef:'logger7',calibrationRef:'certificate7',calibratedAt:start,calibrationDue:future()+'T00:00:00Z',
+      windowStart:start,windowEnd:end,unit:'CELSIUS',minimum:2,maximum:8,maxGapSeconds:300,rawFileSha256:'a'.repeat(64),samples:[{at:start,value:3},{at:end,value:4}]}};
+  const payload={...f.observation(f.primary.id,'PASS'),observedAt:end,partnerRecord:source};
+  const requestKey=randomUUID(),receipt=await submitCustomerApiObservation(session,requestKey,payload);
+  assert.equal(receipt.reportedOutcome,'REPORTED_UNKNOWN');
+  assert.equal((await submitCustomerApiObservation(session,requestKey,payload)).id,receipt.id);
+  const record=receipt.payload?.partnerRecord?.record;
+  assert.ok(record?.kind==='LOGGER_WINDOW');assert.equal(record.rawFileSha256,source.record.rawFileSha256);
+  assert.deepEqual(record.samples,source.record.samples);
+ } finally {await f.cleanup();}
+});
