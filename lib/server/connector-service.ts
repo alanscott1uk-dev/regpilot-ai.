@@ -1,3 +1,5 @@
+import {connectorScopeHash,credentialChanged} from './connector-verification';
+import {applyLoggerCalibration} from './logger-calibration';
 import {isRecordProvider} from "../connectors/record-catalogue";
 import {collectOperationalRecord,readRecordKeys,recordKeys,recordTargets} from "../connectors/operational-records";
 import {workforceTarget,workforceCredentials,workforceKeys,readWorkforceKeys} from "../connectors/workforce-target";
@@ -106,13 +108,7 @@ export const collectConfiguredConnector:Collector=async(target,secret)=>{
    const {managedSyncObservation}=await import("../connectors/marketplace");
    return managedSyncObservation(target.organizationId,configured);
   }
-  let certificateHash:string|undefined;
-  if(target.provider==="UBIBOT"&&target.organizationId){
-   const [id,version]=configured.reference!.split("/");
-   const file=await db.evidence.findFirst({where:{id,organizationId:target.organizationId,reviewVersion:Number(version),reviewStatus:"APPROVED",scanStatus:"CLEAN"},select:{uploadedById:true,reviewerId:true,reviewedAt:true,sha256:true}});
-   if(file?.reviewedAt&&file.reviewerId&&file.uploadedById!==file.reviewerId)certificateHash=file.sha256;
-  }
-  return collectOperationalRecord(target.provider,configured,secret,fetch,certificateHash);
+  return collectOperationalRecord(target.provider,configured,secret);
  }
  if(target.provider==="WORKFORCE_LEAVER"){
   const scope=readWorkforceKeys(target.repository,target.branch);
@@ -190,7 +186,8 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
   if(!old&&await tx.evidenceConnector.findUnique({where:{organizationId_repository_branch:{organizationId:ctx.organizationId,repository:data.repository,branch:data.branch}}}))throw new IntelligenceError("This target already has a connector",409);
   const saved=old?await tx.evidenceConnector.update({where:{id},data:{...data,version:{increment:1}}}):await tx.evidenceConnector.create({data:{id,organizationId:ctx.organizationId,...data}});
   await tx.connectorControlLink.deleteMany({where:{connectorId:id,organizationId:ctx.organizationId,controlId:v.controlId}});
-  await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"connector.configured",entityType:"EvidenceConnector",entityId:id,details:{version:saved.version,controlId:v.controlId,enabled:v.enabled,credentialRotated:!!v.token}}});return {id,version:saved.version};
+  const scopeHash=connectorScopeHash(saved);
+  await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"connector.configured",entityType:"EvidenceConnector",entityId:id,details:{version:saved.version,controlId:v.controlId,enabled:v.enabled,credentialRotated:!!v.token,scopeHash,previousVersion:old?.version??null,credentialReplaced:credentialChanged(old,v.token,scopeHash)}}});return {id,version:saved.version};
  });
 }
 export async function disconnectConnector(ctx:AuthorizedContext,id:string,version:number){return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);const changed=await tx.evidenceConnector.updateMany({where:{id,organizationId:ctx.organizationId,version},data:{enabled:false,failureCode:null,encryptedSecret:null,encryptedWebhookSecret:null,webhookVersion:{increment:1},leaseToken:null,leaseUntil:null,version:{increment:1}}});if(!changed.count)throw new IntelligenceError("Connector changed",409);await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,action:"connector.disconnected",entityType:"EvidenceConnector",entityId:id,details:{}}});return {id};});}
@@ -280,7 +277,8 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector){
   return await transaction(ctx,async tx=>{await assertJob(tx,job);
    const previous=await tx.connectorRun.findFirst({where:{organizationId:job.organizationId,connectorId:job.id},orderBy:[{capturedAt:"desc"},{id:"desc"}]});
    const trustedPrevious=previous?.configVersion===job.version?verifiedObservation(previous):null;
-   const reconciled=reconcileObservation(result,trustedPrevious);
+   const checked=job.provider==="UBIBOT"?await applyLoggerCalibration(tx,job,result):result;
+   const reconciled=reconcileObservation(checked,trustedPrevious);
    const outcome=observationOutcome(reconciled),signalHash=hashValue({engine:reconciled.engine,checks:reconciled.checks});
    const changes=previous&&previous.configVersion===job.version&&hashValue(previous.result)===previous.resultHash?signalChanges(reconciled,previous.result as unknown as Observation):[];
    const run=await tx.connectorRun.create({data:{organizationId:job.organizationId,connectorId:job.id,leaseToken:job.leaseToken!,configVersion:job.version,result:j(reconciled),resultHash:hashValue(reconciled),signalHash,outcome}});
@@ -323,9 +321,14 @@ export async function runConnectorBatch(limit=2,parallelism=1,admissionDeadline=
  return {processed:collected.length,outcomes:collected.map(x=>x.outcome),limitReached:collected.length===limit,budgetExhausted:Date.now()>=deadline};
 }
 export async function exportConnectorRun(ctx:AuthorizedContext,id:string){
- return transaction(ctx,async tx=>{await requireMember(tx,ctx);const row=await tx.connectorRun.findFirst({where:{id,organizationId:ctx.organizationId},include:{connector:{select:{provider:true,version:true,enabled:true,lastSuccessAt:true,failureCode:true,intervalHours:true}}}});if(!row)throw new IntelligenceError("Observation not found",404);if(hashValue(row.result)!==row.resultHash)throw new IntelligenceError("Observation integrity check failed",409);
+ return transaction(ctx,async tx=>{await requireMember(tx,ctx);const row=await tx.connectorRun.findFirst({where:{id,organizationId:ctx.organizationId},include:{connector:{select:{id:true,organizationId:true,repository:true,branch:true,controlId:true,configuredById:true,provider:true,version:true,enabled:true,lastSuccessAt:true,failureCode:true,intervalHours:true}}}});if(!row)throw new IntelligenceError("Observation not found",404);if(hashValue(row.result)!==row.resultHash)throw new IntelligenceError("Observation integrity check failed",409);
   const latest=await tx.connectorRun.findFirst({where:{organizationId:ctx.organizationId,connectorId:row.connectorId},orderBy:[{capturedAt:"desc"},{id:"desc"}],select:{id:true}});
-  const current=!!verifiedObservation(row)&&connectorProviderEnabled(row.connector.provider)&&observationCurrent(row,row.connector,latest?.id===row.id);
+  const observation=verifiedObservation(row);
+  let current=!!observation&&connectorProviderEnabled(row.connector.provider)&&observationCurrent(row,row.connector,latest?.id===row.id);
+  if(current&&observation&&row.connector.provider==="UBIBOT"){
+   const latestCalibration=await applyLoggerCalibration(tx,row.connector,observation);
+   current=hashValue(latestCalibration.checks)===hashValue(observation.checks);
+  }
   return {format:"regpilot-connector-observation-v1",id:row.id,capturedAt:row.capturedAt,result:row.result,resultHash:row.resultHash,currentAtExport:!!current,limitation:"Integrity hash is not a digital signature. A point-in-time observation does not establish compliance."};
  });
 }

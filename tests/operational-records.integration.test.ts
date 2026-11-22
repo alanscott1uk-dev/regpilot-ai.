@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import {verificationReceipt} from '../lib/server/connector-verification';
+import {approveLoggerCalibration} from '../lib/server/logger-calibration';
 import {db} from "../lib/server/db";
 import {saveConnector,verifyConnectorNow,exportConnectorRun} from "../lib/server/connector-service";
 import {assuranceFixture,rejects} from "./helpers/assurance-fixture";
@@ -27,6 +29,20 @@ test("five operational sources can be configured, collected and exported within 
       assert.equal(exported.currentAtExport,true);
       await assert.rejects(exportConnectorRun(f.out,run.id),rejects(404));
       assert.equal(await db.obligation.count({where:{connectorId:saved.id,status:{not:"COMPLETE"}}}),1);
+      const first=await verificationReceipt(f.o,saved.id);
+      assert.equal(first.currentVersionRead,run.id);
+      assert.equal(first.readsAtLeastOneIntervalApart,false);
+      await assert.rejects(verificationReceipt(f.out,saved.id),rejects(404));
+      const renewed=await saveConnector(f.o,{...input,id:saved.id,version:saved.version,token:token+'-replacement'});
+      const before=await verificationReceipt(f.o,saved.id);
+      assert.deepEqual(before.credentialReplacements.map(r=>[r.before,r.after]),[[run.id,null]]);
+      await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
+      await verifyConnectorNow(f.o,saved.id,renewed.version);
+      const after=await verificationReceipt(f.o,saved.id);
+      assert.equal(after.verifiedReadsInWindow,2);
+      assert.ok(after.currentVersionRead&&after.credentialReplacements[0].after===after.currentVersionRead);
+      await saveConnector(f.o,{...input,id:saved.id,version:renewed.version,token:token+'-replacement'});
+      assert.equal((await verificationReceipt(f.o,saved.id)).credentialReplacements.length,1);
     }
   } finally {globalThis.fetch=original;await f.cleanup();}
 });
@@ -76,13 +92,22 @@ test('repeated logger collection checks the physical serial, rotated key and cur
   let expected=token;
   globalThis.fetch=async raw=>{assert.equal(new URL(String(raw)).searchParams.get('api_key'),expected);return Response.json({result:'success',channels:[{channel_id:812,serial:'WS1-fixture',last_values:{field1:{value:4,created_at:Math.floor(Date.now()/1000)-30}}}]});};
   const saved=await saveConnector(f.o,{...base,token,version:0});
+  await assert.rejects(approveLoggerCalibration(f.o,saved.id,saved.version,true),rejects(403));
+  await assert.rejects(approveLoggerCalibration(f.out,saved.id,saved.version,true),rejects(409));
+  assert.equal((await verifyConnectorNow(f.o,saved.id,saved.version)).outcome,'INCOMPLETE');
+  const approval=await approveLoggerCalibration(f.ad,saved.id,saved.version,true);
+  assert.deepEqual(await approveLoggerCalibration(f.ad,saved.id,saved.version,true),approval);
+  await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
   assert.equal((await verifyConnectorNow(f.o,saved.id,saved.version)).outcome,'OBSERVED');
   expected=token+'-rotated';const updated=await saveConnector(f.o,{...base,id:saved.id,version:saved.version,token:expected});
   await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
   assert.equal((await verifyConnectorNow(f.o,saved.id,updated.version)).outcome,'OBSERVED');
+  const run=await db.connectorRun.findFirstOrThrow({where:{connectorId:saved.id},orderBy:{capturedAt:'desc'}});
+  assert.equal((await exportConnectorRun(f.o,run.id)).currentAtExport,true);
   await db.evidence.update({where:{id:file.id},data:{scanStatus:'QUARANTINED'}});
+  assert.equal((await exportConnectorRun(f.o,run.id)).currentAtExport,false);
   await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
   assert.equal((await verifyConnectorNow(f.o,saved.id,updated.version)).outcome,'INCOMPLETE');
-  assert.equal(await db.connectorRun.count({where:{organizationId:f.a.id,connectorId:saved.id}}),3);
+  assert.equal(await db.connectorRun.count({where:{organizationId:f.a.id,connectorId:saved.id}}),4);
  }finally{globalThis.fetch=original;await f.cleanup();}
 });
