@@ -1,3 +1,5 @@
+import {isRecordProvider} from "../connectors/record-catalogue";
+import {collectOperationalRecord,readRecordKeys,recordKeys,recordTargets} from "../connectors/operational-records";
 import {workforceTarget,workforceCredentials,workforceKeys,readWorkforceKeys} from "../connectors/workforce-target";
 import {collectWorkforce} from "../connectors/workforce";
 import {collectIntune} from "../connectors/intune";
@@ -43,6 +45,11 @@ const googleSchema=googleTarget.extend({provider:z.literal("GOOGLE_WORKSPACE"),c
 const microsoftSchema=microsoftTarget.extend({provider:z.enum(["MICROSOFT365","INTUNE"]),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:z.string().min(16).max(512).regex(/^[^\r\n\0]+$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)});
 const extraFields={controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().refine(validCredential).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)};
 const extraSchema=z.discriminatedUnion("provider",[
+ recordTargets.JIRA.extend({...extraFields,provider:z.literal("JIRA")}).strict(),
+ recordTargets.SERVICENOW.extend({...extraFields,provider:z.literal("SERVICENOW")}).strict(),
+ recordTargets.AZURE_DEVOPS.extend({...extraFields,provider:z.literal("AZURE_DEVOPS")}).strict(),
+ recordTargets.CONFLUENCE.extend({...extraFields,provider:z.literal("CONFLUENCE")}).strict(),
+ recordTargets.SAFETYCULTURE.extend({...extraFields,provider:z.literal("SAFETYCULTURE")}).strict(),
  workforceTarget.extend({...extraFields,provider:z.literal("WORKFORCE_LEAVER"),credentials:workforceCredentials.optional()}).omit({token:true}).strict(),
  awsOrganizationTarget.extend({...extraFields,provider:z.literal("AWS_ORGANIZATIONS")}).omit({token:true}).strict(),
  awsTarget.extend({...extraFields,provider:z.literal("AWS")}).omit({token:true}).strict(),
@@ -58,6 +65,12 @@ const extraSchema=z.discriminatedUnion("provider",[
 type ConnectorSettings=z.infer<typeof schema>|z.infer<typeof googleSchema>|z.infer<typeof microsoftSchema>|z.infer<typeof extraSchema>;
 function storedTarget(settings:ConnectorSettings):{repository:string;branch:string;token?:string}{
  switch(settings.provider){
+  case "JIRA":
+  case "SERVICENOW":
+  case "AZURE_DEVOPS":
+  case "CONFLUENCE":
+  case "SAFETYCULTURE":
+   return {...recordKeys(settings.provider,settings),token:settings.token};
   case "GITHUB":return {repository:settings.repository.toLowerCase(),branch:settings.branch,token:settings.token};
   case "MICROSOFT365":
   case "INTUNE":return {repository:(settings.provider==="INTUNE"?"intune:":"microsoft365:")+settings.tenantId.toLowerCase(),
@@ -80,6 +93,7 @@ function storedTarget(settings:ConnectorSettings):{repository:string;branch:stri
 type Collector=(target:{provider?:string;organizationId?:string;repository:string;branch:string},secret:string)=>Promise<Observation>;
 export const collectConfiguredConnector:Collector=async(target,secret)=>{
  if(!connectorProviderEnabled(target.provider||"GITHUB"))throw new CollectionError("PROVIDER_DISABLED");
+ if(isRecordProvider(target.provider))return collectOperationalRecord(target.provider,readRecordKeys(target.provider,target.repository,target.branch),secret);
  if(target.provider==="WORKFORCE_LEAVER"){
   const scope=readWorkforceKeys(target.repository,target.branch);
   if(!scope)throw new CollectionError("INVALID_TARGET");
@@ -126,7 +140,7 @@ export const collectConfiguredConnector:Collector=async(target,secret)=>{
 };
 export async function saveConnector(ctx:AuthorizedContext,input:unknown){
  if(!connectorsEnabled())throw new IntelligenceError("Evidence connectors await activation",503);
- const provider=(input as {provider?:string})?.provider,microsoft=provider==="MICROSOFT365"||provider==="INTUNE",google=provider==="GOOGLE_WORKSPACE",extra=["GITLAB","CLOUDFLARE","COMPANIES_HOUSE","VERCEL","SUPABASE","OKTA","OPENSSF_SCORECARD","AWS","GLEIF","WORKFORCE_LEAVER","AWS_ORGANIZATIONS"].includes(provider||"");
+ const provider=(input as {provider?:string})?.provider,microsoft=provider==="MICROSOFT365"||provider==="INTUNE",google=provider==="GOOGLE_WORKSPACE",extra=isRecordProvider(provider)||["GITLAB","CLOUDFLARE","COMPANIES_HOUSE","VERCEL","SUPABASE","OKTA","OPENSSF_SCORECARD","AWS","GLEIF","WORKFORCE_LEAVER","AWS_ORGANIZATIONS"].includes(provider||"");
  const parsed=(extra?extraSchema:google?googleSchema:microsoft?microsoftSchema:schema).safeParse(input);if(!parsed.success)throw new IntelligenceError("Check the provider, target, credentials, control and version");
  if(microsoft&&!connectorProviderEnabled(provider!))throw new IntelligenceError("This Microsoft provider awaits activation",503);
  if(google&&!googleWorkspaceEnabled())throw new IntelligenceError("Google Workspace collection awaits activation",503);

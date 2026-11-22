@@ -1,0 +1,14 @@
+export const recordProviders = ["JIRA", "SERVICENOW", "AZURE_DEVOPS", "CONFLUENCE", "SAFETYCULTURE"] as const;
+export type RecordProvider = typeof recordProviders[number];
+export function isRecordProvider(provider: unknown): provider is RecordProvider {
+  return recordProviders.some(value => value === provider);
+}
+
+type Definition = {name: string; scope: string; record: string; reference?: string; hint: string; credential: string; docs: string};
+export const recordCatalogue: Record<RecordProvider, Definition> = {
+  JIRA: {name: "Jira Cloud issue", scope: "Atlassian cloud ID", record: "Issue key", credential: "Scoped service-account API token", hint: "Use a service account with read access to the project and issue. Checks cover assignment, workflow status and recorded resolution.", docs: "https://support.atlassian.com/user-management/docs/manage-api-tokens-for-service-accounts/"},
+  SERVICENOW: {name: "ServiceNow incident", scope: "Instance name before .service-now.com", record: "Incident sys_id", credential: "Read-only OAuth access token", hint: "Grant incident read access to sys_id, active, assigned_to and closed_at. Replace the access token when it expires.", docs: "https://www.servicenow.com/docs/r/api-reference/rest-apis/c_TableAPI.html"},
+  AZURE_DEVOPS: {name: "Azure DevOps build", scope: "Organisation name / project UUID (without spaces)", record: "Build ID", reference: "Expected 40-character Git commit", credential: "Build (Read) personal access token", hint: "Use an expiring token scoped to this project for the pilot. RegPilot compares the build revision and completed result with the expected commit.", docs: "https://learn.microsoft.com/en-us/rest/api/azure/devops/build/builds/get?view=azure-devops-rest-7.1"},
+  CONFLUENCE: {name: "Confluence Cloud page", scope: "Atlassian cloud ID", record: "Page ID", reference: "Reviewed version number", credential: "Scoped service-account API token", hint: "Use read:page:confluence and access to the page. A version change flags the document for review.", docs: "https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/"},
+  SAFETYCULTURE: {name: "SafetyCulture inspection", scope: "Template ID (template_…)", record: "Inspection ID (audit_…)", credential: "Inspection read API token", hint: "Choose an inspection visible to the integration account. RegPilot checks its template, completion date and archive status.", docs: "https://github.com/SafetyCulture/api-json-schemas"}
+};

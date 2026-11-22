@@ -17,6 +17,11 @@ export const gleifEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_GLEIF_EN
 export const awsEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_AWS_ENABLED==="true"&&brokerRole.safeParse(process.env.REGPILOT_AWS_BROKER_ROLE_ARN).success;
 export const awsOrganizationEnabled=()=>awsEnabled()&&process.env.REGPILOT_AWS_ORGANIZATIONS_ENABLED==="true";
 const providerGates=new Map<string,()=>boolean>(Object.entries({
+ JIRA:()=>connectorsEnabled()&&process.env.REGPILOT_JIRA_ENABLED==="true",
+ SERVICENOW:()=>connectorsEnabled()&&process.env.REGPILOT_SERVICENOW_ENABLED==="true",
+ AZURE_DEVOPS:()=>connectorsEnabled()&&process.env.REGPILOT_AZURE_DEVOPS_ENABLED==="true",
+ CONFLUENCE:()=>connectorsEnabled()&&process.env.REGPILOT_CONFLUENCE_ENABLED==="true",
+ SAFETYCULTURE:()=>connectorsEnabled()&&process.env.REGPILOT_SAFETYCULTURE_ENABLED==="true",
  GITHUB:connectorsEnabled,MICROSOFT365:microsoft365Enabled,GOOGLE_WORKSPACE:googleWorkspaceEnabled,
  GITLAB:gitlabEnabled,CLOUDFLARE:cloudflareEnabled,COMPANIES_HOUSE:companiesHouseEnabled,
  VERCEL:vercelEnabled,SUPABASE:supabaseEnabled,OKTA:oktaEnabled,INTUNE:intuneEnabled,OPENSSF_SCORECARD:scorecardEnabled,AWS:awsEnabled,GLEIF:gleifEnabled,WORKFORCE_LEAVER:workforceEnabled,AWS_ORGANIZATIONS:awsOrganizationEnabled

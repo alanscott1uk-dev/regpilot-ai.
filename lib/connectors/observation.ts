@@ -1,3 +1,4 @@
+import {isRecordProvider,recordCatalogue} from "./record-catalogue";
 import {z} from 'zod';
 import type {ConnectorCheck} from "./github";
 export type Observation={engine:string;sourceUrl:string;capturedAt:string;checks:ConnectorCheck[];limitations:string[]};
@@ -34,6 +35,7 @@ export function signalChanges(current:Observation,previous:Observation|null):Sig
 }
 export function observationOutcome(value:Observation){return value.checks.some(c=>c.status==="FAIL")?"FOLLOW_UP":!value.checks.length||value.checks.some(c=>c.status==="UNKNOWN")?"INCOMPLETE":"OBSERVED";}
 export function connectorLabel(row:{provider:string;repository:string;branch:string}){
+ if(isRecordProvider(row.provider)){const [,scope,record]=row.repository.split(":");return recordCatalogue[row.provider].name+" · "+scope+" · "+record;}
  if(row.provider==="WORKFORCE_LEAVER"){const [,site,employee,,issue]=row.repository.split(":");return "BambooHR "+site+" · leaver "+employee+" · Jira "+issue;}
  if(row.provider==="AWS_ORGANIZATIONS")return "AWS organization "+row.repository.split(":")[1]+" · "+row.branch;
  if(row.provider==="AWS")return "AWS · "+row.repository.slice(4)+" · "+row.branch;
