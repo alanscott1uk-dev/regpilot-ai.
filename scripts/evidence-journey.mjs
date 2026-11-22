@@ -14,6 +14,7 @@ import {createCustomerWorkspace,sourceToReportJourney} from './customer-journey.
 import {starterProgrammeCustomerJourney,riskCustomerJourney} from './starter-risk-customer-journey.mjs';
 import {questionnaireCustomerJourney} from './questionnaire-customer-journey.mjs';
 import {outlookCaseJourney} from './outlook-case-journey.mjs';
+import {wordReviewJourney} from './office-pilot-journey.mjs';
 import {guidedStockJourney} from './guided-stock-journey.mjs';
 import {capaCustomerJourney} from './capa-customer-journey.mjs';
 import {productKnowledgeCustomerJourney} from './product-knowledge-customer-journey.mjs';
@@ -506,6 +507,7 @@ try{
  report.awsGleif=await awsGleifJourney({review,app,org,db,passed,checkpoint});
 
  report.outlookCase=await outlookCaseJourney({upload,review,db,app,org,otherOrgId,editor,checkpoint,passed});
+ report.wordReview=await wordReviewJourney({upload,review,app,org,db,editor,checkpoint,passed});
  report.guidedStock=await guidedStockJourney({upload,review,db,app,org,editor,submitEvidence,checkpoint,passed});
 
  await checkpoint('unavailable organisation isolation');

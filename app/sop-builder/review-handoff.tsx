@@ -4,7 +4,7 @@ import {useWorkspaceContext,workspaceHref} from "../../lib/client/workspace-cont
 
 export type ExportedSop={blob:Blob;filename:string};
 type Workspace=ReturnType<typeof useWorkspaceContext>;
-export function ReviewHandoff({workspace,document}:{workspace:Workspace;document:ExportedSop}){
+export function ReviewHandoff({workspace,document,onSending}:{workspace:Workspace;document:ExportedSop;onSending?:(value:boolean)=>void}){
   const [tasks,setTasks]=useState<{id:string;title:string}[]>([]),[task,setTask]=useState("");
   const [notice,setNotice]=useState(""),[loading,setLoading]=useState(true),[saving,setSaving]=useState(false);
   const [saved,setSaved]=useState(""),[uncertain,setUncertain]=useState(false);
@@ -21,7 +21,7 @@ export function ReviewHandoff({workspace,document}:{workspace:Workspace;document
   },[organizationId,request,capture,writable]);
   async function transfer(){
     if(!task||locked.current)return;
-    locked.current=true;setSaving(true);setNotice("");const current=capture();
+    locked.current=true;onSending?.(true);setSaving(true);setNotice("");const current=capture();
     let posted=false;
     try{
       const bytes=await document.blob.arrayBuffer();
@@ -33,7 +33,7 @@ export function ReviewHandoff({workspace,document}:{workspace:Workspace;document
       if(response.evidence?.sha256!==digest||response.evidence?.organizationId!==organizationId||response.evidence?.obligationId!==task)throw Error("The upload receipt could not be matched.");
       setSaved(response.evidence.id);
     }catch(error){if(current()){if(posted)setUncertain(true);setNotice(error instanceof Error?error.message:"The file could not be saved.");}}
-    finally{locked.current=false;if(current())setSaving(false);}
+    finally{locked.current=false;if(current()){onSending?.(false);setSaving(false);}}
   }
   if(!writable)return <p>To submit the Word draft for independent review, use a workspace editor account in the <a href="/team/evidence">Evidence Vault</a>.</p>;
   return <div><h3>Independent workspace review</h3><p>{org.name}</p>

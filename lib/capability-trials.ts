@@ -4,7 +4,14 @@ import {siteProtocol,siteTests} from './site-qualification';
 export type TrialStep={id:string;title:string;row:number};
 type Track={title:string;steps:TrialStep[]};
 const step=(row:number,id:string,title:string)=>({row,id,title});
+export const isExcursionTrial=(track:string)=>track==='excursion_operator'||track==='excursion_assessor';
+export const isTimedPilot=(track:string)=>isExcursionTrial(track)||track==='operator_pilot'||track==='assessor_pilot';
 const pilotTracks:Record<string,Track>={
+ excursion_operator:{title:'First-time operator · temperature excursion',steps:[
+  step(25,'link-stock','Identify the out-of-range reading and the affected stock.'),
+  step(25,'investigate-stock','Record the investigation and its findings on the assigned case.')]},
+ excursion_assessor:{title:'Independent assessor · excursion inspection pack',steps:[
+  step(25,'retrieve-pack','Find the signed decision and retrieve the inspection pack from the assigned case.')]},
  site_qualification:{title:'Pharmaceutical site qualification',steps:siteTests},
  operator_pilot:{title:'First-time operator · connection to export',steps:[
   step(26,'connect-first','Set up one authorised read-only connection and identify its first successful reading.'),
@@ -49,7 +56,7 @@ export const trialTracks:Record<string,Track>={
 };
 export const allTrialTracks={...trialTracks,...pilotTracks};
 export const trialEnvironments=['FIXTURE','PARTNER_SANDBOX','PROTECTED_PILOT'] as const;
-export const trialStart=z.object({action:z.literal('START'),requestKey:z.uuid(),track:z.string().refine(k=>Object.hasOwn(allTrialTracks,k)),steps:z.array(z.string().max(30)).min(1).max(6),release:z.string().regex(/^[a-f0-9]{40}$/),environment:z.enum(trialEnvironments),intendedUse:z.string().trim().min(15).max(360),ukExternal:z.boolean(),firstTime:z.boolean().optional(),siteProtocol:siteProtocol.optional()}).strict();
+export const trialStart=z.object({action:z.literal('START'),requestKey:z.uuid(),track:z.string().refine(k=>Object.hasOwn(allTrialTracks,k)),steps:z.array(z.string().max(30)).min(1).max(6),release:z.string().regex(/^[a-f0-9]{40}$/),environment:z.enum(trialEnvironments),intendedUse:z.string().trim().min(15).max(360),ukExternal:z.boolean(),firstTime:z.boolean().optional(),caseId:z.uuid().optional(),siteProtocol:siteProtocol.optional()}).strict();
 export const trialResult=z.object({step:z.string().max(30),outcome:z.enum(['PASS','FAIL','UNOBSERVED']),evidenceId:z.uuid().nullable(),runId:z.uuid().optional(),notes:z.string().trim().min(10).max(600),unsupported:z.number().int().min(0).max(1000),edits:z.number().int().min(0).max(1000),assisted:z.boolean()}).strict();
 const comparison=z.object({
  productId:z.string().refine(id=>benchmarkProductById.has(id),'Choose a workbook comparator').optional(),
@@ -59,5 +66,5 @@ const comparison=z.object({
 export const trialFinish=z.object({comparison:comparison.optional(),action:z.literal('FINISH'),id:z.uuid(),results:z.array(trialResult).min(1).max(6)}).strict();
 export const trialReview=z.object({action:z.literal('REVIEW'),id:z.uuid(),decision:z.enum(['ACCEPT','REJECT']),notes:z.string().trim().min(20).max(800)}).strict();
 export const trialStop=z.object({action:z.literal('STOP'),id:z.uuid()}).strict();
-export const trialCheckpoint=z.object({action:z.literal('CHECKPOINT'),id:z.uuid(),key:z.uuid(),step:z.string().max(30),kind:z.enum(['HELP','COMPLETED','BLOCKED']),note:z.string().trim().min(3).max(400)}).strict();
+export const trialCheckpoint=z.object({action:z.literal('CHECKPOINT'),id:z.uuid(),key:z.uuid(),step:z.string().max(30),kind:z.enum(['HELP','CORRECTION','COMPLETED','BLOCKED']),note:z.string().trim().min(3).max(400)}).strict();
 export const trialAction=z.discriminatedUnion('action',[trialStart,trialStop,trialFinish,trialReview,trialCheckpoint]);

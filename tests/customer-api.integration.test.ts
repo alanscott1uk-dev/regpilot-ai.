@@ -383,3 +383,36 @@ test('database connector receipts reach the control review queue and recover ide
     }
   } finally {await x.cleanup();}
 });
+
+test('database connector receipts report due, missed and recovered stock, identity and document checks to the assigned workspace',
+ {skip:!process.env.REGPILOT_CADENCE_ENVELOPES},async()=>{
+  type Envelope={idempotencyKey:string;body:{controlId:string;checks:{key:string;status:string}[]}};
+  const attempts=JSON.parse(await readFile(process.env.REGPILOT_CADENCE_ENVELOPES!,'utf8')) as {availability:Envelope;source:Envelope|null}[];
+  assert.equal(attempts.length,4);
+  const x=await fixture(attempts[0].availability.body.controlId);
+  try{
+   const key=await x.create(['observations:read','observations:write']);
+   async function admit(e:Envelope){
+    const response=await postObservation(new Request('https://example.invalid/api/v1/observations',{method:'POST',
+     headers:{authorization:'Bearer '+key.secret,'Content-Type':'application/json','Idempotency-Key':e.idempotencyKey},body:JSON.stringify(e.body)}));
+    const receipt=await response.json();assert.equal(response.status,201,JSON.stringify(receipt));return receipt;
+   }
+   let incident='';
+   for(const [i,attempt] of attempts.entries()){
+    const availability=await admit(attempt.availability);
+    assert.equal(availability.reportedOutcome,i===2?'REPORTED_FAILURE':'REPORTED_PASS');
+    if(i===2){
+     assert.equal(attempt.source,null);
+     const reviewed=await reviewCustomerApiObservation(x.ad,availability.id,{decision:'FOLLOW_UP',version:1,notes,ownerId:x.ed.userId,dueDate:future(2),requestKey:randomUUID(),confirm:true});
+     assert.ok('followUpTaskId' in reviewed&&reviewed.followUpTaskId);incident=reviewed.followUpTaskId;const task=await db.obligation.findUniqueOrThrow({where:{id:incident}});
+     assert.equal(task.assigneeId,x.ed.userId);assert.equal(task.controlId,x.primary.id);
+    }else{
+     const receipt=await admit(attempt.source!);assert.equal(receipt.reportedOutcome,i===1?'REPORTED_FAILURE':'REPORTED_PASS');
+     const resource=await resourceFindingReport(x.ad,receipt.id);assert.equal(resource.rows.length,3);
+     if(i===3){assert.equal(resource.rows.filter(row=>row.passedAfterFailure).length,3);assert.equal(resource.reads.length,3);}
+     await assert.rejects(()=>resourceFindingReport(x.out,receipt.id),rejects(404));
+    }
+   }
+   assert.equal((await db.obligation.findUniqueOrThrow({where:{id:incident}})).status,'OPEN');
+  }finally{await x.cleanup();}
+});

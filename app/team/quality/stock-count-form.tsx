@@ -1,6 +1,8 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
 import {reconcileStock,stockCountSchema,stockRegisterSchema,type StockCount,type StockRecord} from '../../../lib/stock-reconciliation';
+import {localStockTime,type parseExcelStock} from '../../../lib/excel-stock';
+import ExcelStockImport from './excel-stock-import';
 import css from './quality.module.css';
 
 export type StockFile={id:string;filename:string;sha256?:string};
@@ -37,6 +39,13 @@ export default function StockCountForm({latest,files:initialFiles,fileLibrary,re
  function editMovement(key:number,change:Partial<Omit<Movement,'key'>>){
   setMovements(rows=>rows.map(row=>row.key===key?{...row,...change}:row));
  }
+ function importExcel(s:ReturnType<typeof parseExcelStock>){
+  if(latest&&(['site','product','batch','unit'] as const).some(k=>s[k]!==latest.count[k]))throw Error('Use the same site, product, batch and unit for a recount.');
+  const openedAt=localStockTime(s.openedAt),countedAt=localStockTime(s.countedAt);
+  const rows=s.movements.map(m=>({...m,key:++sequence.current,at:localStockTime(m.at)}));
+  setRegister({site:s.site,product:s.product,batch:s.batch,unit:s.unit,openedAt,opening:s.opening});setMovements(rows);
+  setCount({countedAt,physical:s.physical,registerId:'',countId:'',notes:''});setPreview(null);setError('');setFileNotice('');
+ }
  function check(form:FormData){
   if(page===2){if(preview)save(preview);return;}
   try{
@@ -64,22 +73,23 @@ export default function StockCountForm({latest,files:initialFiles,fileLibrary,re
    <p className={css.stepLabel}>Step {page+1} of 3</p>
    <h4 ref={heading} tabIndex={-1}>{headings[page]}</h4><p>{guidance[page]}</p>
    {page===0&&<>
+    <ExcelStockImport apply={importExcel}/>
     <div className={css.stockFields}>{([['site','Site and stock location'],['product','Product, strength and form'],['batch','Batch or lot']] as const).map(([key,label])=>
      <label key={key}>{label}<input value={register[key]} readOnly={!!latest} required maxLength={120} onChange={e=>setRegister({...register,[key]:e.target.value})}/></label>)}
      <label>Stock unit<select value={register.unit} onChange={e=>setRegister({...register,unit:e.target.value as StockCount['unit']})}>{(latest?[latest.count.unit]:['packs','units','g','mL']).map(u=><option key={u}>{u}</option>)}</select></label>
-     <label>Opening balance time (local)<input type="datetime-local" required value={register.openedAt} onChange={e=>setRegister({...register,openedAt:e.target.value})}/></label>
+     <label>Opening balance time (local)<input type="datetime-local" step="any" required value={register.openedAt} onChange={e=>setRegister({...register,openedAt:e.target.value})}/></label>
      <label>Opening balance<input inputMode="decimal" required value={register.opening} onChange={e=>setRegister({...register,opening:e.target.value})}/></label>
     </div>
     {movements.map((row,i)=><fieldset key={row.key} className={css.movement}><legend>Movement {i+1}</legend><div className={css.stockFields}>
      <label>Register line reference<input required maxLength={120} value={row.reference} onChange={e=>editMovement(row.key,{reference:e.target.value})}/></label>
-     <label>Movement time (local)<input required type="datetime-local" value={row.at} onChange={e=>editMovement(row.key,{at:e.target.value})}/></label>
+     <label>Movement time (local)<input required type="datetime-local" step="any" value={row.at} onChange={e=>editMovement(row.key,{at:e.target.value})}/></label>
      <label>Direction<select value={row.direction} onChange={e=>editMovement(row.key,{direction:e.target.value as Movement['direction']})}><option value="IN">Received</option><option value="OUT">Supplied or removed</option></select></label>
      <label>Quantity<input required inputMode="decimal" value={row.quantity} onChange={e=>editMovement(row.key,{quantity:e.target.value})}/></label>
     </div><button type="button" onClick={()=>setMovements(rows=>rows.filter(m=>m.key!==row.key))}>Remove movement {i+1}</button></fieldset>)}
     <button type="button" disabled={movements.length>=40} onClick={()=>{const key=++sequence.current;setMovements(rows=>[...rows,{key,reference:'',direction:'IN',quantity:'',at:''}]);}}>Add register movement</button>
    </>}
    {page===1&&<><div className={css.stockFields}>
-    <label>Physical count time (local)<input type="datetime-local" name="countedAt" required value={count.countedAt} onChange={e=>setCount({...count,countedAt:e.target.value})}/></label>
+    <label>Physical count time (local)<input type="datetime-local" step="any" name="countedAt" required value={count.countedAt} onChange={e=>setCount({...count,countedAt:e.target.value})}/></label>
     <label>Quantity physically counted ({register.unit})<input inputMode="decimal" required value={count.physical} onChange={e=>setCount({...count,physical:e.target.value})}/></label>
     {([['registerId','Register extract covering the whole period'],['countId','Dated physical count record']] as const).map(([key,label])=><label key={key}>{label}
      <select required value={count[key]} onChange={e=>setCount({...count,[key]:e.target.value})}><option value="">Choose reviewed evidence</option>{files.map(f=><option value={f.id} key={f.id}>{f.filename}</option>)}</select></label>)}

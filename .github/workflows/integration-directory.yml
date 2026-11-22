@@ -154,9 +154,12 @@ jobs:
       - name: Admit the real collector receipts through the RegPilot observations API
         env:
           REGPILOT_DATABASE_ACCEPTANCE_ENVELOPES: database-acceptance-envelopes.json
+          REGPILOT_CADENCE_ENVELOPES: ${{ matrix.engine == 'postgres' && 'pilot-cadence-envelopes.json' || '' }}
         run: node --import tsx --test --test-name-pattern='database connector receipts' tests/customer-api.integration.test.ts
       - uses: actions/upload-artifact@v4
         with:
           name: database-source-${{ matrix.engine }}
-          path: live-${{ matrix.engine }}-evidence.json
+          path: |
+            live-${{ matrix.engine }}-evidence.json
+            pilot-cadence-report.json
           retention-days: 14

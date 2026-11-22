@@ -1,5 +1,6 @@
 "use client";
 import {useEffect,useRef,useState} from "react";
+import WordIntake from "./word-intake";
 import WorkspaceNav from "../components/workspace-nav";
 import {useWorkspaceContext} from "../../lib/client/workspace-context";
 import {inferSopStarter,newSopDraft,sopDraftSchema,sopNations,sopOpenItems,sopStarterNames,type SopDraft,type SopStarter} from "../../lib/sop-draft";
@@ -52,6 +53,7 @@ function Editor({workspace}:{workspace:ReturnType<typeof useWorkspaceContext>}){
   }
   const openItems=draft?sopOpenItems(draft):[];
   return <><header className={css.intro}><div><h1>SOP builder</h1><p>Create a standard operating procedure someone can follow. Choose a starting point, assign each step and attach official guidance for review.</p></div><a href={"/help"+(workspace.organizationId?"?"+new URLSearchParams({organizationId:workspace.organizationId}):"")+"#sop-builder"}>SOP builder help</a></header>
+    <section className={css.card}><WordIntake workspace={workspace}/></section>
     {!draft?<section className={css.card}><h2>Start a procedure</h2><form onSubmit={e=>{e.preventDefault();change(newSopDraft(topic,starter,nation));}}>
       <label>What procedure are you writing?<input maxLength={160} placeholder="e.g. temperature mapping or staff offboarding" value={topic} onChange={e=>{setTopic(e.target.value);setStarter(inferSopStarter(e.target.value));}}/></label>
       <div className={css.grid}><label>Starting point<select value={starter} onChange={e=>setStarter(e.target.value as SopStarter)}>{Object.entries(sopStarterNames).map(([id,n])=><option key={id} value={id}>{n}</option>)}</select></label>

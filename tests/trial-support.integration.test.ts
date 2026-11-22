@@ -172,3 +172,29 @@ test('a site decision binds the live build, the named configuration, reviewed te
   await f.cleanup();
  }
 });
+
+test('an internal first-time excursion trial requires the participant’s own case action and accounts for corrections and help',async()=>{
+ const f=await assuranceFixture();try{
+  const {createQualityCase,investigateQualityCase}=await import('../lib/server/capa-service');
+  const text='Fictional excursion with a confirmed packing delay. Hold affected test lots, retain the temperature record and review the investigation findings.';
+  const saved=await createQualityCase(f.ed,{requestKey:randomUUID(),kind:'DEVIATION',classification:'MAJOR',title:'Exercise case',description:text,
+   impact:text,containment:text,occurredAt:new Date().toISOString().slice(0,10),ownerId:f.ed.userId});
+  const plan={action:'START',track:'excursion_operator',firstTime:true,steps:['investigate-stock'],caseId:saved.caseId,
+   release:'e'.repeat(40),environment:'FIXTURE',ukExternal:false,intendedUse:'Timed fictional stock excursion investigation.',requestKey:randomUUID()};
+  await assert.rejects(()=>recordTrial(f.out,plan),rejects(404));
+  const {id}=await recordTrial(f.ed,plan);assert.equal((await recordTrial(f.ed,plan)).id,id);
+  await assert.rejects(()=>recordTrial(f.ed,{...plan,requestKey:randomUUID()}),rejects(409));
+  const checkpoint=(kind:string)=>recordTrial(f.ed,{action:'CHECKPOINT',id,key:randomUUID(),step:'investigate-stock',kind,note:'An internal test checkpoint.'});
+  await checkpoint('HELP');await checkpoint('CORRECTION');await checkpoint('COMPLETED');
+  const inv={requestKey:randomUUID(),version:1,ownerId:f.ed.userId,investigationNotes:text,rootCause:text,effectivenessCriteria:text,effectivenessDueAt:future(),containment:text};
+  await investigateQualityCase(f.ad,saved.caseId,inv);
+  const result={step:'investigate-stock',outcome:'PASS',notes:'Checked the exact fixture case.',evidenceId:null,unsupported:0,edits:1,assisted:true};
+  const finish={action:'FINISH',id,results:[result]};await assert.rejects(()=>recordTrial(f.ed,finish,f.store),rejects(409));
+  await investigateQualityCase(f.ed,saved.caseId,{...inv,version:2,requestKey:randomUUID()});await recordTrial(f.ed,{action:'STOP',id});
+  await assert.rejects(()=>recordTrial(f.ed,{...finish,results:[{...result,edits:0}]},f.store),rejects(409));
+  await assert.rejects(()=>recordTrial(f.ed,{...finish,results:[{...result,assisted:false}]},f.store),rejects(409));
+  await recordTrial(f.ed,finish,f.store);const trial=(await trialWorkspace(f.o)).trials.find(t=>t.id===id)!;
+  assert.equal(trial.caseId,saved.caseId);assert.equal(trial.caseReceipts.length,1);assert.equal(trial.results[0].assisted,true);
+  assert.equal((await db.auditEvent.findUniqueOrThrow({where:{id:trial.caseReceipts[0].id}})).actorId,f.ed.userId);
+ }finally{await f.cleanup();}
+});

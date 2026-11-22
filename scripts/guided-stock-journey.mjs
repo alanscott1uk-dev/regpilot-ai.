@@ -1,3 +1,4 @@
+import {excelSelection} from './office-pilot-journey.mjs';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
@@ -31,14 +32,22 @@ export async function guidedStockJourney({upload,review,db,app,org,editor,submit
  const stock=upload.locator('#quality-stock');
  assert.equal(await stock.count(),1,'The selected case must contain one stock reconciliation panel');
  await upload.locator('details#quality-stock > summary').click();
- await stock.getByLabel('Site and stock location').fill('Site A');await stock.getByLabel('Product, strength and form').fill('Test product');
- await stock.getByLabel('Batch or lot').fill('TEST-1');await stock.getByLabel('Opening balance time (local)').fill('2025-06-01T08:00');
- await stock.getByLabel('Opening balance',{exact:true}).fill('10');await stock.getByRole('button',{name:'Add register movement'}).click();
- await stock.getByLabel('Register line reference').fill('L1');await stock.getByLabel('Movement time (local)').fill('2025-06-01T09:00');
- await stock.getByLabel('Direction').selectOption('OUT');await stock.getByLabel('Quantity',{exact:true}).fill('2');
+ const selection=await excelSelection(upload,app);
+ await stock.getByText('Import Excel stock rows',{exact:true}).click();
+ const pick=stock.getByLabel('Excel stock transfer file');
+ const invalid=JSON.parse(selection);invalid.rows[2][6]='WRONG-LOT';
+ await pick.setInputFiles({name:'mixed.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(invalid))});
+ await stock.getByText('Select only one site, product, batch and unit.').waitFor();
+ assert.equal(await stock.getByLabel('Opening balance',{exact:true}).inputValue(),'');
+ await pick.setInputFiles({name:'stock-selection.json',mimeType:'application/json',buffer:selection});
+ await stock.getByRole('button',{name:'Use these figures in place of the current draft'}).click();
+ assert.equal(await stock.getByLabel('Site and stock location').inputValue(),'Site A');
+ assert.equal(await stock.getByLabel('Batch or lot').inputValue(),'TEST-1');
+ assert.equal(await stock.getByLabel('Opening balance',{exact:true}).inputValue(),'10');
+ assert.equal(await stock.getByLabel('Direction').inputValue(),'OUT');
+ assert.equal(await stock.getByLabel('Register line reference').inputValue(),'L1');
  await stock.getByRole('button',{name:'Continue to physical count'}).click();
- await stock.getByLabel('Physical count time (local)').fill('2025-06-01T10:00');
- await stock.getByLabel('Quantity physically counted (packs)').fill('7');
+ assert.equal(await stock.getByLabel('Quantity physically counted (packs)').inputValue(),'7');
  await stock.getByLabel('Register extract covering the whole period').selectOption(files[0]);
  await stock.getByLabel('Dated physical count record').selectOption(files[0]);
  await stock.getByLabel('Count notes').fill('The physical count is one pack short. The lot is held for review.');
@@ -69,6 +78,6 @@ export async function guidedStockJourney({upload,review,db,app,org,editor,submit
  await checker.getByRole('heading',{name:'Stock discrepancy still open'}).waitFor();
  const [download]=await Promise.all([review.waitForEvent('download'),checker.getByRole('button',{name:'Download stock inspection summary'}).click()]);
  const document=await readFile(await download.path(),'utf8');assert.ok(document.includes('difference -1 packs')&&document.includes('stock-count.pdf'));
- passed('The guided stock count retained entries on Back, checked distinct documents, previewed a one-pack shortage before saving, routed it to a separate reviewer and exported the reviewed discrepancy.');
+ passed('The simulated Excel host transferred one selected register and rejected mixed lots. The guided stock count retained entries on Back, checked distinct documents, previewed a one-pack shortage before saving, routed it to a separate reviewer and exported the reviewed discrepancy.');
  return {caseId:row.id,expected:8,physical:7,difference:-1};
 }

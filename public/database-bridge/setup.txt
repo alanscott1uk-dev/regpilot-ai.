@@ -41,3 +41,11 @@ python3 collect.py --plan plan.json --config config.json --digest DIGEST --netwo
 For a bulk manifest add --source DEFINITION_UUID. The runner checks the test's source and version against the plan before collection.
 
 Set an optional remediation target in the test builder or use --remediation-days 7 with a resource selector. At each reading, overdue findings appear first. The first observed failure in the available history sets the deadline. An explicit later pass ends that failure period. Missing readings keep the last known failure visible.
+
+Scheduled source checks
+
+Put watch.py beside collect.py on the authorised Linux collection host. Use one private spool directory for each source instance and rule. Keep the config at the same path when rotating its credential. Invoke the command from your host timer at least once per chosen interval. Overlapping invocations and repeats in the same interval skip the duplicate read.
+
+python3 watch.py --plan plan.json --config config.json --digest DIGEST --network source-network --test-definition source-test.json --directory /var/lib/regpilot/warehouse-check --interval-seconds 3600
+
+Each attempted interval produces a status file and an availability observation. A successful collection also produces the ordinary source observation. Use the existing delivery tool to send each source and availability envelope to its granted RegPilot control. A failure creates no source observation. The next invocation counts intervals skipped while the host was stopped. Keep the spool until delivery and retention requirements have been met.

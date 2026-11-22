@@ -140,6 +140,9 @@ try:
                   "renewed": renewed, "scope": "Disposable CI database"}
         Path("live-" + kind + "-evidence.json").write_text(json.dumps(report, indent=2))
         print(json.dumps(report))
+        if pg:
+            from stock_monitor_cadence import check_cadence
+            check_cadence(folder, plan, config, digest, network, query, config_for)
 finally:
     stack.close()
     subprocess.run(["docker", "rm", "-f", instance], capture_output=True)
