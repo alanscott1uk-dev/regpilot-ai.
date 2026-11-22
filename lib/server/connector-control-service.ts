@@ -36,8 +36,9 @@ export async function changeConnectorControl(ctx:AuthorizedContext,id:string,inp
   const link=await tx.connectorControlLink.create({data:{organizationId:ctx.organizationId,connectorId:id,controlId:control.id,mappedById:ctx.userId,rationale:d.rationale}});
   const run=await tx.connectorRun.findFirst({where:{connectorId:id,organizationId:ctx.organizationId},orderBy:[{capturedAt:'desc'},{id:'desc'}]});
   // Attaching a new control to an already unhealthy source must not wait for another provider request.
-  if(!run||!connectorProviderEnabled(connector.provider)||!observationCurrent(run,connector,true)||!verifiedObservation(run)||run.outcome!=='OBSERVED')
-   await followUpConnectorControls(tx,connector,'The newly linked connection has no current passing collection. Review its history and the scope relevant to this control.',[control.id]);
+  const current=run&&connectorProviderEnabled(connector.provider)&&observationCurrent(run,connector,true)&&verifiedObservation(run);
+  if(!current||run?.outcome!=='OBSERVED')
+   await followUpConnectorControls(tx,connector,'The newly linked connection has no current passing collection. Review its history and the scope relevant to this control.',[control.id],current&&run?{run,changed:false}:undefined);
   await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,entityType:'EvidenceConnector',entityId:id,action:'connector.control_linked',details:{linkId:link.id,controlId:control.id,controlVersion:control.version,rationale:d.rationale}}});
   return {id:link.id,reused:false};
  });

@@ -38,7 +38,7 @@ import {encryptConnectorSecret,decryptConnectorSecret} from "./connector-secret"
 import {collectGithub,githubTarget,CollectionError} from "../connectors/github";
 import {collectGoogleWorkspace,googleTarget,googleCredentials} from "../connectors/google-workspace";
 import {collectMicrosoft365,microsoftTarget} from "../connectors/microsoft365";
-import {observationOutcome,observationCurrent,signalChanges,reconcileObservation,type Observation} from "../connectors/observation";
+import {observationSchema,observationOutcome,observationCurrent,signalChanges,reconcileObservation,type Observation} from "../connectors/observation";
 import {hashValue} from "../regulatory/intelligence";
 const j=(v:unknown)=>v as Prisma.InputJsonValue;
 
@@ -356,14 +356,19 @@ export async function exportConnectorRun(ctx:AuthorizedContext,id:string,taskId?
     throw new IntelligenceError('Linked source reading not found',404);
   }
   const latest=await tx.connectorRun.findFirst({where:{organizationId:ctx.organizationId,connectorId:row.connectorId},orderBy:[{capturedAt:"desc"},{id:"desc"}],select:{id:true}});
-  const observation=verifiedObservation(row);
-  if(!observation||hashValue(observation)!==row.resultHash)throw new IntelligenceError("Observation integrity check failed",409);
-  let current=connectorProviderEnabled(row.connector.provider)&&observationCurrent(row,row.connector,latest?.id===row.id);
+  const trusted=verifiedObservation(row);
+  // Historical exports retain an intact, schema-checked payload for investigation.
+  // A task receipt also requires a verified interpretation of its checks and outcome.
+  const parsed=trusted?null:observationSchema.safeParse(row.result);
+  const observation=trusted??(parsed?.success?parsed.data:null);
+  if(!observation||hashValue(row.result)!==row.resultHash||hashValue(observation)!==row.resultHash||(taskId&&!trusted))
+   throw new IntelligenceError("Observation integrity check failed",409);
+  let current=!!trusted&&connectorProviderEnabled(row.connector.provider)&&observationCurrent(row,row.connector,latest?.id===row.id);
   if(current&&row.connector.provider==="UBIBOT"){
    current=await calibrationStillCurrent(tx,row.connector,observation);
   }
   if(taskId)await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,entityType:'Obligation',entityId:taskId,
    action:'connector.reading_exported',details:{runId:row.id,resultHash:row.resultHash}}});
-  return {format:"regpilot-connector-observation-v1",id:row.id,capturedAt:row.capturedAt,result:observation,resultHash:row.resultHash,currentAtExport:!!current,limitation:"Integrity hash is not a digital signature. A point-in-time observation does not establish compliance."};
+  return {format:"regpilot-connector-observation-v1",id:row.id,capturedAt:row.capturedAt,result:observation,resultHash:row.resultHash,signalIntegrity:trusted?"VERIFIED":"UNVERIFIED",currentAtExport:!!current,limitation:"Integrity hash is not a digital signature. A point-in-time observation does not establish compliance."};
  });
 }

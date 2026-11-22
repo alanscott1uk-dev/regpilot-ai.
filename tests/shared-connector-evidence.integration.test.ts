@@ -10,6 +10,7 @@ import {changeObservationChoices,assertChangeObservations} from '../lib/server/c
 import {operationsWorkspace} from '../lib/server/operations-service';
 import {testConnectedControl} from '../lib/server/control-policy';
 import {getConnectorHealth} from '../lib/server/connector-health-service';
+import {workTask} from '../lib/server/work-hub-service';
 import {exportConnectorRun} from '../lib/server/connector-service';
 import type {Observation} from '../lib/connectors/observation';
 
@@ -79,6 +80,9 @@ test('one collection supports separate controls, evidence revocation and indepen
   await collect('FAIL');let tasks=await db.obligation.findMany({where:{connectorId:saved.id,status:{not:'COMPLETE'}}});assert.equal(tasks.length,3);assert.deepEqual(new Set(tasks.map(t=>t.assigneeId)),new Set([x.ed.userId,x.re.userId,x.ad.userId]));
   await collect('FAIL');assert.equal(await db.obligation.count({where:{connectorId:saved.id,status:{not:'COMPLETE'}}}),3,'repeated failures do not duplicate open work');
   const before=reads;await changeConnectorControl(x.o,saved.id,link(fourth));assert.equal(reads,before);assert.equal(await db.obligation.count({where:{connectorId:saved.id,controlId:fourth.id,status:{not:'COMPLETE'}}}),1,'an already unhealthy source immediately alerts a newly linked owner');
+  const linkedTask=await db.obligation.findFirstOrThrow({where:{organizationId:x.a.id,connectorId:saved.id,controlId:fourth.id}});
+  const linkedRun=await db.connectorRun.findFirstOrThrow({where:{organizationId:x.a.id,connectorId:saved.id},orderBy:[{capturedAt:'desc'},{id:'desc'}]});
+  assert.equal((await workTask(x.o,linkedTask.id)).sourceObservations?.items[0]?.runId,linkedRun.id);
   await changeConnectorControl(x.o,saved.id,{action:'UNLINK',version:1,linkId:relinked.id,confirm:true});
   await db.obligation.updateMany({where:{connectorId:saved.id,controlId:second.id},data:{status:'COMPLETE'}});await collect('FAIL');assert.equal(await db.obligation.count({where:{connectorId:saved.id,controlId:second.id,status:{not:'COMPLETE'}}}),0,'removed controls receive no new work');
   await collect('PASS');assert.equal(await db.obligation.count({where:{connectorId:saved.id,status:{not:'COMPLETE'}}}),3,'a passing observation does not approve or close human work');

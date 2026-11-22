@@ -78,7 +78,9 @@ test("five operational sources can be configured, collected and exported within 
         assert.doesNotMatch(JSON.stringify(reads),/fictional-connector-token|"observed":/);
         await db.connectorRun.update({where:{id:run.id},data:{signalHash:'0'.repeat(64)}});
         const checked=(await workTask(f.o,task.id)).sourceObservations!;
-        await assert.rejects(exportConnectorRun(f.o,run.id),rejects(409));
+        await assert.rejects(exportConnectorRun(f.ed,run.id,task.id),rejects(404));
+        const historical=await exportConnectorRun(f.o,run.id);
+        assert.equal(historical.signalIntegrity,'UNVERIFIED');assert.equal(historical.currentAtExport,false);
         assert.equal(checked.unavailable,1);assert.deepEqual(checked.items.map(r=>r.runId),[after.currentVersionRead]);
         globalThis.fetch=async()=>Response.json(row.good);
         await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
