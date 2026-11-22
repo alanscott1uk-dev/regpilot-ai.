@@ -1,4 +1,4 @@
-"""Submit a saved point reading to the RegPilot workspace chosen by the operator."""
+"""Submit a saved source observation to the RegPilot workspace chosen by the operator."""
 import argparse
 import getpass
 import http.client
@@ -17,7 +17,10 @@ def deliver(origin, envelope, credential):
         raise ValueError("Configure the HTTPS origin of your authorised RegPilot workspace")
     key = str(UUID(envelope["idempotencyKey"]))
     body = envelope["body"]
-    if body["externalId"] != "opcua/" + key:
+    reference = body["externalId"].split("/")
+    database_source = (len(reference) == 3 and reference[0] == "dbsync" and reference[2] == key
+                       and str(UUID(reference[1])) == reference[1])
+    if body["externalId"] != "opcua/" + key and not database_source:
         raise ValueError("The source reference differs from the saved delivery key")
     if not credential or not credential.isascii() or any(ord(c) < 33 or ord(c) > 126 for c in credential):
         raise ValueError("A workspace observation credential is required")

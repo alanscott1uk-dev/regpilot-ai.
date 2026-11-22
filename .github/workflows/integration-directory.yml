@@ -113,3 +113,23 @@ jobs:
           name: private-model-evidence
           path: live-private-model.json
           retention-days: 14
+  database-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [postgres, mysql]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Read real database rows and rotate the source credential
+        run: python3 scripts/check-database-source.py ${{ matrix.engine }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: database-source-${{ matrix.engine }}
+          path: live-${{ matrix.engine }}-evidence.json
+          retention-days: 14
