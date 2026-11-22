@@ -94,7 +94,11 @@ jobs:
       - run: npx prisma db execute --file security/test-role-setup.sql --schema prisma/schema.prisma
       - run: npx prisma db execute --file security/supabase-private-tables.sql --schema prisma/schema.prisma
       - run: node --import tsx --test tests/private-tables.integration.test.ts
+      - name: Install instrument acceptance dependency
+        run: python -m venv "$RUNNER_TEMP/opcua-env" && "$RUNNER_TEMP/opcua-env/bin/python" -m pip install asyncua==1.1.8
       - run: npm run test:integration
+        env:
+          REGPILOT_INSTRUMENT_PYTHON: ${{ runner.temp }}/opcua-env/bin/python
       - run: npm run build
       - run: npm run test:pdf-runtime
       - run: npm run test:smoke

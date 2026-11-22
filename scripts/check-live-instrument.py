@@ -24,6 +24,8 @@ async def run(folder):
                         "-keyout", str(folder / (name + ".pem")), "-outform", "DER", "-out", str(folder / (name + ".der"))],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     config = json.loads((bridge / "example.json").read_text())
+    if os.environ.get("REGPILOT_TEST_CONTROL_ID"):
+        config["controlId"] = os.environ["REGPILOT_TEST_CONTROL_ID"]
     certificate = b"Synthetic calibration reference for software acceptance only."
     (folder / config["calibrationFile"]).write_bytes(certificate)
     now = datetime.now(timezone.utc)
@@ -60,7 +62,7 @@ async def run(folder):
             assert "serial" in str(exc)
         else:
             raise AssertionError("Unexpected instrument was accepted")
-    Path("live-instrument-evidence.json").write_text(json.dumps({"provenance": "Software OPC UA server. Synthetic serial, calibration and readings.",
+    Path(os.environ.get("REGPILOT_INSTRUMENT_REPORT", "live-instrument-evidence.json")).write_text(json.dumps({"provenance": "Software OPC UA server. Synthetic serial, calibration and readings.",
          "baseline": baseline, "excursion": excursion, "unknownUnit": wrong_unit, "serialMismatchRejected": True}, indent=2))
     print("Verified an encrypted OPC UA read, excursion, unit change and instrument replacement.")
 

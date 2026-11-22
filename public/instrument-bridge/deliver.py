@@ -1,0 +1,59 @@
+"""Submit a saved point reading to the RegPilot workspace chosen by the operator."""
+import argparse
+import getpass
+import http.client
+import json
+import os
+import ssl
+import sys
+from pathlib import Path
+from urllib.parse import urlsplit
+from uuid import UUID
+
+
+def deliver(origin, envelope, credential):
+    url = urlsplit(origin)
+    if url.scheme != "https" or not url.hostname or url.username or url.password or url.path not in ("", "/") or url.query or url.fragment:
+        raise ValueError("Configure the HTTPS origin of your authorised RegPilot workspace")
+    key = str(UUID(envelope["idempotencyKey"]))
+    body = envelope["body"]
+    if body["externalId"] != "opcua/" + key:
+        raise ValueError("The source reference differs from the saved delivery key")
+    if not credential or not credential.isascii() or any(ord(c) < 33 or ord(c) > 126 for c in credential):
+        raise ValueError("A workspace observation credential is required")
+    payload = json.dumps(body, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
+    if len(payload) > 32768:
+        raise ValueError("Observation exceeds the intake limit")
+    client = http.client.HTTPSConnection(url.hostname, url.port or 443, timeout=20, context=ssl.create_default_context())
+    try:
+        client.request("POST", "/api/v1/observations", body=payload, headers={
+            "Authorization": "Bearer " + credential, "Content-Type": "application/json", "Idempotency-Key": key})
+        response = client.getresponse()
+        if response.status != 201:
+            raise ValueError(f"RegPilot returned HTTP {response.status}. Retain this envelope for retry.")
+        raw = response.read(65537)
+        if len(raw) > 65536:
+            raise ValueError("The acknowledgement exceeded the supported size")
+        row = json.loads(raw)
+        receipt_id = str(UUID(row["id"]))
+        if row.get("controlId") != body["controlId"] or row.get("externalId") != body["externalId"] or type(row.get("reused")) is not bool:
+            raise ValueError("The acknowledgement could not be matched to this observation")
+        return {"id": receipt_id, "idempotencyKey": key, "reused": row["reused"]}
+    finally:
+        client.close()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("receipt", type=Path)
+    parser.add_argument("--workspace", required=True, help="RegPilot HTTPS origin")
+    args = parser.parse_args()
+    try:
+        if args.receipt.stat().st_size > 36000:
+            raise ValueError("The saved envelope exceeds the supported size")
+        envelope = json.loads(args.receipt.read_text())
+        token = os.environ.get("REGPILOT_OBSERVATION_TOKEN") or getpass.getpass("Workspace observation credential: ")
+        print(json.dumps(deliver(args.workspace, envelope, token)))
+    except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException) as error:
+        reason = str(error) if type(error) is ValueError else "Delivery or acknowledgement unavailable. Retry the saved envelope."
+        sys.exit(reason)

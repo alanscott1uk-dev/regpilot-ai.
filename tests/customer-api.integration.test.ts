@@ -311,3 +311,36 @@ test('private AI client negotiates MCP, sees granted tools only, reads scoped da
   assert.equal((await call(init)).status,401);
  }finally{await f.cleanup();}
 });
+
+test('site reader delivers a real encrypted OPC UA excursion through authenticated HTTPS intake and recovers the identical receipt', {skip:!process.env.REGPILOT_INSTRUMENT_PYTHON}, async()=>{
+ const {createServer}=await import('node:https'),{mkdtemp,readFile,writeFile,rm}=await import('node:fs/promises');
+ const {tmpdir}=await import('node:os'),{join}=await import('node:path'),{execFile}=await import('node:child_process'),{promisify}=await import('node:util'),{once}=await import('node:events');
+ const exec=promisify(execFile),folder=await mkdtemp(join(tmpdir(),'regpilot-intake-')),x=await fixture();
+ const pem=join(folder,'server.pem'),key=join(folder,'server.key'),report=join(folder,'capture.json'),envelope=join(folder,'excursion.json');
+ let server:ReturnType<typeof createServer>|undefined;
+ try{
+  await exec(process.env.REGPILOT_INSTRUMENT_PYTHON!,['scripts/check-live-instrument.py'],{env:{...process.env,REGPILOT_TEST_CONTROL_ID:x.primary.id,REGPILOT_INSTRUMENT_REPORT:report}});
+  const sample=JSON.parse(await readFile(report,'utf8')).excursion;await writeFile(envelope,JSON.stringify(sample));
+  await exec('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj','/CN=localhost','-addext','subjectAltName=IP:127.0.0.1','-keyout',key,'-out',pem]);
+  server=createServer({cert:await readFile(pem),key:await readFile(key)},async(req,res)=>{
+   try{
+    assert.equal(req.method,'POST');assert.equal(req.url,'/api/v1/observations');
+    const chunks=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
+    const headers=new Headers();for(const [name,value] of Object.entries(req.headers))if(typeof value==='string')headers.set(name,value);
+    const received=await postObservation(new Request('https://regpilot.test/api/v1/observations',{method:'POST',headers,body:Buffer.concat(chunks).toString('utf8')}));
+    res.writeHead(received.status,{'Content-Type':'application/json'}).end(await received.text());
+   }catch{res.writeHead(500).end();}
+  });
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  const addr=server.address();assert.ok(addr&&typeof addr==='object');
+  const send=(token:string)=>exec('python',['public/instrument-bridge/deliver.py',envelope,'--workspace','https://127.0.0.1:'+addr.port],{env:{...process.env,SSL_CERT_FILE:pem,REGPILOT_OBSERVATION_TOKEN:token}});
+  const unauthorised=await x.create(['observations:write'],[x.ungranted.id]);
+  await assert.rejects(send(unauthorised.secret!),/HTTP 404/);
+  const writer=await x.create(['observations:write'],[x.primary.id]);
+  const first=JSON.parse((await send(writer.secret!)).stdout),second=JSON.parse((await send(writer.secret!)).stdout);
+  assert.equal(first.reused,false);assert.equal(second.id,first.id);assert.equal(second.reused,true);
+  const stored=await db.customerApiObservation.findUniqueOrThrow({where:{id:first.id}});
+  assert.equal(stored.organizationId,x.a.id);assert.equal(stored.controlId,x.primary.id);
+  assert.equal((stored.payload as typeof sample.body).checks.find((c:{key:string})=>c.key==='temperature-limits').status,'FAIL');
+ }finally{server?.closeAllConnections();if(server?.listening)await new Promise<void>(resolve=>server!.close(()=>resolve()));await x.cleanup();await rm(folder,{recursive:true,force:true});}
+});

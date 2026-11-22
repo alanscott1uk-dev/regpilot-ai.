@@ -82,9 +82,15 @@ async def capture(config, directory):
         check("calibration-period", "Configured certificate period covers the sample", start <= stamp < end if known_time else None,
               "SHA256 " + digest + ", valid to " + timestamp(end))
     ]
+    # The submitted check can only be current while the reading and its calibration are current.
+    horizon = now + timedelta(minutes=max_age)
+    if known_time and now < stamp + timedelta(minutes=max_age):
+        horizon = min(horizon, stamp + timedelta(minutes=max_age))
+    if now < end:
+        horizon = min(horizon, end)
     key = str(uuid4())
     return {"idempotencyKey": key, "body": {"externalId": "opcua/" + key, "controlId": control, "observedAt": timestamp(now),
-            "validUntil": timestamp(now+timedelta(hours=24)), "summary": "Point observation from the configured OPC UA instrument. Compare the certificate, limits and reading against the quality record.", "checks": checks}}
+            "validUntil": timestamp(horizon), "summary": "Point observation from the configured OPC UA instrument. Compare the certificate, limits and reading against the quality record.", "checks": checks}}
 
 
 def main():

@@ -77,3 +77,36 @@ jobs:
           name: instrument-protocol-evidence
           path: live-instrument-evidence.json
           retention-days: 14
+  private-inference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+      - name: Verify a running model before and after credential rotation
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision=c6f2d396a5faa22c9722908d47e8da81a5d8cebc
+          file=SmolLM2-135M-Instruct-Q4_K_M.gguf
+          base=https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF
+          expected=$(curl -fsSL --retry 2 "$base/raw/$revision/$file" | sed -nE 's/^oid sha256:([a-f0-9]{64})$/\1/p')
+          test "${#expected}" = 64
+          curl -fsSL --retry 2 "$base/resolve/$revision/$file" -o "$RUNNER_TEMP/regpilot-model.gguf"
+          echo "$expected  $RUNNER_TEMP/regpilot-model.gguf" | sha256sum -c -
+          docker run -d --name regpilot-model -p 127.0.0.1:8186:8080 -v "$RUNNER_TEMP/regpilot-model.gguf:/models/test.gguf:ro" ghcr.io/ggml-org/llama.cpp:server-b8840@sha256:1a706b41321c3d3e570b9a63cc768039f7bfe0487070ff6cf790f892b8e74831 -m /models/test.gguf --alias regpilot-test --host 0.0.0.0 --port 8080 -c 4096 -t 2
+          trap 'docker rm -f regpilot-model >/dev/null' EXIT
+          curl -fsS --retry 30 --retry-all-errors --retry-delay 2 http://127.0.0.1:8186/health -o /dev/null
+          node --import tsx scripts/check-live-private-model.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: private-model-evidence
+          path: live-private-model.json
+          retention-days: 14

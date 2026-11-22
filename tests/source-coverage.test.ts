@@ -27,6 +27,7 @@ test('device discovery separates NI surveillance scope and exposes sector-specif
 test("curated territorial publications use their exact allowlisted URL and publisher-specific content scope",async()=>{
  const added=REGULATORY_SOURCES.filter(s=>s.provider==="OFFICIAL_WEB"&&s.jurisdictions);assert.ok(added.length>=11);
  for(const s of added){
+  if(s.refreshMode==="manual"){await assert.rejects(loadOfficialWeb(s,async()=>assert.fail("Manual publication triggered an automatic read")),{reasonCode:"MANUAL_REFRESH"});continue;}
   const body="<p>"+("Fictional publication content only, no real legal claims. ").repeat(12)+"</p>";
   const title="<h1>"+s.heading+"</h1>";
   const html=s.articleBody?`<article>${title}<div class="${s.articleBody==="sps"?"text-layout-block__text":"entry-content"}">${body}</div></article>`:title+body;
