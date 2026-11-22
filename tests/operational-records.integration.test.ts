@@ -238,13 +238,19 @@ test('each public pharmaceutical register can be enrolled without a secret, coll
  try{
   const programme=await db.programmeImport.create({data:{organizationId:f.a.id,createdById:f.o.userId,inputHash:f.a.id,method:'SEARCH',status:'ACCEPTED',evidenceManifest:[]}});
   const control=await db.managedControl.create({data:{organizationId:f.a.id,importId:programme.id,proposalKey:'registers',title:'Pharmaceutical register monitoring',description:'Review identified public releases',testProcedure:'Review current source records',theme:'quality',ownerId:f.editor.id,scheduledById:f.owner.id,intervalDays:30,nextReviewAt:new Date()}});
-  const [nhs,trial,fda]=referenceRegisters,pkgId='2aab7706-8c93-42f6-9f49-39a53cfdaa1c';
+  const [nhs,trial,fda,label,paper,guide]=referenceRegisters,pkgId='2aab7706-8c93-42f6-9f49-39a53cfdaa1c';
   const resource={id:nhs.target.record,package_id:pkgId,state:'active',format:'CSV',name:'BNF_SNOMED_MAPPING_DATA_202609'};
   globalThis.fetch=async(raw,req)=>{
    assert.equal(new Headers(req?.headers).has('Authorization'),false);
    const url=new URL(String(raw));
    if(url.host==='opendata.nhsbsa.net')return Response.json({success:true,result:url.pathname.endsWith('package_show')?{id:pkgId,name:nhs.target.scope,num_resources:1,state:'active',resources:[resource]}:resource});
    if(url.host==='clinicaltrials.gov')return Response.json({protocolSection:{identificationModule:{nctId:trial.target.scope},statusModule:{overallStatus:'COMPLETED',lastUpdatePostDateStruct:{date:'2025-09-10'},resultsFirstPostDateStruct:{date:'2025-08-10'}}}});
+   if(url.host==='dailymed.nlm.nih.gov')return Response.json({metadata:{current_page:1,total_pages:1,total_elements:1},data:{
+    spl:{setid:label.target.scope},history:[{spl_version:Number(label.target.record),published_date:'Jun 15, 2026'}]}});
+   if(url.host==='www.ebi.ac.uk')return Response.json({hitCount:1,resultList:{result:[{source:'MED',id:paper.target.scope,pmid:paper.target.scope,
+    doi:paper.target.reference,dateOfRevision:paper.target.record,pubTypeList:{pubType:['Journal Article']}}]}});
+   if(url.host==='www.gov.uk')return Response.json({content_id:guide.target.record,base_path:'/guidance/'+guide.target.scope,document_type:'detailed_guide',
+    public_updated_at:guide.target.reference,withdrawn_notice:{},links:{primary_publishing_organisation:[{content_id:'240f72bd-9a4d-4f39-94d9-77235cadde8e'}]}});
    assert.equal(url.host,'api.fda.gov');return Response.json({meta:{results:{total:1}},results:[{event_id:fda.target.scope,recall_number:fda.target.record,product_type:'Drugs',classification:'Class II',status:'Terminated',report_date:'20250304',recall_initiation_date:'20250301',termination_date:'20250401'}]});
   };
   for(const {provider,target} of referenceRegisters){
