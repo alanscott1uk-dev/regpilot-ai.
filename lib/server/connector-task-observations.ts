@@ -22,18 +22,27 @@ export async function recordTaskObservation(tx:Prisma.TransactionClient,actorId:
  }],skipDuplicates:true});
 }
 
+function proofReference(task:TaskScope,{id,details}:{id:string;details:Prisma.JsonValue}){
+ if(!details||typeof details!=='object'||Array.isArray(details)||!workUuid(details.runId)||
+  details.connectorId!==task.connectorId||details.controlId!==task.controlId||receiptId(task,details.runId)!==id)return null;
+ return {runId:details.runId,configVersion:details.configVersion,resultHash:details.resultHash,
+  signalHash:details.signalHash,changed:details.changed===true};
+}
+
+export async function taskIncludesRun(tx:Prisma.TransactionClient,task:TaskScope,run:RunProof){
+ const row=await tx.auditEvent.findFirst({where:{id:receiptId(task,run.id),organizationId:task.organizationId,
+  action,entityType,entityId:task.id},select:{id:true,details:true}});
+ const ref=row&&proofReference(task,row);
+ return !!ref&&ref.runId===run.id&&ref.resultHash===run.resultHash&&ref.signalHash===run.signalHash&&ref.configVersion===run.configVersion;
+}
+
 export async function taskObservations(tx:Prisma.TransactionClient,task:TaskScope){
  const receipts=await tx.auditEvent.findMany({
   where:{organizationId:task.organizationId,entityType,entityId:task.id,action},
   orderBy:[{createdAt:'desc'},{id:'desc'}],take:21,select:{id:true,details:true}
  });
  const page=receipts.slice(0,20);
- const refs=page.map(({id,details})=>{
-  if(!details||typeof details!=='object'||Array.isArray(details)||!workUuid(details.runId)||
-   details.connectorId!==task.connectorId||details.controlId!==task.controlId||receiptId(task,details.runId)!==id)return null;
-  return {runId:details.runId,configVersion:details.configVersion,resultHash:details.resultHash,
-   signalHash:details.signalHash,changed:details.changed===true};
- });
+ const refs=page.map(row=>proofReference(task,row));
  const runIds=refs.flatMap(ref=>ref?[ref.runId]:[]);
  const runs=runIds.length?await tx.connectorRun.findMany({where:{organizationId:task.organizationId,
   connectorId:task.connectorId,id:{in:runIds}},select:{id:true,result:true,resultHash:true,signalHash:true,

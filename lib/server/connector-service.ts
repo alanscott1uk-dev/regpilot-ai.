@@ -1,3 +1,4 @@
+import {taskIncludesRun} from './connector-task-observations';
 import {benchlingClient,benchlingCredential} from '../connectors/benchling-auth';
 import {connectorScopeHash,credentialChanged} from './connector-verification';
 import {applyLoggerCalibration,calibrationStillCurrent} from './logger-calibration';
@@ -346,14 +347,23 @@ export async function runConnectorBatch(limit=2,parallelism=1,admissionDeadline=
  collected.sort((a,b)=>a.index-b.index);
  return {processed:collected.length,outcomes:collected.map(x=>x.outcome),limitReached:collected.length===limit,budgetExhausted:Date.now()>=deadline};
 }
-export async function exportConnectorRun(ctx:AuthorizedContext,id:string){
- return transaction(ctx,async tx=>{await requireMember(tx,ctx);const row=await tx.connectorRun.findFirst({where:{id,organizationId:ctx.organizationId},include:{connector:{select:{id:true,organizationId:true,repository:true,branch:true,controlId:true,configuredById:true,provider:true,version:true,enabled:true,lastSuccessAt:true,failureCode:true,intervalHours:true}}}});if(!row)throw new IntelligenceError("Observation not found",404);if(hashValue(row.result)!==row.resultHash)throw new IntelligenceError("Observation integrity check failed",409);
+export async function exportConnectorRun(ctx:AuthorizedContext,id:string,taskId?:string){
+ return transaction(ctx,async tx=>{const actor=await requireMember(tx,ctx);const row=await tx.connectorRun.findFirst({where:{id,organizationId:ctx.organizationId},include:{connector:{select:{id:true,organizationId:true,repository:true,branch:true,controlId:true,configuredById:true,provider:true,version:true,enabled:true,lastSuccessAt:true,failureCode:true,intervalHours:true}}}});if(!row)throw new IntelligenceError("Observation not found",404);
+  if(taskId){
+   const task=await tx.obligation.findFirst({where:{id:taskId,organizationId:ctx.organizationId,connectorId:row.connectorId,
+    category:'Automated evidence follow-up',...(ADMIN.includes(actor.role)?{}:{assigneeId:ctx.userId})},select:{controlId:true}});
+   if(!task?.controlId||!await taskIncludesRun(tx,{organizationId:ctx.organizationId,id:taskId,connectorId:row.connectorId,controlId:task.controlId},row))
+    throw new IntelligenceError('Linked source reading not found',404);
+  }
   const latest=await tx.connectorRun.findFirst({where:{organizationId:ctx.organizationId,connectorId:row.connectorId},orderBy:[{capturedAt:"desc"},{id:"desc"}],select:{id:true}});
   const observation=verifiedObservation(row);
-  let current=!!observation&&connectorProviderEnabled(row.connector.provider)&&observationCurrent(row,row.connector,latest?.id===row.id);
-  if(current&&observation&&row.connector.provider==="UBIBOT"){
+  if(!observation||hashValue(observation)!==row.resultHash)throw new IntelligenceError("Observation integrity check failed",409);
+  let current=connectorProviderEnabled(row.connector.provider)&&observationCurrent(row,row.connector,latest?.id===row.id);
+  if(current&&row.connector.provider==="UBIBOT"){
    current=await calibrationStillCurrent(tx,row.connector,observation);
   }
-  return {format:"regpilot-connector-observation-v1",id:row.id,capturedAt:row.capturedAt,result:row.result,resultHash:row.resultHash,currentAtExport:!!current,limitation:"Integrity hash is not a digital signature. A point-in-time observation does not establish compliance."};
+  if(taskId)await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,entityType:'Obligation',entityId:taskId,
+   action:'connector.reading_exported',details:{runId:row.id,resultHash:row.resultHash}}});
+  return {format:"regpilot-connector-observation-v1",id:row.id,capturedAt:row.capturedAt,result:observation,resultHash:row.resultHash,currentAtExport:!!current,limitation:"Integrity hash is not a digital signature. A point-in-time observation does not establish compliance."};
  });
 }

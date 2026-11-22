@@ -62,6 +62,14 @@ test("five operational sources can be configured, collected and exported within 
         assert.equal((await workInbox(f.st,query)).counts.sources,0);
         assert.equal((await workTask(f.st,task.id)).sourceObservations,null);
         await assert.rejects(workTask(f.out,task.id),rejects(404));
+        assert.equal((await exportConnectorRun(f.ed,run.id,task.id)).id,run.id);
+        await assert.rejects(exportConnectorRun(f.st,run.id,task.id),rejects(404));
+        await assert.rejects(exportConnectorRun(f.o,run.id,f.task.id),rejects(404));
+        await db.obligation.update({where:{id:task.id},data:{assigneeId:f.re.userId}});
+        await assert.rejects(exportConnectorRun(f.ed,run.id,task.id),rejects(404));
+        assert.equal((await workTask(f.ed,task.id)).sourceObservations,null);
+        assert.equal((await exportConnectorRun(f.re,run.id,task.id)).id,run.id);
+        await db.obligation.update({where:{id:task.id},data:{assigneeId:f.ed.userId}});
         const event=await db.automationEvent.findFirstOrThrow({where:{organizationId:f.a.id,runId:after.currentVersionRead}});
         await db.$transaction(tx=>applyConnectorReaction(tx,event));
         const reads=(await workTask(f.ed,task.id)).sourceObservations!;
@@ -70,7 +78,16 @@ test("five operational sources can be configured, collected and exported within 
         assert.doesNotMatch(JSON.stringify(reads),/fictional-connector-token|"observed":/);
         await db.connectorRun.update({where:{id:run.id},data:{signalHash:'0'.repeat(64)}});
         const checked=(await workTask(f.o,task.id)).sourceObservations!;
+        await assert.rejects(exportConnectorRun(f.o,run.id),rejects(409));
         assert.equal(checked.unavailable,1);assert.deepEqual(checked.items.map(r=>r.runId),[after.currentVersionRead]);
+        globalThis.fetch=async()=>Response.json(row.good);
+        await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
+        const recovered=await verifyConnectorNow(f.o,saved.id,renewed.version);
+        assert.equal(recovered.outcome,'OBSERVED');
+        const latest=(await workTask(f.ed,task.id)).sourceObservations!.items[0];
+        assert.equal(latest.exceptionCount,0);assert.equal(latest.changed,true);
+        assert.ok(latest.changes.some(c=>c.before==='FAIL'&&c.after==='PASS'));
+        assert.equal(await db.obligation.count({where:{connectorId:saved.id,status:{not:'COMPLETE'}}}),1);
       }
       await saveConnector(f.o,{...input,id:saved.id,version:renewed.version,token:token+'-replacement'});
       assert.equal((await verificationReceipt(f.o,saved.id)).credentialReplacements.length,1);

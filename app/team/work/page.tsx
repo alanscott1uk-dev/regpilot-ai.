@@ -44,6 +44,16 @@ export default function WorkHub(){
   if(!response.ok)throw new Error(body.error||'The request could not be completed.');
   return body;
  },[]);
+ async function downloadReading(runId:string,linkedTaskId:string){
+  const expectedScope=scope,expectedGeneration=generation.current;
+  try{
+   const receipt=await request('/api/workspace/connectors/runs/'+runId+'?'+new URLSearchParams({organizationId:orgId,taskId:linkedTaskId}));
+   if(identity.current!==expectedScope||generation.current!==expectedGeneration||receipt.id!==runId)return;
+   const href=URL.createObjectURL(new Blob([JSON.stringify(receipt,null,2)],{type:'application/json'}));
+   const link=document.createElement('a');link.href=href;link.download='regpilot-reading-'+runId+'.json';link.click();
+   setTimeout(()=>URL.revokeObjectURL(href),1000);
+  }catch(e){if(identity.current===expectedScope&&generation.current===expectedGeneration)setDetailError(e instanceof Error?e.message:'Could not download this reading.');}
+ }
  function resetWork(){setCreating(false);setDraft({title:'',category:'Internal',notes:'',dueDate:'',assigneeId:''});generation.current++;setLoaded(null);setSelected([]);setPreview(null);setTaskId('');setDetail(null);setNotice('');setError('');setAssignee('keep');setDue('');setReason('');}
  useEffect(()=>{
   let alive=true,serial=0;const abort=new AbortController();let unsubscribe=()=>{};
@@ -175,7 +185,7 @@ export default function WorkHub(){
     <div className={styles.taskLayout}><div className={styles.taskMain}>
      {current.sourceObservations&&<section className={styles.taskSection} aria-label="Source readings"><h3>Source readings for this task</h3>
       {current.sourceObservations.items.map((r,index)=><details key={r.runId} open={index===0}><summary>{new Date(r.capturedAt).toLocaleString('en-GB',{timeZone:'UTC'})} UTC · {r.exceptionCount} of {r.checkCount} checks need review</summary>
-       <p>{r.engine} · Collection <code>{r.runId}</code></p>
+       <p>{r.engine} · <button type="button" className={styles.secondary} onClick={()=>void downloadReading(r.runId,current.task.id)}>Download this reading</button></p>
        {r.changes.length>0&&<><h4>What changed since the previous reading</h4><ul>{r.changes.map((c,i)=><li key={i}>{c.label} · {c.before===c.after?'Recorded value changed':c.before+' → '+c.after}</li>)}</ul>{r.changeCount>r.changes.length&&<p>Showing {r.changes.length} of {r.changeCount} changes.</p>}</>}
        {r.changed&&!r.changes.length&&<p>The collector recorded a change. Open connection history to compare the readings.</p>}
        {!!r.exceptionCount&&<><h4>Checks to review</h4><ul>{r.exceptions.map((c,i)=><li key={i}><strong>{c.label}</strong> · {c.status==='FAIL'?'Failed check':'Evidence unavailable'}{c.nextStep&&<p>{c.nextStep}</p>}</li>)}</ul>{r.exceptionCount>r.exceptions.length&&<p>Showing {r.exceptions.length} of {r.exceptionCount} checks requiring review.</p>}</>}
