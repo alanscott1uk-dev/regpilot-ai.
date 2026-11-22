@@ -23,7 +23,7 @@ type Tx=Prisma.TransactionClient;
 const problem=(message:string)=>new IntelligenceError(message,409);
 const basis=(r:QualityCase)=>({caseId:r.id,cycle:r.cycle,occurredOn:r.occurredAt.toISOString().slice(0,10),impact:r.impact,containment:r.containment,investigation:r.investigationNotes,rootCause:r.rootCause});
 const attachment=z.object({runId:z.uuid(),connectorId:z.uuid(),resultHash:z.string(),signalHash:z.string(),channel:z.string(),serial:z.string(),sampleAt:z.iso.datetime(),temperature:z.string(),
- calibration:z.string(),site:text,stock:z.array(text),stockEvidenceId:z.uuid(),files:reviewedFilesSchema});
+ calibration:z.string(),calibrationApprovalId:z.uuid().optional(),calibrationApproverId:z.uuid().optional(),site:text,stock:z.array(text),stockEvidenceId:z.uuid(),files:reviewedFilesSchema});
 const decision=z.object({disposition:decide.shape.disposition,sourceRef:text,signatory:text,decidedAt:z.iso.datetime(),rationale:z.string(),decisionEvidenceId:z.uuid(),authorityEvidenceId:z.uuid(),
  files:reviewedFilesSchema,basisHash:z.string(),attachmentHash:z.string(),investigation:z.string(),rootCause:z.string()});
 const envelope=z.object({cycle:z.number(),requestHash:z.string(),body:z.unknown(),digest:z.string()});
@@ -79,10 +79,17 @@ export async function excursionCommand(c:AuthorizedContext,id:string,raw:unknown
    const temp=obs?.checks.find(x=>x.id==='logger-temperature'&&x.status==='FAIL'),cert=obs?.checks.find(x=>x.id==='logger-calibration'&&x.status==='PASS');
    if(!run||!obs||!sample||!temp||!cert||run.configVersion!==run.connector.version||!await calibrationStillCurrent(tx,run.connector,obs))throw problem('Select an out-of-range reading with a verified instrument and reviewed calibration.');
    const {scope,record,reference}=readRecordKeys('UBIBOT',run.connector.repository,run.connector.branch),certId=reference!.split('/')[0];
+   const approvalId=cert.observed.split(' · instrument review ').at(-1);
+   const approval=z.uuid().safeParse(approvalId);
+   const instrument=approval.success?await tx.auditEvent.findFirst({where:{id:approval.data,organizationId:c.organizationId,entityType:'EvidenceConnector',entityId:run.connectorId,action:'logger.calibration-approved'},select:{actorId:true}}):null;
+   if(!instrument?.actorId)throw problem('A verified instrument review is required for this reading.');
+   const sampleDate=new Date(sample.observed);
+   const ukDay=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).format(sampleDate);
+   if(ukDay!==basis(row).occurredOn)throw problem('Choose a reading from the UK occurrence date recorded on this deviation.');
    if(certId===d.stockEvidenceId)throw problem('Select separate evidence identifying the affected stock.');
    const files=await reviewedFiles(tx,c.organizationId,[certId,d.stockEvidenceId]);
    const body=attachment.parse({runId:run.id,connectorId:run.connectorId,resultHash:run.resultHash,signalHash:run.signalHash,channel:scope,serial:record,sampleAt:sample.observed,
-    temperature:temp.observed,calibration:cert.observed,site:d.site,stock:d.stock,stockEvidenceId:d.stockEvidenceId,files});
+    temperature:temp.observed,calibration:cert.observed,calibrationApprovalId:approvalId,calibrationApproverId:instrument.actorId,site:d.site,stock:d.stock,stockEvidenceId:d.stockEvidenceId,files});
    return {row,prior,body,files};
   }
   if(!chain.reading)throw problem('Link the calibrated reading and affected stock first.');
@@ -99,7 +106,8 @@ export async function excursionCommand(c:AuthorizedContext,id:string,raw:unknown
   }
   const decided=chain.disposition;
   if(!decided||decided.data.basisHash!==hashValue(basis(row))||decided.data.attachmentHash!==chain.reading.hash)throw problem('A current, verified disposition is required for independent retrieval.');
-  if([row.createdById,row.ownerId,decided.actorId,chain.reading.actorId,...chain.reading.data.files.flatMap(f=>[f.uploadedById,f.reviewerId]),...decided.data.files.flatMap(f=>[f.uploadedById,f.reviewerId])].includes(c.userId))throw new IntelligenceError('A separate assessor must retrieve the investigation.',403);
+  if(!chain.reading.data.calibrationApproverId)throw problem('The independent instrument reviewer is missing from this record.');
+  if([row.createdById,row.ownerId,decided.actorId,chain.reading.actorId,chain.reading.data.calibrationApproverId,...chain.reading.data.files.flatMap(f=>[f.uploadedById,f.reviewerId]),...decided.data.files.flatMap(f=>[f.uploadedById,f.reviewerId])].includes(c.userId))throw new IntelligenceError('A separate assessor must retrieve the investigation.',403);
   await assertReviewedFiles(tx,c.organizationId,decided.data.files);
   return {row,prior,body:{reading:chain.reading,disposition:decided,investigation:basis(row)},files:[...chain.reading.data.files,...decided.data.files]};
  };

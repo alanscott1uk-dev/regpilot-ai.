@@ -1,3 +1,4 @@
+import {trialReading,trialReadings} from './trial-readings';
 import {Prisma} from '@prisma/client';
 import {z} from 'zod';
 import {trialAction,trialCheckpoint,trialStart,trialFinish,trialReview,allTrialTracks as trialTracks} from '../capability-trials';
@@ -11,7 +12,7 @@ const entityType='CapabilityTrial';
 type Tx=Prisma.TransactionClient;
 const data=(v:unknown):Prisma.InputJsonValue=>JSON.parse(JSON.stringify(v));
 const now=()=>new Date();
-const finishData=z.object({input:trialFinish,files:z.array(reviewedFileSchema),elapsedSeconds:z.number().int().nonnegative()});
+const finishData=z.object({input:trialFinish,files:z.array(reviewedFileSchema),readings:z.array(trialReading).optional(),elapsedSeconds:z.number().int().nonnegative()});
 async function load(tx:Tx,c:AuthorizedContext,id:string){
  const events=await tx.auditEvent.findMany({where:{organizationId:c.organizationId,entityType,entityId:id},orderBy:[{createdAt:'asc'},{id:'asc'}]});
  const start=events.find(e=>e.action==='trial.start'),finish=events.find(e=>e.action==='trial.finish');
@@ -40,13 +41,14 @@ export async function trialWorkspace(c:AuthorizedContext,filter:{release?:string
    // Independent reviewers cannot see one another's decisions until submitting their own.
    const own=reviews.find(r=>r.actorId===c.userId),required=plan.steps.includes('answer')?2:1;
    let current=!!result;
-   if(result){try{await assertReviewedFiles(tx,c.organizationId,result.files);await requireMember(tx,{...c,userId:s.actorId});for(const r of reviews)await requireMember(tx,{...c,userId:r.actorId},ADMIN);}catch(e){if(!(e instanceof IntelligenceError))throw e;current=false;}}
+   if(result){try{if(result.readings?.length&&hashValue(await trialReadings(tx,c.organizationId,s.actorId,s.createdAt,stoppedAt?new Date(stoppedAt):finish!.createdAt,plan.track,result.input.results))!==hashValue(result.readings))throw new IntelligenceError('Trial reading changed',409);await assertReviewedFiles(tx,c.organizationId,result.files);await requireMember(tx,{...c,userId:s.actorId});for(const r of reviews)await requireMember(tx,{...c,userId:r.actorId},ADMIN);}catch(e){if(!(e instanceof IntelligenceError))throw e;current=false;}}
    const concluded=reviews.length>=required,show=concluded||!!own||s.actorId===c.userId;
    const accepted=concluded&&current&&reviews.every(r=>trialReview.parse(r.details).decision==='ACCEPT');
    const checkpoints=events.filter(e=>e.entityId===s.entityId&&e.action==='trial.checkpoint').map(e=>{const p=trialCheckpoint.parse(e.details);return {id:e.id,step:p.step,kind:p.kind,note:p.note,at:e.createdAt.toISOString(),elapsedSeconds:Math.max(0,Math.floor((e.createdAt.getTime()-s.createdAt.getTime())/1000))};});
    trials.push({firstTime:plan.firstTime===true,checkpoints,id:s.entityId,stoppedAt,track:plan.track,release:plan.release,environment:plan.environment,intendedUse:plan.intendedUse,ukExternal:plan.ukExternal,steps:plan.steps,participantId:s.actorId,startedAt:s.createdAt.toISOString(),elapsedSeconds:result?.elapsedSeconds??null,results:result?.input.results??[],comparison:result?.input.comparison??null,current,reviewCount:reviews.length,required,accepted,reviewDecisions:show?reviews.map(r=>trialReview.parse(r.details).decision):[],canReview:ADMIN.includes(m.role)&&!!result&&current&&s.actorId!==c.userId&&!own&&!concluded,canFinish:!result&&s.actorId===c.userId});
   }
-  return {organizationId:c.organizationId,canManage:ADMIN.includes(m.role),trials,evidence,limited:starts.length>50,nextCursor:starts.length>50?starts[49].id:null};
+  const activeControl=await tx.managedControl.findFirst({where:{organizationId:c.organizationId,enabled:true},select:{id:true}});
+  return {organizationId:c.organizationId,hasActiveControl:!!activeControl,canManage:ADMIN.includes(m.role),trials,evidence,limited:starts.length>50,nextCursor:starts.length>50?starts[49].id:null};
  });
 }
 export async function recordTrial(c:AuthorizedContext,raw:unknown,store?:EvidenceObjectStore){
@@ -90,22 +92,26 @@ export async function recordTrial(c:AuthorizedContext,raw:unknown,store?:Evidenc
      if(marks.some(p=>p.kind==='HELP')&&!r.assisted)throw new IntelligenceError('Include the help recorded during this task.',409);
     }
    }
-   if(t.plan.steps.length!==d.results.length||t.plan.steps.some(k=>d.results.filter(r=>r.step===k).length!==1)||d.results.some(r=>r.outcome==='PASS'&&!r.evidenceId))throw new IntelligenceError('Record every selected task and attach reviewed evidence to each passing result',400);
+   const readings=await trialReadings(tx,c.organizationId,c.userId,t.start.createdAt,t.stop?.createdAt??now(),t.plan.track,d.results);
+   if(t.plan.steps.length!==d.results.length||t.plan.steps.some(k=>d.results.filter(r=>r.step===k).length!==1)||d.results.some(r=>r.outcome==='PASS'&&!r.evidenceId&&!readings.some(x=>x.step===r.step)))throw new IntelligenceError('Record every selected task and attach reviewed evidence to each passing result',400);
    if(d.comparison&&!t.stop)throw new IntelligenceError('Stop the task timer before recording a comparison',409);
-   const ids=[...new Set([...d.results.flatMap(r=>r.evidenceId?[r.evidenceId]:[]),...(d.comparison?[d.comparison.evidenceId]:[])])];return {t,files:await reviewedFiles(tx,c.organizationId,ids),exists:false};
+   const ids=[...new Set([...d.results.flatMap(r=>r.evidenceId?[r.evidenceId]:[]),...(d.comparison?[d.comparison.evidenceId]:[])])];return {t,readings,files:await reviewedFiles(tx,c.organizationId,ids),exists:false};
   }
   if(!t.result||t.start.actorId===c.userId)throw new IntelligenceError('A different administrator must review the finished run',403);
   const prior=t.reviews.find(r=>r.actorId===c.userId);
   if(prior){if(hashValue(prior.details)!==hashValue(d))throw new IntelligenceError('An independent decision is already recorded',409);return {t,files:t.result.files,exists:true};}
   if(t.reviews.length>=(t.plan.steps.includes('answer')?2:1))throw new IntelligenceError('The required independent decisions have already been recorded',409);
-  if(d.decision==='ACCEPT')await assertReviewedFiles(tx,c.organizationId,t.result.files);
+  if(d.decision==='ACCEPT'){
+   await assertReviewedFiles(tx,c.organizationId,t.result.files);
+   if(t.result.readings?.length&&hashValue(await trialReadings(tx,c.organizationId,t.start.actorId,t.start.createdAt,t.stop?.createdAt??t.finish!.createdAt,t.plan.track,t.result.input.results))!==hashValue(t.result.readings))throw new IntelligenceError('Trial reading changed before assessment',409);
+  }
   return {t,files:t.result.files,exists:false};
  }
  const first=await transaction(c,prepare);if(first.exists)return {id:d.id};
  if(d.action==='FINISH'||d.decision==='ACCEPT')await verifyReviewedBytes(c,first.files,store);
  return transaction(c,async tx=>{
-  const after=await prepare(tx);if(after.exists)return {id:d.id};if(hashValue(after.files)!==hashValue(first.files))throw new IntelligenceError('The evidence changed during review',409);
-  const details=d.action==='FINISH'?{input:d,files:after.files,elapsedSeconds:Math.max(0,Math.floor(((after.t.stop?.createdAt??now()).getTime()-after.t.start.createdAt.getTime())/1000))}:d;
+  const after=await prepare(tx);if(after.exists)return {id:d.id};if(hashValue([after.files,after.readings??[]])!==hashValue([first.files,first.readings??[]]))throw new IntelligenceError('The evidence changed during review',409);
+  const details=d.action==='FINISH'?{input:d,files:after.files,readings:after.readings??[],elapsedSeconds:Math.max(0,Math.floor(((after.t.stop?.createdAt??now()).getTime()-after.t.start.createdAt.getTime())/1000))}:d;
   await tx.auditEvent.create({data:{organizationId:c.organizationId,actorId:c.userId,entityType,entityId:d.id,action:d.action==='FINISH'?'trial.finish':'trial.review',details:data(details)}});return {id:d.id};
  });
 }

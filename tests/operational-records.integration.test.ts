@@ -8,7 +8,7 @@ import {applyConnectorReaction} from '../lib/server/connector-reactions';
 import {verificationReceipt} from '../lib/server/connector-verification';
 import {approveLoggerCalibration} from '../lib/server/logger-calibration';
 import {db} from "../lib/server/db";
-import {saveConnector,verifyConnectorNow,exportConnectorRun} from "../lib/server/connector-service";
+import {saveConnector,verifyConnectorNow,exportConnectorRun,claimConnector,executeConnector} from "../lib/server/connector-service";
 import {assuranceFixture,rejects} from "./helpers/assurance-fixture";
 import {records,token} from "./helpers/operational-record-fixtures";
 
@@ -101,6 +101,21 @@ test("five operational sources can be configured, collected and exported within 
         assert.equal(latest.exceptionCount,0);assert.equal(latest.changed,true);
         assert.ok(latest.changes.some(c=>c.before==='FAIL'&&c.after==='PASS'));
         assert.equal(await db.obligation.count({where:{connectorId:saved.id,status:{not:'COMPLETE'}}}),1);
+        // Exercise two worker dispatches with a simulated interval in this disposable database.
+        await db.connectorRun.update({where:{id:run.id},data:{signalHash:run.signalHash}});
+        const day=86400000;
+        async function due(){
+         const now=Date.now();await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(now-day-1000),nextRunAt:new Date(now-100)}});
+         const job=await claimConnector();assert.equal(job?.id,saved.id);assert.equal(await executeConnector(job!), 'OBSERVED');
+         return db.connectorRun.findUniqueOrThrow({where:{leaseToken:job!.leaseToken!}});
+        }
+        const dayOne=await due();await db.connectorRun.update({where:{id:dayOne.id},data:{capturedAt:new Date(Date.now()-day-1000)}});
+        await due();
+        const staged=await customerSourceProof(f.o,saved.id);assert.equal(staged.depth.cadence,true);assert.equal(staged.qualifies,false);
+        await declareSource(f.ad,{connectionId:saved.id,configVersion:renewed.version,confirm:true,category:'CUSTOMER'});
+        assert.equal((await customerSourceProof(f.o,saved.id)).qualifies,true);
+        await declareSource(f.ad,{connectionId:saved.id,configVersion:renewed.version,confirm:true,category:'STAGING'});
+        assert.equal((await customerSourceProof(f.o,saved.id)).qualifies,false);
       }
       await saveConnector(f.o,{...input,id:saved.id,version:renewed.version,token:token+'-replacement'});
       assert.equal((await verificationReceipt(f.o,saved.id)).credentialReplacements.length,1);
@@ -185,7 +200,8 @@ test('repeated logger collection checks the physical serial, rotated key and cur
   temperature=10;await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
   assert.equal((await verifyConnectorNow(f.o,saved.id,updated.version)).outcome,'FOLLOW_UP');
   const excursion=await db.connectorRun.findFirstOrThrow({where:{connectorId:saved.id},orderBy:{capturedAt:'desc'}});
-  const today=new Date().toISOString().slice(0,10);
+  const sampleAt=new Date(Date.now()-30000);
+  const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(sampleAt));
   const q=await createQualityCase(f.ed,{title:'Fictional storage excursion',kind:'DEVIATION',classification:'MAJOR',requestKey:randomUUID(),
    ownerId:f.ed.userId,occurredAt:today,impact:'The fictional affected lot was segregated pending a decision.',description:'The fixture logger reported a temperature above the site operating limit.',containment:'Segregate the identified stock at the test site until reviewed.'});
   const stock=await f.file(),signed=await f.file(),authority=await f.file();
@@ -202,7 +218,9 @@ test('repeated logger collection checks the physical serial, rotated key and cur
   const independent=await excursionCommand(f.re,q.id,fetchRecord,f.store);
   assert.match(JSON.stringify(independent),/TEST-001/);assert.match(JSON.stringify(independent),/TEST-QD-1/);
   assert.equal((await excursionWorkspace(f.re,q.id)).retrieved.length,1);
+  temperature=4;
   await db.evidence.update({where:{id:file.id},data:{scanStatus:'QUARANTINED'}});
+  await assert.rejects(excursionCommand(f.re,q.id,{...fetchRecord,requestKey:randomUUID()},f.store),rejects(409));
   assert.equal((await exportConnectorRun(f.o,run.id)).currentAtExport,false);
   await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
   assert.equal((await verifyConnectorNow(f.o,saved.id,updated.version)).outcome,'INCOMPLETE');
@@ -347,6 +365,9 @@ test('live publication changes reach a private workspace control and its follow-
       proposalKey:'public-revisions',title:'Reviewed public source revisions',description:'Identify an update requiring review',
       testProcedure:'Compare the real publisher revision with the baseline',theme:'quality',ownerId:f.editor.id,
       scheduledById:f.owner.id,intervalDays:30,nextReviewAt:new Date()}});
+    const {recordTrial,trialWorkspace}=await import('../lib/server/capability-trial-service');
+    const steps=['connect-first','find-failure','export-reading'];
+    const trial=await recordTrial(f.o,{action:'START',requestKey:randomUUID(),release:'a'.repeat(40),track:'operator_pilot',environment:'FIXTURE',ukExternal:false,firstTime:true,steps,intendedUse:'Automated rehearsal against a live publication in a disposable workspace.'});
     const baselines={DAILYMED_LABEL:{record:'34'},EUROPE_PMC:{record:'2021-01-01'},MHRA_GUIDANCE:{reference:'2020-01-01T00:00:00Z'}} as const;
     for(const [provider,baseline] of Object.entries(baselines)){
       const source=referenceRegisters.find(r=>r.provider===provider)!;
@@ -363,6 +384,14 @@ test('live publication changes reach a private workspace control and its follow-
       const receipt=(await workTask(f.ed,task.id)).sourceObservations!;
       assert.equal(receipt.items[0].runId,run.id);assert.ok(receipt.items[0].exceptionCount>0);
       assert.equal((await workTask(f.st,task.id)).sourceObservations,null);
+      if(provider==='DAILYMED_LABEL'){
+       await exportConnectorRun(f.o,run.id,task.id);
+       for(const step of steps)await recordTrial(f.o,{action:'CHECKPOINT',id:trial.id,key:randomUUID(),step,kind:'COMPLETED',note:'Automated rehearsal executed this step.'});
+       await recordTrial(f.o,{action:'STOP',id:trial.id});
+       await recordTrial(f.o,{action:'FINISH',id:trial.id,results:steps.map(step=>({step,runId:run.id,evidenceId:null,outcome:'PASS',notes:'Verified the live label through the source task.',assisted:false,edits:0,unsupported:0}))});
+       await recordTrial(f.ad,{action:'REVIEW',id:trial.id,decision:'ACCEPT',notes:'Verified the scoped collection and authenticated export in the fixture.'});
+       assert.equal((await trialWorkspace(f.o)).trials.find(t=>t.id===trial.id)?.accepted,true);
+      }
     }
   } finally {await f.cleanup();}
 });
