@@ -5,6 +5,7 @@ import type {AuthorizedContext} from './authorization';
 import {requireMember,ADMIN,WRITER} from './workspace-member';
 import {transaction,IntelligenceError} from './intelligence-service';
 import {hashValue} from '../regulatory/intelligence';
+import {taskObservations} from './connector-task-observations';
 import {currentAssessment} from './assurance-service';
 import {completionContext,completionTaskRecord} from './work-completion-service';
 import {WORK_PAGE_SIZE,parseWorkPlan,parseWorkStart,parseWorkCreate,planningBlock,taskWorkflow,workUuid,type WorkQuery,type WorkProgress} from '../work-hub.mjs';
@@ -27,9 +28,10 @@ function reviewWhere(ctx:AuthorizedContext,isAdmin:boolean):Prisma.ObligationWhe
  // checks currentness; dropping it from this queue would hide the unresolved decision.
  return {OR:[{evidence:{some:files}},{assuranceAssessments:{some:assessments}}]};
 }
-function inboxWhere(ctx:AuthorizedContext,query:WorkQuery,now:Date,reviews:Prisma.ObligationWhereInput):Prisma.ObligationWhereInput {
+function inboxWhere(ctx:AuthorizedContext,query:WorkQuery,now:Date,reviews:Prisma.ObligationWhereInput,sourceScope:Prisma.ObligationWhereInput):Prisma.ObligationWhereInput {
  const {day}=dayWindow(now);
  const base:Prisma.ObligationWhereInput={organizationId:ctx.organizationId,status:query.view==='complete'?'COMPLETE':{not:'COMPLETE'}};
+ if(query.view==='sources')Object.assign(base,sourceScope);
  if(query.view==='mine')base.assigneeId=ctx.userId;
  if(query.view==='unassigned')base.assigneeId=null;
  if(query.view==='overdue')base.dueDate={lt:day};
@@ -84,12 +86,14 @@ export async function workInbox(ctx:AuthorizedContext,query:WorkQuery,now=new Da
   const actor=await requireMember(tx,ctx),{day}=dayWindow(now);
   const isAdmin=ADMIN.includes(actor.role);
   // Review belongs to its file/assessment. Closing a task does not dispose of a pending review.
-  const reviews=reviewWhere(ctx,isAdmin),where=inboxWhere(ctx,query,now,reviews);
+  const sourceScope:Prisma.ObligationWhereInput={category:'Automated evidence follow-up',connectorId:{not:null},...(isAdmin?{}:{assigneeId:ctx.userId})};
+  const reviews=reviewWhere(ctx,isAdmin),where=inboxWhere(ctx,query,now,reviews,sourceScope);
   const scope={organizationId:ctx.organizationId},open={...scope,status:{not:'COMPLETE' as const}};
-  const [total,allOpen,mine,overdue,unassigned,review,complete,members]=await Promise.all([
+  const [total,allOpen,mine,overdue,unassigned,review,sources,complete,members]=await Promise.all([
    tx.obligation.count({where}),tx.obligation.count({where:open}),tx.obligation.count({where:{...open,assigneeId:ctx.userId}}),
    tx.obligation.count({where:{...open,dueDate:{lt:day}}}),tx.obligation.count({where:{...open,assigneeId:null}}),
    tx.obligation.count({where:{...scope,...reviews}}),
+   tx.obligation.count({where:{...open,...sourceScope}}),
    tx.obligation.count({where:{...scope,status:'COMPLETE'}}),
    tx.membership.findMany({where:{...scope,role:{in:['OWNER','ADMIN','EDITOR']}},orderBy:{userId:'asc'},take:201,select:{role:true,user:{select:{id:true,email:true}}}})
   ]);
@@ -102,7 +106,7 @@ export async function workInbox(ctx:AuthorizedContext,query:WorkQuery,now=new Da
    return {...safeTask,evidenceToReview:evidence.length>0,reviewKinds:{files:observed.reviewableFiles,assessments:!!observed.reviewId},planningBlocked:planningBlock(task),canPlan:isAdmin&&!planningBlock(task),workflow:taskWorkflow(safeTask,ctx.organizationId,progressFor(task,observed,actor.role))};
   });
   return {organizationId:ctx.organizationId,actorId:ctx.userId,role:actor.role,items,total,page,pages,pageSize:WORK_PAGE_SIZE,query:{...query,page},
-   counts:{open:allOpen,mine,overdue,unassigned,review,complete},members:members.slice(0,200),membersLimited:members.length>200,generatedAt:now.toISOString()};
+   counts:{open:allOpen,mine,overdue,unassigned,review,sources,complete},members:members.slice(0,200),membersLimited:members.length>200,generatedAt:now.toISOString()};
  },{isolationLevel:'RepeatableRead',timeout:12000});
 }
 /** Select metadata explicitly: storage keys, bytes, raw AI output and provider secrets never enter this response. */
@@ -128,6 +132,8 @@ export async function workTask(ctx:AuthorizedContext,id:string) {
    select:{id:true,cycle:true,kind:true,qualityCase:{select:{id:true,title:true,status:true,cycle:true}}}});
   const relatedQualityCases=qualityLinks.slice(0,10).map(({id:actionId,cycle,kind,qualityCase})=>({id:qualityCase.id,title:qualityCase.title,status:qualityCase.status,actionId,actionKind:kind,actionCycle:cycle,currentCycle:qualityCase.cycle,href:'/team/quality?'+new URLSearchParams({organizationId:ctx.organizationId,caseId:qualityCase.id})}));
   const isAdmin=ADMIN.includes(actor.role),{evidence,...task}=record;
+  const sourceObservations=(isAdmin||task.assigneeId===ctx.userId)&&task.category==='Automated evidence follow-up'&&task.connectorId&&task.controlId
+   ?await taskObservations(tx,{organizationId:ctx.organizationId,id,controlId:task.controlId,connectorId:task.connectorId}):null;
   const safeTask={...task,changeAction:isAdmin||task.assigneeId===ctx.userId?task.changeAction:null};
   const observed=(await progressRows(tx,ctx,[id],isAdmin)).get(id)!,progress=progressFor(task,observed,actor.role);
   if(!task.changeAction&&!task.auditRequest&&!task.accessItem&&task.status!=='COMPLETE'){
@@ -141,7 +147,7 @@ export async function workTask(ctx:AuthorizedContext,id:string) {
     progress.assessment.current=checked.valid;progress.assessment.reason=checked.reason;
    }else if(!assessment){progress.assessment.current=false;progress.assessment.reason='The saved assessment is unavailable. Refresh its task context.';}
   }
-  return {integrationReceipts,organizationId:ctx.organizationId,task:{...safeTask,evidence:evidence.slice(0,50)},evidenceLimited:evidence.length>50,history:history.slice(0,30),historyLimited:history.length>30,
+  return {sourceObservations,integrationReceipts,organizationId:ctx.organizationId,task:{...safeTask,evidence:evidence.slice(0,50)},evidenceLimited:evidence.length>50,history:history.slice(0,30),historyLimited:history.length>30,
    relatedRisks,relatedRisksLimited:riskLinks.length>10,
    relatedQualityCases,relatedQualityCasesLimited:qualityLinks.length>10,
    reviewKinds:{files:observed.reviewableFiles,assessments:!!observed.reviewId},planningBlocked:planningBlock(task),canPlan:isAdmin&&!planningBlock(task),canStart:WRITER.includes(actor.role)&&task.status==='OPEN'&&!planningBlock(task),workflow:taskWorkflow(safeTask,ctx.organizationId,progress)};

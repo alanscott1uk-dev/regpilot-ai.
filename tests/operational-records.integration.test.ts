@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import {workInbox,workTask} from '../lib/server/work-hub-service';
+import {applyConnectorReaction} from '../lib/server/connector-reactions';
 import {verificationReceipt} from '../lib/server/connector-verification';
 import {approveLoggerCalibration} from '../lib/server/logger-calibration';
 import {db} from "../lib/server/db";
@@ -52,6 +54,24 @@ test("five operational sources can be configured, collected and exported within 
       const after=await verificationReceipt(f.o,saved.id);
       assert.equal(after.verifiedReadsInWindow,2);
       assert.ok(after.currentVersionRead&&after.credentialReplacements[0].after===after.currentVersionRead);
+      if(row===records[0]){
+        const task=await db.obligation.findFirstOrThrow({where:{organizationId:f.a.id,connectorId:saved.id}});
+        const query={view:'sources' as const,q:'',page:1};
+        const inbox=await workInbox(f.ed,query);
+        assert.equal(inbox.counts.sources,1);assert.equal(inbox.items[0].id,task.id);
+        assert.equal((await workInbox(f.st,query)).counts.sources,0);
+        assert.equal((await workTask(f.st,task.id)).sourceObservations,null);
+        await assert.rejects(workTask(f.out,task.id),rejects(404));
+        const event=await db.automationEvent.findFirstOrThrow({where:{organizationId:f.a.id,runId:after.currentVersionRead}});
+        await db.$transaction(tx=>applyConnectorReaction(tx,event));
+        const reads=(await workTask(f.ed,task.id)).sourceObservations!;
+        assert.deepEqual(reads.items.map(r=>r.runId),[after.currentVersionRead,run.id]);
+        assert.equal(reads.unavailable,0);assert.ok(reads.items.every(r=>r.exceptionCount>0));
+        assert.doesNotMatch(JSON.stringify(reads),/fictional-connector-token|"observed":/);
+        await db.connectorRun.update({where:{id:run.id},data:{signalHash:'0'.repeat(64)}});
+        const checked=(await workTask(f.o,task.id)).sourceObservations!;
+        assert.equal(checked.unavailable,1);assert.deepEqual(checked.items.map(r=>r.runId),[after.currentVersionRead]);
+      }
       await saveConnector(f.o,{...input,id:saved.id,version:renewed.version,token:token+'-replacement'});
       assert.equal((await verificationReceipt(f.o,saved.id)).credentialReplacements.length,1);
     }
@@ -289,6 +309,10 @@ test('live publication changes reach a private workspace control and its follow-
       assert.equal((await exportConnectorRun(f.o,run.id)).currentAtExport,true);
       await assert.rejects(exportConnectorRun(f.out,run.id),rejects(404));
       assert.equal(await db.obligation.count({where:{organizationId:f.a.id,connectorId:connection.id,status:{not:'COMPLETE'}}}),1);
+      const task=await db.obligation.findFirstOrThrow({where:{organizationId:f.a.id,connectorId:connection.id}});
+      const receipt=(await workTask(f.ed,task.id)).sourceObservations!;
+      assert.equal(receipt.items[0].runId,run.id);assert.ok(receipt.items[0].exceptionCount>0);
+      assert.equal((await workTask(f.st,task.id)).sourceObservations,null);
     }
   } finally {await f.cleanup();}
 });

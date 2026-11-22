@@ -301,8 +301,13 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector){
    const checked=job.provider==="UBIBOT"?await applyLoggerCalibration(tx,job,result):result;
    const reconciled=reconcileObservation(checked,trustedPrevious);
    const outcome=observationOutcome(reconciled),signalHash=hashValue({engine:reconciled.engine,checks:reconciled.checks});
-   const changes=previous&&previous.configVersion===job.version&&hashValue(previous.result)===previous.resultHash?signalChanges(reconciled,previous.result as unknown as Observation):[];
+   const changes=signalChanges(reconciled,trustedPrevious);
    const run=await tx.connectorRun.create({data:{organizationId:job.organizationId,connectorId:job.id,leaseToken:job.leaseToken!,configVersion:job.version,result:j(reconciled),resultHash:hashValue(reconciled),signalHash,outcome}});
+   if(previous&&trustedPrevious&&changes.length){
+    await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:'connector.compared',entityType:'ConnectorRun',entityId:run.id,
+     details:{connectorId:job.id,baselineId:previous.id,baselineHash:previous.resultHash,resultHash:run.resultHash,
+      checks:changes.map(({id,label,before,after})=>({id,label,before,after}))}}});
+   }
    await enqueueConnectorEvent(tx,job,{kind:'CONNECTOR_OBSERVED',runId:run.id,fingerprint:signalHash,changed:changes.length>0});
    await enqueueConnectorObservationDelivery(tx,job,run);
    const current=await tx.evidenceConnector.findUniqueOrThrow({where:{id:job.id},select:{eventRevision:true}});

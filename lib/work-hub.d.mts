@@ -1,4 +1,4 @@
-export type WorkView='open'|'mine'|'overdue'|'unassigned'|'review'|'complete';
+export type WorkView='open'|'mine'|'overdue'|'unassigned'|'review'|'sources'|'complete';
 export const WORK_VIEWS:Readonly<Record<WorkView,string>>;
 export const WORK_PAGE_SIZE:25;
 export class WorkInputError extends Error { status:number; constructor(message:string,status?:number); }

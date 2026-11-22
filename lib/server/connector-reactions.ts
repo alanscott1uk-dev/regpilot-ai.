@@ -1,7 +1,8 @@
 import {settleLeaverFollowUp} from "./leaver-follow-up";
+import {recordTaskObservation} from './connector-task-observations';
 import {verifiedObservation} from './connector-observation';
 import {connectorControlIds} from './connector-scope';
-import {Prisma,type EvidenceConnector,type AutomationEvent} from '@prisma/client';
+import {Prisma,type EvidenceConnector,type AutomationEvent,type ConnectorRun} from '@prisma/client';
 import {IntelligenceError} from './intelligence-service';
 import {requireMember,ADMIN,WRITER} from './workspace-member';
 import {connectorProviderEnabled} from './connector-flags';
@@ -10,14 +11,18 @@ import {hashValue} from '../regulatory/intelligence';
 import {observationOutcome} from '../connectors/observation';
 export class ReactionInvalid extends Error {constructor(public code:'INPUT_INTEGRITY_FAILED'|'EVENT_KIND_UNSUPPORTED'){super('Automation input requires review');}}
 export class ReactionPaused extends Error{}
-export async function followUpConnectorControls(tx:Prisma.TransactionClient,job:EvidenceConnector,reason:string,onlyControlIds?:string[]){
+export async function followUpConnectorControls(tx:Prisma.TransactionClient,job:EvidenceConnector,reason:string,onlyControlIds?:string[],trigger?:{run:ConnectorRun;changed:boolean}){
  const ids=onlyControlIds||await connectorControlIds(tx,job.organizationId,job.id,job.controlId);
  const controls=await tx.managedControl.findMany({where:{id:{in:ids},organizationId:job.organizationId,enabled:true},include:{owner:{select:{email:true}}},orderBy:{id:'asc'}});
  let created=0;
  for(const control of controls){
   try{await requireMember(tx,{organizationId:job.organizationId,userId:control.ownerId,role:'EDITOR'},WRITER);}catch(e){if(e instanceof IntelligenceError&&e.status===403)continue;throw e;}
-  if(await tx.obligation.findFirst({where:{organizationId:job.organizationId,connectorId:job.id,controlId:control.id,status:{not:'COMPLETE'}}}))continue;
-  await tx.obligation.create({data:{organizationId:job.organizationId,title:('Review connected evidence: '+control.title).slice(0,160),ownerName:control.owner.email,assigneeId:control.ownerId,controlId:control.id,connectorId:job.id,category:'Automated evidence follow-up',dueDate:new Date(),notes:reason+' Review the connection history in Operations. This is an operational review target, not a legal deadline or compliance verdict.'}});created++;
+  const existing=await tx.obligation.findFirst({where:{organizationId:job.organizationId,connectorId:job.id,controlId:control.id,status:{not:'COMPLETE'}},orderBy:[{createdAt:'asc'},{id:'asc'}],select:{id:true,category:true}});
+  const task=existing??await tx.obligation.create({data:{organizationId:job.organizationId,title:('Review connected evidence: '+control.title).slice(0,160),ownerName:control.owner.email,assigneeId:control.ownerId,controlId:control.id,connectorId:job.id,category:'Automated evidence follow-up',dueDate:new Date(),notes:reason+' Review the collection and record your decision.'},select:{id:true,category:true}});
+  if(!existing)created++;
+  if(trigger&&task.category==='Automated evidence follow-up'){
+   await recordTaskObservation(tx,job.configuredById,{id:task.id,organizationId:job.organizationId,connectorId:job.id,controlId:control.id},trigger.run,trigger.changed);
+  }
  }
  return created;
 }
@@ -41,8 +46,8 @@ export async function applyConnectorReaction(tx:Prisma.TransactionClient,event:A
    const settlement=await settleLeaverFollowUp(tx,job,run,observation);
    if(settlement==="SUPERSEDED")return "CANCELLED";
    if(settlement==="VERIFIED")return "DONE";
-   await followUpConnectorControls(tx,job,"Verify the effective BambooHR termination, linked Jira issue and disabled Microsoft identity.");
-  }else if(run.outcome!=='OBSERVED'||event.changed)await followUpConnectorControls(tx,job,event.changed?'Observed signals changed since the last collection. Check the before/after values and remaining gaps.':'The collection contains failing or unknown signals requiring investigation.');
+   await followUpConnectorControls(tx,job,"Verify the effective BambooHR termination, linked Jira issue and disabled Microsoft identity.",undefined,{run,changed:event.changed});
+  }else if(run.outcome!=='OBSERVED'||event.changed)await followUpConnectorControls(tx,job,event.changed?'Observed signals changed since the last collection. Check the before/after values and remaining gaps.':'The collection contains failing or unknown signals requiring investigation.',undefined,{run,changed:event.changed});
   await followUpVendorSignals(tx,ctx,job,event.fingerprint);
  }else if(event.kind==='CONNECTOR_FAILED'){
   // Recovered collections supersede old failures; do not create stale failure tasks.

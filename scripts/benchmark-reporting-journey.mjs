@@ -66,5 +66,12 @@ export async function benchmarkReportingJourney({review,db,app,org,control,machi
   assert.equal(board.rows[0].billSample.prior,'2025-12');assert.equal(board.rows[0].billSample.currentPence,null);
   assert.ok(board.calculatedAt);assert.ok(Array.isArray(board.rows[0].riskLines));assert.match(board.digest,/^[a-f0-9]{64}$/);
   passed('The audited group report exported the chosen organisation, both calendar periods, unknown observed expenditure and the report digest.');
+  await checkpoint('open the source follow-up queue from Connections');
+  await page.goto(app+'/team/operations'+query+'&view=connections');
+  await page.getByRole('link',{name:'Review source follow-ups'}).click();
+  await page.getByRole('button',{name:/Source follow-ups/,pressed:true}).waitFor();
+  assert.equal(new URL(page.url()).searchParams.get('organizationId'),org.id);
+  await page.getByRole('button',{name:'Next page'}).waitFor();
+  passed('The Connections link opened the active workspace’s filtered source follow-up queue.');
  }finally{await page.close();}
 }
