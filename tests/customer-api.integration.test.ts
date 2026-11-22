@@ -287,3 +287,27 @@ test('shipment discrepancies produce owned follow-up and exact serial lookup rec
   assert.deepEqual(await lookup(pack('Case-A')),[]);
  }finally{await f.cleanup();}
 });
+
+test('private AI client negotiates MCP, sees granted tools only, reads scoped data and loses access immediately after revocation',async()=>{
+ const {POST}=await import('../app/api/v1/mcp/route');
+ const {GET:plugin}=await import('../app/api/v1/mcp/plugin/route');
+ const f=await fixture();
+ try{
+  const key=await f.create(['controls:read']);
+  const call=(rpc:object,token=key.secret,origin='')=>POST(new Request('https://regpilot.example/api/v1/mcp',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token,...(origin?{Origin:origin}:{})},body:JSON.stringify({jsonrpc:'2.0',...rpc})}));
+  const init={id:1,method:'initialize',params:{protocolVersion:'2025-11-25'}};
+  assert.equal((await (await call(init)).json()).result.protocolVersion,'2025-11-25');
+  assert.equal((await call({method:'notifications/initialized'})).status,202);
+  const list=await (await call({id:2,method:'tools/list'})).json();
+  assert.deepEqual(list.result.tools.map((r:{name:string})=>r.name),['list_controls']);
+  const read=await (await call({id:3,method:'tools/call',params:{name:'list_controls',arguments:{limit:5}}})).json();
+  assert.deepEqual(JSON.parse(read.result.content[0].text).data.map((row:{id:string})=>row.id),[f.primary.id]);
+  assert.equal((await (await call({id:4,method:'tools/call',params:{name:'list_tasks'}})).json()).error.code,-32602);
+  assert.equal((await call(init,key.secret,'https://foreign.example')).status,403);
+  const archive=plugin(new Request('https://regpilot.example/api/v1/mcp/plugin'));
+  assert.equal(archive.headers.get('content-type'),'application/zip');
+  const bytes=Buffer.from(await archive.arrayBuffer());assert.equal(bytes.readUInt32LE(0),0x04034b50);assert.ok(bytes.includes(Buffer.from('https://regpilot.example/api/v1/mcp')));assert.ok(!bytes.includes(Buffer.from(key.secret!)));
+  await changeCustomerCredential(f.o,key.id,{action:'REVOKE',version:key.version,requestKey:randomUUID(),confirm:true});
+  assert.equal((await call(init)).status,401);
+ }finally{await f.cleanup();}
+});

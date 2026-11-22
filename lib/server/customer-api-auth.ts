@@ -29,7 +29,7 @@ export async function currentCustomerApiPrincipal(tx:Tx,session:CustomerApiSessi
 }
 /** Admission reserves one persisted per-client and company rate unit. Business operations
  * revalidate the exact key/version and issuer authority in their own short transaction. */
-export async function authenticateCustomerApi(request:Request,scope:CustomerApiScope):Promise<CustomerApiSession>{
+export async function authenticateCustomerApi(request:Request,scope:CustomerApiScope|readonly CustomerApiScope[]):Promise<CustomerApiSession&{grantedScopes:string[]}>{
  assertEnabled();const header=request.headers.get('authorization')||'',match=/^Bearer (rpk_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_[A-Za-z0-9_-]{43})$/.exec(header);if(!match)throw unavailable();
  const credential=await db.customerApiCredential.findUnique({where:{id:match[2]},select:{id:true,organizationId:true,issuedById:true,secretHash:true,version:true}}),hashed=secretHash(match[1]);if(!credential||!equal(credential.secretHash,hashed))throw unavailable();
  const session:CustomerApiSession={credentialId:credential.id,organizationId:credential.organizationId,issuedById:credential.issuedById,version:credential.version,tokenHash:hashed,rate:{limit:0,remaining:0,reset:0}},now=Date.now(),minute=new Date(Math.floor(now/60000)*60000),reset=minute.getTime()/1000+60;
@@ -41,9 +41,9 @@ export async function authenticateCustomerApi(request:Request,scope:CustomerApiS
   }
   await tx.customerApiCredential.update({where:{id:session.credentialId},data:{lastUsedAt:new Date()}});
   await tx.customerApiBudget.deleteMany({where:{organizationId:session.organizationId,minute:{lt:new Date(minute.getTime()-86400000)}}});
-  return {allowed:principal.credential.scopes.includes(scope),rate:{limit:CUSTOMER_API_LIMITS.requestsPerKeyMinute,remaining:Math.min(...counts),reset}};
+  return {allowed:(typeof scope==='string'?[scope]:scope).some(value=>principal.credential.scopes.includes(value)),grantedScopes:principal.credential.scopes,rate:{limit:CUSTOMER_API_LIMITS.requestsPerKeyMinute,remaining:Math.min(...counts),reset}};
  });
- if(!admitted.allowed)throw new CustomerApiError('This credential does not grant the required scope',403,'insufficient_scope');return {...session,rate:admitted.rate};
+ if(!admitted.allowed)throw new CustomerApiError('This credential does not grant the required scope',403,'insufficient_scope');return {...session,rate:admitted.rate,grantedScopes:admitted.grantedScopes};
 }
 export function customerApiTransaction<T>(session:CustomerApiSession,scope:CustomerApiScope,fn:(tx:Tx,principal:CustomerApiPrincipal)=>Promise<T>){return transaction({organizationId:session.organizationId,userId:session.issuedById,role:'ADMIN'},async tx=>fn(tx,await currentCustomerApiPrincipal(tx,session,scope)));}
 
