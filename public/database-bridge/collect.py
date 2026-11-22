@@ -2,7 +2,6 @@
 import argparse
 import hashlib
 import json
-import math
 from decimal import Decimal, InvalidOperation
 import os
 import re
@@ -142,6 +141,103 @@ def numeric_bounds(minimum, maximum):
         raise CollectionError("Supply finite numeric limits in ascending order.") from None
 
 
+def resource_reference(value):
+    # Only an explicitly selected, printable source identifier may leave the host.
+    if type(value) is int and len(str(value)) <= 32:
+        return str(value)
+    if type(value) is str and 0 < len(value) <= 96 and value.strip() == value and value.isprintable():
+        encoded = json.dumps(value, ensure_ascii=False)
+        return encoded if len(encoded.encode("utf-16-le")) <= 280 else None
+    return None
+
+
+class ResourceFindings:
+    limit = 16
+
+    def __init__(self, pointer, instance, tracked, definition, control, rule):
+        self.path = rule_path(None, pointer)
+        if not instance or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", instance):
+            raise CollectionError("Supply a stable source instance name with --instance.")
+        self.tracked = [resource_reference(json.loads(value)) for value in tracked]
+        if (None in self.tracked or len(self.tracked) > self.limit or
+                len(set(self.tracked)) != len(self.tracked)):
+            raise CollectionError("Select up to 16 distinct string or integer resource IDs.")
+        scope = json.dumps([definition, control, instance, self.path, rule], ensure_ascii=False,
+                           separators=(",", ":"), allow_nan=False).encode()
+        self.scope = hashlib.sha256(scope).hexdigest()[:32]
+        self.results = {}
+        self.unidentified = 0
+        self.duplicates = set()
+
+    def observe(self, record, outcome):
+        reference = resource_reference(lookup(record, self.path))
+        if reference is None:
+            self.unidentified += 1
+        elif reference in self.results:
+            self.duplicates.add(reference)
+            self.results[reference] = "UNKNOWN"
+        elif len(self.results) >= 20000:
+            raise CollectionError("Resource findings support 20,000 identities per scan. Narrow the source view.")
+        else:
+            self.results[reference] = outcome
+
+    def checks(self):
+        rank = {"FAIL": 0, "UNKNOWN": 1, "PASS": 2}
+        selected = dict.fromkeys(self.tracked)
+        for reference in sorted(self.results, key=lambda ref: (rank[self.results[ref]], ref)):
+            if len(selected) == self.limit:
+                break
+            selected[reference] = None
+        shown = sum(ref in self.results for ref in selected)
+        omitted = len(self.results) - shown
+        summary = {"identified": len(self.results), "shown": shown, "omitted": omitted,
+                   "unidentifiedRows": self.unidentified, "duplicateIds": len(self.duplicates)}
+        checks = [{"key": "resource-coverage", "label": "Resource identification and display coverage",
+                   "status": "UNKNOWN" if self.unidentified or self.duplicates or not self.results else "PASS",
+                   "observed": json.dumps(summary),
+                   "detail": "All rows contribute to the aggregate rule. Track a specific ID to keep it visible on later reads."}]
+        for reference in selected:
+            status = self.results.get(reference, "UNKNOWN")
+            reason = ("Resource absent from this read." if reference not in self.results else
+                      "Multiple records have this identifier." if reference in self.duplicates else
+                      {"PASS": "Resource met the rule.", "FAIL": "Resource failed the rule.",
+                       "UNKNOWN": "The control field was missing or invalid."}[status])
+            key = hashlib.sha256((self.scope + "/" + reference).encode()).hexdigest()
+            # Long or heavily escaped references still fit the observation API's label limit.
+            checks.append({"key": "item-" + key, "label": ("Resource " + reference)[:155],
+                           "status": status, "observed": reason, "detail": "Resource ID (JSON): " + reference})
+        return checks
+
+
+def apply_test_definition(args, plan):
+    path = getattr(args, "test_definition", None)
+    if not path:
+        return
+    if path.stat().st_size > 8192:
+        raise CollectionError("The test definition exceeds 8 KiB.")
+    test = json.loads(path.read_text())
+    if not isinstance(test, dict) or test.get("format") != "regpilot-source-test-v1":
+        raise CollectionError("Unsupported test definition.")
+    if test.get("definitionId") != plan["definitionId"] or test.get("version") != plan["version"]:
+        raise CollectionError("Select the source and version named in the test definition.")
+    mapping = {"stream":"stream", "namespace":"namespace", "control":"control", "pointer":"pointer",
+               "expected":"expected", "minimum":"minimum", "maximum":"maximum",
+               "instance":"instance", "resourcePointer":"resource_pointer"}
+    if set(test) - (set(mapping) | {"definitionId", "format", "version", "name"}):
+        raise CollectionError("Unknown test definition option.")
+    name = test.get("name")
+    if not isinstance(name, str) or not name.strip() or len(name) > 100 or not name.isprintable():
+        raise CollectionError("Enter a printable test name of up to 100 characters.")
+    if args.check_access or args.list_streams or args.field is not None or any(getattr(args, key, None) is not None for key in mapping.values()):
+        raise CollectionError("Use a test definition or individual rule settings.")
+    for field, attribute in mapping.items():
+        value = test.get(field)
+        if value is not None and (not isinstance(value, str) or len(value) > 600):
+            raise CollectionError("Invalid value in test definition.")
+        setattr(args, attribute, value)
+    args.test_name = name.strip()
+
+
 def run(args):
     plan = json.loads(args.plan.read_text())
     if plan.get("format") == "regpilot-airbyte-manifest-v1":
@@ -153,6 +249,7 @@ def run(args):
         plan = candidates[0]
     elif args.source and str(UUID(args.source)) != plan.get("definitionId"):
         raise CollectionError("The selected source differs from the downloaded plan.")
+    apply_test_definition(args, plan)
     pinned = pin_image(plan, args.digest)
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}", args.network) or args.network in ("host", "none"):
         raise CollectionError("Select a bridge network with authorised source access.")
@@ -194,10 +291,13 @@ def run(args):
             policy = ["range",parts,str(bounds[0]),str(bounds[1])]
             description = "Inclusive numeric limits on "+selector
         else:
-            expected = json.loads(args.expected) if args.expected is not None else None
-            if type(expected) not in (str,bool,int,float) or (type(expected) is float and not math.isfinite(expected)):
+            expected = json.loads(args.expected, parse_float=Decimal) if args.expected is not None else None
+            if type(expected) not in (str, bool, int, Decimal) or isinstance(expected, Decimal) and not expected.is_finite():
                 raise CollectionError("Supply an expected JSON string, finite number or boolean.")
-            policy = [args.field,expected] if args.field else ["pointer",parts,expected]
+            if isinstance(expected, Decimal):
+                policy = ["number-equals", parts, str(expected)]
+            else:
+                policy = [args.field,expected] if args.field else ["pointer",parts,expected]
             description = "Typed equality on "+selector
         chosen = [s for s in streams if s["name"] == args.stream and s.get("namespace") == args.namespace
                   and "full_refresh" in s.get("supported_sync_modes", [])]
@@ -208,6 +308,13 @@ def run(args):
         counts = {"matched": 0, "different": 0, "missing": 0}
         if bounds:
             counts["invalid"] = 0
+        policy_scope = [args.namespace, args.stream, *policy]
+        pointer = getattr(args, "resource_pointer", None)
+        instance = getattr(args, "instance", None)
+        tracked = getattr(args, "track", None) or []
+        if not pointer and (instance or tracked):
+            raise CollectionError("--instance and --track require --resource-pointer.")
+        findings = ResourceFindings(pointer, instance, tracked, plan["definitionId"], control, policy_scope) if pointer else None
         def checked(msg):
             if msg.get("type") != "RECORD":
                 return
@@ -216,17 +323,20 @@ def run(args):
                 raise CollectionError("A record differed from the selected stream.")
             actual = lookup(row["data"],parts)
             if actual is None:
-                counts["missing"] += 1
+                category = "missing"
             elif bounds:
-                if type(actual) not in (int,Decimal) or not Decimal(actual).is_finite():
-                    counts["invalid"] += 1
+                if type(actual) not in (int, Decimal) or not Decimal(actual).is_finite():
+                    category = "invalid"
                 else:
-                    counts["matched" if bounds[0] <= actual <= bounds[1] else "different"] += 1
-            elif type(actual) is type(expected) and actual == expected:
-                counts["matched"] += 1
+                    category = "matched" if bounds[0] <= actual <= bounds[1] else "different"
+            elif type(expected) in (int, Decimal) and type(actual) in (int, Decimal):
+                category = "matched" if actual == expected else "different"
             else:
-                counts["different"] += 1
-        protocol(pinned, args.network, config, "read", checked, selected, decimal_records=bounds is not None)
+                category = "matched" if type(actual) is type(expected) and actual == expected else "different"
+            counts[category] += 1
+            if findings:
+                findings.observe(row["data"], {"matched": "PASS", "different": "FAIL"}.get(category, "UNKNOWN"))
+        protocol(pinned, args.network, config, "read", checked, selected, decimal_records=True)
     total = sum(counts.values())
     status = "FAIL" if counts["different"] else "UNKNOWN" if not total or counts["missing"] or counts.get("invalid") else "PASS"
     rule = json.dumps([args.namespace, args.stream, *policy], ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
@@ -242,6 +352,14 @@ def run(args):
                             "observed": str(total), "detail": "Records returned by a completed full refresh."},
                            {"key": "row-rule", "label": "Configured field comparison", "status": status, "observed": json.dumps(counts),
                             "detail": description + ". Rule and stream SHA-256 " + fingerprint + "."}]}}
+    if getattr(args, "test_name", None):
+        envelope["body"]["summary"] = "Operator-run source monitoring test: " + args.test_name
+    if findings:
+        body = envelope["body"]
+        body["externalId"] = "/".join(["dbsync", plan["definitionId"], findings.scope, key])
+        body["checks"].extend(findings.checks())
+        statuses = {check["status"] for check in body["checks"]}
+        status = "FAIL" if "FAIL" in statuses else "UNKNOWN" if "UNKNOWN" in statuses else "PASS"
     payload = json.dumps(envelope, allow_nan=False, indent=2).encode()
     # Publish a complete new envelope without overwriting a previous retry key.
     with tempfile.NamedTemporaryFile(dir=args.output.parent, delete=False) as stage:
@@ -268,6 +386,10 @@ if __name__ == "__main__":
     mode.add_argument("--check-access", action="store_true")
     for flag in ("stream", "namespace", "field", "pointer", "expected", "minimum", "maximum", "control"):
         parser.add_argument("--" + flag)
+    parser.add_argument("--test-definition", type=Path, help="Run a monitoring test downloaded from the source catalogue.")
+    parser.add_argument("--resource-pointer", help="Opt in to reporting resource IDs from this JSON Pointer.")
+    parser.add_argument("--instance", help="Stable name for this source account or installation.")
+    parser.add_argument("--track", action="append", help="Keep this JSON string or integer ID visible on every scan.")
     parser.add_argument("--output", type=Path)
     try:
         print(json.dumps(run(parser.parse_args()), allow_nan=False))

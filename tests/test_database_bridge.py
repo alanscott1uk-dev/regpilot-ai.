@@ -82,6 +82,70 @@ class DatabaseBridgeTests(unittest.TestCase):
             self.collect([{"approved":True}],incomplete=True)
         self.assertFalse(self.args.output.exists())
 
+    def configure_findings(self):
+        self.args.resource_pointer = "/id"
+        self.args.instance = "quality-test"
+        self.args.track = ['3']
+
+    def test_resource_evidence_recovers_only_on_positive_identified_read(self):
+        self.configure_findings()
+        keys = []
+        series = []
+        for rows, expected in [([{"id":3,"approved":False}],"FAIL"),
+                               ([{"id":4,"approved":True}],"UNKNOWN"),
+                               ([{"id":3,"approved":True}],"PASS")]:
+            self.assertEqual(self.collect(rows)["status"], expected)
+            body = json.loads(self.args.output.read_text())["body"]
+            tracked = next(c for c in body["checks"] if c["label"] == "Resource 3")
+            self.assertEqual(tracked["status"], expected)
+            keys.append(tracked["key"])
+            series.append(body["externalId"].rsplit("/", 1)[0])
+            self.args.output.unlink()
+        self.assertEqual(len(set(keys)), 1)
+        self.assertEqual(len(set(series)), 1)
+        self.args.instance = "other-site"
+        self.collect([{"id":3,"approved":True}])
+        self.assertNotEqual(json.loads(self.args.output.read_text())["body"]["externalId"].rsplit("/",1)[0],series[0])
+
+    def test_resource_limit_is_visible_and_ids_are_type_sensitive(self):
+        self.configure_findings()
+        rows = [{"id":n,"approved":True} for n in range(35)] + [{"id":"3","approved":False}]
+        self.collect(rows)
+        checks = json.loads(self.args.output.read_text())["body"]["checks"]
+        self.assertEqual(len(checks), 20)
+        self.assertEqual(json.loads(checks[3]["observed"])["omitted"], 20)
+        self.assertEqual([c["label"] for c in checks if c["key"].startswith("item-") and c["status"]=="FAIL"], ['Resource "3"'])
+        self.assertEqual(checks[4]["status"], "PASS")
+
+    def test_duplicate_or_missing_identity_stays_unknown(self):
+        self.configure_findings()
+        self.assertEqual(self.collect([{"id":3,"approved":True},{"id":3,"approved":True},{"approved":True}])["status"],"UNKNOWN")
+        checks = json.loads(self.args.output.read_text())["body"]["checks"]
+        self.assertEqual([c["status"] for c in checks if c["label"]=="Resource 3"], ["UNKNOWN"])
+        self.assertEqual(json.loads(checks[3]["observed"])["unidentifiedRows"], 1)
+
+    def test_saved_definition_binds_source_version_and_runs_resource_rule(self):
+        self.args.test_definition = self.args.output.parent / "test.json"
+        self.args.test_definition.write_text(json.dumps({"format":"regpilot-source-test-v1",
+            "definitionId":self.definition,"version":"3.8.11","name":"Release approval",
+            "control":self.args.control,"stream":"release_gate","namespace":"quality","pointer":"/approved",
+            "expected":"true","instance":"quality-test","resourcePointer":"/id"}))
+        self.args.stream = self.args.namespace = self.args.field = self.args.expected = self.args.control = None
+        self.assertEqual(self.collect([{"id":3,"approved":False}])["status"], "FAIL")
+        self.assertIn("Release approval", json.loads(self.args.output.read_text())["body"]["summary"])
+        self.args.output.unlink()
+        changed = json.loads(self.args.test_definition.read_text())
+        changed["version"] = "4.0.0"
+        self.args.test_definition.write_text(json.dumps(changed))
+        with self.assertRaisesRegex(bridge.CollectionError, "source and version"):
+            self.collect([])
+        self.assertFalse(self.args.output.exists())
+
+    def test_decimal_equality_does_not_round_distinct_values_or_accept_booleans(self):
+        self.args.expected = "1.00000000000000001"
+        result = self.collect([{"approved":Decimal("1.00000000000000001")},{"approved":1},{"approved":True}])
+        self.assertEqual(result["counts"], {"matched":1,"different":2,"missing":0})
+
     def test_digest_and_manifest_definition_are_bound(self):
         with patch.object(bridge.subprocess,"run") as docker, self.assertRaises(bridge.CollectionError):
             bridge.pin_image(self.plan,"sha256:"+"b"*64)

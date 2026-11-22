@@ -96,11 +96,16 @@ try:
         matches = [stream for stream in streams if stream["stream"] == "release_gate" and "decision" in stream["fields"]]
         assert len(matches) == 1, "Expected one release gate stream with the configured field"
         qualifier = ["--namespace", matches[0]["namespace"]] if matches[0]["namespace"] is not None else []
+        control = str(uuid4())
+        test_file = folder / "source-test.json"
+        test_file.write_text(json.dumps({"format":"regpilot-source-test-v1","definitionId":definition,
+            "version":version,"name":"Release decision","stream":"release_gate","namespace":matches[0]["namespace"],
+            "resourcePointer":"/_id" if kind == "mongodb" else "/id","instance":"fixture-" + kind,
+            "pointer":"/decision","expected":'"accepted"',"control":control}))
         def read(label):
             receipt = folder / (label + ".json")
-            result = subprocess.run([*command_base, "--stream", "release_gate", *qualifier,
-                                    "--field", "decision", "--expected", '"accepted"', "--control", control, "--output", str(receipt)],
-                                   capture_output=True, text=True)
+            result = subprocess.run([*command_base, "--test-definition", str(test_file), "--output", str(receipt)],
+                                    capture_output=True, text=True)
             if label == "retired":
                 assert result.returncode and not receipt.exists(), "Retired credential must not produce a receipt"
                 return
@@ -110,7 +115,6 @@ try:
             assert envelope["body"]["controlId"] == control and len(envelope["body"]["checks"]) >= 3
             assert first not in receipt.read_text() and second not in receipt.read_text()
             return json.loads(result.stdout)
-        control = str(uuid4())
         old = read("before")
         assert old == {"rows": 3, "status": "FAIL", "counts": {"matched": 2, "different": 1, "missing": 0}}, old
         if kind == "postgres":

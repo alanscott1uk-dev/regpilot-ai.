@@ -38,3 +38,23 @@ test('OpenAPI publishes the exact limited observation contract without machine a
  const schema=customerApiOpenApi.components.schemas.ObservationInput;assert.equal(schema.additionalProperties,false);assert.ok(schema.required?.includes('controlId'));assert.equal((schema.properties?.checks as {maxItems?:number}).maxItems,20);
  assert.equal(Object.keys(customerApiOpenApi.paths['/tasks']).join(','),'get');assert.equal(Object.keys(customerApiOpenApi.paths['/evidence']).join(','),'get');
 });
+
+test('resource findings retain gaps, confirmed recovery and a repeat failure as separate observations',async()=>{
+ const {findingRows,resourceSeries}=await import('../lib/resource-findings');
+ const prefix='dbsync/'+randomUUID()+'/'+'a'.repeat(32)+'/';
+ assert.equal(resourceSeries(prefix+randomUUID()),prefix);
+ assert.equal(resourceSeries('dbsync/'+randomUUID()+'/'+randomUUID()),null);
+ const check=(day:number,status:'PASS'|'FAIL'|'UNKNOWN'|null,available=true)=>({id:'read-'+day,
+   at:'2026-11-'+String(day).padStart(2,'0')+'T10:00:00Z',hash:'hash-'+day,available,
+   checks: status?[{key:'item-'+'b'.repeat(64),label:'Resource 7',status}]:[]});
+ const start=[check(1,'FAIL'),check(2,'UNKNOWN'),check(3,null)];
+ assert.equal(findingRows(start)[0].status,'UNOBSERVED');
+ assert.equal(findingRows(start)[0].unresolvedSince,start[0].at);
+ assert.equal(findingRows([...start,check(4,'PASS',false)])[0].passedAfterFailure,false);
+ const confirmed=[...start,check(5,'PASS')];
+ assert.equal(findingRows(confirmed)[0].passedAfterFailure,true);
+ assert.equal(findingRows(confirmed)[0].unresolvedSince,null);
+ const reopened=findingRows([...confirmed,check(7,'FAIL')])[0];
+ assert.equal(reopened.firstFailureAt,start[0].at);
+ assert.equal(reopened.unresolvedSince,check(7,'FAIL').at);
+});

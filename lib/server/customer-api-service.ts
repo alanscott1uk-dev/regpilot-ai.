@@ -1,3 +1,4 @@
+import {resourceSeries, findingRows} from '../resource-findings';
 import {scopeWords} from '../operator-answer';
 import {searchTerms} from '../retrieval/bm25';
 import {partnerTopics,partnerFinding,partnerLabels,partnerValidity} from '../partner-records';
@@ -43,6 +44,42 @@ async function observationsView(tx:Tx,c:{organizationId:string},rows:Observation
    if(row.status==='REJECTED')throw new Error('An administrator rejected this submission');current=true;
   }catch(error){reason=error instanceof z.ZodError?'Submission integrity failed':error instanceof Error?error.message:'Submission unavailable';}
   return {id:row.id,requestKey:row.requestKey,receiptHash:row.payloadHash,supersededAt:row.supersededAt?.toISOString()||null,externalId:row.externalId,controlId:row.controlId,controlTitle:row.control.title,source:{kind:'CUSTOMER_API_CLIENT' as const,credentialId:row.credentialId,name:row.credential.name,credentialVersion:row.credentialVersion},status:row.status,version:row.version,current,reason,payload,reportedOutcome:payload?reportedObservationOutcome(payload):null,observedAt:row.observedAt.toISOString(),receivedAt:row.receivedAt.toISOString(),validUntil:row.validUntil.toISOString(),reviewerId:row.reviewerId,reviewedAt:row.reviewedAt?.toISOString()||null,reviewNotes:row.reviewNotes,followUpTaskId:row.followUpTaskId,limitation:'Customer-submitted observations are unverified reports. Receipt, acknowledgement and follow-up do not approve evidence, certify compliance or complete a control.'};
+ });
+}
+
+export async function resourceFindingReport(ctx: AuthorizedContext, id: string) {
+ return transaction(ctx, async tx => {
+  await requireMember(tx, ctx, ADMIN);
+  const selected = await tx.customerApiObservation.findFirst({where: {...org(ctx), id}, include: rowInclude});
+  if (!selected) throw new IntelligenceError('Observation not found', 404);
+  const prefix = resourceSeries(selected.externalId);
+  if (!prefix) throw new IntelligenceError('This submission has no resource-level history', 409);
+  const [anchor] = await observationsView(tx, ctx, [selected]);
+  if (!anchor.payload || anchor.status === 'REJECTED' || anchor.supersededAt) throw new IntelligenceError('The selected submission is unavailable for comparison', 409);
+  // A new credential or control specification starts a separate series. Equal source
+  // timestamps have no provable order and cannot establish recovery.
+  const scope = {...org(ctx), controlId: selected.controlId, credentialId: selected.credentialId,
+   contextHash: selected.contextHash, externalId: {startsWith: prefix}};
+  const sameTime = await tx.customerApiObservation.count({where: {...scope, observedAt: selected.observedAt}});
+  const older = await tx.customerApiObservation.findMany({
+   where: {...scope, observedAt: {lt: selected.observedAt}},
+   include: rowInclude, orderBy: [{observedAt: 'desc'}, {id: 'asc'}], take: 50
+  });
+  const previous = await observationsView(tx, ctx, older.slice(0, 49).reverse());
+  const views = [...previous, anchor];
+  const frequency = new Map<string, number>();
+  for (const v of views) frequency.set(v.observedAt, (frequency.get(v.observedAt) ?? 0) + 1);
+  frequency.set(anchor.observedAt, sameTime);
+  const reads = views.map(v => {
+   const available = !!v.payload && !v.payload.partnerRecord && v.status !== 'REJECTED' && !v.supersededAt &&
+    resourceSeries(v.externalId) === prefix && frequency.get(v.observedAt) === 1;
+   return {id: v.id, at: v.observedAt, hash: v.receiptHash, available,
+    checks: available ? v.payload!.checks : []};
+  });
+  return {organizationId: ctx.organizationId, controlId: selected.controlId, credentialId: selected.credentialId,
+   selectedId: id, selectedCurrent: anchor.current, reason: anchor.reason, limited: older.length === 50,
+   unavailable: reads.filter(r => !r.available).length, rows: findingRows(reads),
+   reads: reads.map(({checks, ...read}) => read)};
  });
 }
 

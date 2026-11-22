@@ -13,7 +13,7 @@ import {db} from '../lib/server/db';
 import {assuranceFixture,rejects,future} from './helpers/assurance-fixture';
 import {CUSTOMER_API_SCOPES,type CustomerApiScope} from '../lib/customer-api';
 import {authenticateCustomerApi,secretHash,type CustomerApiSession} from '../lib/server/customer-api-auth';
-import {searchPartnerReports,createCustomerCredential,changeCustomerCredential,developerWorkspace,groupObservationFollowUps,listCustomerApiResource,submitCustomerApiObservation,reviewCustomerApiObservation} from '../lib/server/customer-api-service';
+import {resourceFindingReport,searchPartnerReports,createCustomerCredential,changeCustomerCredential,developerWorkspace,groupObservationFollowUps,listCustomerApiResource,submitCustomerApiObservation,reviewCustomerApiObservation} from '../lib/server/customer-api-service';
 import {hashValue} from '../lib/regulatory/intelligence';
 import {GET as getControls} from '../app/api/v1/controls/route';
 import {GET as getObservations,POST as postObservation} from '../app/api/v1/observations/route';
@@ -371,6 +371,14 @@ test('database connector receipts reach the control review queue and recover ide
       const review=await developerWorkspace(x.ad,{observationId:receipt.id});
       assert.equal(review.observations[0].receiptHash,receipt.receiptHash);
       await assert.rejects(()=>developerWorkspace(x.out,{observationId:receipt.id}),rejects(404));
+      const findings=await resourceFindingReport(x.ad,receipt.id);
+      assert.equal(findings.rows.length,3);
+      assert.equal(findings.reads.length,index+1);
+      assert.equal(findings.rows.filter(row=>row.status==='FAIL').length,index===0?1:0);
+      const recovered=findings.rows.filter(row=>row.passedAfterFailure);
+      assert.equal(recovered.length,index===0?0:1);
+      if(index===1)assert.deepEqual(recovered[0].history.map(event=>event.status),['FAIL','PASS']);
+      await assert.rejects(()=>resourceFindingReport(x.out,receipt.id),rejects(404));
     }
   } finally {await x.cleanup();}
 });

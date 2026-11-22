@@ -25,3 +25,17 @@ The catalogue API is GET /api/database-integrations with optional q, kind and pa
 Download all currently checked plans from /api/database-integrations/manifest. Pass the manifest as --plan and choose one definition UUID with --source. Each entry includes the checked Linux image digest, version, configuration field names and required fields.
 
 For nested fields, replace --field with a JSON Pointer such as --pointer /instrument/readings/0/value. Escape a slash inside a key as ~1 and a tilde as ~0. To apply an approved numeric range, replace --expected with --minimum and --maximum. Both limits are inclusive. For example, --pointer /instrument/readings/0/value --minimum 2 --maximum 8 checks the selected value in each record. Select the stream and units covered by your control. A numeric excursion produces FAIL. Missing or nonnumeric values produce UNKNOWN when there are no excursions. Receipts contain aggregate counts.
+
+Resource findings and rechecks
+
+To identify affected records, add --resource-pointer /id and --instance warehouse-east to the collection command. Choose a stable instance name unique to this account or site and an identifier you are authorised to share with your RegPilot workspace. Only the selected IDs appear in the resource checks. The remaining row values stay on the source host.
+
+Up to 16 resource results accompany each receipt. Add --track 42 for an integer ID or --track '"LOT-12"' for a string ID to follow a particular record even if the next scan omits it. Tracked IDs appear first, then failing, unknown and passing resources. The coverage check shows omitted counts, duplicate IDs and unidentified rows. Aggregates cover every row scanned.
+
+Repeat the same rule and instance after correcting the source and deliver the new receipt. In Company integrations, open the observation and choose Inspect affected resources to see earlier failures, later passing readings and missing records. Download findings and receipt history for the reviewer. A changed rule, control specification, source instance or resource selector starts a separate history.
+
+To build the rule in RegPilot, search the source catalogue, expand Create a custom monitoring test, choose the source and control, then download source-test.json. Use the individual plan for that source version. You can add --track when the saved definition includes a resource ID field.
+
+python3 collect.py --plan plan.json --config config.json --digest DIGEST --network source-network --test-definition source-test.json --output observation.json
+
+For a bulk manifest add --source DEFINITION_UUID. The runner checks the test's source and version against the plan before collection.

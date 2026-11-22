@@ -1,3 +1,4 @@
+import TestBuilder from './test-builder';
 import {sourceCatalogue,registryFilters,sourceKinds,planPath} from '../../lib/server/source-registry';
 import css from '../integration-directory/directory.module.css';
 export const runtime='nodejs',dynamic='force-dynamic';
@@ -22,6 +23,7 @@ export default async function Sources({searchParams}:{searchParams:Promise<Recor
     <p>{data.counts.matches} matching definitions{data.counts.refreshed&&<> · Imported {data.counts.refreshed.toISOString().slice(0,16).replace('T',' ')} UTC</>}</p>
     {data.entries.length>0?<div className={css.scroll}><table><thead><tr><th>Source</th><th>Type</th><th>Version</th><th>Collection plan</th></tr></thead><tbody>
     {data.entries.map(row=><tr key={row.id}><td>{row.name}{row.workspace_tested&&<> · <a href={'#test-'+row.id}>View collection test</a></>}</td><td>{kinds[row.kind]||row.kind}</td><td>{row.version}</td><td>{row.artifact_verified?<a href={planPath(row.id,row.version)} aria-label={'Download '+row.name+' plan'}>Download JSON</a>:row.plan_available?'Image check pending or unavailable':'Provider-managed'}</td></tr>)}</tbody></table></div>:<p>No matching source. <a href="/database-integrations">Clear filters</a></p>}
+    <TestBuilder sources={data.entries.filter(row=>row.artifact_verified).map(({id,name,version})=>({id,name,version}))}/>
     {data.pages>1&&<nav className={css.pages} aria-label="Source pages">{data.page>1&&<a href={href(data.page-1)}>Previous</a>}<span>Page {data.page} of {data.pages}</span>{data.page<data.pages&&<a href={href(data.page+1)}>Next</a>}</nav>}</>:<p role="status">The staging source catalogue is unavailable.</p>}</section>
     {data&&data.acceptance.length>0&&<section className={css.panel}><h2>Database collection tests</h2>
     <p>These tests use disposable databases. Each test reads a held record, rotates the source credential, checks the retired credential is rejected and submits both collection receipts to a private test workspace.</p>
@@ -29,7 +31,7 @@ export default async function Sources({searchParams}:{searchParams:Promise<Recor
       {data.acceptance.map(a=><tr key={a.id} id={'test-'+a.id}><td>{a.name} {a.version}</td><td>{a.before_different} held of {a.before_matched+a.before_different}</td><td>{a.after_matched} accepted of {a.after_matched}</td>
       <td><a href={'https://github.com/alanscott1uk-dev/regpilot-ai./actions/runs/'+a.run+'/job/'+a.job}>View test · {a.completed_at.toISOString().slice(0,10)}</a></td></tr>)}
     </tbody></table></div></section>}
-    <section className={css.panel}><h2>Run a manual collection</h2><p>Use a read-only source account and an approved connector image. The runner discovers streams, reads the one you select and checks a field or nested value against your expected result or numeric limits. The receipt records aggregate counts. Credentials and row values stay on the collection host.</p>
-    <p><a href="/database-bridge/setup.txt">Set up a collection</a> · <a href="/database-bridge/collect.py" download>Download the runner</a> · <a href="/instrument-bridge/deliver.py" download>Download the delivery tool</a></p>
+    <section className={css.panel}><h2>Run a manual collection</h2><p>Use a read-only source account and an approved connector image. The runner discovers streams, reads the one you select and checks a field or nested value against your expected result or numeric limits. By default the receipt records aggregate counts. To identify affected records, choose an approved resource ID field and a source instance. You can track up to 16 IDs per reading and review their history after a correction.</p>
+    <p><a href="/database-bridge/setup.txt">Set up collection and resource findings</a> · <a href="/database-bridge/collect.py" download>Download the runner</a> · <a href="/instrument-bridge/deliver.py" download>Download the delivery tool</a></p>
     <p>Workspace submissions go to an administrator for review. The <a href="/integration-benchmark">monitoring benchmark</a> tracks separate evidence of repeated live collection.</p></section></main>;
 }
