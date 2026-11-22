@@ -119,7 +119,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        engine: [postgres, mysql, clickhouse]
+        engine: [postgres, mysql, clickhouse, cockroachdb, mongodb, tidb]
     permissions:
       contents: read
     services:
