@@ -154,3 +154,34 @@ test('workflow receipts bind repository, attempt, branch and revision before acc
  await assert.rejects(read({jobAttempt:1}),{code:'TARGET_MISMATCH'});
  await assert.rejects(read({moved:true}),{code:'TARGET_MISMATCH'});
 });
+
+test('Benchling exchanges a tenant application credential for a new grant on each read and detects a changed assay revision',async()=>{
+ const {benchlingCredential}=await import('../lib/connectors/benchling-auth');
+ const target={scope:'testlab',record:'ar_sample',reference:'etr_sample/usr_qa'};
+ const credential=benchlingCredential('cli_lab',token),date='2026-01-01T08:00:00Z';
+ let grants=0,reads=0,move=false;
+ const fetcher:typeof fetch=async(input,init)=>{
+  const url=new URL(String(input));assert.equal(url.hostname,'testlab.benchling.com');
+  if(url.pathname==='/oauth/token'){
+   const params=new URLSearchParams(String(init?.body));assert.equal(params.get('client_id'),'cli_lab');assert.equal(params.get('client_secret'),token);
+   assert.equal(params.get('grant_type'),'client_credentials');reads=0;grants++;
+   return Response.json({token_type:'Bearer',access_token:'temporary-benchling-key-'+grants,expires_in:60});
+  }
+  assert.equal(new Headers(init?.headers).get('Authorization'),'Bearer temporary-benchling-key-'+grants);
+  if(url.pathname.includes('assay-results'))return Response.json({id:target.record,entryId:'etr_sample',creator:{id:'usr_scientist'},archiveRecord:null,isReviewed:true,modifiedAt:++reads===2&&move?'2026-01-03T08:00:00Z':date});
+  return Response.json({id:'etr_sample',archiveRecord:null,authors:[{id:'usr_scientist'}],assignedReviewers:[{id:'usr_qa'}],reviewRecord:{status:'ACCEPTED',reviewChanges:[{id:'review',action:'ACCEPT',createdAt:'2026-01-02T08:00:00Z'}],reviewProcesses:[{id:'process',completionStatus:'APPROVED',stages:[{actionLabel:'APPROVE',reviewers:[{id:'usr_qa',status:'FINISHED'}]}]}]}});
+ };
+ for(let n=0;n<2;n++){const result=await collectOperationalRecord('BENCHLING',target,credential,fetcher);assert.equal(observationOutcome(result),'OBSERVED');assert.match(result.checks.find(c=>c.id==='lab-decision')!.observed,/e-signature unreported/);assert.doesNotMatch(JSON.stringify(result),/temporary-benchling-key|fictional-connector-token/);}
+ assert.equal(grants,2);move=true;await assert.rejects(collectOperationalRecord('BENCHLING',target,credential,fetcher));
+});
+
+test('direct OpenAI access pins the project and exact model and discards other returned fields',async()=>{
+ const {collectModelAccess}=await import('../lib/connectors/direct-model');
+ const target={scope:'proj_staging',record:'requested-model'};
+ const result=await collectModelAccess('OPENAI_PROJECT_MODEL',target,token,async(url,init)=>{
+  assert.equal(String(url),'https://api.openai.com/v1/models/requested-model');assert.equal(new Headers(init?.headers).get('OpenAI-Project'),target.scope);
+  assert.equal(new Headers(init?.headers).get('Authorization'),'Bearer '+token);return Response.json({id:target.record,object:'model',owner:'confidential-identifier'});
+ });
+ assert.doesNotMatch(JSON.stringify(result),/fictional-connector-token|confidential-identifier/);
+ await assert.rejects(collectModelAccess('OPENAI_PROJECT_MODEL',target,token,async()=>Response.json({id:'other-model',object:'model'})),{code:'TARGET_MISMATCH'});
+});

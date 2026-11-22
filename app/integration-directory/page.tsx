@@ -18,7 +18,7 @@ export default async function Directory({searchParams}:{searchParams:Promise<Que
  const pages=Math.max(1,Math.ceil(matches.length/pageSize)),number=Math.min(pages,Math.max(1,Number.parseInt(value(q,'page'),10)||1));
  const link=(p:number)=>'/integration-directory?'+new URLSearchParams({q:term,auth,page:String(p)});
  return <main className={styles.main}>
-  <nav className={styles.nav} aria-label="Directory navigation"><a href="/">RegPilot AI</a><a href="/monitoring-proof">Staging monitoring evidence</a><a href="/team/developers">Company integrations</a></nav>
+  <nav className={styles.nav} aria-label="Directory navigation"><a href="/">RegPilot AI</a><a href="/monitoring-proof">Staging monitoring evidence</a><a href="/team/developers">Company integrations</a><a href="/team/developers#source-verification">Customer source verification</a></nav>
   <header className={styles.header}><h1>Integration directory</h1><p>Find a system, check how it connects and see which evidence RegPilot can collect.</p></header>
   <section className={styles.panel} aria-labelledby="providers"><div className={styles.intro}><div><h2 id="providers">Provider catalogue</h2>{data&&<p>{entries.length.toLocaleString('en-GB')} providers · {entries.filter(e=>e.auth==='API_KEY').length.toLocaleString('en-GB')} list API-key setup</p>}</div><a href={link(number)}>Refresh catalogue</a></div>
    <p>Listings come from Nango. Evidence monitoring requires an authorised workspace connection and a deployed sync model or a RegPilot collector.</p>

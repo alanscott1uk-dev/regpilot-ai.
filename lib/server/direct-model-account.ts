@@ -39,3 +39,13 @@ export async function verifyModelConnection(ctx:AuthorizedContext,id:string,vers
  await collectModelAccess(account.modelConnector,{scope:account.scope,record:account.model},account.key,fetcher);
  return directBinding.parse({transport:'direct',connectionId:id,configVersion:version,provider:account.provider,model:account.model});
 }
+
+export async function recordModelInference(ctx:AuthorizedContext,account:Awaited<ReturnType<typeof readModelConnection>>,bindingId:string,requestId:string){
+ return transaction(ctx,async tx=>{
+  await requireMember(tx,ctx,WRITER);
+  const active=await tx.evidenceConnector.count({where:{organizationId:ctx.organizationId,id:account.connectionId,version:account.configVersion,enabled:true,control:{enabled:true}}});
+  const binding=await tx.auditEvent.findFirst({where:{organizationId:ctx.organizationId,entityType:'WorkspaceAiProvider',entityId:ctx.organizationId},orderBy:[{createdAt:'desc'},{id:'desc'}],select:{id:true,action:true}});
+  if(!active||binding?.id!==bindingId||binding.action!=='ai.provider-linked')throw new IntelligenceError('Model configuration changed before the receipt was saved.',409);
+  return tx.auditEvent.create({data:{organizationId:ctx.organizationId,entityType:'EvidenceConnector',entityId:account.connectionId,action:'ai.customer-inference',actorId:ctx.userId,details:{bindingId,requestId,version:account.configVersion,model:account.model}},select:{id:true}});
+ });
+}

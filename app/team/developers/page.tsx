@@ -3,6 +3,7 @@ import {useEffect,useRef,useState} from 'react';
 import WorkspaceNav from '../../components/workspace-nav';
 import EmailSignIn from '../../components/email-sign-in';
 import {useWorkspaceContext,workspaceHref} from '../../../lib/client/workspace-context';
+import SourceVerification from './source-verification';
 import IntegrationDirectory from './integration-directory';
 import EpcisImport from './epcis-import';
 import {transferFinding} from '../../../lib/epcis';
@@ -96,6 +97,7 @@ function DeveloperDesk({workspace,onLocked}:{workspace:Workspace;onLocked:(locke
   {data&&<>
    <div className={css.statGrid}><div className={css.stat}><span>API ACCESS</span><strong className={own.word}>{data.enabled?'Activated':'Inactive'}</strong><small>Current environment</small></div><div className={css.stat}><span>ACTIVE CREDENTIALS</span><strong>{data.credentials.filter(row=>row.status==='ACTIVE').length}</strong><small>Up to {data.limits.activeCredentials} expiring keys</small></div><div className={css.stat}><span>AWAITING REVIEW</span><strong>{data.observationPage.pendingCount}</strong><small>Customer-reported observations</small></div><div className={css.stat}><span>CLIENT RATE LIMIT</span><strong>{data.limits.requestsPerKeyMinute}<small> / minute</small></strong><small>{data.limits.requestsPerCompanyMinute} per company per minute</small></div></div>
    {!data.enabled&&<p className={css.warning}>API access is inactive in this environment. You can prepare and revoke credentials here; machine requests remain blocked until the environment is activated.</p>}
+   <section className={css.panel} id="source-verification"><SourceVerification workspace={workspace} locked={locked}/></section>
    <div className={css.panel}><IntegrationDirectory workspace={workspace} locked={locked}/></div>
    <CreateCredential controls={data.controls} locked={locked} base={base} submit={submit}/>
    <section className={css.panel} aria-label="API credentials"><div className={css.heading}><h2>Credentials and access</h2><button type="button" className={css.secondary} disabled={locked} onClick={()=>void refresh().catch(problem=>setError(explain(problem)))}>Refresh integrations</button></div>

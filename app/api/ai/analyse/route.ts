@@ -1,3 +1,4 @@
+import {recordModelInference} from '../../../../lib/server/direct-model-account';
 import {searchOfficialPublications} from "../../../../lib/server/publication-research";
 import {IntelligenceError} from "../../../../lib/server/intelligence-service";
 import {NextResponse} from "next/server";
@@ -66,6 +67,11 @@ export async function POST(request:Request){
   requestId=await reserveAiRequest(ctx,input.mode,input.useDeclaration);
   const ai=await runRegPilotAi(aiInput,official,research,account);
   let reviewId:string|null=null,storageWarning:string|null=null;
+  let inferenceReceipt:string|null=null;
+  if(account&&'transport' in account&&choice){
+   try{inferenceReceipt=(await recordModelInference(ctx,account,choice,requestId)).id;}
+   catch{storageWarning="The draft was generated. Its model verification receipt could not be saved.";}
+  }
   if(input.retainDraft){
    try{
     const stored=await saveGeneratedReview(ctx,{requestId,mode:input.mode,ai});
@@ -75,7 +81,7 @@ export async function POST(request:Request){
     storageWarning="Your AI review was generated but not saved to the team inbox. Download the draft before leaving.";
    }
   }
-  return json({requestId,ai,reviewId,storageWarning});
+  return json({requestId,ai,reviewId,storageWarning,inferenceReceipt});
  }catch(error){
   if(error instanceof InputError)return json({error:error.message},400);
   if(error instanceof IntelligenceError)return json({error:error.message},error.status);

@@ -191,3 +191,42 @@ test('an organisation can manage 500 targets and retrieve a connection outside t
   assert.equal((await operationsWorkspace(f.out,undefined,oldest.id)).connectors.length,0);
  }finally{await f.cleanup();}
 });
+
+test('customer model proof requires active ownership, generation, repeated collection and an observed credential replacement',async()=>{
+ const {marketplaceAction,aiChoice,resolveCustomerAi}=await import('../lib/server/integration-marketplace');
+ const {recordModelInference}=await import('../lib/server/direct-model-account');
+ const {declareSource,customerSourceProof,proofTargets}=await import('../lib/server/customer-source-proof');
+ const f=await assuranceFixture(),original=globalThis.fetch;
+ Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:'true',REGPILOT_CONNECTORS_ENABLED:'true',REGPILOT_CONNECTOR_ENCRYPTION_KEY:'dc'.repeat(32),SUPABASE_URL:'https://auth.invalid',SUPABASE_PUBLISHABLE_KEY:'fictional'});
+ try{
+  const programme=await db.programmeImport.create({data:{organizationId:f.a.id,createdById:f.o.userId,inputHash:f.a.id,method:'SEARCH',status:'ACCEPTED',evidenceManifest:[]}});
+  const control=await db.managedControl.create({data:{organizationId:f.a.id,importId:programme.id,proposalKey:'ai',title:'Model access',description:'Verify named model',testProcedure:'Check access and independent attribution',theme:'technology',ownerId:f.editor.id,scheduledById:f.owner.id,intervalDays:30,nextReviewAt:new Date()}});
+  const config={provider:'OPENAI_PROJECT_MODEL',scope:'proj_stage',record:'staging-model',controlId:control.id,consent:true,enabled:true,intervalHours:24};
+  let expected=token;
+  globalThis.fetch=async(raw,init)=>{assert.equal(new Headers(init?.headers).get('OpenAI-Project'),config.scope);assert.equal(new Headers(init?.headers).get('Authorization'),'Bearer '+expected);assert.equal(String(raw),'https://api.openai.com/v1/models/staging-model');return Response.json({object:'model',id:config.record});};
+  const first=await saveConnector(f.o,{...config,token,version:0});
+  assert.equal((await proofTargets(f.out)).length,0);await assert.rejects(customerSourceProof(f.ed,first.id),rejects(403));
+  assert.equal((await verifyConnectorNow(f.o,first.id,first.version)).outcome,'OBSERVED');
+  expected=token+'-renewed';
+  const next=await saveConnector(f.o,{...config,id:first.id,version:first.version,token:expected});
+  const declaration={connectionId:next.id,configVersion:next.version,category:'CUSTOMER' as const,confirm:true as const};
+  await assert.rejects(declareSource(f.o,declaration),rejects(403));await declareSource(f.ad,declaration);
+  await db.evidenceConnector.update({where:{id:next.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
+  await verifyConnectorNow(f.o,next.id,next.version);
+  let proof=await customerSourceProof(f.o,next.id);
+  assert.deepEqual([proof.current,proof.repeat,proof.rotated,proof.inference,proof.customerVerified],[true,false,true,false,false]);
+  const bind={action:'SET_DIRECT_AI',connectionId:next.id,configVersion:next.version,previous:null,confirmDrafting:true};
+  await assert.rejects(marketplaceAction(f.out,bind),rejects(409));await marketplaceAction(f.o,bind);
+  const choice=await aiChoice(f.o),account=await resolveCustomerAi(f.ed,choice.version!);assert.ok('modelConnector' in account);
+  await recordModelInference(f.ed,account,choice.version!,'fixture-request-id');
+  const run=await db.connectorRun.findFirstOrThrow({where:{connectorId:next.id,configVersion:next.version}});
+  await db.connectorRun.update({where:{id:run.id},data:{capturedAt:new Date(Date.now()-25*3600000)}});
+  await db.evidenceConnector.update({where:{id:next.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
+  await verifyConnectorNow(f.o,next.id,next.version);
+  proof=await customerSourceProof(f.o,next.id);assert.equal(proof.customerVerified,true);
+  await marketplaceAction(f.o,{action:'UNLINK_AI',previous:choice.version});
+  assert.equal((await customerSourceProof(f.o,next.id)).customerVerified,false);
+  await assert.rejects(recordModelInference(f.ed,account,choice.version!,'after-unlink'),rejects(409));
+  const events=await db.auditEvent.findMany({where:{entityId:next.id}});assert.doesNotMatch(JSON.stringify(events),/fictional-connector-token/);
+ }finally{globalThis.fetch=original;await f.cleanup();}
+});

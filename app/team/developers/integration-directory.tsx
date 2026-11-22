@@ -33,7 +33,7 @@ export default function IntegrationDirectory({workspace,locked}:{workspace:Retur
    if(!valid())return;
    if(action==='ENABLE'){const enabled=v.source as Integration;setAvailable(old=>[...old.filter(s=>s.integration!==enabled.integration),enabled]);selectSource(enabled);tell('Ready to authorise '+enabled.name+' for this organisation.');}
    if(action==='DIRECTORY'){setEntries(v.entries);page(0);tell(v.entries.length+' provider catalogue entries refreshed.');}
-   if(action==='AVAILABLE'){setDirect(v.direct??[]);chooseDirect(v.direct?.[0]?.id??'');consent(false);setSelfService(v.selfService===true);setAvailable(v.integrations);setAccount(v.ai);selectSource(v.integrations[0]);tell(v.enabled?v.integrations.length+' integrations enabled for hosted connection.':'Hosted connections await broker configuration.');}
+   if(action==='AVAILABLE'){setDirect(v.direct??[]);chooseDirect(v.direct?.[0]?.id??'');consent(false);setSelfService(v.selfService===true);setAvailable(v.integrations);setAccount(v.ai);selectSource(v.integrations[0]);tell((v.direct?.length??0)+' direct model connections. '+(v.enabled?v.integrations.length+' hosted integrations enabled.':'Hosted connections await broker configuration.'));}
    if(action==='GRANTS'){setDeployed([]);setModel(source?.models[0]??'');setGrants(v.grants);choose(v.grants[0]?.id??'');tell(v.grants.length+' connections returned for this organisation.');}
    if(action==='MODELS'){setDeployed(v.models);setModel(v.models[0]??'');tell(v.deployed.length+' deployed record models identified on this connection.');}
    if(action==='CONNECT'||action==='RENEW')setLink(v.link);

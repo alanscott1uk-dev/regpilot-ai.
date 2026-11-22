@@ -314,7 +314,7 @@ test('private AI client negotiates MCP, sees granted tools only, reads scoped da
 
 test('site reader delivers a real encrypted OPC UA excursion through authenticated HTTPS intake and recovers the identical receipt', {skip:!process.env.REGPILOT_INSTRUMENT_PYTHON}, async()=>{
  const {createServer}=await import('node:https'),{mkdtemp,readFile,writeFile,rm}=await import('node:fs/promises');
- const {tmpdir}=await import('node:os'),{join}=await import('node:path'),{execFile}=await import('node:child_process'),{promisify}=await import('node:util'),{once}=await import('node:events');
+ const {tmpdir}=await import('node:os'),{join}=await import('node:path'),{execFile}=await import('node:child_process'),{promisify}=await import('node:util');
  const exec=promisify(execFile),folder=await mkdtemp(join(tmpdir(),'regpilot-intake-')),x=await fixture();
  const pem=join(folder,'server.pem'),key=join(folder,'server.key'),report=join(folder,'capture.json'),envelope=join(folder,'excursion.json');
  let server:ReturnType<typeof createServer>|undefined;
@@ -331,7 +331,7 @@ test('site reader delivers a real encrypted OPC UA excursion through authenticat
     res.writeHead(received.status,{'Content-Type':'application/json'}).end(await received.text());
    }catch{res.writeHead(500).end();}
   });
-  server.listen(0,'127.0.0.1');await once(server,'listening');
+  await new Promise<void>(resolve=>server!.listen(0,'127.0.0.1',resolve));
   const addr=server.address();assert.ok(addr&&typeof addr==='object');
   const send=(token:string)=>exec('python',['public/instrument-bridge/deliver.py',envelope,'--workspace','https://127.0.0.1:'+addr.port],{env:{...process.env,SSL_CERT_FILE:pem,REGPILOT_OBSERVATION_TOKEN:token}});
   const unauthorised=await x.create(['observations:write'],[x.ungranted.id]);
