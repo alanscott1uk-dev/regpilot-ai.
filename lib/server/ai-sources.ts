@@ -12,6 +12,7 @@ export async function loadOfficialSource(sourceId:string){
  return loadPublication(source);
 }
 export async function loadPublication(source:RegulatorySource){
+ if(REGULATORY_SOURCES.some(s=>s.id===source.id&&s.refreshMode==="manual"))throw new SourceUnavailable("Open this publication at the publisher for manual review","MANUAL_REFRESH");
  if(source.provider==="OFFICIAL_WEB"){try{return await loadOfficialWeb(source);}catch(error){throw new SourceUnavailable("Official page unavailable or changed; inspect the original",error instanceof OfficialWebUnavailable?error.reasonCode:"FETCH_OR_EXTRACTION_FAILED",error instanceof OfficialWebUnavailable?error.httpStatus:undefined);}}
  let raw:any;
  try{raw=await boundedPublicJson("https://www.gov.uk/api/content"+source.path);}catch{

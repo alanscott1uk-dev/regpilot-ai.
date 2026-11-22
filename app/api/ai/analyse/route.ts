@@ -2,6 +2,7 @@ import {searchOfficialPublications} from "../../../../lib/server/publication-res
 import {IntelligenceError} from "../../../../lib/server/intelligence-service";
 import {NextResponse} from "next/server";
 import {resolveCustomerAi} from "../../../../lib/server/integration-marketplace";
+import {connectorProviderEnabled} from '../../../../lib/server/connector-flags';
 import {brokerKey} from "../../../../lib/connectors/marketplace";
 import {aiProcessingAllowed,aiConfigured,workspaceConfigured,AccessError,authorisedAiContext} from "../../../../lib/server/ai-auth";
 import {reserveAiRequest,DailyLimitError} from "../../../../lib/server/ai-meter";
@@ -28,13 +29,14 @@ async function limitedBody(request:Request){
  }
  return JSON.parse(Buffer.concat(chunks.map(x=>Buffer.from(x))).toString("utf8"));
 }
+const customerProcessing=()=>aiProcessingAllowed()&&(!!brokerKey()||connectorProviderEnabled('OPENAI_PROJECT_MODEL'));
 export async function GET(){
- return json({enabled:aiConfigured(),customerEnabled:aiProcessingAllowed()&&!!brokerKey(),workspaceEnabled:workspaceConfigured(),mode:"private-pilot",privacy:"Use fictional or non-sensitive working drafts only. Model processing may occur outside the UK.",requiresAuth:true,intendedUse:aiBoundarySummary()});
+ return json({enabled:aiConfigured(),customerEnabled:customerProcessing(),workspaceEnabled:workspaceConfigured(),mode:"private-pilot",privacy:"Use fictional or non-sensitive working drafts only. Model processing may occur outside the UK.",requiresAuth:true,intendedUse:aiBoundarySummary()});
 }
 export async function POST(request:Request){
  const choice=request.headers.get('x-regpilot-ai-binding');
  if(choice&&!/^[a-f0-9-]{36}$/i.test(choice))return json({error:'Invalid AI connection'},400);
- if(choice?!aiProcessingAllowed()||!brokerKey():!aiConfigured())return json({error:"Private AI pilot not configured"},503);
+ if(choice?!customerProcessing():!aiConfigured())return json({error:"Private AI pilot not configured"},503);
  if(!choice&&!process.env.AI_GATEWAY_API_KEY&&!process.env.VERCEL_OIDC_TOKEN)return json({error:"AI Gateway authentication not configured"},503);
  const contentType=request.headers.get("content-type")||"";
  if(contentType.toLowerCase().split(";")[0].trim()!=="application/json")return json({error:"Send application/json"},415);

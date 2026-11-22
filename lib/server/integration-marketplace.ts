@@ -1,3 +1,4 @@
+import {directBinding,modelConnections,readModelConnection,verifyModelConnection} from './direct-model-account';
 import {resourcePolicy} from '../connectors/resource-control';
 import {saveManagedPolicy,readManagedPolicy} from './managed-control-policy';
 import {z} from 'zod';
@@ -16,10 +17,11 @@ const actions=z.discriminatedUnion('action',[
  z.object({action:z.enum(['RENEW','MODELS']),...fields}).strict(),
  z.object({action:z.literal('BIND_POLICY'),...fields,model:sourceModel,policy:resourcePolicy}).strict(),
  z.object({action:z.literal('COLLECT'),...fields,model:sourceModel,policyId:z.uuid().optional()}).strict(),
+ z.object({action:z.literal('SET_DIRECT_AI'),connectionId:z.uuid(),configVersion:z.number().int().positive(),previous:z.uuid().nullable(),confirmDrafting:z.literal(true)}).strict(),
  z.object({action:z.literal('SET_AI'),...fields,model:brokerId,previous:z.uuid().nullable()}).strict(),
  z.object({action:z.literal('UNLINK_AI'),previous:z.uuid()}).strict()
 ]);
-const binding=z.object({...fields,provider:aiProvider,model:brokerId});
+const binding=z.union([directBinding,z.object({...fields,provider:aiProvider,model:brokerId})]);
 type Bound=z.infer<typeof binding>;
 const scope=(ctx:AuthorizedContext)=>({organizationId:ctx.organizationId,entityType:'WorkspaceAiProvider',entityId:ctx.organizationId});
 async function currentBinding(ctx:AuthorizedContext,manage=false){
@@ -33,6 +35,10 @@ async function saveBinding(ctx:AuthorizedContext,b:Bound|null,previous:string|nu
  return transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);
   const head=await tx.auditEvent.findFirst({where:scope(ctx),orderBy:[{createdAt:'desc'},{id:'desc'}],select:{id:true}});
   if((head?.id??null)!==previous)throw new IntelligenceError('The AI connection changed. Refresh first.',409);
+  if(b&&'transport' in b){
+   const live=await tx.evidenceConnector.count({where:{id:b.connectionId,organizationId:ctx.organizationId,version:b.configVersion,enabled:true,control:{enabled:true}}});
+   if(!live)throw new IntelligenceError('The model connection changed during verification.',409);
+  }
   const event=await tx.auditEvent.create({data:{...scope(ctx),actorId:ctx.userId,action:b?'ai.provider-linked':'ai.provider-unlinked',details:b??{}}});
   return {version:event.id,provider:b?.provider??null,model:b?.model??null};
  });
@@ -41,6 +47,7 @@ export async function marketplaceAction(ctx:AuthorizedContext,raw:unknown,fetche
  const d=actions.parse(raw);
  const allow=()=>transaction(ctx,tx=>requireMember(tx,ctx,ADMIN));
  await allow();
+ if(d.action==='SET_DIRECT_AI')return saveBinding(ctx,await verifyModelConnection(ctx,d.connectionId,d.configVersion,fetcher),d.previous);
  if(d.action==='UNLINK_AI')return saveBinding(ctx,null,d.previous);
  if(d.action==='DIRECTORY'){const entries=await publicDirectory(fetcher);await allow();return {entries,checkedAt:new Date().toISOString()};}
  const key=brokerKey();
@@ -57,7 +64,7 @@ export async function marketplaceAction(ctx:AuthorizedContext,raw:unknown,fetche
   if(!source)throw new IntelligenceError(accepted?'Refresh after the hosted integration becomes available.':'The broker did not enable this provider.',502);
   await allow();return {source};
  }
- if(d.action==='AVAILABLE'){const integrations=key?await enabledIntegrations(key,fetcher,ctx.organizationId):[];await allow();return {integrations,ai:await aiChoice(ctx),enabled:!!key,selfService:!!key&&process.env.REGPILOT_MARKETPLACE_SELF_SERVICE_ENABLED==='true'};}
+ if(d.action==='AVAILABLE'){const integrations=key?await enabledIntegrations(key,fetcher,ctx.organizationId):[];await allow();return {integrations,direct:await modelConnections(ctx),ai:await aiChoice(ctx),enabled:!!key,selfService:!!key&&process.env.REGPILOT_MARKETPLACE_SELF_SERVICE_ENABLED==='true'};}
  if(!key)throw new IntelligenceError('Managed integrations await configuration.',503);
  const sources=await enabledIntegrations(key,fetcher,ctx.organizationId),source=sources.find(s=>s.integration===d.integration);
  if(!source)throw new IntelligenceError('This integration is unavailable.',404);
@@ -107,7 +114,13 @@ export async function marketplaceAction(ctx:AuthorizedContext,raw:unknown,fetche
 }
 export async function resolveCustomerAi(ctx:AuthorizedContext,version:string,fetcher:typeof fetch=fetch){
  const key=brokerKey(),state=await currentBinding(ctx),b=state.binding;
- if(!key||!b||state.version!==version)throw new IntelligenceError('Refresh your organisation’s AI connection.',409);
+ if(!b||state.version!==version)throw new IntelligenceError('Refresh your organisation’s AI connection.',409);
+ if('transport' in b){
+  const account=await readModelConnection(ctx,b.connectionId,b.configVersion);
+  if(account.provider!==b.provider||account.model!==b.model||(await currentBinding(ctx)).version!==version)throw new IntelligenceError('The selected AI account changed.',409);
+  return account;
+ }
+ if(!key)throw new IntelligenceError('Managed model access is unavailable.',503);
  const sources=await enabledIntegrations(key,fetcher,ctx.organizationId);
  const source=sources.find(s=>s.integration===b.integration&&s.provider===b.provider&&s.aiModels.includes(b.model));
  if(!source)throw new IntelligenceError('The selected model is unavailable.',409);

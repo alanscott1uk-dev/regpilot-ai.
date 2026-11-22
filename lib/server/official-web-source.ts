@@ -66,6 +66,7 @@ export function officialMainText(html:string,heading:string,articleBody?:Regulat
 }
 export async function loadOfficialWeb(source:RegulatorySource,fetcher:typeof fetch=fetch){
  const known=REGULATORY_SOURCES.find(s=>s.id===source.id&&s.provider==="OFFICIAL_WEB");
+ if(known?.refreshMode==="manual")throw new OfficialWebUnavailable("Open this publication at the publisher for manual review","MANUAL_REFRESH");
  if(!known?.url||!known.heading||source.url!==known.url||source.path!==known.path)throw new OfficialWebUnavailable("Only curated official pages can be fetched");
  const read=resilientGet(fetcher,new URL(known.url).origin,{Accept:"text/html","User-Agent":"RegPilot/1.0 (public regulatory publication monitor)"},{timeoutMs:25000,maxRequests:3});
  let response:Response;

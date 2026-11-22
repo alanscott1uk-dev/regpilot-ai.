@@ -1,6 +1,6 @@
 module.exports = [
   {id:"procedures",question:"standard operating procedures",sources:["home-office-controlled-drug-sops"],facts:["Violet Register"]},
-  {id:"mapping-typo",question:"temperature mappping",sources:["mhra-temperature-mapping","sps-medicines-temperature-mapping"],facts:["calibrated loggers","Amber Map"]},
+  {id:"mapping-typo",question:"temperature mappping",sources:["mhra-temperature-mapping"],manual:"sps-medicines-temperature-mapping",facts:["calibrated loggers","Amber Map"]},
   {id:"consumer-outcomes",question:"How does the financial services firm check Consumer Duty outcomes?",sources:["fca-consumer-duty"],facts:["Cedar Review"]},
   {id:"food-registration",question:"What does the Scottish food business complete before opening?",sources:["fss-starting-business"],facts:["Heather Checklist"]},
   {id:"waste-wales",question:"Where is the commercial waste transfer recorded?",nation:"Wales",sources:["nrw-waste-duty"],facts:["Red Transfer Book"],forbidden:["Green Transfer Book"]},
@@ -18,8 +18,8 @@ module.exports = [
   {id:"no-interval",question:"How often must the financial services firm check Consumer Duty outcomes?",sources:["fca-consumer-duty"],abstain:true},
   {id:"no-welsh-vat-period",question:"How long does the example business keep VAT invoices?",nation:"Wales",status:"no_match",abstain:true,forbidden:["Slate Ledger","Copper Ledger"]},
   {id:"no-ni-vat-period",question:"How long does the example business keep VAT invoices?",nation:"Northern Ireland",status:"no_match",abstain:true,forbidden:["Slate Ledger","Copper Ledger"]},
-  {id:"missing-mapping-price",question:"How much does temperature mapping cost?",sources:["mhra-temperature-mapping","sps-medicines-temperature-mapping"],abstain:true},
-  {id:"partial-publisher-outage",question:"temperature mapping",unavailable:["sps-medicines-temperature-mapping"],sources:["mhra-temperature-mapping"],facts:["calibrated loggers","Amber Map"]},
+  {id:"missing-mapping-price",question:"How much does temperature mapping cost?",sources:["mhra-temperature-mapping"],manual:"sps-medicines-temperature-mapping",abstain:true},
+  {id:"partial-publisher-outage",question:"temperature mapping",unavailable:["mhra-temperature-mapping"],manual:"sps-medicines-temperature-mapping",status:"incomplete",abstain:true},
   {id:"unavailable",question:"Where is the business VAT record kept?",outage:true,status:"incomplete",abstain:true},
   {id:"economic-gdp",question:"What was GDP growth across the UK last quarter?",status:"no_match",abstain:true},
   {id:"unrelated",question:"Can you estimate the mass of Jupiter?",status:"no_match",abstain:true}

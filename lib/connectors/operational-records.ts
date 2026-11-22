@@ -1,3 +1,5 @@
+import {collectModelAccess,openAiProjectTarget,privateModelTarget} from './direct-model';
+import {benchlingAccess} from './benchling-auth';
 import {collectKeycloak,keycloakTarget} from './keycloak';
 import {collectWorkflow,workflowTarget} from './workflow-evidence';
 import { z } from "zod";
@@ -20,6 +22,7 @@ export const calibrationBasis=z.string().max(120).refine(value=>{
  return !extra.length&&z.uuid().safeParse(file).success&&/^[1-9]\d{0,6}$/.test(version)&&z.iso.date().safeParse(from).success&&z.iso.date().safeParse(until).success&&from<until&&numeric(low)&&numeric(high)&&Number(low)<Number(high)&&/^[1-9]\d{0,3}$/.test(age)&&Number(age)<=1440;
 });
 export const recordTargets = {
+  OPENAI_PROJECT_MODEL:openAiProjectTarget, PRIVATE_AI_MODEL:privateModelTarget,
   KEYCLOAK_REALM:keycloakTarget,
   GITHUB_WORKFLOW:workflowTarget,
   NANGO_SYNC:z.object({scope:z.string().max(201).regex(/^(?:regpilot-|rpw-)[A-Za-z0-9._-]{1,92}\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/),record:z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,79}$/),reference:z.string().refine(v=>{const [provider,policy,...rest]=v.split('/');return !rest.length&&/^[a-z0-9][a-z0-9_-]{0,79}$/.test(provider)&&(policy===undefined||z.uuid().safeParse(policy).success);})}),
@@ -67,12 +70,14 @@ function validTime(value: unknown): value is string {
 
 export async function collectOperationalRecord(provider: RecordProvider, target: Target, token: string, fetcher: typeof fetch = fetch, certificateHash?:string): Promise<Observation> {
   const parsed = recordTargets[provider].strict().safeParse(target);
-  if (!parsed.success || !validCredential(token)) throw new CollectionError("INVALID_TARGET");
+  if (!parsed.success || !(provider==="BENCHLING"&&token.startsWith('{')?token.length<=1200:validCredential(token))) throw new CollectionError("INVALID_TARGET");
   const {scope, record, reference} = parsed.data as Target;
+  if(provider==="BENCHLING")token=await benchlingAccess(scope,token,fetcher);
   const auth = provider === "AZURE_DEVOPS" ? "Basic " + Buffer.from(":" + token).toString("base64") : "Bearer " + token;
   const get = providerReader(fetcher, {Authorization: auth});
 
   switch (provider) {
+    case "OPENAI_PROJECT_MODEL":case "PRIVATE_AI_MODEL":return collectModelAccess(provider,{scope,record},token,fetcher);
     case "KEYCLOAK_REALM":return collectKeycloak(keycloakTarget.parse(target),token,fetcher);
     case "GITHUB_WORKFLOW":return collectWorkflow(workflowTarget.parse(target),token,fetcher);
     case "NANGO_SYNC":throw new CollectionError("WORKSPACE_REQUIRED");

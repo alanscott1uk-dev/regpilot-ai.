@@ -98,3 +98,15 @@ test("a partial or queued GOV.UK response cannot provide evidence for a research
   await assert.rejects(()=>boundedPublicJson("https://www.gov.uk/api/content"+publication.path,async()=>new Response('{"title":"partial"}',{status})));
  }
 });
+
+test('both NHS SPS references remain at the publisher, including when a caller supplies an old automatic descriptor',async()=>{
+ const {REGULATORY_SOURCES}=await import('../lib/regulatory-sources.mjs');
+ const {loadPublication}=await import('../lib/server/ai-sources');
+ const {loadOfficialWeb}=await import('../lib/server/official-web-source');
+ for(const id of ['sps-aseptic-sops','sps-medicines-temperature-mapping']){
+  const source=REGULATORY_SOURCES.find(s=>s.id===id)!;
+  assert.equal(source.refreshMode,'manual');
+  await assert.rejects(loadPublication({...source,refreshMode:undefined}),{reasonCode:'MANUAL_REFRESH'});
+  await assert.rejects(loadOfficialWeb({...source,refreshMode:undefined},async()=>{throw Error('Unexpected publisher access')}),{reasonCode:'MANUAL_REFRESH'});
+ }
+});

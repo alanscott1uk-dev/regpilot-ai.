@@ -1,3 +1,4 @@
+import {benchlingClient,benchlingCredential} from '../connectors/benchling-auth';
 import {connectorScopeHash,credentialChanged} from './connector-verification';
 import {applyLoggerCalibration,calibrationStillCurrent} from './logger-calibration';
 import {isRecordProvider} from "../connectors/record-catalogue";
@@ -47,11 +48,13 @@ const googleSchema=googleTarget.extend({provider:z.literal("GOOGLE_WORKSPACE"),c
 const microsoftSchema=microsoftTarget.extend({provider:z.enum(["MICROSOFT365","INTUNE"]),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:z.string().min(16).max(512).regex(/^[^\r\n\0]+$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)});
 const extraFields={controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().refine(validCredential).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)};
 const extraSchema=z.discriminatedUnion("provider",[
+ recordTargets.OPENAI_PROJECT_MODEL.extend({...extraFields,provider:z.literal("OPENAI_PROJECT_MODEL")}).strict(),
+ recordTargets.PRIVATE_AI_MODEL.extend({...extraFields,provider:z.literal("PRIVATE_AI_MODEL")}).strict(),
  recordTargets.KEYCLOAK_REALM.extend({...extraFields,provider:z.literal("KEYCLOAK_REALM")}).strict(),
  recordTargets.GITHUB_WORKFLOW.extend({...extraFields,provider:z.literal("GITHUB_WORKFLOW")}).strict(),
  recordTargets.NANGO_SYNC.extend({...extraFields,provider:z.literal("NANGO_SYNC")}).omit({token:true}).strict(),
  recordTargets.UBIBOT.extend({...extraFields,provider:z.literal("UBIBOT")}).strict(),
- recordTargets.BENCHLING.extend({...extraFields,provider:z.literal("BENCHLING")}).strict(),
+ recordTargets.BENCHLING.extend({...extraFields,provider:z.literal("BENCHLING"),clientId:benchlingClient.optional()}).strict(),
  recordTargets.JIRA.extend({...extraFields,provider:z.literal("JIRA")}).strict(),
  recordTargets.SERVICENOW.extend({...extraFields,provider:z.literal("SERVICENOW")}).strict(),
  recordTargets.AZURE_DEVOPS.extend({...extraFields,provider:z.literal("AZURE_DEVOPS")}).strict(),
@@ -72,10 +75,14 @@ const extraSchema=z.discriminatedUnion("provider",[
 type ConnectorSettings=z.infer<typeof schema>|z.infer<typeof googleSchema>|z.infer<typeof microsoftSchema>|z.infer<typeof extraSchema>;
 function storedTarget(settings:ConnectorSettings):{repository:string;branch:string;token?:string}{
  switch(settings.provider){
+  case "BENCHLING":{
+   if(settings.clientId&&!settings.token)throw new IntelligenceError("Enter the app secret with its client ID");
+   return {...recordKeys(settings.provider,settings),token:settings.clientId&&settings.token?benchlingCredential(settings.clientId,settings.token):settings.token};
+  }
   case "NANGO_SYNC":return recordKeys(settings.provider,settings);
+  case "OPENAI_PROJECT_MODEL":case "PRIVATE_AI_MODEL":
   case "KEYCLOAK_REALM":
   case "GITHUB_WORKFLOW":
-  case "BENCHLING":
   case "UBIBOT":
   case "JIRA":
   case "SERVICENOW":

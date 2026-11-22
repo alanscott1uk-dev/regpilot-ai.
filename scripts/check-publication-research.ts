@@ -4,7 +4,7 @@ import {mkdir,writeFile} from "node:fs/promises";
 import {researchPublications, type ResearchDocument} from "../lib/regulatory/research";
 import {createResearchReader} from "../lib/server/publication-research";
 
-const cases: {question:string; expected:string[]; answer?:{source:string; wording:RegExp}; abstain?:boolean}[] = [
+const cases: {question:string; expected:string[]; manual?:string; answer?:{source:string; wording:RegExp}; abstain?:boolean}[] = [
   {question:"Which publications cover GMP and wholesale dealer licensing for medicines?",expected:["mhra-gmp-gdp","mhra-manufacturer-wholesale"]},
   {question:"What records must we keep when we charge or reclaim VAT?",expected:["vat-records"]},
   {question:"Where is the guidance on regulating medical devices in Northern Ireland?",expected:["mhra-device-ni"]},
@@ -20,7 +20,7 @@ const cases: {question:string; expected:string[]; answer?:{source:string; wordin
   ...["standard operating procedures","SOP","SOPs"].map(question=>({question,
     expected:["home-office-controlled-drug-sops"],answer:{source:"home-office-controlled-drug-sops",wording:/SOP|standard operating procedure/i}})),
   ...["temperature mapping","temperature mappping"].map(question=>({question,
-    expected:["mhra-temperature-mapping","sps-medicines-temperature-mapping"],answer:{source:"sps-medicines-temperature-mapping",wording:/storage|sensor|logger/i}})),
+    expected:["mhra-temperature-mapping"],manual:"sps-medicines-temperature-mapping",answer:{source:"mhra-temperature-mapping",wording:/storage|warehouse|mapping|temperature/i}})),
   {question:"How do I find hot or cold spots in my medicines warehouse?",expected:["mhra-temperature-mapping"],
     answer:{source:"mhra-temperature-mapping",wording:/hot or cold spots|monitoring probes/i}},
   {question:"Where should I place thermometers in the stockroom?",expected:["mhra-temperature-mapping"],
@@ -34,7 +34,7 @@ const cases: {question:string; expected:string[]; answer?:{source:string; wordin
 async function main() {
   const read = createResearchReader();
   const rows = [];
-  for (const {question,expected,answer,abstain} of cases) {
+  for (const {question,expected,answer,abstain,manual} of cases) {
     const documents = new Map<string,ResearchDocument>();
     const result = await researchPublications({question},async source=>{
       const doc=await read(source); documents.set(doc.id,doc); return doc;
@@ -49,9 +49,10 @@ async function main() {
       return !!doc && !!citation && citation.start<=point.start && point.end<=citation.end && doc.text.slice(point.start,point.end)===point.text;
     });
     const answered=abstain?result.answer.points.length===0:!answer || result.answer.points.some(point=>point.sourceId===answer.source && answer.wording.test(point.text));
-    const passed=result.answer.model==="potion-base-8M" && expected.every(id=>returned.includes(id)) && exact && answerExact && answered &&
+    const manualSignposted=!manual||result.checked.some(s=>s.id===manual&&s.status==="manual_refresh")&&!documents.has(manual)&&!returned.includes(manual);
+    const passed=manualSignposted&&result.answer.model==="potion-base-8M" && expected.every(id=>returned.includes(id)) && exact && answerExact && answered &&
       (expected.length>0 || result.status==="no_match"&&result.checked.length===0&&result.answer.points.length===0);
-    rows.push({question,expected,returned,exact,answerExact,answered,passages:result.citations.length,unavailable:result.unavailable,passed});
+    rows.push({question,expected,returned,manual,manualSignposted,exact,answerExact,answered,passages:result.citations.length,unavailable:result.unavailable,passed});
   }
   await mkdir("artifacts",{recursive:true});
   await writeFile("artifacts/publication-research.json",JSON.stringify({checkedAt:new Date().toISOString(),cases:rows},null,2)+"\n");

@@ -71,6 +71,7 @@ export function PublicationResults({result}:{result:ResearchResult}) {
       {p.scopeNote&&<small>{p.scopeNote}</small>}
       <RecheckCitation passage={p}/>
     </article>)}
+    {result.checked.filter(s=>s.status==="manual_refresh").map(s=><p key={s.id}><a href={s.url} target="_blank" rel="noopener noreferrer">Review {s.title} at the publisher</a> · manual source</p>)}
     {!!result.unavailable&&<p role="note">{result.unavailable} shortlisted publication(s) could not be checked.</p>}
     <details><summary>Search coverage</summary>
       <p>Ranked a catalogue of {result.catalogueSize} publications and selected {result.checked.length} for passage matching. {result.nations.length ? "Territorial filter: "+result.nations.join(", ")+". " : ""}Results cover extracted page text. Linked files and legal applicability require separate review.</p>
