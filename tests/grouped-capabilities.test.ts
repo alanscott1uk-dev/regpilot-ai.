@@ -87,3 +87,23 @@ test('every market comparator has a sourced capability, an outstanding test and 
    assert.equal(new Set(p.criteria).size,p.criteria.length,p.name);
  }
 });
+
+test('EPCIS compares exact pack identities and real instants within one despatch advice',async()=>{
+ const {epcisFile,pack}=await import('./helpers/epcis-documents');
+ const {epcisTransfer,reconcileTransfer}=await import('../lib/epcis');
+ const shipping=epcisFile('shipping',['A','B'],'2026-11-19T10:30:00+01:00');
+ const receiving=epcisFile('receiving',['B','A'],'2026-11-19T10:00:00Z');
+ const pair={kind:'EPCIS_TRANSFER',shipping,receiving};
+ assert.equal(result(pair),'REPORTED_PASS');
+ receiving.epcisBody.eventList[0].epcList=[pack('a'),pack('B')];
+ const compared=reconcileTransfer(epcisTransfer.parse(pair));assert.equal(result(pair),'REPORTED_FAILURE');assert.deepEqual(compared.missing,[pack('A')]);assert.deepEqual(compared.unexpected,[pack('a')]);
+ const rece=receiving.epcisBody.eventList[0];
+ for(const mutation of [{eventID:shipping.epcisBody.eventList[0].eventID},{eventTime:'2026-11-19T09:00:00Z'},{readPoint:shipping.epcisBody.eventList[0].readPoint},{bizTransactionList:[{type:'desadv',bizTransaction:'urn:example:other'}]}]){
+  assert.equal(result({...pair,receiving:{...receiving,epcisBody:{eventList:[{...rece,...mutation}]}}}),'REPORTED_UNKNOWN');
+ }
+ for(const mutation of [{errorDeclaration:{}},{quantityList:[]},{epcList:[pack('A'),pack('A')]},{epcList:[]},{action:'ADD'},{'@context':{}}]){
+  assert.equal(epcisTransfer.safeParse({...pair,receiving:{...receiving,epcisBody:{eventList:[{...rece,...mutation}]}}}).success,false);
+ }
+ assert.equal(epcisTransfer.safeParse({...pair,shipping:{...shipping,'@context':['https://example.org/custom']}}).success,false);
+ assert.throws(()=>customerObservationInput.parse({...generic,observedAt:'2026-01-01T00:00:00Z',partnerRecord:{...source,record:pair}}));
+});

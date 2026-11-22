@@ -1,4 +1,5 @@
 import {z} from 'zod';
+import {epcisTransfer,reconcileTransfer,transferFinding} from './epcis';
 import {loggerWindow,assessLoggerWindow,describeLoggerWindow} from './logger-window';
 
 const reference=z.string().min(1).max(96).regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/);
@@ -10,7 +11,7 @@ const sourceLink=z.url({protocol:/^https$/}).max(350).refine(value=>{
 
 const permittedBuyers=z.array(z.email().trim().toLowerCase().max(254)).min(1).max(10).refine(v=>new Set(v).size===v.length).optional();
 const records=z.discriminatedUnion('kind',[
- loggerWindow,
+ epcisTransfer,loggerWindow,
  z.object({kind:z.literal('SUPPLIER_RELATION'),permittedBuyers,buyerRef:reference,supplierRef:reference,upstreamRef:reference,consentRef:reference,consentExpiresAt:z.iso.datetime()}).strict(),
  z.object({kind:z.literal('SUPPLIER_ASSESSMENT'),permittedBuyers,supplierRef:reference,assessment:z.enum(['SECURITY','ESG']),assessmentRef:reference,consentRef:reference,consentExpiresAt:z.iso.datetime(),result:z.enum(['CLEAR','EXCEPTION','UNASSESSED'])}).strict(),
  z.object({kind:z.literal('MODEL_CHANGE'),systemRef:reference,vendorRef:reference,modelRef:reference,modelVersion:reference,approval:z.enum(['PENDING','APPROVED','DECLINED']),decisionRef:reference.optional()}).strict(),
@@ -34,6 +35,7 @@ export const partnerRecordSchema=z.object({
 });
 export type PartnerRecord=z.infer<typeof partnerRecordSchema>;
 export const partnerLabels:Record<PartnerRecord['record']['kind'],string>={
+ EPCIS_TRANSFER:'Serialised shipment reconciliation',
  LOGGER_WINDOW:'Environmental logger window',
  SUPPLIER_RELATION:'Consented second-tier supplier relationship',SUPPLIER_ASSESSMENT:'Supplier security or ESG assessment',MODEL_CHANGE:'AI model change',SPECIALIST_ATTESTATION:'Specialist decision',PRODUCT_EVENT:'Product release, change or registration',CALIBRATED_READING:'Calibrated site reading',FOOD_HAZARD:'Food hazard decision'
 };
@@ -50,6 +52,7 @@ export function partnerOutcome(record:PartnerRecord,observedAt:string):'PASS'|'F
  if(partnerValidity(record,Date.parse(observedAt)))return 'UNKNOWN';
  const r=record.record;
  switch(r.kind){
+  case 'EPCIS_TRANSFER':return reconcileTransfer(r).outcome;
   case 'LOGGER_WINDOW':return assessLoggerWindow(r).outcome;
   case 'SUPPLIER_RELATION':return 'PASS';
   case 'SUPPLIER_ASSESSMENT':return r.result==='CLEAR'?'PASS':r.result==='EXCEPTION'?'FAIL':'UNKNOWN';
@@ -66,6 +69,7 @@ export function partnerOutcome(record:PartnerRecord,observedAt:string):'PASS'|'F
 }
 
 export const partnerTopics:Record<PartnerRecord['record']['kind'],string>={
+ EPCIS_TRANSFER:'EPCIS shipment dispatch receipt traceability serialised packs dispatch advice goods receiving missing unexpected',
  LOGGER_WINDOW:'temperature humidity sensor calibration excursion cold storage missing samples monitoring window',
  SUPPLIER_RELATION:'tier two supply chain dependency fourth party',
  SUPPLIER_ASSESSMENT:'supplier security ESG sustainability assessment',
@@ -78,6 +82,7 @@ export const partnerTopics:Record<PartnerRecord['record']['kind'],string>={
 
 export function partnerFinding(record:PartnerRecord['record']){
  switch(record.kind){
+  case 'EPCIS_TRANSFER':return transferFinding(record);
   case 'LOGGER_WINDOW':return describeLoggerWindow(record);
   case 'CALIBRATED_READING':return `${record.sensorRef} at ${record.siteRef}: ${record.reading} ${record.unit==='CELSIUS'?'°C':'% RH'} (limits ${record.minimum}–${record.maximum}). Calibration ${record.calibrationRef}.`;
   case 'FOOD_HAZARD':return `${record.hazardRef} at ${record.siteRef}: ${record.result}. Corrective action ${record.correctiveActionRef??'unrecorded'}.`;

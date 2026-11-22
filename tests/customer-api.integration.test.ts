@@ -267,3 +267,23 @@ test('a logger window with missing samples reaches quality review with its origi
   assert.deepEqual(record.samples,source.record.samples);
  } finally {await f.cleanup();}
 });
+
+test('shipment discrepancies produce owned follow-up and exact serial lookup recognises only current reviewed receipts',async()=>{
+ const f=await fixture();
+ try{
+  const {epcisFile,pack}=await import('./helpers/epcis-documents');
+  const grant=await f.create(),session=await f.session(grant.secret!,'observations:write');
+  const at=new Date(Date.now()-60000).toISOString(),shipping=epcisFile('shipping',['Case-A','Case-B'],at),receiving=epcisFile('receiving',['Case-B'],at);
+  const source={schemaVersion:1,revision:1,recordId:'transfer-7',state:'CURRENT',sourceSystem:'Fictional trading partner',sourceVersion:'EPCIS-2.0',decisionOwnerRef:'goods-in',record:{kind:'EPCIS_TRANSFER',shipping,receiving}};
+  const body={...f.observation(f.primary.id,'PASS'),partnerRecord:source};
+  const receipt=await submitCustomerApiObservation(session,randomUUID(),body);
+  const lookup=(id:string,who=f.o)=>db.$transaction(tx=>searchPartnerReports(tx,who,'shipment serialised packs',id));
+  assert.equal(receipt.reportedOutcome,'REPORTED_FAILURE');assert.deepEqual(await lookup(pack('Case-A')),[]);
+  await assert.rejects(reviewCustomerApiObservation(f.ad,receipt.id,{decision:'ACKNOWLEDGE',version:1,notes,confirm:true,requestKey:randomUUID()}),rejects(409));
+  await reviewCustomerApiObservation(f.ad,receipt.id,{decision:'FOLLOW_UP',version:1,notes,ownerId:f.ed.userId,dueDate:future(),confirm:true,requestKey:randomUUID()});
+  const found=await lookup(pack('Case-A'));assert.equal(found[0].receiptHash,receipt.receiptHash);assert.ok(found[0].taskId);assert.match(found[0].summary,/1 missing/);
+  assert.deepEqual(await lookup(pack('case-a')),[]);assert.deepEqual(await lookup(pack('Case-A'),f.out),[]);
+  await submitCustomerApiObservation(session,randomUUID(),{...f.observation(f.primary.id,'PASS'),partnerRecord:{...source,revision:2,previousHash:receipt.receiptHash,state:'WITHDRAWN'}});
+  assert.deepEqual(await lookup(pack('Case-A')),[]);
+ }finally{await f.cleanup();}
+});

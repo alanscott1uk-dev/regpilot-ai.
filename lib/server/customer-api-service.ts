@@ -229,6 +229,10 @@ export async function searchPartnerReports(tx:Tx,c:AuthorizedContext,question:st
    FROM records WHERE ${named}='' OR EXISTS (
     SELECT 1 FROM jsonb_each_text(detail) f WHERE key IN ('siteRef','sensorRef','scopeRef','productRef','systemRef','supplierRef','upstreamRef','vendorRef','hazardRef')
     AND trim(regexp_replace(lower(value),'[^[:alnum:]]+',' ','g'))=${named})
+   OR (detail->>'kind'='EPCIS_TRANSFER' AND EXISTS (
+    SELECT 1 FROM (VALUES (detail#>'{shipping,epcisBody,eventList,0}'),(detail#>'{receiving,epcisBody,eventList,0}')) AS transfer(event)
+    WHERE (event->'epcList') ? ${asset.trim()} OR event#>>'{readPoint,id}'=${asset.trim()}
+      OR event#>>'{bizTransactionList,0,bizTransaction}'=${asset.trim()}))
   ) SELECT id FROM indexed,to_tsquery('simple',${terms.join(' | ')}) q WHERE doc @@ q
     ORDER BY ts_rank(doc,q) DESC,observed DESC,id LIMIT 30`;
  const rows=await tx.customerApiObservation.findMany({where:{organizationId:c.organizationId,id:{in:candidates.map(row=>row.id)}},include:rowInclude});
