@@ -1,3 +1,4 @@
+import {scheduledEvidence,missingMonitoringEvidence,sameKnownChecks} from '../lib/monitoring-criteria';
 import test from "node:test";
 import assert from "node:assert/strict";
 import {collectWorkforce} from "../lib/connectors/workforce";
@@ -123,4 +124,26 @@ test("operator questions ask for missing site or employee and preserve private h
   assert.deepEqual(relevantConnections("staff offboarding","leaver 4",[connection]),[]);
   const link=researchHandoff("temperature mappping",leaver.tenantId),url=new URL(link,"https://pilot.invalid");
   assert.equal(url.searchParams.size,1);assert.match(url.hash,/q=temperature\+mappping/);assert.equal(workspaceHref(link,leaver.tenantId),link);
+});
+
+test('customer cadence needs a current scheduled pair with a stable check set and distinct receipts',()=>{
+ const now=Date.parse('2026-01-10T10:00:00Z'), day=86400000;
+ const sample=(id:string,age:number)=>({id,mode:'SCHEDULED',version:4,at:new Date(now-age).toISOString(),checks:[{id:'stock',status:'PASS'}]});
+ const newest=sample('two',1000),older=sample('one',day+1000);
+ const check=(rows:typeof newest[])=>scheduledEvidence(rows,4,24,now);
+ assert.deepEqual(check([older,newest]).cadenceReceipts,{older:'one',newer:'two'});
+ assert.equal(check([older,newest,newest]).scheduledReads,2);
+ assert.equal(check([{...newest,mode:'MANUAL'},sample('old',2*day),older]).cadence,false);
+ assert.equal(check([{...newest,version:3},older]).cadence,false);
+ assert.equal(check([{...newest,checks:[{id:'different',status:'PASS'}]},older]).cadence,false);
+ assert.equal(check([{...newest,checks:[{id:'stock',status:'UNKNOWN'}]},older]).cadence,false);
+ assert.equal(check([sample('future',-1000),older]).cadence,false);
+ assert.equal(check([newest,sample('late',day+32*60000)]).cadence,false);
+ assert.equal(check([{...newest,checks:[{id:'stock',status:'FAIL'}]},older]).cadence,true);
+});
+test('benchmark reasons use the same criteria as the qualified product total',()=>{
+ const complete={productKey:'AWS',category:'CUSTOMER',current:true,repeat:true,rotated:true,cadence:true,recovered:true,inference:null};
+ assert.deepEqual(missingMonitoringEvidence(complete),[]);
+ assert.deepEqual(missingMonitoringEvidence({...complete,category:'STAGING',productKey:null,cadence:false,recovered:false,inference:false}),['product','ownership','cadence','recovery','inference']);
+ assert.equal(sameKnownChecks([{id:'a',status:'PASS'}],[{id:'a',status:'UNKNOWN'}]),false);
 });

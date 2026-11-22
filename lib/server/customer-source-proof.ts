@@ -1,3 +1,4 @@
+import {missingMonitoringEvidence} from '../monitoring-criteria';
 import {monitoringDepth} from './monitoring-depth';
 import {maxWorkspaceConnectorTargets} from '../connectors/capacity';
 import {z} from 'zod';
@@ -80,8 +81,9 @@ export async function customerSourceProof(ctx:AuthorizedContext,id:string){
   const inference=binding?.action==='ai.provider-linked'?await tx.auditEvent.findFirst({where:{...audit,action:'ai.customer-inference',AND:[{details:{path:['version'],equals:row.version}},{details:{path:['bindingId'],equals:binding.id}}]},orderBy:[{createdAt:'desc'},{id:'desc'}],select:{id:true}}):null;
   const depth=await monitoringDepth(tx,ctx.organizationId,id,scopeHash,row.version,row.intervalHours,captures,rotations);
   const productKey=['PRIVATE_AI_MODEL','NANGO_SYNC','WORKFORCE_LEAVER'].includes(row.provider)?null:row.provider==='AWS_ORGANIZATIONS'?'AWS':row.provider;
-  const qualifies=!!productKey&&recorded==='CUSTOMER'&&current&&repeat&&rotated&&depth.cadence&&depth.recoveries.length>0&&(!isModel||!!inference);
-  return {depth,productKey,qualifies,connectorId:id,provider:row.provider,version:row.version,category:recorded,current,repeat,rotated,inference:isModel?!!inference:null,customerVerified:recorded==='CUSTOMER'&&current&&repeat&&rotated&&(!isModel||!!inference),sourceReceiptId:current?latest!.run.id:null,inferenceReceiptId:inference?.id??null,intervalHours:row.intervalHours,historyTruncated:captures.length>100||changes.length>50,checkedAt:new Date(now).toISOString()};
+  const gaps=missingMonitoringEvidence({productKey,category:recorded,current,repeat,rotated,cadence:depth.cadence,recovered:depth.recoveries.length>0,inference:isModel?!!inference:null});
+  const qualifies=gaps.length===0;
+  return {depth,productKey,gaps,qualifies,connectorId:id,provider:row.provider,version:row.version,category:recorded,current,repeat,rotated,inference:isModel?!!inference:null,customerVerified:recorded==='CUSTOMER'&&current&&repeat&&rotated&&(!isModel||!!inference),sourceReceiptId:current?latest!.run.id:null,inferenceReceiptId:inference?.id??null,intervalHours:row.intervalHours,historyTruncated:captures.length>100||changes.length>50,checkedAt:new Date(now).toISOString()};
  });
 }
 
@@ -89,12 +91,12 @@ export async function customerSourceProof(ctx:AuthorizedContext,id:string){
 export async function customerBenchmarkPage(ctx:AuthorizedContext,after?:string){
  const page=await transaction(ctx,async tx=>{
   await requireMember(tx,ctx,ADMIN);
-  return tx.evidenceConnector.findMany({where:{organizationId:ctx.organizationId,enabled:true,...(after?{id:{gt:after}}:{})},orderBy:{id:'asc'},take:9,select:{id:true}});
+  return tx.evidenceConnector.findMany({where:{organizationId:ctx.organizationId,enabled:true,...(after?{id:{gt:after}}:{})},orderBy:{id:'asc'},take:9,select:{id:true,repository:true}});
  });
  const connections=[];
- for(const {id} of page.slice(0,8)){
+ for(const {id,repository} of page.slice(0,8)){
   const p=await customerSourceProof(ctx,id);
-  connections.push({id,product:p.productKey??p.provider,qualified:p.qualifies,category:p.category,scheduledReads:p.depth.scheduledReads,
+  connections.push({id,target:repository,product:p.productKey??p.provider,qualified:p.qualifies,gaps:p.gaps,category:p.category,latestScheduledAt:p.depth.latestScheduledAt,cadenceReceipts:p.depth.cadenceReceipts,scheduledReads:p.depth.scheduledReads,
    failures:p.depth.failures.length,verifiedRecoveries:p.depth.recoveries.length,checkedAt:p.checkedAt});
  }
  return {organizationId:ctx.organizationId,target:500,connections,after:page.length>8?page[7].id:null};

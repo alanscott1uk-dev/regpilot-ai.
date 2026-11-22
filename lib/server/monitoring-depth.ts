@@ -1,3 +1,4 @@
+import {sameKnownChecks,scheduledEvidence} from '../monitoring-criteria';
 import {z} from 'zod';
 import type {Prisma} from '@prisma/client';
 import {verifiedObservation} from './connector-observation';
@@ -21,18 +22,13 @@ export async function monitoringDepth(tx:Prisma.TransactionClient,org:string,id:
    hash:r.resultHash,checks:obs.checks.map(c=>({id:c.id,label:c.label,status:c.status}))}];
  });
  const failures=failed.slice(0,100).flatMap(e=>{const p=failure.safeParse(e.details);return p.success?[{id:e.id,at:e.createdAt.toISOString(),version:p.data.configVersion,code:p.data.code}]:[];});
- const scheduled=reads.filter(r=>r.mode==='SCHEDULED'&&r.version===version&&r.checks.every(c=>c.status!=='UNKNOWN'));
- const cadence=scheduled.some((newer,i)=>scheduled.slice(i+1).some(older=>{
-  const delta=Date.parse(newer.at)-Date.parse(older.at);
-  return delta>=interval*3600000-1000&&delta<=(interval*60+30)*60000&&older.checks.length===newer.checks.length&&
-   older.checks.every(c=>newer.checks.some(n=>n.id===c.id));
- }));
+ const schedule=scheduledEvidence(reads,version,interval,Date.now());
  const recoveries=rotations.filter(r=>r.after===version).flatMap(change=>{
   const incident=failures.find(f=>f.version===change.before&&f.code==='CREDENTIAL_REJECTED'&&Date.parse(f.at)<=change.at.getTime());
   if(!incident)return [];
-  const before=reads.find(r=>r.version===change.before&&Date.parse(r.at)<=Date.parse(incident.at));
-  const after=reads.find(r=>r.version===change.after&&Date.parse(r.at)>=change.at.getTime()&&r.checks.every(c=>c.status!=='UNKNOWN'));
+  const before=reads.find(r=>r.version===change.before&&Date.parse(r.at)<=Date.parse(incident.at)&&r.checks.every(c=>c.status!=='UNKNOWN'));
+  const after=reads.find(r=>r.version===change.after&&Date.parse(r.at)>=change.at.getTime()&&!!before&&sameKnownChecks(before.checks,r.checks));
   return before&&after?[{before:before.id,failure:incident.id,replacedAt:change.at.toISOString(),after:after.id}]:[];
  });
- return {reads,failures,scheduledReads:scheduled.length,cadence,recoveries,limited:success.length>100||failed.length>100||captures.length>100};
+ return {reads,failures,...schedule,recoveries,limited:success.length>100||failed.length>100||captures.length>100};
 }
