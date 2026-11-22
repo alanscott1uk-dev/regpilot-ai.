@@ -8,7 +8,7 @@ CREATE TABLE regpilot_verification.source_artifact_checks (
 CREATE INDEX source_artifact_version_idx ON regpilot_verification.source_artifact_checks(definition_id,image,version,checked_at DESC);
 ALTER TABLE regpilot_verification.source_artifact_checks ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON regpilot_verification.source_artifact_checks FROM PUBLIC,anon,authenticated,regpilot_staging_runtime;
-CREATE FUNCTION regpilot_verification.check_source_artifacts(batch_size integer DEFAULT 10)
+CREATE OR REPLACE FUNCTION regpilot_verification.check_source_artifacts(batch_size integer DEFAULT 10)
 RETURNS integer LANGUAGE plpgsql SET search_path=pg_catalog AS $$
 DECLARE src record; res record; item jsonb; actual text; code int; wait_seconds int; done int:=0;
 BEGIN
@@ -16,9 +16,9 @@ BEGIN
  IF NOT pg_try_advisory_xact_lock(98375143) THEN RETURN 0; END IF;
  IF EXISTS (SELECT 1 FROM regpilot_verification.source_artifact_checks WHERE retry_at>clock_timestamp()) THEN RETURN 0; END IF;
  FOR src IN SELECT d.* FROM regpilot_verification.available_source_definitions d
-  LEFT JOIN LATERAL (SELECT checked_at,status FROM regpilot_verification.source_artifact_checks a
+  LEFT JOIN LATERAL (SELECT checked_at,status,retry_at FROM regpilot_verification.source_artifact_checks a
    WHERE (a.definition_id,a.image,a.version)=(d.id,d.image,d.version) ORDER BY checked_at DESC,id DESC LIMIT 1) last_run ON true
-  WHERE d.plan_available AND (last_run.checked_at IS NULL OR last_run.checked_at<
+  WHERE d.plan_available AND (last_run.checked_at IS NULL OR last_run.retry_at<=clock_timestamp() OR last_run.checked_at<
     clock_timestamp()-CASE WHEN last_run.status=200 THEN interval '7 days' ELSE interval '12 hours' END)
   ORDER BY last_run.checked_at NULLS FIRST,(d.kind='database') DESC,d.name LIMIT batch_size
  LOOP

@@ -1,6 +1,7 @@
 """Read a disposable database with the installed vendor connector before and after credential rotation."""
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -33,16 +34,21 @@ digest = next(d.split("@")[1] for d in digests if d.startswith(source + "@"))
 command("docker", "network", "create", network)
 os.environ[password_env] = admin
 try:
+    admin_options = ["-e","CLICKHOUSE_USER=fixture_admin","-e","CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1"] if kind == "clickhouse" else []
     command("docker", "run", "-d", "--name", instance, "--network", network,
-            "-e", password_env, db_image)
+            "-e", password_env, *admin_options, db_image)
     cli = (["psql", "-U", "postgres", "-v", "ON_ERROR_STOP=1"] if pg else ["mysql", "-uroot"])
     if kind == "clickhouse":
-        cli = ["clickhouse-client", "--multiquery"]
+        cli = ["clickhouse-client", "--user", "fixture_admin", "--multiquery"]
     def query(sql, check=True):
         # Pass credentials via environment, SQL over stdin. Never print credential-bearing SQL.
         env = dict(os.environ, MYSQL_PWD=admin, CLICKHOUSE_PASSWORD=admin)
-        return subprocess.run(["docker", "exec", "-i", "-e", "MYSQL_PWD", "-e", "CLICKHOUSE_PASSWORD", instance, *cli],
-                              input=sql, env=env, text=True, capture_output=True, check=check)
+        completed = subprocess.run(["docker", "exec", "-i", "-e", "MYSQL_PWD", "-e", "CLICKHOUSE_PASSWORD", instance, *cli],
+                              input=sql, env=env, text=True, capture_output=True)
+        if check and completed.returncode:
+            codes = re.findall(r"\(([A-Z_]{4,80})\)|(?:Code:|ERROR) (\d+)", completed.stderr)
+            raise RuntimeError("Fixture SQL failed (%s): %s" % (completed.returncode, codes))
+        return completed
     for attempt in range(90):
         if query("select 1;", False).returncode == 0 and (kind != "mysql" or
                 subprocess.run(["docker","exec",instance,"mysqladmin","--protocol=tcp","ping"],capture_output=True).returncode == 0):

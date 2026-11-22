@@ -111,8 +111,8 @@ All decisions require explicit confirmation, at least 20 characters of rationale
 | --- | --- |
 | 60 requests per credential per UTC calendar minute | PostgreSQL persisted rate admission. |
 | 300 requests per company per UTC calendar minute | Reserved atomically with the credential unit. |
-| 200 new observations per company per rolling 24 hours | Checked inside the ingestion transaction; existing replay does not add an observation. |
-| 500 observations awaiting administrator review | Requires the company to review or reject its pending reports before accepting more. |
+| 2,000 new observations per company per rolling 24 hours | Checked inside the ingestion transaction; existing replay does not add an observation. |
+| 2,000 observations awaiting administrator review | Requires the company to review or reject its pending reports before accepting more. |
 | 20 active credentials, 50 controls per credential | Expired and revoked credential history does not block creation. |
 
 Authenticated admissions consume a rate unit, including scope rejection, malformed business requests and idempotent retries. Invalid or inactive credentials do not enter the per-company ledger. A request rejected because a rate budget is full reserves neither unit: the transaction rolls both reservations back. Old rate windows are pruned after 24 hours. This provides distributed correctness across application instances; it is not an edge denial-of-service defence or a throughput benchmark.
