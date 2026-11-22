@@ -21,7 +21,13 @@ test("five operational sources can be configured, collected and exported within 
       process.env[flag]="true";
       await assert.rejects(saveConnector(f.out,input),rejects(404));
       const saved = await saveConnector(f.o,input);
-      globalThis.fetch=async url => {assert.equal(String(url),row.url);return Response.json(row.changed);};
+      let acceptedCredential=token;
+      globalThis.fetch=async (url,options) => {
+        assert.equal(String(url),row.url);
+        const required=row.provider==="AZURE_DEVOPS"?"Basic "+Buffer.from(":"+acceptedCredential).toString("base64"):"Bearer "+acceptedCredential;
+        if(new Headers(options?.headers).get("authorization")!==required)return new Response(null,{status:401});
+        return Response.json(row.changed);
+      };
       const observed = await verifyConnectorNow(f.o,saved.id,saved.version);
       assert.equal(observed.outcome,"FOLLOW_UP",row.provider);
       const run = await db.connectorRun.findFirstOrThrow({where:{connectorId:saved.id}});
@@ -33,7 +39,12 @@ test("five operational sources can be configured, collected and exported within 
       assert.equal(first.currentVersionRead,run.id);
       assert.equal(first.readsAtLeastOneIntervalApart,false);
       await assert.rejects(verificationReceipt(f.out,saved.id),rejects(404));
-      const renewed=await saveConnector(f.o,{...input,id:saved.id,version:saved.version,token:token+'-replacement'});
+      acceptedCredential=token+'-replacement';
+      await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
+      const rejected=await verifyConnectorNow(f.o,saved.id,saved.version);
+      assert.equal(rejected.observed,false);
+      assert.equal((await db.evidenceConnector.findUniqueOrThrow({where:{id:saved.id}})).failureCode,'CREDENTIAL_REJECTED');
+      const renewed=await saveConnector(f.o,{...input,id:saved.id,version:saved.version,token:acceptedCredential});
       const before=await verificationReceipt(f.o,saved.id);
       assert.deepEqual(before.credentialReplacements.map(r=>[r.before,r.after]),[[run.id,null]]);
       await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
