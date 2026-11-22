@@ -21,6 +21,8 @@ try {
         has_table_privilege('authenticated', format('public.%I', ${model}::text), 'SELECT,INSERT,UPDATE,DELETE') AS api_access`;
     if (!checks[0]?.runtime_access || checks[0].anon_access || checks[0].api_access) throw new Error('Private table grants are incorrect');
   }
+  const monitoring = await db.$queryRaw`SELECT resources, tests FROM regpilot_verification.history ORDER BY collected_at DESC LIMIT 1`;
+  if (monitoring[0]?.resources !== models.length || monitoring[0]?.tests !== models.length * 5) throw new Error('Staging monitoring inventory differs from application models');
   // Exercise actual generated Prisma mappings without returning stored data.
   await db.auditGrant.findFirst({select:{apiIssuerId:true,apiExpiresAt:true,apiLastUsedAt:true,apiKeyHash:true}});
   await db.$queryRaw`SELECT "licenceScope", "licenceRecord" FROM "Vendor" WHERE FALSE`;

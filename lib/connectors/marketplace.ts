@@ -132,7 +132,7 @@ export async function readSync(org:string,source:Integration,id:string,model:str
    nextStep:'Review the mapped source field and any affected resources.'};
  }):[];
  const findings=evaluated.filter(row=>row.states.some(state=>state!=='PASS')).sort((a,b)=>a.resource.localeCompare(b.resource)).slice(0,12);
- const ruleHash=policy?createHash('sha256').update(JSON.stringify(evaluated.sort((a,b)=>a.resource.localeCompare(b.resource)))).digest('hex'):null;
+ const ruleHash=policy?createHash('sha256').update(JSON.stringify({populationComplete,statuses:rules.map(r=>r.status),resources:evaluated.sort((a,b)=>a.resource.localeCompare(b.resource))})).digest('hex'):null;
  return {rules,findings,populationComplete,activeResources:evaluated.length,ruleHash,syncState:pipeline?.state??"UNKNOWN",syncCompletedAt:pipeline?.finishedAt??null,count:items.length,limited:more,deleted:items.filter(r=>r.action==='DELETED').length,lastChanged:items.map(r=>new Date(r.changed).toISOString()).sort().at(-1)??null,
   digest:createHash('sha256').update(JSON.stringify(sorted)).digest('hex')};
 }

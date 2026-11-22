@@ -58,7 +58,19 @@ s, changes = re.subn(r'^additional_redirect_urls =.*$', 'additional_redirect_url
 if changes != 1: raise SystemExit("Unsupported Supabase redirect configuration")
 p.write_text(s)
 PY
-  supabase start -x realtime,imgproxy,postgres-meta,studio,edge-runtime,logflare,vector,supavisor > "$work/supabase-start.log" 2>&1 || { docker ps -a --format '{{.Names}} {{.Status}}'; exit 1; }
+  for attempt in 1 2; do
+    if supabase start -x realtime,imgproxy,postgres-meta,studio,edge-runtime,logflare,vector,supavisor > "$work/supabase-start.log" 2>&1; then break; fi
+    docker ps -a --format '{{.Names}} {{.Status}}'
+    # Print diagnostic classes only. Service logs can include disposable credentials.
+    python - "$work/supabase-start.log" <<'PYCODE'
+import re, sys
+log = open(sys.argv[1]).read().lower()
+for category, pattern in [("registry throttling", r"toomanyrequests|rate limit|429"), ("registry access", r"denied|unauthorized|403"), ("network", r"timeout|connection reset|eof"), ("image retrieval", r"failed to pull|manifest unknown"), ("service health", r"unhealthy|health check"), ("storage", r"no space")]:
+    if re.search(pattern, log): print("Supabase startup:", category)
+PYCODE
+    if [[ $attempt == 2 ]]; then exit 1; fi
+    sleep 3
+  done
   supabase status -o json > "$work/keys.json"
 )
 read_key() {

@@ -120,3 +120,37 @@ test('private ChatGPT Action exposes the three scoped lookup operations and reso
  }
  for(const ref of JSON.stringify(doc).matchAll(/"\$ref":"#\/components\/schemas\/([^"]+)"/g))assert.ok(Object.hasOwn(doc.components.schemas,ref[1]));
 });
+
+test('resource controls require distinct mapped fields, typed values and independent current decisions',async()=>{
+ const {evaluateResource,resourcePolicy,profileFields,profiles}=await import('../lib/connectors/resource-control');
+ assert.equal(Object.values(profiles).reduce((total,profile)=>total+profile.rules.length,0),20);
+ const mapping=Object.fromEntries(profileFields('laboratory').map(k=>[k,'decision.'+k]));
+ const policy=resourcePolicy.parse({profile:'laboratory',mapping});
+ assert.equal(resourcePolicy.safeParse({profile:'laboratory',mapping:{...mapping,reviewerId:mapping.authorId}}).success,false);
+ assert.equal(resourcePolicy.safeParse({profile:'laboratory',mapping:{...mapping,reviewerId:'constructor.field'}}).success,false);
+ const now=Date.parse('2026-01-15T12:00:00Z'),decision={approved:true,authorisedReviewer:true,authorId:'a',reviewerId:'b',modifiedAt:'2026-01-10T00:00:00Z',decidedAt:'2026-01-12T00:00:00Z'};
+ assert.deepEqual(evaluateResource({decision},policy,now),['PASS','PASS','PASS','PASS']);
+ assert.deepEqual(evaluateResource({decision:{...decision,authorisedReviewer:'yes',reviewerId:'a',modifiedAt:'2026-01-13T00:00:00Z'}},policy,now),['PASS','UNKNOWN','FAIL','FAIL']);
+ assert.deepEqual(evaluateResource({},policy,now),Array(4).fill('UNKNOWN'));
+});
+
+test('workflow receipts bind repository, attempt, branch and revision before accepting a job',async()=>{
+ const {collectWorkflow}=await import('../lib/connectors/workflow-evidence');
+ const target={scope:'owner/repo',record:'ci.yml',reference:'main'},sha='a'.repeat(40);
+ const simulate=(options:{foreign?:boolean;jobAttempt?:number;moved?:boolean;skipped?:boolean}={}):typeof fetch=>{
+  let branches=0;
+  return async input=>{
+   const route=new URL(String(input)).pathname,repo={full_name:'owner/repo',id:10};
+   if(route.endsWith('/repos/owner/repo'))return Response.json(repo);
+   if(route.endsWith('ci.yml'))return Response.json({id:20,path:'.github/workflows/ci.yml',state:'active'});
+   if(route.endsWith('branches/main'))return Response.json({name:'main',commit:{sha:++branches===2&&options.moved?'b'.repeat(40):sha}});
+   if(route.endsWith('/runs'))return Response.json({total_count:1,workflow_runs:[{id:30,workflow_id:20,head_sha:sha,head_branch:'main',run_attempt:2,repository:repo,head_repository:{id:options.foreign?90:10},status:'completed',conclusion:'success',updated_at:'2026-11-01T08:00:00Z'}]});
+   return Response.json({total_count:1,jobs:[{id:40,run_id:30,run_attempt:options.jobAttempt??2,head_sha:sha,status:'completed',conclusion:options.skipped?'skipped':'success'}]});
+  };
+ };
+ const read=(options:Parameters<typeof simulate>[0])=>collectWorkflow(target,token,simulate(options));
+ assert.equal((await read({})).checks.find(c=>c.id==='run-1-jobs')?.status,'PASS');
+ for(const options of [{skipped:true},{foreign:true}])assert.equal((await read(options)).checks.find(c=>c.id==='run-1-jobs')?.status,'UNKNOWN');
+ await assert.rejects(read({jobAttempt:1}),{code:'TARGET_MISMATCH'});
+ await assert.rejects(read({moved:true}),{code:'TARGET_MISMATCH'});
+});

@@ -1,0 +1,21 @@
+{
+  "controlId": "00000000-0000-4000-8000-000000000001",
+  "endpoint": "opc.tcp://instrument.example:4840/",
+  "applicationUri": "urn:regpilot:instrument-reader",
+  "clientCertificate": "reader.der",
+  "clientPrivateKey": "reader.pem",
+  "serverCertificate": "approved-server.der",
+  "namespaceUri": "urn:example:instruments",
+  "objectIdentifier": "logger-001",
+  "expectedSerial": "LOGGER-001",
+  "serialField": "Serial",
+  "unitField": "Unit",
+  "valueField": "Temperature",
+  "minimumC": 2,
+  "maximumC": 8,
+  "maxAgeMinutes": 15,
+  "calibrationFile": "site-reviewed-certificate.pdf",
+  "calibrationSha256": "replace-with-the-sha256-from-the-reviewed-certificate",
+  "validFrom": "2026-01-01T00:00:00Z",
+  "validUntil": "2027-01-01T00:00:00Z"
+}

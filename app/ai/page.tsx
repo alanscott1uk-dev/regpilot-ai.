@@ -259,7 +259,7 @@ export default function AiStudio(){
    <PublicationResearch/>
    <div className={shell.warning}><strong>Private AI pilot — no sensitive information.</strong> The private drafting tools below send supplied text and documents to an external model provider, potentially outside the UK. Do not send genuine patient, staff, supplier, confidential or regulated records. No legal or regulatory conclusion is provided.</div>
    {message&&<div className={ui.alert} role="status">{message}<button type="button" onClick={()=>setMessage("")} aria-label="Dismiss">×</button></div>}
-   {feature===false&&!ownEnabled&&<div className={ui.setup}><strong>AI integration is installed but not activated.</strong><p>Verified Supabase login, an invite allowlist, a migrated database and Gateway credentials are required. The server intentionally refuses AI requests until configured.</p></div>}
+   {feature===false&&!ownEnabled&&<div className={ui.setup}><strong>Private document drafting awaits an AI provider.</strong><p><a href="#source-research">Search UK regulatory sources</a> uses RegPilot’s local language model. An administrator can configure provider access for private drafting in <a href="/team/developers">Company integrations</a>.</p></div>}
    <div className={ui.layout}>
     <section className={ui.controls}>
      <div className={ui.sectionHead}><span>01 / ACCESS</span><h2>Secure pilot session</h2></div>
