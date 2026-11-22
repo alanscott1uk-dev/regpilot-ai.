@@ -58,6 +58,7 @@ test('managed AI access, renewal and successive sync receipts are isolated to th
   if(url.pathname==='/integrations')return Response.json({data:[{unique_key:integration,provider:'openai',display_name:'Own model'}]});
   if(url.pathname==='/connections')return Response.json({connections:[foreign?{...row,tags:{...row.tags,organization_id:f.b.id}}:row]});
   if(url.pathname==='/proxy/v1/models/exact-model')return Response.json({id:'exact-model'});
+  if(url.pathname==='/sync/status')return Response.json({syncs:[{connection_id:connectionId,status:'SUCCESS',finishedAt:new Date().toISOString(),recordCount:{AuditItem:1}}]});
   if(url.pathname==='/records')return Response.json({records:[{id:recordId,private:'do-not-persist',_nango_metadata:{last_modified_at:'2026-01-01T12:00:00Z',last_action:'ADDED'}}],next_cursor:null});
   assert.equal(url.pathname,'/connect/sessions/reconnect');
   const body=JSON.parse(String(init?.body));assert.equal(body.connection_id,connectionId);assert.equal(body.integration_id,integration);assert.equal(body.tags.organization_id,f.a.id);assert.equal(body.tags.regpilot_integration,integration);
@@ -110,4 +111,34 @@ test('repeated logger collection checks the physical serial, rotated key and cur
   assert.equal((await verifyConnectorNow(f.o,saved.id,updated.version)).outcome,'INCOMPLETE');
   assert.equal(await db.connectorRun.count({where:{organizationId:f.a.id,connectorId:saved.id}}),4);
  }finally{globalThis.fetch=original;await f.cleanup();}
+});
+
+test('self-service provisions an eligible provider once for the requesting organisation and hides other customer configurations', async()=>{
+ const {marketplaceAction}=await import('../lib/server/integration-marketplace');
+ const {workspaceIntegrationId,catalogUrl}=await import('../lib/connectors/marketplace');
+ const f=await assuranceFixture();
+ Object.assign(process.env,{REGPILOT_MARKETPLACE_ENABLED:'true',REGPILOT_MARKETPLACE_SELF_SERVICE_ENABLED:'true',REGPILOT_NANGO_API_KEY:token});
+ const expected=workspaceIntegrationId(f.a.id,'example'),foreign=workspaceIntegrationId(f.b.id,'example');
+ const integrations=[{unique_key:foreign,provider:'example',display_name:'Another account'}];
+ let creates=0;
+ const fetcher:typeof fetch=async(input,init)=>{
+  if(String(input)===catalogUrl)return new Response('| `example` | Example | API_KEY | docs | connect | | ERP |\n| `oauth` | OAuth | OAUTH2 | docs | connect | | ERP |');
+  assert.equal(String(input),'https://api.nango.dev/integrations');
+  if(init?.method==='POST'){
+   const data=JSON.parse(String(init.body));assert.deepEqual(data,{unique_key:expected,provider:'example'});
+   creates++;integrations.push({...data,display_name:'Connected example'});return Response.json({data});
+  }
+  return Response.json({data:integrations});
+ };
+ try{
+  await assert.rejects(marketplaceAction(f.ed,{action:'ENABLE',slug:'example'},fetcher),rejects(403));
+  await assert.rejects(marketplaceAction(f.o,{action:'ENABLE',slug:'oauth'},fetcher),rejects(400));
+  await marketplaceAction(f.o,{action:'ENABLE',slug:'example'},fetcher);
+  await marketplaceAction(f.o,{action:'ENABLE',slug:'example'},fetcher);
+  assert.equal(creates,1);
+  const a=await marketplaceAction(f.o,{action:'AVAILABLE'},fetcher),b=await marketplaceAction(f.out,{action:'AVAILABLE'},fetcher);
+  assert.ok('integrations' in a&&'integrations' in b);
+  assert.deepEqual(a.integrations.map(s=>s.integration),[expected]);
+  assert.deepEqual(b.integrations.map(s=>s.integration),[foreign]);
+ }finally{await f.cleanup();}
 });

@@ -71,19 +71,22 @@ test('Benchling links a result to its exact entry and independent named review s
 test('managed sync samples respect tenant, provider and connection boundaries, limits, removals and cursor progression',async()=>{
  const {readSync,parseDirectory,workspaceIntegrationId}=await import('../lib/connectors/marketplace');
  const {randomUUID}=await import('node:crypto');const org=randomUUID(),other=randomUUID();
- const source={integration:'regpilot-crm',provider:'example',name:'CRM',models:['Contact'],aiModels:[]},connection='grant-1';
+ const source={integration:'regpilot-crm',provider:'example',name:'CRM',models:[],aiModels:[]},connection='grant-1';
  const row={provider:'example',provider_config_key:source.integration,connection_id:connection,errors:[],tags:{organization_id:org,regpilot_integration:source.integration}};
  const at=new Date().toISOString();
- function simulate(foreign=false,loop=false):typeof fetch{return async(input,init)=>{
+ function simulate(foreign=false,loop=false,stale=false,wrongSync=false):typeof fetch{return async(input,init)=>{
   const u=new URL(String(input));assert.equal(u.hostname,'api.nango.dev');
   if(u.pathname==='/connections')return Response.json({connections:[foreign?{...row,tags:{...row.tags,organization_id:other}}:row]});
+  if(u.pathname==='/sync/status'){assert.equal(u.searchParams.get('connection_id'),connection);return Response.json({syncs:[{connection_id:wrongSync?'other':connection,status:'SUCCESS',finishedAt:stale?'2020-01-01T00:00:00Z':at,recordCount:{Contact:2}}]});}
   assert.equal(u.pathname,'/records');assert.equal(new Headers(init?.headers).get('Connection-Id'),connection);const next=u.searchParams.has('cursor');
   return Response.json({records:[{id:next?'b':'a',private:'secret-text',_nango_metadata:{last_action:next?'DELETED':'UPDATED',last_modified_at:at}}],next_cursor:next&&!loop?null:'next'});
  };}
- const result=await readSync(org,source,connection,'Contact',token,simulate());assert.equal(result.count,2);assert.equal(result.deleted,1);assert.equal(result.limited,false);assert.doesNotMatch(JSON.stringify(result),/secret-text/);
+ const result=await readSync(org,source,connection,'Contact',token,simulate());assert.equal(result.syncState,'FRESH');assert.equal(result.count,2);assert.equal(result.deleted,1);assert.equal(result.limited,false);assert.doesNotMatch(JSON.stringify(result),/secret-text/);
  await assert.rejects(readSync(org,source,connection,'Contact',token,simulate(true)),{code:'TARGET_MISMATCH'});
  await assert.rejects(readSync(org,source,connection,'Contact',token,simulate(false,true)),{code:'INVALID_RESPONSE'});
  await assert.rejects(readSync(org,source,connection,'Private',token,simulate()),{code:'INVALID_TARGET'});
+ assert.equal((await readSync(org,source,connection,'Contact',token,simulate(false,false,true))).syncState,'STALE');
+ await assert.rejects(readSync(org,source,connection,'Contact',token,simulate(false,false,false,true)),{code:'TARGET_MISMATCH'});
  const id=workspaceIntegrationId(org,'example');assert.notEqual(workspaceIntegrationId(other,'example'),id);
  const target={scope:id+'/a-long-connected-tenant',record:'Contact',reference:'example'},stored=recordKeys('NANGO_SYNC',target);
  assert.deepEqual(readRecordKeys('NANGO_SYNC',stored.repository,stored.branch),target);
@@ -101,4 +104,16 @@ test('customer model routes pin the broker and provider, disable provider storag
   });
   assert.deepEqual(await call(false),{output:{ok:true},usage:{inputTokens:4,outputTokens:2}});await assert.rejects(call(true),/Incomplete/);
  }
+});
+
+test('private ChatGPT Action exposes the three scoped lookup operations and resolves all schema references',async()=>{
+ const {GET}=await import('../app/api/v1/chatgpt/route');
+ const doc=await GET(new Request('https://authorised-workspace.example/api/v1/chatgpt')).json();
+ assert.deepEqual(doc.servers,[{url:'https://authorised-workspace.example/api/v1'}]);
+ assert.deepEqual(Object.keys(doc.paths).sort(),['/controls','/regulatory-sources','/tasks']);
+ for(const path of Object.values(doc.paths) as {get:{security:unknown}}[]){
+  assert.deepEqual(Object.keys(path),['get']);
+  assert.deepEqual(path.get.security,[{customerCredential:[]}]);
+ }
+ for(const ref of JSON.stringify(doc).matchAll(/"\$ref":"#\/components\/schemas\/([^"]+)"/g))assert.ok(Object.hasOwn(doc.components.schemas,ref[1]));
 });

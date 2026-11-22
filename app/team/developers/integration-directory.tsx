@@ -9,17 +9,19 @@ export default function IntegrationDirectory({workspace,locked}:{workspace:Retur
  const [selfService,setSelfService]=useState(false);
  const [entries,setEntries]=useState<Entry[]>([]),[available,setAvailable]=useState<Integration[]>([]),[search,filter]=useState('');
  const [sourceId,select]=useState(''),[grants,setGrants]=useState<{id:string;healthy:boolean}[]>([]),[id,choose]=useState(''),[model,setModel]=useState(''),[aiModel,setAiModel]=useState('');
+ const [deployed,setDeployed]=useState<string[]>([]);
  const [account,setAccount]=useState<Choice|null>(null),[link,setLink]=useState(''),[message,tell]=useState(''),[busy,lock]=useState(false),[offset,page]=useState(0);
  const source=available.find(s=>s.integration===sourceId);
  const matches=entries.filter(e=>(e.name+' '+e.category+' '+e.slug).toLowerCase().includes(search.trim().toLowerCase()));
- function selectSource(s?:Integration){select(s?.integration??'');setGrants([]);choose('');setModel(s?.models[0]??'');setAiModel(s?.aiModels[0]??'');setLink('');tell('');}
+ const models=Array.from(new Set([...(source?.models??[]),...deployed]));
+ function selectSource(s?:Integration){setDeployed([]);select(s?.integration??'');setGrants([]);choose('');setModel(s?.models[0]??'');setAiModel(s?.aiModels[0]??'');setLink('');tell('');}
  async function act(action:string,slug?:string){
   const valid=workspace.capture();lock(true);tell('');setLink('');
   try{
    const body:Record<string,unknown>={action,organizationId:workspace.organizationId};
    if(action==='ENABLE')body.slug=slug;
    if(!['DIRECTORY','AVAILABLE','UNLINK_AI','ENABLE'].includes(action))body.integration=sourceId;
-   if(['RENEW','COLLECT','SET_AI'].includes(action))body.connectionId=id;
+   if(['RENEW','COLLECT','SET_AI','MODELS'].includes(action))body.connectionId=id;
    if(action==='COLLECT')body.model=model;
    if(action==='SET_AI')body.model=aiModel;
    if(action==='SET_AI'||action==='UNLINK_AI')body.previous=account?.version??null;
@@ -28,10 +30,11 @@ export default function IntegrationDirectory({workspace,locked}:{workspace:Retur
    if(action==='ENABLE'){const enabled=v.source as Integration;setAvailable(old=>[...old.filter(s=>s.integration!==enabled.integration),enabled]);selectSource(enabled);tell('Ready to authorise '+enabled.name+' for this organisation.');}
    if(action==='DIRECTORY'){setEntries(v.entries);page(0);tell(v.entries.length+' provider catalogue entries refreshed.');}
    if(action==='AVAILABLE'){setSelfService(v.selfService===true);setAvailable(v.integrations);setAccount(v.ai);selectSource(v.integrations[0]);tell(v.enabled?v.integrations.length+' integrations enabled for hosted connection.':'Hosted connections await broker configuration.');}
-   if(action==='GRANTS'){setGrants(v.grants);choose(v.grants[0]?.id??'');tell(v.grants.length+' connections returned for this organisation.');}
+   if(action==='GRANTS'){setDeployed([]);setModel(source?.models[0]??'');setGrants(v.grants);choose(v.grants[0]?.id??'');tell(v.grants.length+' connections returned for this organisation.');}
+   if(action==='MODELS'){setDeployed(v.models);setModel(v.models[0]??'');tell(v.deployed.length+' deployed record models identified on this connection.');}
    if(action==='CONNECT'||action==='RENEW')setLink(v.link);
    if(action==='SET_AI'||action==='UNLINK_AI'){setAccount(v);tell(v.provider?'Model access confirmed. Select your organisation account in AI Studio.':'AI account unlinked from RegPilot.');}
-   if(action==='COLLECT')tell(v.count+' synced records sampled · '+v.deleted+' marked deleted · '+(v.limited?'partial sample':'end of returned pages')+' · '+(v.changed===null?'first collection':v.changed?'sample changed since '+v.previousCheckedAt:'same metadata as '+v.previousCheckedAt)+' · receipt '+v.receiptId);
+   if(action==='COLLECT')tell(v.count+' synced records sampled · '+v.deleted+' marked deleted · '+(v.limited?'partial sample':'end of returned pages')+' · '+(v.changed===null?'first collection':v.changed?'sample changed since '+v.previousCheckedAt:'same metadata as '+v.previousCheckedAt)+' · source sync '+v.syncState+' · receipt '+v.receiptId);
   }catch(e){if(valid())tell(e instanceof Error?e.message:'Connection request unavailable.');}finally{if(valid())lock(false);}
  }
  return <section><h2>Integration directory and AI accounts</h2><fieldset disabled={busy||locked}><legend>Provider catalogue</legend>
@@ -41,9 +44,10 @@ export default function IntegrationDirectory({workspace,locked}:{workspace:Retur
  <button type="button" disabled={offset===0} onClick={()=>page(offset-15)}>Previous providers</button> <button type="button" disabled={offset+15>=matches.length} onClick={()=>page(offset+15)}>More providers</button></>}</fieldset>
  {available.length>0&&<fieldset disabled={locked||busy}><legend>Connect or reauthorise a provider</legend><label>Enabled integration <select aria-label="Enabled integration" value={sourceId} onChange={e=>selectSource(available.find(s=>s.integration===e.target.value))}>{available.map(s=><option key={s.integration} value={s.integration}>{s.name} · {s.integration}</option>)}</select></label>
  <button type="button" onClick={()=>void act('CONNECT')}>Start hosted authorisation</button> <button type="button" onClick={()=>void act('GRANTS')}>Check organisation connections</button>
- {grants.length>0&&<><label>Connection <select aria-label="Connection" value={id} onChange={e=>{choose(e.target.value);setLink('');tell('');}}>{grants.map(g=><option key={g.id} value={g.id}>{g.id} · {g.healthy?'authorised':'needs attention'}</option>)}</select></label>
+ {grants.length>0&&<><label>Connection <select aria-label="Connection" value={id} onChange={e=>{choose(e.target.value);setDeployed([]);setModel(source?.models[0]??'');setLink('');tell('');}}>{grants.map(g=><option key={g.id} value={g.id}>{g.id} · {g.healthy?'authorised':'needs attention'}</option>)}</select></label>
  <button type="button" onClick={()=>void act('RENEW')}>Renew this connection</button>
- {source&&source.models.length>0&&<><label>Synced record model <select aria-label="Synced record model" value={model} onChange={e=>setModel(e.target.value)}>{source.models.map(m=><option key={m}>{m}</option>)}</select></label><button type="button" onClick={()=>void act('COLLECT')}>Collect and compare sync metadata</button><p>For daily or weekly collection, choose Managed provider sync in <a href={'/team/operations?'+new URLSearchParams({organizationId:workspace.organizationId,view:'connections'})}>Operations</a>. Use {source.integration}/{id}, model {model} and provider {source.provider}.</p></>}
+ <button type="button" onClick={()=>void act('MODELS')}>Check deployed sync models</button>
+ {source&&models.length>0&&<><label>Synced record model <select aria-label="Synced record model" value={model} onChange={e=>setModel(e.target.value)}>{models.map(m=><option key={m}>{m}</option>)}</select></label><button type="button" onClick={()=>void act('COLLECT')}>Collect and compare sync metadata</button><p>For daily or weekly collection, choose Managed provider sync in <a href={'/team/operations?'+new URLSearchParams({organizationId:workspace.organizationId,view:'connections'})}>Operations</a>. Use {source.integration}/{id}, model {model} and provider {source.provider}.</p></>}
  {source&&source.aiModels.length>0&&<><label>AI model <select aria-label="AI model" value={aiModel} onChange={e=>setAiModel(e.target.value)}>{source.aiModels.map(m=><option key={m}>{m}</option>)}</select></label><button onClick={()=>void act('SET_AI')}>Verify model and link AI account</button></>}</>}</fieldset>}
  {link&&<p><a href={link} rel="noreferrer" target="_blank">Continue securely with the provider</a>. Return here and check organisation connections.</p>}
  {account?.provider&&<p>Linked model · {account.provider} / {account.model} · <a href="/ai">Open AI Studio</a> <button disabled={locked||busy} onClick={()=>void act('UNLINK_AI')}>Unlink AI account</button></p>}

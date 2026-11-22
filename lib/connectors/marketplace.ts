@@ -64,9 +64,41 @@ export async function checkGrant(org:string,source:Integration,id:string,key:str
  const grants=await workspaceGrants(org,source,key,fetcher,id);
  if(grants.length!==1||!allowFault&&!grants[0].healthy)throw new CollectionError('TARGET_MISMATCH');
 }
+export async function deployedModels(source:Integration,id:string,key:string,fetcher:typeof fetch){
+ const params=new URLSearchParams({provider_config_key:source.integration,connection_id:brokerId.parse(id),syncs:'*'});
+ const rows=(await get('/sync/status?'+params,key,fetcher)).syncs;
+ if(!Array.isArray(rows)||rows.length>200)throw new CollectionError('SCOPE_LIMIT');
+ const models=new Map<string,Array<{state:string;finishedAt:string|null}>>();
+ for(const row of rows){
+  if(row?.connection_id!==id)throw new CollectionError('TARGET_MISMATCH');
+  const names=new Set([...Object.keys(row.recordCount??{}),...Object.keys(row.latestResult??{})]);
+  for(const name of names){
+   if(!sourceModel.safeParse(name).success)continue;
+   const finished=z.iso.datetime({offset:true}).safeParse(row.finishedAt);
+   const states=models.get(name)??[];
+   states.push({state:['SUCCESS','RUNNING','PAUSED','STOPPED','ERROR'].includes(row.status)?String(row.status):'UNKNOWN',finishedAt:finished.success?new Date(finished.data).toISOString():null});
+   models.set(name,states);
+  }
+ }
+ if(models.size>200)throw new CollectionError('SCOPE_LIMIT');
+ return [...models].map(([name,jobs])=>{
+  const allComplete=jobs.every(job=>job.state==='SUCCESS'&&job.finishedAt);
+  const finishedAt=allComplete?jobs.map(job=>job.finishedAt!).sort()[0]:null;
+  const age=finishedAt?Date.now()-Date.parse(finishedAt):NaN;
+  const state=jobs.some(job=>['ERROR','PAUSED','STOPPED'].includes(job.state))?'NEEDS_ATTENTION':
+   allComplete&&age>=0?(age<=86400000?'FRESH':'STALE'):'UNKNOWN';
+  return {name,state,finishedAt};
+ });
+}
 export async function readSync(org:string,source:Integration,id:string,model:string,key:string,fetcher:typeof fetch=fetch){
- if(!source.models.includes(sourceModel.parse(model)))throw new CollectionError('INVALID_TARGET');
+ sourceModel.parse(model);
  await checkGrant(org,source,id,key,fetcher);
+ const deployed=await deployedModels(source,id,key,fetcher).catch(error=>{
+  if(error instanceof CollectionError&&error.code==='ACCESS_DENIED'&&source.models.includes(model))return [];
+  throw error;
+ });
+ const pipeline=deployed.find(entry=>entry.name===model);
+ if(!pipeline&&!source.models.includes(model))throw new CollectionError('INVALID_TARGET');
  const q=new URLSearchParams({model,limit:'50'}),seen=new Set<string>(),items=[] as {id:string;changed:string;action:string}[];
  let more=false;
  for(let page=0;page<4;page++){
@@ -80,7 +112,7 @@ export async function readSync(org:string,source:Integration,id:string,model:str
  }
  if(new Set(items.map(i=>i.id)).size!==items.length)throw new CollectionError('INVALID_RESPONSE');
  const sorted=items.sort((a,b)=>a.id.localeCompare(b.id)||a.changed.localeCompare(b.changed));
- return {count:items.length,limited:more,deleted:items.filter(r=>r.action==='DELETED').length,lastChanged:items.map(r=>new Date(r.changed).toISOString()).sort().at(-1)??null,
+ return {syncState:pipeline?.state??"UNKNOWN",syncCompletedAt:pipeline?.finishedAt??null,count:items.length,limited:more,deleted:items.filter(r=>r.action==='DELETED').length,lastChanged:items.map(r=>new Date(r.changed).toISOString()).sort().at(-1)??null,
   digest:createHash('sha256').update(JSON.stringify(sorted)).digest('hex')};
 }
 
@@ -92,7 +124,8 @@ export async function managedSyncObservation(org:string,target:{scope:string;rec
  const sample=await readSync(org,source,connectionId,target.record,key,fetcher);
  await checkGrant(org,source,connectionId,key,fetcher);
  return {engine:'managed-sync-metadata-v1',capturedAt:new Date().toISOString(),sourceUrl:'https://nango.dev/docs/api-integrations/'+source.provider,
-  checks:[{id:'sync-coverage',label:'Synced record metadata available',status:sample.count&&!sample.limited?'PASS':'UNKNOWN',observed:sample.count+' records · '+(sample.limited?'truncated':'end of returned pages'),nextStep:'Compare the model and its sync scope with the source system.'},
+  checks:[{id:'source-sync',label:'Source sync completed in the past 24 hours',status:sample.syncState==='FRESH'?'PASS':sample.syncState==='STALE'||sample.syncState==='NEEDS_ATTENTION'?'FAIL':'UNKNOWN',observed:sample.syncState+' · '+(sample.syncCompletedAt??'completion unconfirmed'),nextStep:'Check the deployed upstream sync schedule, errors and last completion.'},
+   {id:'sync-coverage',label:'Synced record metadata available',status:sample.count&&!sample.limited?'PASS':'UNKNOWN',observed:sample.count+' records · '+(sample.limited?'truncated':'end of returned pages'),nextStep:'Compare the model and its sync scope with the source system.'},
    {id:'sync-sample',label:'Version of the sampled record identities and modification times',status:sample.count?'PASS':'UNKNOWN',observed:sample.digest+' · last change '+(sample.lastChanged??'unknown')+' · '+sample.deleted+' deleted',nextStep:'Inspect changed records in the provider before relying on the control.'}],
-  limitations:['The broker cache is read on this collection. Provider-side sync completeness, last successful source poll and a specific control outcome require separate evidence.']};
+  limitations:['The broker cache is read on this collection. The upstream job status and completion time come from the broker. Verify the underlying control and model scope in the source system.']};
 }

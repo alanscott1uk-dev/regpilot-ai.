@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import {brokerId,brokerOrigin,hostedConnectSession} from '../connectors/hosted-oauth';
-import {aiProvider,workspaceIntegrationId,brokerKey,enabledIntegrations,checkGrant,workspaceGrants,readSync,publicDirectory,sourceModel} from '../connectors/marketplace';
+import {aiProvider,workspaceIntegrationId,brokerKey,enabledIntegrations,checkGrant,deployedModels,workspaceGrants,readSync,publicDirectory,sourceModel} from '../connectors/marketplace';
 import {checkedJson} from '../services/http';
 import {transaction,IntelligenceError} from './intelligence-service';
 import type {AuthorizedContext} from './authorization';
@@ -11,7 +11,7 @@ const actions=z.discriminatedUnion('action',[
  z.object({action:z.literal('ENABLE'),slug:brokerId}).strict(),
  z.object({action:z.literal('DIRECTORY')}).strict(),z.object({action:z.literal('AVAILABLE')}).strict(),
  z.object({action:z.enum(['CONNECT','GRANTS']),integration:brokerId}).strict(),
- z.object({action:z.literal('RENEW'),...fields}).strict(),
+ z.object({action:z.enum(['RENEW','MODELS']),...fields}).strict(),
  z.object({action:z.literal('COLLECT'),...fields,model:sourceModel}).strict(),
  z.object({action:z.literal('SET_AI'),...fields,model:brokerId,previous:z.uuid().nullable()}).strict(),
  z.object({action:z.literal('UNLINK_AI'),previous:z.uuid()}).strict()
@@ -64,6 +64,12 @@ export async function marketplaceAction(ctx:AuthorizedContext,raw:unknown,fetche
   await allow();return hostedConnectSession(ctx.organizationId,ctx.userId,config,fetcher,tags,d.action==='RENEW'?d.connectionId:undefined);
  }
  if(d.action==='GRANTS'){const grants=await workspaceGrants(ctx.organizationId,source,key,fetcher);await allow();return {grants};}
+ if(d.action==='MODELS'){
+  await checkGrant(ctx.organizationId,source,d.connectionId,key,fetcher);
+  const deployed=await deployedModels(source,d.connectionId,key,fetcher);
+  await checkGrant(ctx.organizationId,source,d.connectionId,key,fetcher);await allow();
+  return {models:[...new Set([...source.models,...deployed.map(entry=>entry.name)])].sort(),deployed};
+ }
  if(d.action==='SET_AI'){
   const provider=aiProvider.parse(source.provider);
   if(!source.aiModels.includes(d.model))throw new IntelligenceError('Select a configured model.',400);
