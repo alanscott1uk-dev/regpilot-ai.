@@ -15,6 +15,11 @@ export default function OfficeReceive({host,receive}:{host:'word'|'excel';receiv
   if(!window.opener){setNotice('Choose the copy downloaded from '+label+' below.');return;}
   waiting.current=true;setNotice('Waiting for '+label+'. If your browser opened separately, choose the downloaded copy below.');
   window.opener.postMessage({type:'regpilot-request-'+host},location.origin);
- }}>Receive from {label}</button> <a href={'/api/tools/office-manifest/'+host} download>Download {label} add-in manifest</a>
+ }}>Receive from {label}</button>
+ <details><summary>Set up RegPilot in {label}</summary>
+ <ol><li><a href={'/api/tools/office-manifest/'+host} download>Download the {label} add-in manifest</a> from the RegPilot workspace you want to use.</li>
+ <li>Ask your Microsoft 365 administrator to upload the manifest in Integrated apps and assign it to your pilot users.</li>
+ <li>Open {label}, find RegPilot in your add-ins and choose Prepare for review.</li></ol>
+ <a href="https://learn.microsoft.com/en-us/microsoft-365/admin/manage/manage-deployment-of-add-ins">Microsoft 365 add-in deployment guide</a></details>
  {notice&&<p role="status">{notice}</p>}</div>;
 }

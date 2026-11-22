@@ -26,8 +26,9 @@ export async function wordReviewJourney({upload,review,app,org,db,editor,checkpo
  closeAsync:done=>{window.fileClosed=true;done({status:'ok'})}}});`);
  await pane.getByText(/pilot-receiving.docx ·/).waitFor();assert.equal(await pane.evaluate(()=>window.fileClosed),true);
  const [work]=await Promise.all([pane.waitForEvent('popup'),pane.getByRole('button',{name:'Open RegPilot',exact:true}).click()]);
- await work.goto(app+'/sop-builder?'+new URLSearchParams({organizationId:org.id}));
- await work.getByText('Review a Word SOP',{exact:true}).click();
+ const workspace=work.getByLabel('Review workspace');
+ await workspace.waitFor();
+ if(await workspace.inputValue()!==org.id)await workspace.selectOption(org.id);
  await work.getByRole('button',{name:'Receive from Word'}).click();
  await work.getByText(/pilot-receiving.docx ·/).waitFor();
  await work.getByLabel('Evidence task').selectOption(task.id);
