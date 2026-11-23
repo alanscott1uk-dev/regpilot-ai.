@@ -62,9 +62,31 @@ async function testJourney(name,viewport){
   const workspaceOverflow=await page.evaluate(()=>Math.max(0,document.documentElement.scrollWidth-innerWidth));
   assert.ok(workspaceOverflow<=3,"workspace home must fit mobile");
   await checkAccessibility(page,"artifacts/usability/accessibility-"+name+".json");
-  await page.getByRole("link",{name:"Connections",exact:true}).click();
+  const actions=page.getByRole("region",{name:"What do you need to do?"});
+  for(const [label,path] of [["Write an SOP","/sop-builder"],["Record a deviation","/team/quality"],["Find evidence","/team/evidence"]]){
+   await actions.getByRole("link",{name:label,exact:true}).click();
+   assert.equal(new URL(page.url()).pathname,path);
+   await page.goBack();
+   await actions.waitFor();
+  }
+  const finder=page.getByRole("button",{name:"Find a tool",exact:true});
+  await finder.click();
+  const directory=page.getByRole("dialog",{name:"Find a workspace tool"});
+  const search=directory.getByRole("searchbox",{name:"Search by task or tool"});
+  assert.equal(await search.evaluate(el=>el===document.activeElement),true);
+  await search.fill("stock count");await directory.getByRole("link",{name:"Deviations & CAPA"}).waitFor();
+  await search.fill("not-a-workspace-destination");await directory.getByRole("button",{name:"Browse all tools"}).click();
+  await directory.getByText("Procedures & training",{exact:true}).click();
+  await directory.getByRole("link",{name:"SOP builder",exact:true}).waitFor();
+  await page.keyboard.press("Escape");await directory.waitFor({state:"hidden"});
+  assert.equal(await finder.evaluate(el=>el===document.activeElement),true);
+  await finder.click();await search.fill("connect accounts");
+  await directory.getByRole("link",{name:"Connections",exact:true}).click();
   await page.getByRole("form",{name:"Email sign-in"}).waitFor();
-  assert.equal(await page.getByRole("link",{name:"Connections",exact:true}).getAttribute("aria-current"),"page");
+  assert.equal(new URL(page.url()).searchParams.get("view"),"connections");
+  await finder.click();await search.fill("Connections");
+  assert.equal(await directory.getByRole("link",{name:"Connections",exact:true}).getAttribute("aria-current"),"page");
+  await directory.getByRole("button",{name:"Close",exact:true}).click();
   await page.goto(base+"/workbench",{waitUntil:"domcontentloaded"});
   await page.getByRole("heading",{name:/Compliance, without the chaos/i}).waitFor();
   await page.getByRole("button",{name:/Try a demo task/}).click();

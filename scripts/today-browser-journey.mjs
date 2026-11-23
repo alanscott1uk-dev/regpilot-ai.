@@ -63,6 +63,15 @@ export async function todayJourney(browser,base,viewport,name){
   assert.equal(await mainNav.getByRole('link').count(),5);
   assert.equal(await mainNav.getByRole('link',{name:'Today',exact:true}).getAttribute('aria-current'),'page');
   assert.equal(new URL(await mainNav.getByRole('link',{name:'Reports',exact:true}).getAttribute('href'),base).searchParams.get('organizationId'),org);
+  const actions=page.getByRole('region',{name:'What do you need to do?'});
+  assert.equal(new URL(await actions.getByRole('link',{name:'Record a deviation'}).getAttribute('href'),base).searchParams.get('organizationId'),org);
+  const opener=page.getByRole('button',{name:'Find a tool',exact:true});
+  await opener.click();
+  const finder=page.getByRole('dialog',{name:'Find a workspace tool'});
+  await finder.getByRole('searchbox').fill('temperature excursion');
+  const route=new URL(await finder.getByRole('link',{name:'Deviations & CAPA'}).getAttribute('href'),base);
+  assert.equal(route.pathname,'/team/quality');assert.equal(route.searchParams.get('organizationId'),org);
+  await finder.getByRole('button',{name:'Close'}).click();
   const nextStep=page.getByRole('region',{name:'Recommended next step',exact:true});
   await nextStep.getByRole('heading',{name:'Business scope',exact:true}).waitFor();
   assert.equal(new URL(await nextStep.getByRole('link',{name:/Set up your business/}).getAttribute('href'),base).searchParams.get('organizationId'),org);

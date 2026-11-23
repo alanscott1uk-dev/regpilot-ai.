@@ -44,3 +44,14 @@
 @media(prefers-reduced-motion:reduce){.journeySteps{scroll-behavior:auto;scroll-snap-type:none}}
 
 .journeyHint{display:none}@media(max-width:520px){.journeyHint{display:block;font-size:10px;color:#75647f;margin:-5px 0 12px;line-height:1.6}}
+
+.commonActions{margin:16px 0 22px;color:#292637}
+.commonActions h2{font-size:20px;line-height:1.3;margin:0 0 10px}
+.commonActions ul{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.commonActions li{position:relative;background:white;border:1px solid #d9d5e0;border-radius:12px}
+.commonActions li:hover,.commonActions li:focus-within{border-color:#8a76a8}
+.commonActions a{display:block;padding:13px 15px 4px;color:#44316a;font-size:15px;font-weight:700;text-decoration:none}
+.commonActions a::after{content:"";position:absolute;inset:0;border-radius:12px}
+.commonActions a:focus-visible::after{outline:3px solid #695092}
+.commonActions p{margin:0;padding:0 15px 14px;color:#575264;font-size:13px;line-height:1.45}
+@media(max-width:680px){.commonActions ul{grid-template-columns:1fr;gap:6px}.commonActions a{padding-top:10px}.commonActions p{padding-bottom:10px}}
