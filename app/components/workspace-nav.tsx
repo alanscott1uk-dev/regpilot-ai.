@@ -19,7 +19,7 @@ export default function WorkspaceNav(){
  const selected=toolGroups.flatMap(group=>group.tools).find(item=>item.href===current);
  return <aside className={styles.sidebar}>
   <div className={styles.navTop}>
-   <a className={styles.brand} href={scoped('/team/operations')} aria-label="RegPilot home"><span aria-hidden="true">R</span><strong>RegPilot</strong></a>
+   <a className={styles.brand} href={scoped('/team/operations')} aria-label="RegPilot home"><span aria-hidden="true"><svg width="21" height="24" viewBox="0 0 21 24" fill="none" stroke="currentColor" strokeWidth="3.5"><path d="M4 21V3h6a5 5 0 0 1 0 10H4m6 0 7 8"/></svg></span><strong>RegPilot</strong></a>
    <ToolFinder current={current} scoped={scoped}/>
   </div>
   <p className={styles.caption}>Your daily work</p>

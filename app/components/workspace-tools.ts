@@ -21,8 +21,8 @@ export const workspaceTools: WorkspaceTool[] = [
   {label:'Help Centre', href:'/help', icon:'help', terms:'help how to user instructions guide support'}
 ];
 
-const procedures = {label:'SOP builder', href:'/sop-builder', terms:'write create draft standard operating procedure Word document'};
-const quality = {label:'Deviations & CAPA', href:'/team/quality', terms:'record report incident quality case temperature excursion cold chain investigation corrective preventive action stock count batch Excel reconciliation Outlook email'};
+const procedures = {label:'SOP builder', href:'/sop-builder', terms:'write create draft standard operating procedures Word document temperature mapping template'};
+const quality = {label:'Deviations & CAPA', href:'/team/quality', terms:'record report deviation incident nonconformance non conformance quality case temperature excursion cold chain investigation corrective preventive action stock count batch Excel reconciliation Outlook email'};
 export const homeActions = [
   {tool:procedures, label:'Write an SOP', instruction:'Choose a template or start with the procedure you need.'},
   {tool:quality, label:'Record a deviation', instruction:'Choose New quality case to record what happened.'},
@@ -42,7 +42,8 @@ export const toolGroups = [
 ];
 
 export function searchTools(query:string){
-  const words=query.toLowerCase().split(/[^a-z0-9]+/).filter(word=>word&&!['a','an','the','to','my','of'].includes(word));
+  const terms=query.toLowerCase().replace(/\bs\.o\.p\b/g,'sop').split(/[^a-z0-9]+/);
+  const words=terms.filter(word=>word&&!['a','an','the','to','my','of','how','where','do','i','can'].includes(word));
   return toolGroups.map(group=>({...group,tools:group.tools.filter(item=>{
     const text=(item.label+' '+item.terms+' '+group.name).toLowerCase();
     return words.every(word=>text.includes(word));

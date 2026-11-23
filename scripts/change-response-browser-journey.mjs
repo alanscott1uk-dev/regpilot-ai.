@@ -23,7 +23,7 @@ export async function changeResponseJourney(browser,base,viewport,name){
   await page.goto(base+'/team/changes?organizationId='+org+'&responseId='+response+'&actionId='+action,{waitUntil:'domcontentloaded'});
   const card=page.locator('#action-'+action);await card.getByRole('heading',{name:'Training approval',exact:true}).waitFor();
   assert.equal(await page.getByLabel('Organisation',{exact:true}).inputValue(),org);
-  if(viewport.width<1051)assert.equal(await page.locator('aside details').evaluate(el=>el.open),false,'secondary menu starts collapsed on mobile');
+  if(viewport.width<1051)assert.equal(await page.getByRole('dialog',{name:'Find a workspace tool'}).isVisible(),false,'tool directory starts closed on mobile');
   await page.waitForFunction(id=>document.activeElement?.id==='action-'+id,action);
   assert.equal(await card.getByRole('button',{name:'Submit for independent acceptance'}).isEnabled(),false);
   await card.getByLabel('Use Fictional training system',{exact:true}).check();await card.getByText(/Fictional training system · Collected/).click();

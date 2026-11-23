@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {readFileSync,existsSync} from "node:fs";
+import {existsSync} from "node:fs";
 import {createHash} from "node:crypto";
 import {parseDocx} from "../lib/server/docx-parser.mjs";
 import {buildSopDocument} from "../lib/server/sop-document";
 import {newSopDraft,sopDraftSchema,sopOpenItems,sopHref,sopIntent,type SopReceipt} from "../lib/sop-draft";
+import {searchTools} from "../app/components/workspace-tools";
 import {helpArticles,searchHelp} from "../lib/help-centre";
 import {POST} from "../app/api/sop-builder/export/route";
 const hash=(text:string)=>createHash("sha256").update(text).digest("hex");
@@ -68,5 +69,5 @@ test("help resolves actual tasks, spelling variants and valid product links",()=
   for(const a of helpArticles)for(const [,href] of a.links){
     const loc=new URL(href,"http://localhost");assert.ok(existsSync("app"+loc.pathname+"/page.tsx"),href);
   }
-  assert.ok(readFileSync("app/components/workspace-nav.tsx","utf8").includes('href:"/help"'));
+  assert.ok(searchTools("help").flatMap(group=>group.tools).some(tool=>tool.href==="/help"&&tool.label==="Help Centre"));
 });
