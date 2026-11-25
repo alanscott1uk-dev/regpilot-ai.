@@ -25,6 +25,7 @@ if [ "$VERCEL_GIT_COMMIT_REF" = "feature/traceability-benchmark-batch-20261106" 
       'Verify scoped customer product reads on the staging worker|3a09aacf9ce3c7a5aeb7caee1c17e26ea23f3a05') exit 1 ;;
       'Verify live inventory when hosted grant health lags authorisation|88ec48ffc01bf90a03ba85a7074680e3b34f1d0c') exit 1 ;;
       'Show verified hourly product reads to the owning workspace|de88a9b7e8fe04322fe1d15abb6b01cee76934bb') exit 1 ;;
+      'Evaluate repository security settings on each live GitHub inventory read|5a6b4ac72d9f4d3498645066b74db493f9a9a028') exit 1 ;;
     esac
   fi
   exit 0

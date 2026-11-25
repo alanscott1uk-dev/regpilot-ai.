@@ -47,6 +47,8 @@ export default function ProductMonitors({workspace,controls}:{workspace:ReturnTy
   {history&&<section aria-label="Connected account monitoring"><h3>{history.product} · {history.action.replace(/-/g,' ')}</h3>
    {history.lastReadAt?<p>{history.reads} successful worker {history.reads===1?'read':'reads'} across {history.hours} UTC {history.hours===1?'hour':'hours'} in the past 24 hours.
     Latest inventory at {new Date(history.lastReadAt).toLocaleString('en-GB',{timeZone:'UTC'})} UTC contained {history.count} {history.count===1?'record':'records'}.</p>:<p>Awaiting the first successful worker read.</p>}
+   {!!history.checks.length&&<table><caption>Latest repository checks</caption><thead><tr><th scope="col">Setting</th><th scope="col">Result</th></tr></thead>
+    <tbody>{history.checks.map(row=><tr key={row.id}><td>{row.label}</td><td>{row.status}</td></tr>)}</tbody></table>}
    {history.latestError&&<p role="status">The latest read needs attention ({history.latestError}).</p>}
   </section>}
   <fieldset disabled={busy}><label>Find a product <input value={query} maxLength={100} onChange={e=>{clearSelection();setSelected('');setProducts([]);setQuery(e.target.value);}}/></label>

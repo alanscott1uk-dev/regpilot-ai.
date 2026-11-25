@@ -3,6 +3,7 @@ import {z} from 'zod';
 import {accountLinkScopes,pdFailure,pdRequest} from './pipedream-client';
 export {pdConfig} from './pipedream-client';
 import {CollectionError} from './collection-error';
+import {githubInventoryChecks} from './github-inventory-checks';
 import {atStep} from './collection-step';
 import {productActionUrl,type ProductRead} from './product-recipes';
 import type {Observation} from './observation';
@@ -43,7 +44,7 @@ export async function pdLink(org:string,app:string,fetcher:typeof fetch=fetch){
  return u.href;
 }
 
-export type Sample={keys:string[];digest:string;count:number};
+export type Sample={keys:string[];digest:string;count:number;policyChecks?:Observation['checks']};
 export const sampleHash=(keys:string[])=>createHash('sha256').update(JSON.stringify(keys)).digest('hex');
 function stableId(row:unknown):string|null{
  if(typeof row==='string'||typeof row==='number'&&Number.isSafeInteger(row))return String(row);
@@ -72,7 +73,8 @@ export function pdSample(ret:unknown,org:string,recipe:ProductRead):Sample{
  const ids=rows.map(stableId);
  if(ids.some(v=>!v)||new Set(ids).size!==ids.length)throw new CollectionError('INVALID_RESPONSE');
  const keys=(ids as string[]).map(id=>createHmac('sha256',Buffer.from(salt,'hex')).update(JSON.stringify([org,recipe.app,recipe.action,id])).digest('hex')).sort();
- return {keys,digest:sampleHash(keys),count:keys.length};
+ const checks=recipe.app==='github'&&recipe.action==='list-repositories'?{policyChecks:githubInventoryChecks(rows)}:{};
+ return {keys,digest:sampleHash(keys),count:keys.length,...checks};
 }
 async function actionSample(org:string,account:string,recipe:ProductRead,fetcher:typeof fetch,assertGrant:()=>Promise<void>){
  const raw=await atStep('records',async()=>{
@@ -115,6 +117,6 @@ export function productObservation(recipe:ProductRead,sample:Sample,expected:str
   checks:[{id:'approved-resources',label:'Previously approved identifiers appear in the returned sample',status:missing?'FAIL':'PASS',
    observed:missing+' missing of '+expected.length,nextStep:'Review the source account and the named inventory read.'},
    {id:'unreviewed-resources',label:'Returned identifiers belong to the approved sample',status:added?'FAIL':'PASS',
-   observed:added+' additional of '+sample.count,nextStep:'Investigate additions before approving a revised baseline.'}],
+   observed:added+' additional of '+sample.count,nextStep:'Investigate additions before approving a revised baseline.'},...(sample.policyChecks??[])],
   limitations:['This comparison covers identifiers returned by the pinned product action. A changed provider page can change the sample.']};
 }

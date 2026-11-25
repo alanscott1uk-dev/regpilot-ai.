@@ -4,6 +4,7 @@ import {pdConfig} from '../connectors/pipedream-client';
 import {pdApp,pdAction,pdAccount,readProduct} from '../connectors/pipedream';
 import {recipeFor} from '../connectors/product-recipes';
 import {CollectionError} from '../connectors/collection-error';
+import {githubInventoryLabels,githubInventoryRevision} from '../connectors/github-inventory-checks';
 
 const targetSchema=z.object({org:z.uuid(),account:pdAccount,app:pdApp,action:pdAction}).strict();
 
@@ -16,23 +17,26 @@ export function stagingProbeTarget(){
  const recipe=recipeFor(target.app,target.action);
  if(!recipe)throw new CollectionError('INVALID_TARGET');
  const scopeHash=createHash('sha256').update(JSON.stringify([config.project,config.environment,target.org,target.account,recipe.app,recipe.action,recipe.version])).digest('hex');
- return {org:target.org,account:target.account,recipe,scopeHash};
+ const policyRevision=recipe.app==='github'&&recipe.action==='list-repositories'?githubInventoryRevision:0;
+ return {org:target.org,account:target.account,recipe,scopeHash,policyRevision};
 }
 
 export async function runStagingProductProbe(target:NonNullable<ReturnType<typeof stagingProbeTarget>>,fetcher:typeof fetch=fetch){
  const {scopeHash,recipe}=target;
- const metadata={scopeHash,app:recipe.app,action:recipe.action,version:recipe.version};
+ const metadata={scopeHash,policyRevision:target.policyRevision,app:recipe.app,action:recipe.action,version:recipe.version};
  try{
-  const {count,digest,providerHealth}=await readProduct(target.org,target.account,recipe,fetcher);
-  return {...metadata,count,digest,providerHealth,state:'read' as const,checkedAt:new Date().toISOString()};
+  const {count,digest,providerHealth,policyChecks}=await readProduct(target.org,target.account,recipe,fetcher);
+  const checks=policyChecks?.map(({id,status})=>({id,status}));
+  return {...metadata,count,digest,providerHealth,...(checks?{checks}:{}),state:'read' as const,checkedAt:new Date().toISOString()};
  }catch(error){
   return {...metadata,state:'attention' as const,code:error instanceof CollectionError?error.code:'INVALID_RESPONSE',
    step:error instanceof CollectionError?error.step??'grant':'grant',checkedAt:new Date().toISOString()};
  }
 }
 
+const checkSchema=z.object({id:z.string().refine(id=>githubInventoryLabels.has(id)),status:z.enum(['PASS','FAIL','UNKNOWN'])});
 const receiptSchema=z.discriminatedUnion('state',[
- z.object({state:z.literal('read'),checkedAt:z.iso.datetime(),count:z.number().int().nonnegative(),digest:z.string().regex(/^[a-f0-9]{64}$/)}),
+ z.object({state:z.literal('read'),checkedAt:z.iso.datetime(),count:z.number().int().nonnegative(),digest:z.string().regex(/^[a-f0-9]{64}$/),checks:z.array(checkSchema).max(5).optional()}),
  z.object({state:z.literal('attention'),checkedAt:z.iso.datetime(),code:z.string().regex(/^[A-Z_]{2,40}$/)})
 ]);
 
@@ -54,6 +58,7 @@ export async function stagingProductHistory(org:string){
  const reads=receipts.filter(r=>r.state==='read');
  const last=reads[0],latest=receipts[0];
  return {product:target.recipe.name,action:target.recipe.action,hours:new Set(reads.map(r=>r.checkedAt.slice(0,13))).size,
+  checks:last?.checks?.map(c=>({id:c.id,status:c.status,label:githubInventoryLabels.get(c.id)!}))??[],
   reads:reads.length,lastReadAt:last?.checkedAt??null,count:last?.count??null,latestError:latest?.state==='attention'?latest.code:null};
 }
 export type StagingProductHistory=NonNullable<Awaited<ReturnType<typeof stagingProductHistory>>>;

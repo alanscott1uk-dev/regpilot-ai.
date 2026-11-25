@@ -8,6 +8,7 @@ import {productReads,productTotal} from '../lib/connectors/product-recipes';
 import {generateKeyPairSync} from 'node:crypto';
 import {jwtVerify} from 'jose';
 import {pdSample,readProduct,pdLink} from '../lib/connectors/pipedream';
+import {githubInventoryChecks} from '../lib/connectors/github-inventory-checks';
 import {runStagingProductProbe,stagingProbeTarget,stagingProductHistory} from '../lib/server/staging-product-probe';
 import {pdConfig,pdProjectHealth} from '../lib/connectors/pipedream-client';
 import {monitoringProduct} from '../lib/connectors/monitoring-product';
@@ -71,11 +72,25 @@ test('project signing binds the issuer, audience and scope and returns only a ve
   setup();
  }
 });
+test('GitHub repository policies distinguish missing fields, actual failures and the 180-day boundary',()=>{
+ const now=Date.UTC(2026,10,25);
+ const source={id:1,disabled:false,archived:false,pushed_at:new Date(now-180*86400000).toISOString(),delete_branch_on_merge:false,
+  security_and_analysis:{secret_scanning:{status:'enabled'},secret_scanning_push_protection:{status:'disabled'}}};
+ const statuses=(rows:unknown[])=>githubInventoryChecks(rows,now).map(c=>c.status);
+ assert.deepEqual(statuses([source]),['PASS','FAIL','FAIL','PASS','FAIL']);
+ assert.deepEqual(statuses([{}]),Array(5).fill('UNKNOWN'));
+ assert.deepEqual(statuses([]),Array(5).fill('UNKNOWN'));
+ assert.deepEqual(statuses([{...source,archived:true},{}]),['UNKNOWN','UNKNOWN','FAIL','UNKNOWN','FAIL']);
+ assert.equal(statuses([{...source,pushed_at:new Date(now-180*86400000+1).toISOString()}])[1],'PASS');
+ const recipe=productReads.find(r=>r.app==='github'&&r.action==='list-repositories')!;
+ setup();const sample=pdSample([source],'794e38e1-b6aa-40ab-9b5f-925f87138d6a',recipe);
+ assert.deepEqual(sample.policyChecks?.map(c=>c.status),githubInventoryChecks([source]).map(c=>c.status));
+});
 test('the staging probe validates its precise grant on both sides of a read and records no source identifiers',async()=>{
  setup();
  const org='794e38e1-b6aa-40ab-9b5f-925f87138d6a',account='apn_probe';
  const recipe=productReads.find(p=>p.app==='github'&&p.action==='list-repositories')!;
- const target={org,account,recipe,scopeHash:'d'.repeat(64)};
+ const target={org,account,recipe,scopeHash:'d'.repeat(64),policyRevision:1};
  let flags:{healthy?:boolean;dead?:boolean;error?:string}={healthy:false},calls=0,grants=0,revokeAfter=false;
  const fetcher:typeof fetch=async(input)=>{
   const url=new URL(String(input));

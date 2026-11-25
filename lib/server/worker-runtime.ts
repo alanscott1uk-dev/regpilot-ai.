@@ -70,8 +70,10 @@ async function dueStagingProductProbe(){
  const target=stagingProbeTarget();
  if(!target)return null;
  const hourStart=new Date(Math.floor(Date.now()/3600000)*3600000);
- const thisHour=await db.workerRun.findFirst({where:{slot:0,startedAt:{gte:hourStart},
-  summary:{path:['stagingProduct','scopeHash'],equals:target.scopeHash}},select:{id:true}});
+ const thisHour=await db.workerRun.findFirst({where:{slot:0,startedAt:{gte:hourStart},AND:[
+  {summary:{path:['stagingProduct','scopeHash'],equals:target.scopeHash}},
+  {summary:{path:['stagingProduct','policyRevision'],equals:target.policyRevision}}
+ ]},select:{id:true}});
  if(thisHour)return null;
  const reading=await runStagingProductProbe(target);
  if(reading.state!=='read')return reading;
