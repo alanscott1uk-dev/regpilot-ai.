@@ -1,7 +1,7 @@
 [
   {
     "id": "PH-01",
-    "requirement": "Bind each logger observation to serial, current calibration and credential history",
+    "requirement": "Bind the reading to serial, calibration and affected stock, then independently retrieve the signed disposition and four verified originals",
     "file": "tests/operational-records.integration.test.ts",
     "test": "repeated logger collection checks the physical serial, rotated key and current certificate review on each collection"
   },

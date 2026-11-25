@@ -103,6 +103,18 @@ test('a mapped evidence task is shared by both audit references in the saved pro
   await decideProgrammeReference(f.reviewer,isoSaved.id,{...choice,version:1,decision:'REVIEW_NEEDED',reason:'Ownership has changed and the original decision now requires another review.'});
   const final=await programmeReferenceStatement(f.reviewer,isoSaved.id);
   assert.equal(final.rows[0].version,2);assert.equal(final.rows[0].reviewerId,f.reviewer.userId);
+  const {programmeCrosswalk}=await import('../lib/server/programme-reference-review'),{crosswalkCsv}=await import('../lib/programme-crosswalk');
+  const stored=new Map<string,Uint8Array>(),storage:EvidenceObjectStore={async put(k,v){stored.set(k,Uint8Array.from(v));},async get(k){return stored.get(k)!;},async remove(k){stored.delete(k);}};
+  const evidence=await createEvidence(f.editor,saved.taskIds[0],'access-sample.pdf',fixturePdf([['Approved access sample']]),{storage,scan:async()=>({status:'CLEAN',engine:'fictional-test'})});
+  let cross=await programmeCrosswalk(f.reviewer,isoSaved.id,saved.id);
+  assert.equal(cross.rows.length,93);assert.equal(cross.shared,4);assert.equal(cross.reviewedFiles,0);
+  await reviewEvidence(f.reviewer,evidence.id,{decision:'APPROVED',version:1,notes:'The fictional access sample was reviewed independently against the recorded task and scope.'},storage);
+  cross=await programmeCrosswalk(f.reviewer,isoSaved.id,saved.id);
+  assert.equal(cross.reviewedFiles,1);assert.equal(cross.rows[0].decision,'REVIEW_NEEDED');
+  for(const code of ['A.5.16','A.5.18'])assert.equal(cross.rows.find(row=>row.code===code)!.tasks.find(link=>link.criteria.includes('CC6.2'))!.files[0].id,evidence.id);
+  assert.match(crosswalkCsv(cross),new RegExp(evidence.id));
+  await assert.rejects(programmeCrosswalk(f.viewer,isoSaved.id,saved.id),(err:any)=>err.status===403);
+  await assert.rejects(programmeCrosswalk(f.foreign,isoSaved.id,saved.id),(err:any)=>err.status===404);
   assert.match(referenceStatementCsv(final),/REVIEW_NEEDED/);assert.equal(referenceStatementCsv(final).split('\r\n').length,94);
  }finally{await f.clean();}
 });

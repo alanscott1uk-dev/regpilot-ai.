@@ -56,6 +56,7 @@ export function otherNationMedicine(item:HorizonItem){
 }
 export function scottishPharmaReason(item:HorizonItem){
  if(otherNationMedicine(item))return null;
+ if(item.publisherIds.includes('mhra')&&item.path.startsWith('/drug-safety-update/'))return 'MHRA Drug Safety Update';
  if(item.publisherIds.includes('mhra')&&item.kind==='Safety alert')return 'MHRA safety alert';
  if(!item.publisherIds.some(id=>['mhra','home-office','dhsc','ukhsa','hse','uksi','ssi'].includes(id)))return null;
  const phrase=matchingPhrase(item,medicinesTerms);

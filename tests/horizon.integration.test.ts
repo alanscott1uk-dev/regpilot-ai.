@@ -91,3 +91,32 @@ test('shared horizon watchlists enforce tenant membership, versioned edits, repl
    }
  }
 });
+
+test('independent site applicability assessment keeps the shortlist blind until every sampled publication is judged',async()=>{
+ const {changeApplicabilityAssessment,applicabilityAssessment}=await import('../lib/server/horizon-applicability-assessment');
+ const f=await assuranceFixture(),stamp=new Date().toISOString();
+ try{
+  const seed=(await import('../lib/regulatory/intelligence')).hashValue;
+  const items=Array.from({length:24},(_,i)=>{
+   const path=i%2===0?'/drug-safety-update/substance-'+i:'/guidance/business-'+i;
+   return {id:seed(path),revision:seed([path,1]),path,url:'https://www.gov.uk'+path,title:'Publication '+i,summary:'Official release',documentType:'guidance',kind:'Guidance' as const,
+    publisherIds:[i%2===0?'mhra':'hmrc'],updatedAt:stamp,firstSeenAt:stamp,observedAt:stamp,discovery:'BASELINE' as const};
+  });
+  const report:HorizonReport={format:'regpilot-horizon-v1',generatedAt:stamp,windowStart:new Date(Date.now()-30*86400000).toISOString(),codeCommit:null,runId:null,
+   previousAvailable:false,items,limitations:[],feeds:PUBLISHERS.map(p=>({id:p.id,state:'available',checkedAt:stamp,total:20,retrieved:20,reason:null}))};
+  const start={action:'START',requestKey:randomUUID(),scope:'Licensed wholesale supply of human medicines at a Scottish site.'};
+  const saved=await changeApplicabilityAssessment(f.o,start,async()=>report);
+  assert.deepEqual(await changeApplicabilityAssessment(f.o,start,async()=>{throw Error('An exact retry should reuse its frozen sample');}),saved);
+  await assert.rejects(changeApplicabilityAssessment(f.o,{...start,scope:'A different site scope recorded on the same request.'},async()=>report),rejects(409));
+  const view=(await applicabilityAssessment(f.ad,saved.id)).selected!;
+  assert.equal(view.rows.length,20);assert.equal(view.canReview,true);assert.equal(view.score,null);assert.doesNotMatch(JSON.stringify(view),/suggested|falseAlert|correctAlert/);
+  await assert.rejects(applicabilityAssessment(f.out,saved.id),rejects(404));await assert.rejects(applicabilityAssessment(f.ed,saved.id),rejects(403));
+  const body={action:'REVIEW',assessmentId:saved.id,sampleHash:view.sampleHash,labels:view.rows.map(r=>({id:r.id,verdict:r.publishers.includes('mhra')?'OUTSIDE_SCOPE':'APPLIES',reason:'The independent reviewer checked the stated site activities.'}))};
+  await assert.rejects(changeApplicabilityAssessment(f.o,body),rejects(403));await assert.rejects(changeApplicabilityAssessment(f.ad,{...body,labels:body.labels.slice(1)}),rejects(409));
+  await changeApplicabilityAssessment(f.ad,body);
+  assert.deepEqual(await changeApplicabilityAssessment(f.ad,{...body,labels:[...body.labels].reverse()}),saved);
+  const reviewed=(await applicabilityAssessment(f.o,saved.id)).selected!;
+  assert.deepEqual(reviewed.score,{correctAlert:0,falseAlert:10,missed:10,correctExclusion:0,uncertain:0,precision:0,recall:0});
+  assert.equal(reviewed.reviewerId,f.ad.userId);await assert.rejects(changeApplicabilityAssessment(f.ad,{...body,labels:body.labels.map(r=>({...r,verdict:'UNCERTAIN'}))}),rejects(409));
+ }finally{await f.cleanup();}
+});

@@ -35,6 +35,7 @@ export async function runQuestionnaireFormatJourney({upload,review,app,org,edito
  await checkpoint('prepare independently approved answers for a buyer portal without installing a helper');
  await packages.getByText('Complete a buyer’s online questionnaire',{exact:true}).click();
  await packages.getByLabel('Buyer questionnaire URL').waitFor();
+ assert.equal(await packages.getByLabel('Buyer questions, one per line').inputValue(),question);
  await packages.getByLabel('Buyer questionnaire URL').fill('https://buyer.example.invalid/security?review=fixture');
  await packages.getByLabel('Buyer questions, one per line').fill(question+'\nWhich unknown question remains blank?');
  await packages.getByRole('button',{name:'Find approved answers',exact:true}).click();
@@ -56,6 +57,7 @@ export async function runQuestionnaireFormatJourney({upload,review,app,org,edito
  const paste=upload.getByRole('region',{name:'Import a questionnaire',exact:true});
  await paste.getByText('Start from questions copied from a buyer portal or email',{exact:true}).click();
  await paste.getByLabel('Questions, one per line',{exact:true}).fill(question+'\nHow is the fictional delivery verified?');
+ await paste.getByLabel('Original buyer portal URL (optional)',{exact:true}).fill('https://buyer.example.invalid/private/one?invite=fixture');
  await paste.getByLabel('Questionnaire title',{exact:true}).fill('Pasted buyer portal');
  await paste.getByLabel('Buyer or recipient',{exact:true}).fill('Fictional buyer');
  await paste.getByLabel('Scope of the answers',{exact:true}).fill(scope);
@@ -63,8 +65,32 @@ export async function runQuestionnaireFormatJourney({upload,review,app,org,edito
  await paste.getByLabel('I checked the questions, recipient, product and scope.',{exact:true}).check();
  const pasted=await action(upload,'/api/workspace/questionnaires','POST',()=>paste.getByRole('button',{name:'Create questionnaire from 2 questions',exact:true}).click(),201);
  const savedPaste=await db.assuranceQuestionnaire.findUniqueOrThrow({where:{id:pasted.id}});
+ const savedIntake=await db.auditEvent.findFirstOrThrow({where:{entityId:pasted.id,action:'customer_assurance.questionnaire_imported'}});
+ assert.equal(savedIntake.details.portalDestination.origin,'https://buyer.example.invalid');
+ assert.match(savedIntake.details.portalDestination.pageHash,/^[a-f0-9]{64}$/);
+ assert.ok(!JSON.stringify(savedIntake.details).includes('invite=fixture'));
  assert.deepEqual(savedPaste.questions.map(q=>q.status),['SUGGESTED','EMPTY']);
  passed('A buyer questionnaire was created from two pasted portal labels. The current approved answer was suggested for one and the unmatched row remained empty. The returned table preserved blank rows for spreadsheet entry.');
+ await upload.goto(app+'/team/questionnaires'+query);
+ await upload.getByRole('button',{name:'Import questionnaire',exact:true}).click();
+ await paste.getByText('Start from questions copied from a buyer portal or email',{exact:true}).click();
+ await paste.getByLabel('Questions, one per line',{exact:true}).fill(question);
+ await paste.getByLabel('Original buyer portal URL (optional)',{exact:true}).fill('https://buyer.example.invalid/private/original');
+ await paste.getByLabel('Questionnaire title',{exact:true}).fill('Saved buyer portal');
+ await paste.getByLabel('Buyer or recipient',{exact:true}).fill('Fictional buyer');
+ await paste.getByLabel('Scope of the answers',{exact:true}).fill(scope);
+ await paste.getByLabel('Question owner',{exact:true}).selectOption(editor.id);
+ await paste.getByLabel('I checked the questions, recipient, product and scope.',{exact:true}).check();
+ const single=await action(upload,'/api/workspace/questionnaires','POST',()=>paste.getByRole('button',{name:'Create questionnaire from 1 question',exact:true}).click(),201);
+ await approve(single.id,'Q1');
+ await packages.getByText('Complete a buyer’s online questionnaire',{exact:true}).click();
+ await packages.getByRole('button',{name:'Use original buyer portal and saved questions',exact:true}).click();
+ await packages.getByRole('checkbox',{name:question,exact:true}).check();
+ await packages.getByRole('checkbox',{name:'I independently checked the destination, questions, product scope, answers and citations.',exact:true}).check();
+ await packages.getByRole('button',{name:'Prepare answers for manual entry',exact:true}).click();
+ const originalCopy=packages.getByRole('region',{name:'Approved answers for manual entry',exact:true}).getByRole('textbox',{name:question,exact:true});
+ await originalCopy.waitFor();assert.equal(await originalCopy.inputValue(),answer);
+ passed('The reviewer recovered the original buyer destination and question in one click and received the approved response without re-entering either.');
  const documentIds=[];
  for(const [format,filename,bytes,mimeType] of [['PDF','buyer-questions.pdf',await fixtureFillablePdf('1. '+question),'application/pdf'],['DOCX','buyer-questions.docx',fixtureDocx(paragraph('1. '+question)),'application/vnd.openxmlformats-officedocument.wordprocessingml.document']]){
   await checkpoint('review exact '+format+' question source and import it through the mobile interface');await upload.goto(app+'/team/questionnaires'+query);await upload.getByRole('button',{name:'Import questionnaire',exact:true}).click();intake=upload.getByRole('region',{name:'Import a questionnaire',exact:true});await intake.getByLabel('Questionnaire file',{exact:true}).setInputFiles({name:filename,mimeType,buffer:bytes});const inspected=await action(upload,'/api/workspace/questionnaires/inspect','POST',()=>intake.getByRole('button',{name:'Inspect questionnaire file',exact:true}).click());assert.equal(inspected.version,'questionnaire-document-v1');assert.equal(inspected.canImport,true);assert.equal(inspected.candidates.length,1);const selection=intake.getByRole('region',{name:'Review document questions',exact:true});await selection.getByRole('checkbox',{name:'Select document question '+inspected.candidates[0].reference,exact:true}).check();await selection.getByLabel('Question reference 1',{exact:true}).fill('Q1');await selection.getByLabel('Questionnaire name',{exact:true}).fill('Fictional '+format+' response');await selection.getByLabel('Customer / recipient',{exact:true}).fill('Fictional customer');await selection.getByLabel('Response scope',{exact:true}).fill(scope);await selection.getByLabel('Initial question owner',{exact:true}).selectOption(editor.id);await selection.getByRole('checkbox',{name:'I checked every selected source passage, question wording, customer instructions, recipient and product scope.',exact:true}).check();await upload.screenshot({path:artifactDir+'/mobile-questionnaire-'+format.toLowerCase()+'-selection.png',fullPage:true});assert.ok(await bounded(upload.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Mobile document intake layout'));

@@ -50,9 +50,11 @@ def check_cadence(folder, plan, config, digest, network, query, config_for):
     # No invocation in slot 2. The next invocation must report it AND detect the rejected source access.
     failed=run(3,"FAILED")
     assert failed["missedIntervals"]==1 and failed["source"] is None
+    assert failed["failureStage"]=="ACCESS" and "credential" in failed["recoveryGuidance"]
     config.write_text(json.dumps(config_for(renewal)))
     query("UPDATE stock_count SET counted=10; UPDATE staff_access SET enabled=false; UPDATE sop_use SET in_use=3;")
-    run(4,"READ")
+    recovered=run(4,"READ")
+    assert recovered["recoveredAfterSlot"]==3
     for i,outcome in ((0,"PASS"),(1,"FAIL"),(3,"PASS")):
         row=next(c for c in events[i]["source"]["body"]["checks"] if c["key"]=="row-rule")
         assert row["status"]==outcome

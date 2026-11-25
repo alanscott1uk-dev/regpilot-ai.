@@ -48,4 +48,6 @@ Put watch.py beside collect.py on the authorised Linux collection host. Use one 
 
 python3 watch.py --plan plan.json --config config.json --digest DIGEST --network source-network --test-definition source-test.json --directory /var/lib/regpilot/warehouse-check --interval-seconds 3600
 
+A failed interval identifies the step that stopped and the corresponding recovery action. After access is restored, the successful receipt points back to the failed slot.
+
 Each attempted interval produces a status file and an availability observation. A successful collection also produces the ordinary source observation. Use the existing delivery tool to send each source and availability envelope to its granted RegPilot control. A failure creates no source observation. The next invocation counts intervals skipped while the host was stopped. Keep the spool until delivery and retention requirements have been met.

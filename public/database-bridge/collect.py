@@ -248,6 +248,7 @@ def apply_test_definition(args, plan):
 
 
 def run(args):
+    args.failure_stage = 'PLAN'
     plan = json.loads(args.plan.read_text())
     if plan.get("format") == "regpilot-airbyte-manifest-v1":
         if not args.source:
@@ -259,7 +260,9 @@ def run(args):
     elif args.source and str(UUID(args.source)) != plan.get("definitionId"):
         raise CollectionError("The selected source differs from the downloaded plan.")
     apply_test_definition(args, plan)
+    args.failure_stage = 'IMAGE'
     pinned = pin_image(plan, args.digest)
+    args.failure_stage = 'CONFIG'
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}", args.network) or args.network in ("host", "none"):
         raise CollectionError("Select a bridge network with authorised source access.")
     with tempfile.TemporaryDirectory() as tmp:
@@ -267,7 +270,8 @@ def run(args):
         if ":" in str(folder):
             raise CollectionError("Select a temporary directory without a colon in its path.")
         config = local_json(folder, "config.json", json.loads(args.config.read_text()))
-        if args.check_access:
+        if args.check_access or getattr(args, 'scheduled_diagnostics', False):
+            args.failure_stage = 'ACCESS'
             statuses = []
             def connection(msg):
                 if msg.get("type") == "CONNECTION_STATUS":
@@ -275,7 +279,9 @@ def run(args):
             protocol(pinned, args.network, config, "check", connection)
             if statuses != ["SUCCEEDED"]:
                 raise CollectionError("The source did not confirm access.")
-            return {"access": "confirmed"}
+            if args.check_access:
+                return {"access": "confirmed"}
+        args.failure_stage = 'DISCOVERY'
         streams = []
         def discovered(msg):
             if msg.get("type") == "CATALOG":
@@ -287,6 +293,7 @@ def run(args):
             return [{"stream": s["name"], "namespace": s.get("namespace"),
                      "fields": sorted(s.get("json_schema", {}).get("properties", {}))}
                     for s in streams if "full_refresh" in s.get("supported_sync_modes", [])]
+        args.failure_stage = 'SELECTION'
         if not args.stream or not args.control or not args.output:
             raise CollectionError("Collection requires a stream, control UUID and output file.")
         control = str(UUID(args.control))
@@ -346,7 +353,9 @@ def run(args):
             counts[category] += 1
             if findings:
                 findings.observe(row["data"], {"matched": "PASS", "different": "FAIL"}.get(category, "UNKNOWN"))
+        args.failure_stage = 'READ'
         protocol(pinned, args.network, config, "read", checked, selected, decimal_records=True)
+    args.failure_stage = 'RECEIPT'
     total = sum(counts.values())
     status = "FAIL" if counts["different"] else "UNKNOWN" if not total or counts["missing"] or counts.get("invalid") else "PASS"
     rule = json.dumps([args.namespace, args.stream, *policy], ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
@@ -402,9 +411,11 @@ if __name__ == "__main__":
     parser.add_argument("--instance", help="Stable name for this source account or installation.")
     parser.add_argument("--track", action="append", help="Keep this JSON string or integer ID visible on every scan.")
     parser.add_argument("--output", type=Path)
+    parser.add_argument('--scheduled-diagnostics', action='store_true', help='Check source access before discovery and report a fixed failure stage.')
+    args = parser.parse_args()
     try:
-        print(json.dumps(run(parser.parse_args()), allow_nan=False))
+        print(json.dumps(run(args), allow_nan=False))
     except CollectionError as error:
-        sys.exit(str(error))
+        sys.exit(args.failure_stage if args.scheduled_diagnostics else str(error))
     except (ValueError, OSError, TypeError, KeyError, subprocess.SubprocessError):
-        sys.exit("Collection failed. Check the local inputs, output path and Docker service.")
+        sys.exit(args.failure_stage if args.scheduled_diagnostics else "Collection failed. Check the local inputs, output path and Docker service.")

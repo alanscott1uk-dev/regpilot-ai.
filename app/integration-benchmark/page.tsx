@@ -1,3 +1,4 @@
+import {databaseTestRecords} from '../../lib/server/source-registry';
 import {registerBenchmark} from '../../lib/connectors/register-benchmark';
 import {publicRegisterHistory,registerStagingEnabled} from '../../lib/server/public-register-history';
 import {recordCatalogue} from '../../lib/connectors/record-catalogue';
@@ -7,7 +8,7 @@ export const metadata={title:'Integration benchmark · RegPilot AI'};
 const utc=(stamp:string)=>new Date(stamp).toISOString().slice(0,16).replace('T',' ')+' UTC';
 const download=(provider:string,batch:string)=>'/api/integration-benchmark/receipt?'+new URLSearchParams({provider,batch});
 export default async function BenchmarkPage(){
- const history=registerStagingEnabled()?await publicRegisterHistory().catch(()=>null):null;
+ const [history,databases]=await Promise.all([registerStagingEnabled()?publicRegisterHistory().catch(()=>null):null,databaseTestRecords().catch(()=>null)]);
  const report=history?await registerBenchmark(history):null;
  return <main className={css.main}><nav className={css.nav}><a href="/">RegPilot AI</a><a href="/integration-directory">Integration directory</a><a href="/database-integrations">Database and source integrations</a><a href="/team/developers#source-verification">Customer source verification</a></nav>
  <header className={css.header}><h1>Integration benchmark</h1><p>RegPilot’s target is 500 distinct products with verified monitoring. This register tracks the public pharmaceutical sources observed by staging.</p></header>
@@ -18,5 +19,5 @@ export default async function BenchmarkPage(){
  {p.latest?.reason&&<p>{p.latest.reason}</p>}{p.latest?.observation&&<><ul>{p.latest.observation.checks.map(c=><li key={c.id}><strong>{c.status}</strong> · {c.label} · {c.observed}</li>)}</ul><p>{p.latest.observation.limitations.join(' ')}</p><a href={p.latest.observation.sourceUrl}>Open source record</a>{' · '}</>}
  {p.latest&&<a href={download(p.provider,p.latest.batch)}>Download latest receipt</a>}{p.previous&&<> · <a href={download(p.provider,p.previous.batch)}>Download earlier receipt</a></>}
  <p><a href={'/team/operations?view=connections&register='+p.provider}>Monitor this record in your workspace</a></p>
- </article>)}</>:<p role="status">Public register receipts are unavailable in this environment.</p>}</section></main>;
+ </article>)}</>:<p role="status">Public register receipts are unavailable in this environment.</p>}</section><section className={css.panel}><h2>Database collection and credential recovery</h2>{databases?.length?<><p>{databases.length} database engines passed collection and credential rotation against disposable installations. Each test also sent its receipts through the RegPilot workspace API.</p><ul>{databases.map(row=><li key={row.id}><a href={'https://github.com/alanscott1uk-dev/regpilot-ai./actions/runs/'+row.run+'/job/'+row.job}>{row.name} {row.version}</a> · {row.before_different} held before correction · {row.after_matched} accepted after renewal</li>)}</ul></>:<p>No database test receipts are available here.</p>}<a href="/team/developers#source-verification">Inspect customer-owned monitoring in your workspace</a></section></main>;
 }

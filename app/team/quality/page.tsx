@@ -111,7 +111,7 @@ export default function QualityPage(){
     {selected.emailRecords&&<EmailCorrespondence key={`email:${organizationId}:${row.id}:${row.version}`} org={organizationId} caseId={row.id} title={row.title} version={row.version}
      editable={selected.canEdit&&!blocked} records={selected.emailRecords} actions={selected.actions} request={request} capture={capture}
      onSaved={()=>{setNotice('Email saved to this case. Open Email correspondence to see the source and attachment records.');setRefresh(v=>v+1);}}/>}
-    {row.kind==='DEVIATION'&&(selected.canEdit||selected.trainingRecords)&&<Excursion key={`excursion:${organizationId}:${row.id}:${row.cycle}`} organizationId={organizationId} caseId={row.id} version={row.version} files={data?.evidence??[]} request={request} canEdit={selected.canEdit} canDecide={!!selected.trainingRecords} onChange={()=>setRefresh(v=>v+1)}/>}
+    {row.kind==='DEVIATION'&&(selected.canEdit||selected.trainingRecords)&&<Excursion key={`excursion:${organizationId}:${row.id}:${row.cycle}`} organizationId={organizationId} caseId={row.id} version={row.version} files={data?.evidence??[]} request={request} requestResponse={requestResponse} capture={capture} canEdit={selected.canEdit} canDecide={!!selected.trainingRecords} onChange={()=>setRefresh(v=>v+1)}/>}
     {row.kind==='DEVIATION'&&selected.stockRecords&&<StockReconciliation key={`stock:${organizationId}:${row.id}:${row.version}`} records={selected.stockRecords} files={data?.evidence??[]}
      owner={row.ownerName} members={people} organizationId={organizationId} expanded={openStock===organizationId+row.id}
      onToggle={open=>setOpenStock(open?organizationId+row.id:'')} reloadFiles={refreshStockFiles} download={()=>void download('text')}

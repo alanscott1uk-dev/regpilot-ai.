@@ -8,6 +8,9 @@ import {verifiedObservation} from './connector-observation';
 import {calibrationStillCurrent} from './logger-calibration';
 import {readRecordKeys} from '../connectors/operational-records';
 import {reviewedFiles,reviewedFilesSchema,assertReviewedFiles,verifyReviewedBytes} from './reviewed-files';
+import {archiveFilename,makeAuditZip} from '../audit-archive';
+import {downloadEvidence} from './evidence-service';
+import type {ReviewedFile} from './reviewed-files';
 import type {EvidenceObjectStore} from './evidence-storage';
 
 const text=z.string().trim().min(2).max(140);
@@ -48,6 +51,38 @@ async function checkSource(tx:Tx,row:QualityCase,reading:z.infer<typeof attachme
  if(!run||run.resultHash!==reading.resultHash||run.signalHash!==reading.signalHash||!verifiedObservation(run))throw problem('The linked logger reading could not be verified.');
  await assertReviewedFiles(tx,row.organizationId,reading.files);
 }
+type LoggerRun=Prisma.ConnectorRunGetPayload<{include:{connector:true}}>;
+const londonDay=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'});
+async function qualifiedReading(tx:Tx,row:QualityCase,run:LoggerRun|null){
+ const observation=verifiedObservation(run);
+ const sample=observation?.checks.find(check=>check.id==='logger-fresh'&&check.status==='PASS');
+ const temperature=observation?.checks.find(check=>check.id==='logger-temperature'&&check.status==='FAIL');
+ const certificate=observation?.checks.find(check=>check.id==='logger-calibration'&&check.status==='PASS');
+ if(!run||!observation||!sample||!temperature||!certificate||run.configVersion!==run.connector.version)
+  throw problem('Select an out-of-range reading with a verified instrument and reviewed calibration.');
+ const time=new Date(sample.observed);
+ if(!Number.isFinite(time.getTime())||londonDay.format(time)!==basis(row).occurredOn)
+  throw problem('Choose a reading from the UK occurrence date recorded on this deviation.');
+ if(!await calibrationStillCurrent(tx,run.connector,observation))throw problem('Review the current instrument calibration.');
+ const keys=readRecordKeys('UBIBOT',run.connector.repository,run.connector.branch);
+ const approval=z.uuid().safeParse(certificate.observed.split(' · instrument review ').at(-1));
+ const reviewer=approval.success?await tx.auditEvent.findFirst({where:{id:approval.data,organizationId:row.organizationId,entityType:'EvidenceConnector',entityId:run.connectorId,action:'logger.calibration-approved'},select:{actorId:true}}):null;
+ if(!approval.success||!reviewer?.actorId)throw problem('A verified instrument review is required for this reading.');
+ return {runId:run.id,connectorId:run.connectorId,resultHash:run.resultHash,signalHash:run.signalHash,channel:keys.scope,serial:keys.record,
+  sampleAt:sample.observed,temperature:temperature.observed,calibration:certificate.observed,certificateId:keys.reference!.split('/')[0],calibrationApprovalId:approval.data,calibrationApproverId:reviewer.actorId};
+}
+async function matchingReadings(tx:Tx,row:QualityCase){
+ const day=row.occurredAt.getTime(),hour=3600000;
+ // The longest accepted logger freshness window is one day. Include the UK midnight offset.
+ const runs=await tx.connectorRun.findMany({where:{organizationId:row.organizationId,connector:{provider:'UBIBOT'},outcome:'FOLLOW_UP',
+  capturedAt:{gte:new Date(day-2*hour),lt:new Date(day+49*hour)}},orderBy:[{capturedAt:'desc'},{id:'desc'}],take:41,include:{connector:true}});
+ const readings=[];
+ for(const run of runs.slice(0,40)){
+  try{const {runId,serial,channel,sampleAt,temperature}=await qualifiedReading(tx,row,run);readings.push({runId,serial,channel,sampleAt,temperature});}
+  catch(err){if(!(err instanceof IntelligenceError)||err.status!==409)throw err;}
+ }
+ return {readings,limited:runs.length>40};
+}
 export async function excursionWorkspace(c:AuthorizedContext,id:string){
  return transaction(c,async tx=>{
   const actor=await requireMember(tx,c),row=await caseRow(tx,c,id);
@@ -58,10 +93,11 @@ export async function excursionWorkspace(c:AuthorizedContext,id:string){
    if(chain.disposition){await assertReviewedFiles(tx,c.organizationId,chain.disposition.data.files);
     if(chain.disposition.data.attachmentHash!==chain.reading?.hash||chain.disposition.data.basisHash!==hashValue(basis(row)))throw problem('The investigation has changed since disposition. Review the signed source record.');}
   }catch(e){if(!(e instanceof IntelligenceError))throw e;issue=e.message;}
-  return {caseId:id,version:row.version,cycle:row.cycle,...chain,issue};
+  const candidates=WRITER.includes(actor.role)&&row.kind==='DEVIATION'&&row.status!=='CLOSED'&&!chain.reading?await matchingReadings(tx,row):{readings:[],limited:false};
+  return {caseId:id,version:row.version,cycle:row.cycle,...chain,issue,candidates};
  });
 }
-export async function excursionCommand(c:AuthorizedContext,id:string,raw:unknown,store?:EvidenceObjectStore){
+async function processExcursion(c:AuthorizedContext,id:string,raw:unknown,store?:EvidenceObjectStore,collect?: (files:ReviewedFile[])=>Promise<void>){
  const d=excursionInput.parse(raw),action='excursion.'+d.action.toLowerCase(),requestHash=hashValue({id,input:d});
  const prepare=async(tx:Tx)=>{
   const member=await requireMember(tx,c,d.action==='LINK'?WRITER:ADMIN),row=await caseRow(tx,c,id);
@@ -75,21 +111,11 @@ export async function excursionCommand(c:AuthorizedContext,id:string,raw:unknown
    if(prior&&chain.reading?.id===prior.id)return {row,prior,body:chain.reading.data,files:chain.reading.data.files};
    if(chain.reading||prior)throw problem('An excursion has already been linked in this investigation cycle.');
    const run=await tx.connectorRun.findFirst({where:{id:d.runId,organizationId:c.organizationId,connector:{provider:'UBIBOT'}},include:{connector:true}});
-   const obs=verifiedObservation(run);const sample=obs?.checks.find(x=>x.id==='logger-fresh'&&x.status==='PASS');
-   const temp=obs?.checks.find(x=>x.id==='logger-temperature'&&x.status==='FAIL'),cert=obs?.checks.find(x=>x.id==='logger-calibration'&&x.status==='PASS');
-   if(!run||!obs||!sample||!temp||!cert||run.configVersion!==run.connector.version||!await calibrationStillCurrent(tx,run.connector,obs))throw problem('Select an out-of-range reading with a verified instrument and reviewed calibration.');
-   const {scope,record,reference}=readRecordKeys('UBIBOT',run.connector.repository,run.connector.branch),certId=reference!.split('/')[0];
-   const approvalId=cert.observed.split(' · instrument review ').at(-1);
-   const approval=z.uuid().safeParse(approvalId);
-   const instrument=approval.success?await tx.auditEvent.findFirst({where:{id:approval.data,organizationId:c.organizationId,entityType:'EvidenceConnector',entityId:run.connectorId,action:'logger.calibration-approved'},select:{actorId:true}}):null;
-   if(!instrument?.actorId)throw problem('A verified instrument review is required for this reading.');
-   const sampleDate=new Date(sample.observed);
-   const ukDay=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).format(sampleDate);
-   if(ukDay!==basis(row).occurredOn)throw problem('Choose a reading from the UK occurrence date recorded on this deviation.');
-   if(certId===d.stockEvidenceId)throw problem('Select separate evidence identifying the affected stock.');
-   const files=await reviewedFiles(tx,c.organizationId,[certId,d.stockEvidenceId]);
-   const body=attachment.parse({runId:run.id,connectorId:run.connectorId,resultHash:run.resultHash,signalHash:run.signalHash,channel:scope,serial:record,sampleAt:sample.observed,
-    temperature:temp.observed,calibration:cert.observed,calibrationApprovalId:approvalId,calibrationApproverId:instrument.actorId,site:d.site,stock:d.stock,stockEvidenceId:d.stockEvidenceId,files});
+   const reading=await qualifiedReading(tx,row,run);
+   if(reading.certificateId===d.stockEvidenceId)throw problem('Select separate evidence identifying the affected stock.');
+   const {certificateId,...measurement}=reading;
+   const files=await reviewedFiles(tx,c.organizationId,[certificateId,d.stockEvidenceId]);
+   const body=attachment.parse({...measurement,site:d.site,stock:d.stock,stockEvidenceId:d.stockEvidenceId,files});
    return {row,prior,body,files};
   }
   if(!chain.reading)throw problem('Link the calibrated reading and affected stock first.');
@@ -112,7 +138,7 @@ export async function excursionCommand(c:AuthorizedContext,id:string,raw:unknown
   return {row,prior,body:{reading:chain.reading,disposition:decided,investigation:basis(row)},files:[...chain.reading.data.files,...decided.data.files]};
  };
  const first=await transaction(c,prepare);
- await verifyReviewedBytes(c,first.files,store);
+ if(collect)await collect(first.files);else await verifyReviewedBytes(c,first.files,store);
  return transaction(c,async tx=>{
   const checked=await prepare(tx);
   if(hashValue(checked.body)!==hashValue(first.body))throw problem('The evidence changed during verification.');
@@ -130,4 +156,25 @@ export async function excursionCommand(c:AuthorizedContext,id:string,raw:unknown
   }
   return {receiptId:d.requestKey,caseId:id,cycle:checked.row.cycle,digest,record:checked.body};
  });
+}
+
+export function excursionCommand(c:AuthorizedContext,id:string,raw:unknown,store?:EvidenceObjectStore){
+ return processExcursion(c,id,raw,store);
+}
+export async function excursionArchive(c:AuthorizedContext,id:string,raw:unknown,store?:EvidenceObjectStore){
+ const request=retrieve.parse(raw),entries:{name:string;bytes:Uint8Array}[]=[],files:{name:string;file:ReviewedFile}[]=[];
+ const receipt=await processExcursion(c,id,request,store,async refs=>{
+  if(refs.reduce((total,file)=>total+file.sizeBytes,0)>31*1024*1024)throw new IntelligenceError('The four source records exceed the inspection ZIP size limit of 31 MiB.',413);
+  for(const file of refs){
+   const actual=await downloadEvidence(c,file.id,store);
+   if(actual.sha256!==file.sha256)throw problem('A source record changed during inspection.');
+   const name=archiveFilename(files.length,file.filename);
+   files.push({name,file});entries.push({name,bytes:actual.bytes});
+  }
+ });
+ const record=z.object({reading:z.object({data:attachment}),disposition:z.object({data:decision})}).parse(receipt.record);
+ const stock=record.reading.data.stockEvidenceId,decided=record.disposition.data;
+ const sources=files.map(({name,file})=>({role:file.id===stock?'affected-stock':file.id===decided.decisionEvidenceId?'signed-decision':file.id===decided.authorityEvidenceId?'signatory-authority':'calibration',entry:name,...file}));
+ const manifest={format:'regpilot-excursion-inspection-v1',...receipt,sources};
+ return makeAuditZip([{name:'inspection.json',bytes:Buffer.from(JSON.stringify(manifest,null,2))},...entries]);
 }

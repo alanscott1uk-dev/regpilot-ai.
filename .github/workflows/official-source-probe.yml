@@ -37,7 +37,7 @@ jobs:
       - name: Verify the collected snapshot against the publication contract
         if: ${{ !cancelled() && hashFiles('artifacts/horizon.json') != '' }}
         run: python scripts/publish-horizon.py --validate-only
-      - name: Measure discovery against the two official MHRA publication indexes
+      - name: Measure discovery against MHRA and the four UK legislative indexes
         if: ${{ !cancelled() && hashFiles('artifacts/horizon.json') != '' }}
         run: node --import tsx scripts/assess-mhra-indexes.mjs
       - name: Verify real GitHub API contract with repository-scoped credentials

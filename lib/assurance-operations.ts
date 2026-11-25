@@ -1,4 +1,5 @@
 import {z} from "zod";
+import {portalDestination} from './portal-questionnaire';
 import {ocrQuestionSourceSchema} from "./ocr";
 export const OPS_LIMITS={inventory:200,campaigns:100,answers:300,questions:100,questionnaires:100,history:20} as const;
 const notes=z.string().trim().min(40).max(1600),version=z.number().int().positive(),ids=z.array(z.uuid()).min(1).max(10).refine(v=>new Set(v).size===v.length);
@@ -41,7 +42,7 @@ export const documentQuestionSourceSchema=z.object({filename:z.string().min(1).m
 // OCR must be tried first: the legacy PDF object intentionally accepts older extra metadata.
 export const questionSourceSchema=z.preprocess((value,ctx)=>{if(value&&typeof value==='object'&&'method' in value&&value.method==='OCR'){const parsed=ocrQuestionSourceSchema.safeParse(value);if(!parsed.success){ctx.addIssue({code:'custom',message:'OCR requires complete independently reviewed region provenance'});return z.NEVER;}return parsed.data;}return value;},z.union([ocrQuestionSourceSchema,spreadsheetQuestionSourceSchema,documentQuestionSourceSchema.refine(s=>s.extractionVersion!=='azure-read-2024-11-30','OCR requires independently reviewed region provenance')]));
 export const questionImportRowSchema=z.object({reference:z.string().trim().min(1).max(100),question:z.string().trim().min(10).max(1200),instructions:z.string().trim().max(4000).optional(),suppliedAnswer:z.string().trim().max(6000).optional(),source:questionSourceSchema.optional()});
-const questionnaireBase=z.object({title:z.string().trim().min(3).max(160),recipient:z.string().trim().min(2).max(160),scope:z.string().trim().min(2).max(120),ownerId:z.uuid(),productIds:z.array(z.uuid()).max(10).refine(ids=>new Set(ids).size===ids.length).optional(),requestKey:z.uuid().optional(),confirm:z.literal(true)});
+const questionnaireBase=z.object({portalDestination:portalDestination.optional(),title:z.string().trim().min(3).max(160),recipient:z.string().trim().min(2).max(160),scope:z.string().trim().min(2).max(120),ownerId:z.uuid(),productIds:z.array(z.uuid()).max(10).refine(ids=>new Set(ids).size===ids.length).optional(),requestKey:z.uuid().optional(),confirm:z.literal(true)});
 export const questionnaireInput=z.union([questionnaireBase.extend({csv:z.string().max(200000)}),questionnaireBase.extend({rows:z.array(questionImportRowSchema).min(1).max(OPS_LIMITS.questions)})]);
 export const questionSchema=questionImportRowSchema.extend({id:z.uuid(),productId:z.uuid().optional(),productName:z.string().min(2).max(100).optional(),ownerId:z.uuid(),answerId:z.uuid().nullable(),answerVersion:z.number().int().nullable(),answerHash:z.string().nullable(),status:z.enum(["EMPTY","SUGGESTED","READY"]),changedById:z.uuid().nullable()});
 export const questionsSchema=z.array(questionSchema).min(1).max(OPS_LIMITS.questions);

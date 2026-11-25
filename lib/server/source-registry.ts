@@ -18,6 +18,12 @@ export function registryFilters(params:URLSearchParams) {
   };
 }
 
+export async function databaseTestRecords(client:Pick<typeof db,'$queryRaw'>=db){
+ if(!registerStagingEnabled())return [];
+ return client.$queryRaw<DatabaseAcceptance[]>`SELECT id,name,version,run,job,completed_at,before_matched,before_different,after_matched
+  FROM regpilot_verification.tested_database_sources ORDER BY lower(name),id`;
+}
+
 export async function sourceCatalogue(filters:ReturnType<typeof registryFilters>) {
   if (!registerStagingEnabled()) return null;
   const {term,kind,tested} = filters;
@@ -36,9 +42,7 @@ export async function sourceCatalogue(filters:ReturnType<typeof registryFilters>
       WHERE (${kind}='' OR kind=${kind}) AND strpos(lower(name),lower(${term}))>0
         AND (NOT ${tested} OR EXISTS (SELECT 1 FROM regpilot_verification.tested_database_sources a WHERE a.id=p.id))
       ORDER BY lower(name),id LIMIT ${size} OFFSET ${(page-1)*size}`;
-    const acceptance=await tx.$queryRaw<DatabaseAcceptance[]>`
-      SELECT id,name,version,run,job,completed_at,before_matched,before_different,after_matched
-      FROM regpilot_verification.tested_database_sources ORDER BY lower(name),id`;
+    const acceptance=await databaseTestRecords(tx);
     const testedIds=new Set(acceptance.map(a=>a.id));
     return {counts,entries:entries.map(row=>({...row,workspace_tested:testedIds.has(row.id)})),page,pages,acceptance};
   },{isolationLevel:'RepeatableRead'});

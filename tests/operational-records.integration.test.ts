@@ -1,6 +1,8 @@
 import {randomUUID} from 'node:crypto';
 import {createQualityCase,investigateQualityCase} from '../lib/server/capa-service';
-import {excursionCommand,excursionWorkspace} from '../lib/server/excursion-pilot';
+import {readZipParts} from './helpers/zip-inspection.mjs';
+import {createHash} from 'node:crypto';
+import {excursionArchive,excursionCommand,excursionWorkspace} from '../lib/server/excursion-pilot';
 import test from "node:test";
 import assert from "node:assert/strict";
 import {workInbox,workTask} from '../lib/server/work-hub-service';
@@ -217,6 +219,9 @@ test('repeated logger collection checks the physical serial, rotated key and cur
   const q=await createQualityCase(f.ed,{title:'Fictional storage excursion',kind:'DEVIATION',classification:'MAJOR',requestKey:randomUUID(),
    ownerId:f.ed.userId,occurredAt:today,impact:'The fictional affected lot was segregated pending a decision.',description:'The fixture logger reported a temperature above the site operating limit.',containment:'Segregate the identified stock at the test site until reviewed.'});
   const stock=await f.file(),signed=await f.file(),authority=await f.file();
+  const candidates=await excursionWorkspace(f.ed,q.id);
+  assert.deepEqual(candidates.candidates.readings.map(r=>r.runId),[excursion.id]);
+  await assert.rejects(excursionWorkspace(f.out,q.id),rejects(404));
   const attach={action:'LINK',requestKey:randomUUID(),version:q.version,runId:excursion.id,site:'Fictional cold room',stock:['TEST-001'],stockEvidenceId:stock.id};
   await assert.rejects(excursionCommand(f.out,q.id,attach,f.store),rejects(404));
   await assert.rejects(excursionCommand(f.ed,q.id,{...attach,runId:run.id},f.store),rejects(409));
@@ -229,11 +234,18 @@ test('repeated logger collection checks the physical serial, rotated key and cur
   await assert.rejects(excursionCommand(f.ad,q.id,fetchRecord,f.store),rejects(403));
   await db.membership.update({where:{organizationId_userId:{organizationId:f.a.id,userId:f.re.userId}},data:{role:'ADMIN'}});
   const independent=await excursionCommand(f.re,q.id,fetchRecord,f.store);
+  await assert.rejects(excursionArchive(f.ad,q.id,{...fetchRecord,requestKey:randomUUID()},f.store),rejects(403));
+  const archive=await readZipParts(await excursionArchive(f.re,q.id,fetchRecord,f.store)) as Map<string,Buffer>;
+  const inspection=JSON.parse(archive.get('inspection.json')!.toString());
+  assert.equal(inspection.digest,independent.digest);
+  assert.deepEqual(inspection.sources.map((s:{role:string})=>s.role).sort(),['affected-stock','calibration','signatory-authority','signed-decision']);
+  for(const source of inspection.sources)assert.equal(createHash('sha256').update(archive.get(source.entry)!).digest('hex'),source.sha256);
   assert.match(JSON.stringify(independent),/TEST-001/);assert.match(JSON.stringify(independent),/TEST-QD-1/);
   assert.equal((await excursionWorkspace(f.re,q.id)).retrieved.length,1);
   temperature=4;
   await db.evidence.update({where:{id:file.id},data:{scanStatus:'QUARANTINED'}});
   await assert.rejects(excursionCommand(f.re,q.id,{...fetchRecord,requestKey:randomUUID()},f.store),rejects(409));
+  await assert.rejects(excursionArchive(f.re,q.id,fetchRecord,f.store),rejects(409));
   assert.equal((await exportConnectorRun(f.o,run.id)).currentAtExport,false);
   await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
   assert.equal((await verifyConnectorNow(f.o,saved.id,updated.version)).outcome,'INCOMPLETE');

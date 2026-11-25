@@ -8,7 +8,7 @@ import type {EvidenceObjectStore} from './evidence-storage';
 import {db} from './db';
 import {IntelligenceError,transaction} from './intelligence-service';
 import {hashValue} from '../regulatory/intelligence';
-const issue=z.object({delivery:z.literal('MANUAL_COPY').optional(),capture:portalFields,version:z.number().int().positive(),labels:z.array(z.string().min(3).max(600)).min(1).max(100).refine(v=>v.length===new Set(v).size),confirm:z.literal(true)}).strict();
+const issue=z.object({delivery:z.literal('MANUAL_COPY').optional(),capture:portalFields,version:z.number().int().positive(),labels:z.array(z.string().min(3).max(1200)).min(1).max(100).refine(v=>v.length===new Set(v).size),confirm:z.literal(true)}).strict();
 const secretHash=(s:string)=>createHash('sha256').update(s).digest('hex');
 const bad=()=>new IntelligenceError('The portal hand-off is unavailable. Return to the approved questionnaire.',404);
 const saved=z.object({delivery:z.literal('MANUAL_COPY').optional(),capture:portalFields,labels:z.array(z.string()).min(1).max(100),approvedHash:z.string().length(64),questionnaireId:z.uuid(),secretHash:z.string().length(64),expiresAt:z.iso.datetime()}).strict();

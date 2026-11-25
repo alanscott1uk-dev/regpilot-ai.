@@ -219,6 +219,12 @@ test('dated legislation indexes preserve instrument identity, bilingual titles a
  assert.equal(later.feeds.find(f=>f.id==='ssi')?.state,'limited');assert.equal(later.items.find(i=>i.id===slip.id)?.observedAt,first.generatedAt);
  assert.equal(measureCoverage(sample,later,+now+60000).indeterminate,1);
  const businessView=watchlistFilters.parse({...emptyHorizonView,siteView:'scottish-pharma-wholesale'});
+ const namedDrug={...slip,path:'/drug-safety-update/named-substance',publisherIds:['mhra'],kind:'Guidance' as const,title:'Named substance',summary:'Revised advice for prescribers'};
+ assert.ok(matchesHorizonView(namedDrug,businessView,first.generatedAt,false));
+ assert.equal(matchesHorizonView({...namedDrug,publisherIds:['dhsc']},businessView,first.generatedAt,false),false);
+ const {indexEntries}=await import('../lib/horizon/official-indexes');
+ const independent=indexEntries('<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>http://www.legislation.gov.uk/id/ssi/2026/2</id><updated>2026-11-23</updated><published>2026-11-01</published></entry></feed>',{name:'Scottish index',publisher:'ssi',url:'https://www.legislation.gov.uk/ssi/2026/data.feed?sort=published'});
+ assert.equal(independent.references.get('https://www.legislation.gov.uk/ssi/2026/2/made'),'2026-11-01');
  assert.ok(matchesHorizonView({...slip,title:'Human Medicines Amendment Regulations'},businessView,first.generatedAt,false));
  assert.equal(matchesHorizonView({...slip,title:'Temporary trunk road closure'},businessView,first.generatedAt,false),false);
  assert.equal(matchesHorizonView({...slip,publisherIds:['wsi'],title:'Human medicines'},businessView,first.generatedAt,false),false);

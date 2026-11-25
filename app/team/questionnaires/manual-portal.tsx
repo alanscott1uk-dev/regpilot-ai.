@@ -1,22 +1,24 @@
 'use client';
 import {useEffect,useState} from 'react';
 import {portalTable} from '../../../lib/portal-table';
-import {portalFields,type PortalFields} from '../../../lib/portal-questionnaire';
+import {identifyPortal,portalFields,type PortalDestination,type PortalFields} from '../../../lib/portal-questionnaire';
 
-export function ManualCapture({disabled,onCapture,onError}:{disabled:boolean;onCapture:(page:PortalFields)=>void;onError:(s:string)=>void}){
+export function ManualCapture({disabled,savedQuestions,destination,onCapture,onError}:{disabled:boolean;savedQuestions:string[];destination?:PortalDestination|null;onCapture:(page:PortalFields)=>void;onError:(s:string)=>void}){
  async function prepare(form:FormData){
   try{
-   const url=new URL(String(form.get('address')));
-   if(url.protocol!=='https:'||url.username||url.password)throw Error('Enter the HTTPS address of the buyer’s questionnaire.');
+   const target=await identifyPortal(String(form.get('address')));
    const fields=String(form.get('questions')).split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-   const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(url.href));
-   onCapture(portalFields.parse({format:'regpilot-portal-fields-v1',origin:url.origin,pageHash:Array.from(new Uint8Array(digest),n=>n.toString(16).padStart(2,'0')).join(''),fields}));
-  }catch{onError('Enter an HTTPS buyer address and one question per line. Use up to 100 questions of 3–600 characters each.');}
+   onCapture(portalFields.parse({format:'regpilot-portal-fields-v1',...target,fields}));
+  }catch{onError('Enter an HTTPS buyer address and one question per line. Use up to 100 questions of 3–1,200 characters each.');}
  }
  return <details open><summary>Complete a buyer portal without installing the helper</summary>
+  {destination&&<><p>Original destination · {destination.origin}</p><button type="button" disabled={disabled} onClick={()=>{
+   const result=portalFields.safeParse({format:'regpilot-portal-fields-v1',...destination,fields:savedQuestions});
+   if(result.success)onCapture(result.data);else onError('Review the saved labels below. Each portal field accepts 3–1,200 characters.');
+  }}>Use original buyer portal and saved questions</button></>}
   <form onSubmit={e=>{e.preventDefault();void prepare(new FormData(e.currentTarget));}}><fieldset disabled={disabled}><legend>Review questions copied from the buyer</legend>
    <label>Buyer questionnaire URL<input name="address" type="url" required maxLength={3000} placeholder="https://…"/></label>
-   <label>Buyer questions, one per line<textarea name="questions" required rows={4} maxLength={60100}/></label>
+   <label>Buyer questions, one per line<textarea name="questions" defaultValue={savedQuestions.join('\n')} required rows={4} maxLength={120100}/></label>
    <button>Find approved answers</button></fieldset></form></details>;
 }
 export type CopyReceipt={origin:string;expiresAt:string;fields:{label:string;answer:string}[]};

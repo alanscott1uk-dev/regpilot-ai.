@@ -1,3 +1,4 @@
+import {buildCrosswalk} from '../programme-crosswalk';
 import {z} from 'zod';
 import {Prisma} from '@prisma/client';
 import {programmeReferenceContext} from './starter-programme-service';
@@ -25,9 +26,9 @@ function references(plan:Awaited<ReturnType<typeof programmeReferenceContext>>){
  return index;
 }
 const eventId=(programmeId:string,reference:string)=>programmeId+'/'+hashValue(reference);
-export async function programmeReferenceStatement(ctx:AuthorizedContext,programmeId:string){
- return transaction(ctx,async tx=>{
-  const member=await requireMember(tx,ctx,ADMIN),plan=await programmeReferenceContext(tx,ctx,programmeId),index=references(plan);
+type Plan=Awaited<ReturnType<typeof programmeReferenceContext>>;
+async function readStatement(tx:Prisma.TransactionClient,ctx:AuthorizedContext,plan:Plan){
+ const programmeId=plan.id,index=references(plan);
   const events=await tx.$queryRaw<{entityId:string;actorId:string;createdAt:Date;details:Prisma.JsonValue}[]>`
    SELECT DISTINCT ON ("entityId") "entityId","actorId","createdAt",details FROM "AuditEvent"
    WHERE "organizationId"=${ctx.organizationId}::uuid AND "entityType"=${entity} AND action='programme.reference_decided'
@@ -38,10 +39,24 @@ export async function programmeReferenceStatement(ctx:AuthorizedContext,programm
    if(d.programmeId!==programmeId||d.recordHash!==plan.recordHash||eventId(programmeId,d.reference)!==event.entityId||!index.has(d.reference))throw new IntelligenceError('Scope history does not match the saved programme.',409);
    return [d.reference,{decision:d.decision,reason:d.reason,version:d.version,reviewerId:event.actorId,reviewedAt:event.createdAt.toISOString()}] as const;
   }));
-  return {programmeId,name:plan.name,recordHash:plan.recordHash,evidenceLimited:plan.evidenceLimited,canDecide:ADMIN.includes(member.role),
+  return {programmeId,name:plan.name,recordHash:plan.recordHash,evidenceLimited:plan.evidenceLimited,canDecide:true,
    rows:[...index.values()].map(row=>({...row,...(latest.get(row.reference)??{decision:'UNASSESSED' as const,reason:'',version:0,reviewerId:'',reviewedAt:''})}))};
+}
+export async function programmeReferenceStatement(ctx:AuthorizedContext,programmeId:string){
+ return transaction(ctx,async tx=>{
+  await requireMember(tx,ctx,ADMIN);
+  return readStatement(tx,ctx,await programmeReferenceContext(tx,ctx,programmeId));
  });
 }
+export async function programmeCrosswalk(ctx:AuthorizedContext,annexId:string,combinedId:string){
+ return transaction(ctx,async tx=>{
+  await requireMember(tx,ctx,ADMIN);
+  const annex=await programmeReferenceContext(tx,ctx,annexId),combined=await programmeReferenceContext(tx,ctx,combinedId);
+  if(annex.packId!=='iso27001-annex-a'||combined.packId!=='soc2-iso27001')throw new IntelligenceError('Select the Annex A and combined SOC 2 programmes.',409);
+  return buildCrosswalk(annex,combined,await readStatement(tx,ctx,annex));
+ });
+}
+
 export async function decideProgrammeReference(ctx:AuthorizedContext,programmeId:string,raw:unknown){
  const d=input.parse(raw);
  return transaction(ctx,async tx=>{

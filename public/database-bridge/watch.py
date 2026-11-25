@@ -25,6 +25,19 @@ def write_json(path, value):
     os.replace(stage.name, path)
 
 
+recovery_steps = {
+    "PLAN": "Download the test and its matching source plan again. Check the definition and version.",
+    "IMAGE": "Verify the installed source image and its approved digest.",
+    "CONFIG": "Check the local configuration file and the authorised source network.",
+    "ACCESS": "Check connectivity and the read account. Renew its credential if required and run the access check.",
+    "DISCOVERY": "Confirm the reader can discover the required schema and streams.",
+    "SELECTION": "Check the stream, namespace and field mapping against current discovery.",
+    "READ": "Check read permission and connector limits on the selected stream, then collect again.",
+    "RECEIPT": "Verify local space and write permission for the observation spool.",
+    "COLLECTOR": "Check that the collection runner is installed alongside the scheduler."
+}
+
+
 def tick(args):
     definition = json.loads(args.test_definition.read_text())
     control = str(UUID(definition["control"]))
@@ -55,13 +68,17 @@ def tick(args):
         availability = args.directory / (prefix+"-availability.json")
         summary_file = args.directory / (prefix+"-status.json")
         if not summary_file.exists():
+            failure_stage = None
             if not source_file.exists() and not availability.exists():
                 runner = [sys.executable, str(Path(__file__).with_name("collect.py")), "--plan", str(args.plan),
                           "--config", str(args.config), "--digest", args.digest, "--network", args.network,
-                          "--test-definition", str(args.test_definition), "--output", str(source_file)]
+                          "--test-definition", str(args.test_definition), "--output", str(source_file), "--scheduled-diagnostics"]
                 if args.source:
                     runner.extend(["--source",args.source])
-                result = subprocess.run(runner, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                result = subprocess.run(runner, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+                if result.returncode:
+                    stage = result.stderr.strip()
+                    failure_stage = stage if stage in recovery_steps else 'COLLECTOR'
                 if result.returncode and source_file.exists():
                     raise RuntimeError("Inconsistent collector outcome; inspect the source receipt.")
             success = source_file.exists()
@@ -76,11 +93,24 @@ def tick(args):
                                    "detail":"Historical attempt at "+timestamp(captured)+". No new source observation is issued on failure."},
                                   {"key":"missed-intervals","label":"Scheduled intervals missed","status":"FAIL" if missed else "PASS",
                                    "observed":str(missed),"detail":"Elapsed intervals without a runner invocation since the last completed slot."}]}
+                if failure_stage:
+                    body["checks"][0].update(observed=failure_stage, detail=recovery_steps[failure_stage])
+                elif success and state["last"] >= 0:
+                    previous_file = args.directory / (str(state["last"]).zfill(12)+"-status.json")
+                    previous = json.loads(previous_file.read_text())
+                    if previous.get("state") == "FAILED":
+                        body["checks"][0]["detail"] = "Collection restored after failed slot " + str(state["last"]) + " (" + (previous.get("failureStage") or "stage unavailable") + ")."
                 write_json(availability, {"idempotencyKey":key,"body":body})
-            observed = json.loads(availability.read_text())["body"]["observedAt"]
+            recorded = json.loads(availability.read_text())["body"]
+            observed = recorded["observedAt"]
             summary = {"slot":slot,"dueAt":timestamp(state["start"]+slot*period),"observedAt":observed,
                        "state":"READ" if success else "FAILED","missedIntervals":missed,
                        "source":source_file.name if success else None,"availability":availability.name}
+            health = recorded["checks"][0]
+            if not success and health["observed"] in recovery_steps:
+                summary.update(failureStage=health["observed"], recoveryGuidance=health["detail"])
+            if success and health["detail"].startswith("Collection restored after failed slot "):
+                summary["recoveredAfterSlot"] = state["last"]
             write_json(summary_file,summary)
         else:
             summary = json.loads(summary_file.read_text())
