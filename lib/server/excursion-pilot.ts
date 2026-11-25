@@ -1,4 +1,6 @@
 import {z} from 'zod';
+import {temperatureHistory,temperatureCsv} from '../excursion-history';
+import {captureTemperatureHistory,verifyTemperatureHistory} from './excursion-history';
 import {Prisma,type QualityCase} from '@prisma/client';
 import type {AuthorizedContext} from './authorization';
 import {ADMIN,WRITER,requireMember} from './workspace-member';
@@ -30,7 +32,7 @@ const basis=(r:QualityCase)=>({caseId:r.id,cycle:r.cycle,occurredOn:r.occurredAt
 const attachment=z.object({runId:z.uuid(),connectorId:z.uuid(),resultHash:z.string(),signalHash:z.string(),channel:z.string(),serial:z.string(),sampleAt:z.iso.datetime(),temperature:z.string(),
  calibration:z.string(),calibrationApprovalId:z.uuid().optional(),calibrationApproverId:z.uuid().optional(),site:text,stock:z.array(text),stockEvidenceId:z.uuid(),files:reviewedFilesSchema});
 const decision=z.object({disposition:decide.shape.disposition,sourceRef:text,signatory:text,decidedAt:z.iso.datetime(),rationale:z.string(),decisionEvidenceId:z.uuid(),authorityEvidenceId:z.uuid(),
- files:reviewedFilesSchema,basisHash:z.string(),attachmentHash:z.string(),investigation:z.string(),rootCause:z.string()});
+ files:reviewedFilesSchema,history:temperatureHistory.optional(),basisHash:z.string(),attachmentHash:z.string(),investigation:z.string(),rootCause:z.string()});
 const envelope=z.object({cycle:z.number(),requestHash:z.string(),body:z.unknown(),digest:z.string()});
 async function caseRow(tx:Tx,c:AuthorizedContext,id:string){
  const row=await tx.qualityCase.findFirst({where:{organizationId:c.organizationId,id}});
@@ -92,7 +94,9 @@ export async function excursionWorkspace(c:AuthorizedContext,id:string){
   const chain=await records(tx,row);
   let issue:string|null=null;
   try{if(chain.reading)await checkSource(tx,row,chain.reading.data);
-   if(chain.disposition){await assertReviewedFiles(tx,c.organizationId,chain.disposition.data.files);
+   if(chain.disposition){
+    if(chain.reading&&chain.disposition.data.history)await verifyTemperatureHistory(tx,c.organizationId,chain.reading.data,chain.disposition.data.history);
+    await assertReviewedFiles(tx,c.organizationId,chain.disposition.data.files);
     if(chain.disposition.data.attachmentHash!==chain.reading?.hash||chain.disposition.data.basisHash!==hashValue(basis(row)))throw problem('The investigation has changed since disposition. Review the signed source record.');}
   }catch(e){if(!(e instanceof IntelligenceError))throw e;issue=e.message;}
   const candidates=WRITER.includes(actor.role)&&row.kind==='DEVIATION'&&row.status!=='CLOSED'&&!chain.reading?await matchingReadings(tx,row):{readings:[],limited:false};
@@ -129,7 +133,8 @@ async function processExcursion(c:AuthorizedContext,id:string,raw:unknown,store?
    if(Date.parse(d.decidedAt)<Date.parse(chain.reading.data.sampleAt)||Date.parse(d.decidedAt)>Date.now())throw problem('The signed decision time must fall between the reading and now.');
    const docIds=[d.decisionEvidenceId,d.authorityEvidenceId];if(new Set([...docIds,...chain.reading.data.files.map(f=>f.id)]).size!==docIds.length+chain.reading.data.files.length)throw problem('Choose separate signed decision and delegation records.');
    const files=await reviewedFiles(tx,c.organizationId,docIds);
-   const body=decision.parse({...d,files,basisHash:hashValue(basis(row)),attachmentHash:chain.reading.hash,investigation:row.investigationNotes,rootCause:row.rootCause});
+   const history=await captureTemperatureHistory(tx,c.organizationId,chain.reading.data,d.decidedAt);
+   const body=decision.parse({...d,files,history,basisHash:hashValue(basis(row)),attachmentHash:chain.reading.hash,investigation:row.investigationNotes,rootCause:row.rootCause});
    return {row,prior,body,files:[...chain.reading.data.files,...files]};
   }
   const decided=chain.disposition;
@@ -137,6 +142,7 @@ async function processExcursion(c:AuthorizedContext,id:string,raw:unknown,store?
   if(!chain.reading.data.calibrationApproverId)throw problem('The independent instrument reviewer is missing from this record.');
   if([row.createdById,row.ownerId,decided.actorId,chain.reading.actorId,chain.reading.data.calibrationApproverId,...chain.reading.data.files.flatMap(f=>[f.uploadedById,f.reviewerId]),...decided.data.files.flatMap(f=>[f.uploadedById,f.reviewerId])].includes(c.userId))throw new IntelligenceError('A separate assessor must retrieve the investigation.',403);
   await assertReviewedFiles(tx,c.organizationId,decided.data.files);
+  if(decided.data.history)await verifyTemperatureHistory(tx,c.organizationId,chain.reading.data,decided.data.history);
   const core={reading:chain.reading,disposition:decided,investigation:basis(row)};
   // Preserve the original build and source declaration for an exact replay.
   const existing=prior?envelope.parse(prior.details):null;
@@ -170,7 +176,7 @@ async function processExcursion(c:AuthorizedContext,id:string,raw:unknown,store?
 }
 
 const qualifiedContext=z.object({release:z.string().regex(/^[a-f0-9]{40}$/),ownership:z.object({id:z.uuid(),actor:z.uuid(),category:z.literal('CUSTOMER'),scopeHash:z.string(),version:z.number().int().positive()})});
-export const siteExcursionSchema=z.object({receiptId:z.uuid(),caseId:z.uuid(),digest:z.string(),assessorId:z.uuid(),at:z.iso.datetime(),site:text,serial:z.string(),temperature:z.string(),sampleAt:z.iso.datetime(),stock:z.array(text),disposition:decide.shape.disposition,sourceRef:text,stockEvidenceId:z.uuid(),decisionEvidenceId:z.uuid(),authorityEvidenceId:z.uuid(),qualification:qualifiedContext,files:reviewedFilesSchema});
+export const siteExcursionSchema=z.object({receiptId:z.uuid(),caseId:z.uuid(),digest:z.string(),assessorId:z.uuid(),at:z.iso.datetime(),site:text,serial:z.string(),temperature:z.string(),sampleAt:z.iso.datetime(),stock:z.array(text),disposition:decide.shape.disposition,sourceRef:text,stockEvidenceId:z.uuid(),decisionEvidenceId:z.uuid(),authorityEvidenceId:z.uuid(),history:temperatureHistory.optional(),qualification:qualifiedContext,files:reviewedFilesSchema});
 export async function siteExcursion(tx:Tx,c:AuthorizedContext,receiptId:string,site:string,release:string,since:Date){
  const event=await tx.auditEvent.findFirst({where:{id:receiptId,organizationId:c.organizationId,entityType,action:'excursion.retrieve',createdAt:{gte:since}}});
  if(!event?.actorId)throw problem('Select an independent excursion retrieval for this site protocol.');
@@ -181,8 +187,19 @@ export async function siteExcursion(tx:Tx,c:AuthorizedContext,receiptId:string,s
     hashValue({reading,disposition,investigation:basis(row),qualification:proof.data})!==p.digest||hashValue(p.body)!==p.digest)
   throw problem('The retrieval must match this site, release, independently confirmed customer logger and current investigation.');
  await checkSource(tx,row,reading.data);await assertReviewedFiles(tx,c.organizationId,disposition.data.files);
- return siteExcursionSchema.parse({receiptId,caseId:row.id,digest:p.digest,assessorId:event.actorId,at:event.createdAt.toISOString(),site,serial:reading.data.serial,temperature:reading.data.temperature,sampleAt:reading.data.sampleAt,stock:reading.data.stock,disposition:disposition.data.disposition,sourceRef:disposition.data.sourceRef,stockEvidenceId:reading.data.stockEvidenceId,decisionEvidenceId:disposition.data.decisionEvidenceId,authorityEvidenceId:disposition.data.authorityEvidenceId,qualification:proof.data,files:[...reading.data.files,...disposition.data.files]});
+ if(disposition.data.history)await verifyTemperatureHistory(tx,c.organizationId,reading.data,disposition.data.history);
+ return siteExcursionSchema.parse({...(disposition.data.history?{history:disposition.data.history}:{}),receiptId,caseId:row.id,digest:p.digest,assessorId:event.actorId,at:event.createdAt.toISOString(),site,serial:reading.data.serial,temperature:reading.data.temperature,sampleAt:reading.data.sampleAt,stock:reading.data.stock,disposition:disposition.data.disposition,sourceRef:disposition.data.sourceRef,stockEvidenceId:reading.data.stockEvidenceId,decisionEvidenceId:disposition.data.decisionEvidenceId,authorityEvidenceId:disposition.data.authorityEvidenceId,qualification:proof.data,files:[...reading.data.files,...disposition.data.files]});
 }
+export async function verifyInspectionTemperatures(tx:Tx,org:string,excursion:z.infer<typeof siteExcursionSchema>){
+ if(!excursion.history)return;
+ const event=await tx.auditEvent.findFirst({where:{id:excursion.receiptId,organizationId:org,entityType,entityId:excursion.caseId,action:'excursion.retrieve'},select:{details:true}});
+ const stored=envelope.safeParse(event?.details);
+ if(!stored.success||stored.data.digest!==excursion.digest||hashValue(stored.data.body)!==excursion.digest)throw problem('The source excursion receipt failed its integrity check.');
+ const record=z.object({reading:z.object({data:attachment}),disposition:z.object({data:decision})}).parse(stored.data.body);
+ if(!record.disposition.data.history||hashValue(record.disposition.data.history)!==hashValue(excursion.history))throw problem('The site temperature history differs from the disposition.');
+ await verifyTemperatureHistory(tx,org,record.reading.data,excursion.history);
+}
+
 export function excursionCommand(c:AuthorizedContext,id:string,raw:unknown,store?:EvidenceObjectStore){
  return processExcursion(c,id,raw,store);
 }
@@ -200,6 +217,8 @@ export async function excursionArchive(c:AuthorizedContext,id:string,raw:unknown
  const record=z.object({reading:z.object({data:attachment}),disposition:z.object({data:decision})}).parse(receipt.record);
  const stock=record.reading.data.stockEvidenceId,decided=record.disposition.data;
  const sources=files.map(({name,file})=>({role:file.id===stock?'affected-stock':file.id===decided.decisionEvidenceId?'signed-decision':file.id===decided.authorityEvidenceId?'signatory-authority':'calibration',entry:name,...file}));
- const manifest={format:'regpilot-excursion-inspection-v1',...receipt,sources};
+ const history=decided.history;
+ if(history)entries.push({name:'temperature-readings.csv',bytes:Buffer.from(temperatureCsv(history))});
+ const manifest={...(history?{temperatureReadings:'temperature-readings.csv'}:{}),format:'regpilot-excursion-inspection-v1',...receipt,sources};
  return makeAuditZip([{name:'inspection.json',bytes:Buffer.from(JSON.stringify(manifest,null,2))},...entries]);
 }

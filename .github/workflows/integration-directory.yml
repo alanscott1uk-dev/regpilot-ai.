@@ -77,6 +77,21 @@ jobs:
           name: business-application-recovery-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
           path: business-application-recovery.json
           retention-days: 30
+      - name: Verify Prometheus alert changes and credential recovery
+        env:
+          REGPILOT_SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          archive=prometheus-3.5.0.linux-amd64.tar.gz
+          curl -fsSL --retry 3 "https://github.com/prometheus/prometheus/releases/download/v3.5.0/$archive" -o "$RUNNER_TEMP/$archive"
+          (cd "$RUNNER_TEMP" && echo "e811827af26d822afb09a4f28314f61b618b12cff5369835a67f674d8b46f39a  $archive" | sha256sum -c - && tar -xzf "$archive" prometheus-3.5.0.linux-amd64/prometheus)
+          REGPILOT_TEST_PROMETHEUS_BIN="$RUNNER_TEMP/prometheus-3.5.0.linux-amd64/prometheus" node --import tsx scripts/check-live-prometheus.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prometheus-monitoring-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: prometheus-monitoring.json
+          if-no-files-found: error
+          retention-days: 30
   identity-server:
     runs-on: ubuntu-latest
     timeout-minutes: 10

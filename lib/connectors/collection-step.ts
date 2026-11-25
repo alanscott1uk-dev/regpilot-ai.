@@ -1,5 +1,11 @@
 import {CollectionError} from './collection-error';
 export const collectionSteps={
+ 'logger-channel':['Read the logger channel','Check the read-only channel key, channel ID and physical serial against the instrument record.'],
+ 'lab-token':['Authenticate the Benchling application','Verify the app ID and secret for the selected Benchling tenant.'],
+ 'lab-result':['Read the assay result','Check access to the result and confirm its linked entry ID.'],
+ 'lab-entry':['Read the notebook review','Check access to the linked entry and its review history.'],
+ 'lab-revision':['Recheck the assay revision','Read the result again after the notebook review and investigate a changed revision.'],
+ 'prometheus-rule':['Read the Prometheus alert rule','Verify the read-only account, the exact group and rule names, and the approved Prometheus host.'],
  'grafana-org':['Verify the Grafana organisation','Check the selected organisation ID and the service account’s access to that organisation.'],
  dashboard:['Read the monitored dashboard','Check the dashboard UID and grant the service account viewer access to its folder.'],
  record:['Read the configured record','Confirm that the credential can read the selected record in the configured account.'],

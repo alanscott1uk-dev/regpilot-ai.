@@ -9,9 +9,9 @@ export async function databaseScheduleProof(revision:string,fetcher:typeof fetch
  const runs=(await get(base+'/actions/runs?head_sha='+revision+'&per_page=30'))!.body.workflow_runs;
  if(!Array.isArray(runs))throw Error('Missing workflow list.');
  const run=runs.filter(r=>r?.path==='.github/workflows/integration-directory.yml'&&r.head_sha===revision&&r.repository?.full_name===repo&&r.head_repository?.full_name===repo&&Number.isSafeInteger(r.id)&&r.id>0&&Number.isSafeInteger(r.run_attempt)&&r.run_attempt>0).sort((a,b)=>b.id-a.id)[0];
- if(!run)return {revision,runUrl:null,state:'No release run found',rows,applications:null};
+ if(!run)return {revision,runUrl:null,state:'No release run found',rows,applications:null,prometheus:null};
  const root='/actions/runs/'+run.id,attempt=root+'/attempts/'+run.run_attempt,runUrl=web+attempt;
- if(run.status!=='completed')return {revision,runUrl,state:'Collection tests running',rows,applications:null};
+ if(run.status!=='completed')return {revision,runUrl,state:'Collection tests running',rows,applications:null,prometheus:null};
  const [jobsResponse,artifactsResponse]=await Promise.all([get(base+root+'/jobs?filter=latest&per_page=100'),get(base+root+'/artifacts?per_page=100')]);
  const jobs=jobsResponse?.body.jobs,artifacts=artifactsResponse?.body.artifacts;
  if(!Array.isArray(jobs)||!Array.isArray(artifacts))throw Error('Incomplete provider receipt list.');
@@ -31,5 +31,6 @@ export async function databaseScheduleProof(revision:string,fetcher:typeof fetch
   if(record)rows.push({engine,name,...record});
  }
  const applications=verifiedArtifact('monitored-applications','Monitor Gitea and Grafana through timed changes and credential renewal','business-application-recovery');
- return {revision,runUrl,applications,state:rows.length===Object.keys(engines).length?'All seven schedules verified':'Partial release evidence',rows};
+ const prometheus=verifiedArtifact('monitored-applications','Verify Prometheus alert changes and credential recovery','prometheus-monitoring');
+ return {revision,runUrl,applications,prometheus,state:rows.length===Object.keys(engines).length?'All seven schedules verified':'Partial release evidence',rows};
 }

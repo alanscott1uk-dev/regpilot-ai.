@@ -12,9 +12,10 @@ import {hashValue} from '../regulatory/intelligence';
 const entity='ProgrammeReferenceScope';
 const input=z.object({reference:z.string().min(1).max(120),decision:z.enum(['APPLIES','EXCLUDED','REVIEW_NEEDED']),reason:z.string().trim().min(20).max(800),version:z.number().int().min(0),recordHash:z.string().regex(/^[a-f0-9]{64}$/)}).strict();
 const stored=input.extend({programmeId:z.uuid(),version:z.number().int().positive()});
+type ReferenceTask={id:string;title:string;href:string;owner:string;status:string;reviewedFiles:string[]};
 function references(plan:Awaited<ReturnType<typeof programmeReferenceContext>>){
- const index=new Map<string,{reference:string;area:string;taskId:string|null;owner:string;taskStatus:string;reviewedFiles:string[]}>();
- const add=(reference:string,area:string)=>{if(!index.has(reference))index.set(reference,{reference,area:nistControlTitle(reference)||area,taskId:null,owner:'',taskStatus:'No linked task',reviewedFiles:[]});};
+ const index=new Map<string,{reference:string;area:string;taskId:string|null;owner:string;taskStatus:string;reviewedFiles:string[];tasks:ReferenceTask[]}>();
+ const add=(reference:string,area:string)=>{if(!index.has(reference))index.set(reference,{reference,area:nistControlTitle(reference)||area,taskId:null,owner:'',taskStatus:'No linked task',reviewedFiles:[],tasks:[]});};
  if((['iso27001-annex-a','soc2-security','soc2-iso27001-joint'].includes(plan.packId)||plan.packId.startsWith('nist-800-53b-'))&&plan.packVersion===1){
   const pack=STARTER_PACKS.find(p=>p.id===plan.packId)!;
   for(const template of pack.items)for(const ref of template.mappings??[])add(ref,template.title);
@@ -22,7 +23,11 @@ function references(plan:Awaited<ReturnType<typeof programmeReferenceContext>>){
  for(const item of plan.items)for(const reference of item.mappings??[]){
   add(reference,item.title);
   const row=index.get(reference)!;
-  if(item.task)Object.assign(row,{area:nistControlTitle(reference)||item.title,taskId:item.task.id,owner:item.task.ownerName,taskStatus:item.task.status,reviewedFiles:item.reviewedFiles?.map(file=>file.id+' @ '+file.sha256)??[]});
+  if(item.task&&!row.tasks.some(task=>task.id===item.task!.id)){
+   const task=item.task,files=item.reviewedFiles?.map(file=>file.id+' @ '+file.sha256)??[];
+   row.tasks.push({id:task.id,title:task.title,href:task.href,owner:task.ownerName,status:task.status,reviewedFiles:files});
+   Object.assign(row,{area:nistControlTitle(reference)||item.title,taskId:task.id,owner:task.ownerName,taskStatus:task.status,reviewedFiles:[...new Set([...row.reviewedFiles,...files])]});
+  }
  }
  return index;
 }

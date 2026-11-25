@@ -15,5 +15,10 @@ test('scheduled database proof requires the release, attempt, successful admissi
  artifact.name='business-application-recovery-'+sha+'-1';
  assert.match((await databaseScheduleProof(sha,read)).applications!.receiptUrl,/artifacts\/71$/);
  artifact.expired=true;assert.equal((await databaseScheduleProof(sha,read)).applications,null);artifact.expired=false;
+ job.steps[0].name='Verify Prometheus alert changes and credential recovery';
+ artifact.name='prometheus-monitoring-'+sha+'-1';
+ assert.match((await databaseScheduleProof(sha,read)).prometheus!.receiptUrl,/artifacts\/71$/);
+ job.steps[0].conclusion='failure';assert.equal((await databaseScheduleProof(sha,read)).prometheus,null);
+ job.steps[0].conclusion='success';
  artifact.workflow_run.head_sha='e'.repeat(40);assert.equal((await databaseScheduleProof(sha,read)).rows.length,0);
 });

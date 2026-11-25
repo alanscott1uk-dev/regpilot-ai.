@@ -62,7 +62,7 @@ test('UbiBot checks the exact physical serial, current reading and independent c
  assert.equal(observationOutcome(await read(9,at)),'FOLLOW_UP');
  assert.equal(observationOutcome(await read(5,at-3600)),'FOLLOW_UP');
  assert.equal(observationOutcome(await read(5,at,target.record,'')),'INCOMPLETE');
- await assert.rejects(read(5,at,'other'),{code:'TARGET_MISMATCH'});
+ await assert.rejects(read(5,at,'other'),{code:'TARGET_MISMATCH',step:'logger-channel'});
 });
 test('Benchling links a result to its exact entry and independent named review stage',async()=>{
  const target={scope:'fictional',record:'ar_123',reference:'etr_book/usr_qa'},entry={id:'etr_book',archiveRecord:null,authors:[{id:'usr_writer'}],assignedReviewers:[{id:'usr_qa'}],reviewRecord:{status:'ACCEPTED',reviewChanges:[{id:'change_1',action:'ACCEPT',createdAt:'2025-07-02T09:00:00Z'}],reviewProcesses:[{id:'proc_1',completionStatus:'APPROVED',stages:[{actionLabel:'APPROVE',reviewers:[{id:'usr_qa',status:'FINISHED'}]}]}]}};
@@ -79,7 +79,7 @@ test('Benchling links a result to its exact entry and independent named review s
  const ambiguous={...process,stages:[{actionLabel:'APPROVE',reviewers:[{id:'usr_qa',status:'FINISHED'},{id:'usr_other',status:'FINISHED'}]}]};
  assert.equal((await read(reviewWith(ambiguous))).checks.find(c=>c.id==='lab-authority')?.status,'UNKNOWN');
  assert.equal(observationOutcome(await read({reviewRecord:{status:'IN_PROGRESS'}})),'FOLLOW_UP');
- await assert.rejects(read({},{entryId:'etr_other'}),{code:'TARGET_MISMATCH'});
+ await assert.rejects(read({},{entryId:'etr_other'}),{code:'TARGET_MISMATCH',step:'lab-result'});
 });
 test('managed sync samples respect tenant, provider and connection boundaries, limits, removals and cursor progression',async()=>{
  const {readSync,parseDirectory,workspaceIntegrationId}=await import('../lib/connectors/marketplace');
@@ -287,4 +287,27 @@ test('publication sources distinguish changed, withdrawn and incomplete public r
  assert.equal(signal(await read(guide,{...guidance,withdrawn_notice:{withdrawn_at:'2025-02-01'}}),'guidance-active'),'FAIL');
  assert.equal(signal(await read(guide,{...guidance,withdrawn_notice:null}),'guidance-active'),'UNKNOWN');
  assert.equal(signal(await read(guide,{...guidance,public_updated_at:'2030-01-01T00:00:00Z'}),'guidance-revision'),'UNKNOWN');
+});
+
+test('Prometheus scopes reads to one approved host, group and alert and treats unknown health as incomplete',async()=>{
+ const previous=process.env.REGPILOT_PROMETHEUS_HOST;
+ const host='monitoring.example.test',target={scope:host,record:'distribution',reference:'StorageAlarm'};
+ const credential='reader:fictional-prometheus-password',now=new Date();
+ const rule={name:target.reference,type:'alerting',state:'inactive',health:'ok',lastEvaluation:now.toISOString()};
+ const group={name:target.record,interval:30,rules:[rule]};
+ const read=(groups:unknown[],extra={})=>collectOperationalRecord('PROMETHEUS_ALERT_RULE',target,credential,async(url,init)=>{
+  const u=new URL(String(url));assert.equal(u.origin,'https://'+host);assert.equal(u.searchParams.get('rule_group[]'),group.name);
+  assert.equal(u.searchParams.get('rule_name[]'),rule.name);assert.equal(u.searchParams.get('exclude_alerts'),'true');
+  assert.equal(new Headers(init?.headers).get('authorization'),'Basic '+Buffer.from(credential).toString('base64'));
+  return Response.json({status:'success',data:{groups,...extra}});
+ });
+ process.env.REGPILOT_PROMETHEUS_HOST=host;
+ try{
+  const good=await read([group]);assert.equal(observationOutcome(good),'OBSERVED');assert.ok(!JSON.stringify(good).includes(credential));
+  assert.equal(observationOutcome(await read([{...group,rules:[{...rule,health:'unknown'}]}])),'INCOMPLETE');
+  assert.equal(observationOutcome(await read([{...group,rules:[{...rule,lastEvaluation:new Date(now.getTime()-120000).toISOString()}]}])),'FOLLOW_UP');
+  await assert.rejects(read([group,group]),{code:'TARGET_MISMATCH',step:'prometheus-rule'});
+  await assert.rejects(read([group],{groupNextToken:'next'}),{code:'INVALID_RESPONSE',step:'prometheus-rule'});
+  await assert.rejects(collectOperationalRecord('PROMETHEUS_ALERT_RULE',{...target,scope:'another.example.test'},credential,async()=>assert.fail('Unapproved origin')),{code:'INVALID_TARGET'});
+ }finally{if(previous===undefined)delete process.env.REGPILOT_PROMETHEUS_HOST;else process.env.REGPILOT_PROMETHEUS_HOST=previous;}
 });

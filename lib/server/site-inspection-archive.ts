@@ -1,3 +1,5 @@
+import {verifyInspectionTemperatures} from './excursion-pilot';
+import {temperatureCsv} from '../excursion-history';
 import {hashValue} from '../regulatory/intelligence';
 import {archiveFilename,makeAuditZip} from '../audit-archive';
 import type {AuthorizedContext} from './authorization';
@@ -21,7 +23,10 @@ export async function siteInspectionArchive(ctx:AuthorizedContext,id:string,stor
    await assertReviewedFiles(tx,ctx.organizationId,packet.testFiles);
    for(const decision of packet.decisions){
     await assertReviewedFiles(tx,ctx.organizationId,decision.files);
-    if(decision.excursion)await assertReviewedFiles(tx,ctx.organizationId,[...decision.excursion.files].sort((a,b)=>a.id.localeCompare(b.id)));
+    if(decision.excursion){
+     await assertReviewedFiles(tx,ctx.organizationId,[...decision.excursion.files].sort((a,b)=>a.id.localeCompare(b.id)));
+     await verifyInspectionTemperatures(tx,ctx.organizationId,decision.excursion);
+    }
    }
   });
  }
@@ -41,6 +46,14 @@ export async function siteInspectionArchive(ctx:AuthorizedContext,id:string,stor
  const current=await siteQualification(ctx,id);
  if(current.basisHash!==packet.basisHash||current.status!==packet.status||hashValue(current.decisions)!==hashValue(packet.decisions)||current.supplier?.receiptId!==release.meta.receiptId)
   throw new IntelligenceError('The site decision or supplier archive changed. Retrieve the current dossier.',409);
- const manifest={format:'regpilot-site-inspection-v1',site:current,supplier:{entry:'supplier-validation.zip',...release.meta},sources};
+ const temperatureReadings=[];
+ for(const decision of current.decisions){
+  const excursion=decision.excursion;
+  if(!excursion?.history)continue;
+  const entry='temperature-'+excursion.receiptId+'.csv';
+  entries.push({name:entry,bytes:Buffer.from(temperatureCsv(excursion.history))});
+  temperatureReadings.push({entry,caseId:excursion.caseId,receiptId:excursion.receiptId});
+ }
+ const manifest={temperatureReadings,format:'regpilot-site-inspection-v1',site:current,supplier:{entry:'supplier-validation.zip',...release.meta},sources};
  return makeAuditZip([{name:'site-inspection.json',bytes:Buffer.from(JSON.stringify(manifest,null,2))},...entries]);
 }

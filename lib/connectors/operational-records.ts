@@ -1,3 +1,5 @@
+import {atStep} from './collection-step';
+import {collectPrometheus,prometheusTarget} from './prometheus';
 import {applicationTargets,collectApplication} from './application-controls';
 import {workspaceRecordTargets,collectWorkspaceRecord} from './workspace-records';
 import {customerTargets,collectCustomerControl} from './customer-controls';
@@ -26,7 +28,7 @@ export const calibrationBasis=z.string().max(120).refine(value=>{
  return !extra.length&&z.uuid().safeParse(file).success&&/^[1-9]\d{0,6}$/.test(version)&&z.iso.date().safeParse(from).success&&z.iso.date().safeParse(until).success&&from<until&&numeric(low)&&numeric(high)&&Number(low)<Number(high)&&/^[1-9]\d{0,3}$/.test(age)&&Number(age)<=1440;
 });
 export const recordTargets = {
-  ...registerTargets,
+  ...registerTargets, PROMETHEUS_ALERT_RULE:prometheusTarget,
   ...customerTargets,...workspaceRecordTargets,...applicationTargets,
   OPENAI_PROJECT_MODEL:openAiProjectTarget, PRIVATE_AI_MODEL:privateModelTarget,
   KEYCLOAK_REALM:keycloakTarget,
@@ -51,7 +53,7 @@ export function readRecordKeys(provider: RecordProvider, repository: string, bra
   if (prefix !== provider.toLowerCase() || extra.length) throw new CollectionError("INVALID_TARGET");
   const [slug,model,...rest]=branch.split(":");
   if(provider==="NANGO_SYNC"&&rest.length)throw new CollectionError("INVALID_TARGET");
-  const result = recordTargets[provider].strict().safeParse(provider==="NANGO_SYNC"?{scope:scope+"/"+record,record:model,reference:slug}:{scope, record, ...(branch === "record" ? {} : {reference: branch})});
+  const result = recordTargets[provider].strict().safeParse(provider==="NANGO_SYNC"?{scope:scope+"/"+record,record:model,reference:slug}:{scope, record, ...(branch === "record" && provider !== "PROMETHEUS_ALERT_RULE" ? {} : {reference: branch})});
   if (!result.success) throw new CollectionError("INVALID_TARGET");
   return result.data;
 }
@@ -80,11 +82,12 @@ export async function collectOperationalRecord(provider: RecordProvider, target:
   if(provider==="NHSBSA_MAPPING"||provider==="CLINICALTRIALS_GOV"||provider==="OPENFDA_RECALL"||provider==="DAILYMED_LABEL"||provider==="EUROPE_PMC"||provider==="MHRA_GUIDANCE")return collectPublicRegister(provider,parsed.data as Target,fetcher);
   if (!(provider==="BENCHLING"&&token.startsWith('{')?token.length<=1200:validCredential(token))) throw new CollectionError("INVALID_TARGET");
   const {scope, record, reference} = parsed.data as Target;
-  if(provider==="BENCHLING")token=await benchlingAccess(scope,token,fetcher);
+  if(provider==="BENCHLING")token=await atStep('lab-token',()=>benchlingAccess(scope,token,fetcher));
   const auth = provider === "AZURE_DEVOPS" ? "Basic " + Buffer.from(":" + token).toString("base64") : "Bearer " + token;
   const get = providerReader(fetcher, {Authorization: auth});
 
   switch (provider) {
+    case "PROMETHEUS_ALERT_RULE":return collectPrometheus({scope,record,reference:reference!},token,fetcher);
     case "GITEA_REPOSITORY":case "GRAFANA_DASHBOARD":return collectApplication(provider,{scope,record,reference:reference!},token,fetcher);
     case "SLACK_MEMBER":case "BOX_USER":case "ASANA_TASK":return collectWorkspaceRecord(provider,{scope,record,reference:reference!},token,fetcher);
     case "GITHUB_SCIM":case "ATLASSIAN_SCIM":case "STATUSPAGE_COMPONENT":case "ZENDESK_TICKET":return collectCustomerControl(provider,{scope,record,reference:reference!},token,fetcher);
@@ -94,12 +97,12 @@ export async function collectOperationalRecord(provider: RecordProvider, target:
     case "NANGO_SYNC":throw new CollectionError("WORKSPACE_REQUIRED");
     case "UBIBOT": {
       const source="https://webapi.ubibot.com/channels/"+scope;
-      const data=(await providerReader(fetcher,{})(source+"?"+new URLSearchParams({api_key:token})))!.body;
+      const data=(await atStep('logger-channel',()=>providerReader(fetcher,{})(source+"?"+new URLSearchParams({api_key:token}))))!.body;
       const channel=Array.isArray(data?.channels)&&data.channels.length===1?data.channels[0]:data?.channel;
-      if(data?.result!=="success"||String(channel?.channel_id)!==scope||channel?.serial!==record)throw new CollectionError("TARGET_MISMATCH");
+      if(data?.result!=="success"||String(channel?.channel_id)!==scope||channel?.serial!==record)throw new CollectionError("TARGET_MISMATCH",undefined,'logger-channel');
       const [file,version,from,until,low,high,maxMinutes]=reference!.split("/");
       let values=channel.last_values;
-      if(typeof values==="string"){try{values=JSON.parse(values);}catch{throw new CollectionError("INVALID_RESPONSE");}}
+      if(typeof values==="string"){try{values=JSON.parse(values);}catch{throw new CollectionError("INVALID_RESPONSE",undefined,'logger-channel');}}
       const sample=values?.field1,value=sample?.value,stamp=sample?.created_at;
       const celsius=typeof value==="number"&&Number.isFinite(value)?value:undefined;
       const ms=typeof stamp==="number"&&Number.isInteger(stamp)&&stamp>0&&stamp<1e11?stamp*1000:NaN;
@@ -113,11 +116,11 @@ export async function collectOperationalRecord(provider: RecordProvider, target:
     }
     case "BENCHLING": {
       const [entryId,reviewer]=reference!.split("/"),base="https://"+scope+".benchling.com/api/v2";
-      const result=(await get(base+"/assay-results/"+record))!.body;
-      if(result?.id!==record||result.entryId!==entryId)throw new CollectionError("TARGET_MISMATCH");
-      const body=(await get(base+"/entries/"+entryId+"?returning=id,assignedReviewers,authors,archiveRecord,reviewRecord"))!.body;
+      const result=(await atStep('lab-result',()=>get(base+"/assay-results/"+record)))!.body;
+      if(result?.id!==record||result.entryId!==entryId)throw new CollectionError("TARGET_MISMATCH",undefined,'lab-result');
+      const body=(await atStep('lab-entry',()=>get(base+"/entries/"+entryId+"?returning=id,assignedReviewers,authors,archiveRecord,reviewRecord")))!.body;
       const entry=body?.entry??body;
-      if(entry?.id!==entryId)throw new CollectionError("TARGET_MISMATCH");
+      if(entry?.id!==entryId)throw new CollectionError("TARGET_MISMATCH",undefined,'lab-entry');
       const review=entry.reviewRecord,processes=Array.isArray(review?.reviewProcesses)?review.reviewProcesses:[],assigned=Array.isArray(entry.assignedReviewers)?entry.assignedReviewers.some((r:{id?:string})=>r?.id===reviewer):undefined;
       const independent=Array.isArray(entry.authors)&&entry.authors.length>0&&entry.authors.every((r:{id?:string})=>typeof r?.id==="string"&&!!r.id)&&typeof result.creator?.id==="string"?result.creator.id!==reviewer&&!entry.authors.some((r:{id?:string})=>r?.id===reviewer):undefined;
       const process=processes.length===1?processes[0]:undefined;
@@ -136,9 +139,9 @@ export async function collectOperationalRecord(provider: RecordProvider, target:
       const history=changes.success?[...changes.data].sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt)):[];
       const decision=history[0],unique=decision&&(!history[1]||Date.parse(history[1].createdAt)!==Date.parse(decision.createdAt));
       const afterResult=unique&&validTime(decision.createdAt)&&validTime(result.modifiedAt)?decision.action==="ACCEPT"&&Date.parse(decision.createdAt)>=Date.parse(result.modifiedAt):undefined;
-      const reread=(await get(base+"/assay-results/"+record))!.body;
+      const reread=(await atStep('lab-revision',()=>get(base+"/assay-results/"+record)))!.body;
       const revision=(row:typeof result)=>JSON.stringify([row?.id,row?.entryId,row?.modifiedAt,row?.isReviewed,row?.archiveRecord?.reason??!!row?.archiveRecord,row?.creator?.id]);
-      if(revision(reread)!==revision(result))throw new CollectionError("TARGET_MISMATCH");
+      if(revision(reread)!==revision(result))throw new CollectionError("TARGET_MISMATCH",undefined,'lab-revision');
       return observation("benchling-result-review",base+"/assay-results/"+record,[
        check("lab-result","Result is reviewed and active",typeof result.isReviewed==="boolean"?result.isReviewed&&!result.archiveRecord:undefined,"Check the result and any archive decision."),
        check("lab-entry","Linked entry has an accepted review",typeof review?.status==="string"?review.status==="ACCEPTED"&&!entry.archiveRecord:undefined,"Inspect the current notebook decision.",entryId+" · "+(review?.status??"unavailable")),

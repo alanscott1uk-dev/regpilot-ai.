@@ -1,4 +1,5 @@
 import {z} from 'zod';
+import {randomUUID} from 'node:crypto';
 import type {Prisma} from '@prisma/client';
 import {transaction,IntelligenceError} from './intelligence-service';
 import {requireMember,ADMIN} from './workspace-member';
@@ -12,7 +13,7 @@ import {hashValue} from '../regulatory/intelligence';
 const entity='ScottishApplicabilityAssessment',frozen='horizon.assessment_frozen',decided='horizon.assessment_reviewed';
 const key=z.string().regex(/^[a-f0-9]{32,64}$/);
 const item=z.object({id:key,revision:key,title:z.string().min(1),url:z.url(),publishers:z.array(z.string()),suggested:z.boolean(),collection:z.enum(['FOUND','WRONG_PUBLISHER','MISSING','INDETERMINATE']).optional(),index:z.url().optional(),indexDigest:key.optional()});
-const sample=z.object({profile:wholesaleView.optional(),method:z.enum(['INDEX','QUEUE']).optional(),population:z.number().int().positive().optional(),scope:z.string().min(15).max(400),snapshot:z.iso.datetime(),release:z.string().nullable(),unavailable:z.array(z.string()),rows:z.array(item).min(2).max(20)});
+const sample=z.object({profile:wholesaleView.optional(),method:z.enum(['INDEX','QUEUE']).optional(),population:z.number().int().positive().optional(),queuePopulation:z.object({shortlisted:z.number().int().positive(),other:z.number().int().positive()}).optional(),scope:z.string().min(15).max(400),snapshot:z.iso.datetime(),release:z.string().nullable(),unavailable:z.array(z.string()),rows:z.array(item).min(2).max(20)});
 const judgement=z.object({id:key,verdict:z.enum(['APPLIES','OUTSIDE_SCOPE','UNCERTAIN']),reason:z.string().trim().min(10).max(350)}).strict();
 const labels=z.array(judgement).min(2).max(20);
 export const assessmentAction=z.discriminatedUnion('action',[
@@ -46,7 +47,18 @@ function visible(state:Awaited<ReturnType<typeof detail>>,userId:string){
   return {...row,assessment:{suggested,collection,index,indexDigest,verdict:label.verdict,reason:label.reason}};
  });
  const ratio=(part:number,total:number)=>total?part/total:null;
- return {id:first.id,sampleHash:hash,profile:facts.profile??'scottish-pharma-wholesale',method:facts.method??'QUEUE',population:facts.population??null,coverage:review&&facts.method==='INDEX'?{unavailableComparisons,missedAtCollection}:null,scope:facts.scope,snapshot:facts.snapshot,release:facts.release,unavailable:facts.unavailable,
+ const population=facts.queuePopulation;
+ let queueEstimate=null;
+ if(review&&population&&!counts.uncertain){
+  const sampledAlerts=counts.correctAlert+counts.falseAlert,sampledOthers=counts.missed+counts.correctExclusion;
+  if(sampledAlerts>0&&sampledOthers>0&&sampledAlerts<=population.shortlisted&&sampledOthers<=population.other){
+   const applicableAlerts=population.shortlisted*counts.correctAlert/sampledAlerts;
+   const missed=population.other*counts.missed/sampledOthers;
+   queueEstimate={sampledAlerts,sampledOthers,shortlisted:population.shortlisted,other:population.other,
+    precision:ratio(counts.correctAlert,sampledAlerts),recall:ratio(applicableAlerts,applicableAlerts+missed)};
+  }
+ }
+ return {id:first.id,queueEstimate,sampleHash:hash,profile:facts.profile??'scottish-pharma-wholesale',method:facts.method??'QUEUE',population:facts.population??null,coverage:review&&facts.method==='INDEX'?{unavailableComparisons,missedAtCollection}:null,scope:facts.scope,snapshot:facts.snapshot,release:facts.release,unavailable:facts.unavailable,
   createdBy:first.actorId,reviewerId:event?.actorId??null,reviewedAt:event?.createdAt.toISOString()??null,canReview:!review&&first.actorId!==userId,rows,
   score:review?{...counts,precision:ratio(counts.correctAlert,counts.correctAlert+counts.falseAlert),recall:ratio(counts.correctAlert,counts.correctAlert+counts.missed)}:null};
 }
@@ -90,12 +102,14 @@ export async function changeApplicabilityAssessment(c:AuthorizedContext,input:un
   const report=await read();
   if(reportState(report)==='stale')throw invalid('Collect a fresh regulatory snapshot before starting this assessment.');
   const uk=report.items.filter(i=>i.observedAt===report.generatedAt&&i.publisherIds.some(p=>p!=='us-fda'&&p!=='eu-ema'&&report.feeds.some(f=>f.id===p&&f.state!=='unavailable')));
+  const seed=randomUUID();
   const ranked=uk.map(i=>({id:i.id,revision:i.revision,title:i.title,url:i.url,publishers:i.publisherIds,
-   suggested:Boolean(scottishPharmaReason(i,action.profile)),order:hashValue([action.requestKey,i.id,i.revision])})).sort((a,b)=>a.order.localeCompare(b.order));
+   suggested:Boolean(scottishPharmaReason(i,action.profile)),order:hashValue([seed,i.id,i.revision])})).sort((a,b)=>a.order.localeCompare(b.order));
   const selected=[...ranked.filter(i=>i.suggested).slice(0,10),...ranked.filter(i=>!i.suggested).slice(0,10)];
   if(action.method==='QUEUE'&&(!selected.some(i=>i.suggested)||!selected.some(i=>!i.suggested)))throw invalid('Both shortlisted and other UK publications are required to measure the review queue.');
-  const indexed=action.method==='INDEX'?await publisherSample(report,action.requestKey,action.profile,compare):null;
-  const facts=sample.parse({profile:action.profile,method:action.method,...(indexed?{population:indexed.population}:{}),scope:action.scope,snapshot:report.generatedAt,release:report.codeCommit,unavailable:[...report.feeds.filter(f=>f.id!=='us-fda'&&f.id!=='eu-ema'&&f.state!=='available').map(f=>f.id+' · '+f.state),...(indexed?.failures??[])],rows:indexed?.rows??selected.sort((a,b)=>a.order.localeCompare(b.order))});
+  const shortlisted=ranked.filter(i=>i.suggested).length;
+  const indexed=action.method==='INDEX'?await publisherSample(report,seed,action.profile,compare):null;
+  const facts=sample.parse({profile:action.profile,method:action.method,...(indexed?{population:indexed.population}:{queuePopulation:{shortlisted,other:ranked.length-shortlisted}}),scope:action.scope,snapshot:report.generatedAt,release:report.codeCommit,unavailable:[...report.feeds.filter(f=>f.id!=='us-fda'&&f.id!=='eu-ema'&&f.state!=='available').map(f=>f.id+' · '+f.state),...(indexed?.failures??[])],rows:indexed?.rows??selected.sort((a,b)=>a.order.localeCompare(b.order))});
   return transaction(c,async tx=>{
    await requireMember(tx,c,ADMIN);
    const previous=await tx.auditEvent.findUnique({where:{id:action.requestKey}});

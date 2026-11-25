@@ -144,6 +144,13 @@ test('a mapped evidence task is shared by both audit references in the saved pro
   assert.deepEqual(reviewed.rows.find(r=>r.reference.endsWith(' · CC6.2'))!.reviewedFiles,reviewed.rows.find(r=>r.reference.endsWith(' · A.5.16'))!.reviewedFiles);
   assert.ok(reviewed.rows.find(r=>r.reference===shared.reference)!.reviewedFiles.some(value=>value.startsWith(sample.id+' @ ')));
   await decideProgrammeReference(f.reviewer,jointResult.id,{...choice,recordHash:statement.recordHash,reference:shared.reference});
+  const {referenceEvidence,referenceEvidenceCsv}=await import('../lib/programme-reference-csv');
+  const scoped=await programmeReferenceStatement(f.reviewer,jointResult.id),applied=scoped.rows.find(r=>r.reference===shared.reference)!;
+  assert.equal(referenceEvidence(applied,false),'covered');assert.ok(applied.tasks.some(t=>t.href.includes('taskId=')&&t.reviewedFiles.length));
+  assert.equal(referenceEvidence({...applied,tasks:[]},false),'unlinked');
+  const incomplete={...applied,tasks:[...applied.tasks,{...applied.tasks[0],reviewedFiles:[]}]};
+  assert.equal(referenceEvidence(incomplete,false),'missing');assert.equal(referenceEvidence(incomplete,true),'limited');
+  assert.match(referenceEvidenceCsv(scoped,[applied]),new RegExp(sample.id));
   const exportRows=referenceStatementCsv(await programmeReferenceStatement(f.reviewer,jointResult.id)).split('\r\n');
   assert.equal(exportRows.length,157);assert.match(exportRows.find(row=>row.includes(' · CC6.2'))!,/APPLIES/);assert.match(exportRows.find(row=>row.includes(' · A.5.16'))!,/UNASSESSED/);
   assert.match(referenceStatementCsv(final),/REVIEW_NEEDED/);assert.equal(referenceStatementCsv(final).split('\r\n').length,94);

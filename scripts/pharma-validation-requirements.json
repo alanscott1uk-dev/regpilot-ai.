@@ -1,7 +1,7 @@
 [
   {
     "id": "PH-01",
-    "requirement": "Bind cold-chain site acceptance to the release, independently confirmed customer logger, serial, calibration, affected stock, independent retrieval and signed disposition. Recover the four originals from the site inspection ZIP.",
+    "requirement": "Bind cold-chain site acceptance to the release, independently confirmed customer logger, serial, calibration, affected stock, independent retrieval and signed disposition. Recover the four originals and the calibrated temperature history tied to the disposition from the site inspection ZIP.",
     "file": "tests/operational-records.integration.test.ts",
     "test": "repeated logger collection checks the physical serial, rotated key and current certificate review on each collection"
   },

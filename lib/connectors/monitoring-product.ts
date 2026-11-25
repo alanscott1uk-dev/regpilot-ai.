@@ -9,7 +9,7 @@ const managedProducts:Record<string,string> = {
  'notion':'NOTION','okta':'OKTA','salesforce':'SALESFORCE','slack':'SLACK','trello':'TRELLO','workday':'WORKDAY','zendesk':'ZENDESK'
 };
 const directNames:Record<string,string> = {GITHUB_WORKFLOW:'GITHUB',GITHUB_SCIM:'GITHUB',AWS_ORGANIZATIONS:'AWS',
- SLACK_MEMBER:'SLACK',BOX_USER:'BOX',ASANA_TASK:'ASANA',ZENDESK_TICKET:'ZENDESK',GRAFANA_DASHBOARD:'GRAFANA',GITEA_REPOSITORY:'GITEA'};
+ SLACK_MEMBER:'SLACK',BOX_USER:'BOX',ASANA_TASK:'ASANA',ZENDESK_TICKET:'ZENDESK',GRAFANA_DASHBOARD:'GRAFANA',GITEA_REPOSITORY:'GITEA',PROMETHEUS_ALERT_RULE:'PROMETHEUS'};
 export const publicMonitoringProducts=new Set<string>([...publicRegisters,'OPENSSF_SCORECARD','COMPANIES_HOUSE','GLEIF']);
 const unassigned=new Set(['PRIVATE_AI_MODEL','WORKFORCE_LEAVER']);
 export function monitoringProduct(provider:string,managedSlug?:string){

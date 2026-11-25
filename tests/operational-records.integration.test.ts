@@ -261,7 +261,8 @@ test('repeated logger collection checks the physical serial, rotated key and cur
   const control=await db.managedControl.create({data:{organizationId:f.a.id,importId:programme.id,proposalKey:'logger',title:'Logger calibration',description:'Check the current calibrated thermometer',testProcedure:'Read the current channel',theme:'quality',ownerId:f.editor.id,scheduledById:f.owner.id,intervalDays:30,nextReviewAt:new Date()}});
   const base={provider:'UBIBOT',scope:'812',record:'WS1-fixture',reference:[file.id,cert.reviewVersion,'2025-01-01','2030-01-01',2,8,15].join('/'),controlId:control.id,consent:true,enabled:true,intervalHours:24};
   let temperature=4,expected=token;
-  globalThis.fetch=async raw=>{assert.equal(new URL(String(raw)).searchParams.get('api_key'),expected);return Response.json({result:'success',channels:[{channel_id:812,serial:'WS1-fixture',last_values:{field1:{value:temperature,created_at:Math.floor(Date.now()/1000)-30}}}]});};
+  const clock=Math.floor(Date.now()/1000);let sensorTime=clock-180;
+  globalThis.fetch=async raw=>{assert.equal(new URL(String(raw)).searchParams.get('api_key'),expected);return Response.json({result:'success',channels:[{channel_id:812,serial:'WS1-fixture',last_values:{field1:{value:temperature,created_at:sensorTime}}}]});};
   const saved=await saveConnector(f.o,{...base,token,version:0});
   await assert.rejects(approveLoggerCalibration(f.o,saved.id,saved.version,true),rejects(403));
   await assert.rejects(approveLoggerCalibration(f.out,saved.id,saved.version,true),rejects(409));
@@ -275,10 +276,10 @@ test('repeated logger collection checks the physical serial, rotated key and cur
   assert.equal((await verifyConnectorNow(f.o,saved.id,updated.version)).outcome,'OBSERVED');
   const run=await db.connectorRun.findFirstOrThrow({where:{connectorId:saved.id},orderBy:{capturedAt:'desc'}});
   assert.equal((await exportConnectorRun(f.o,run.id)).currentAtExport,true);
-  temperature=10;await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
+  sensorTime=clock-90;temperature=10;await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
   assert.equal((await verifyConnectorNow(f.o,saved.id,updated.version)).outcome,'FOLLOW_UP');
   const excursion=await db.connectorRun.findFirstOrThrow({where:{connectorId:saved.id},orderBy:{capturedAt:'desc'}});
-  const sampleAt=new Date(Date.now()-30000);
+  const sampleAt=new Date(sensorTime*1000);
   const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(sampleAt));
   const q=await createQualityCase(f.ed,{title:'Fictional storage excursion',kind:'DEVIATION',classification:'MAJOR',requestKey:randomUUID(),
    ownerId:f.ed.userId,occurredAt:today,impact:'The fictional affected lot was segregated pending a decision.',description:'The fixture logger reported a temperature above the site operating limit.',containment:'Segregate the identified stock at the test site until reviewed.'});
@@ -292,6 +293,10 @@ test('repeated logger collection checks the physical serial, rotated key and cur
   const linked=await excursionCommand(f.ed,q.id,attach,f.store);assert.equal((await excursionCommand(f.ed,q.id,attach,f.store)).digest,linked.digest);
   const assessed=await investigateQualityCase(f.ed,q.id,{requestKey:randomUUID(),version:q.version+1,ownerId:f.ed.userId,containment:'The identified fictional lot stays segregated pending independent review.',investigationNotes:'Compared the excursion timing against the stock and certificate in the fixture.',rootCause:'The fictional cold-room door was left open during a documented transfer.',effectivenessCriteria:'Verify the handover and logger condition on the next agreed review.',effectivenessDueAt:today});
   const disposition={action:'DECIDE',requestKey:randomUUID(),version:assessed.version,sourceRef:'TEST-QD-1',signatory:'Fictional delegated decision maker',disposition:'QUARANTINE',decidedAt:new Date().toISOString(),rationale:'The signed fixture decision retains the affected lot in quarantine.',decisionEvidenceId:signed.id,authorityEvidenceId:authority.id,confirmed:true};
+  sensorTime=clock-20;temperature=6;
+  await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
+  assert.equal((await verifyConnectorNow(f.o,saved.id,updated.version)).outcome,'OBSERVED');
+  const restored=await db.connectorRun.findFirstOrThrow({where:{connectorId:saved.id},orderBy:{capturedAt:'desc'}});
   await excursionCommand(f.o,q.id,disposition,f.store);
   const fetchRecord={action:'RETRIEVE',version:assessed.version+1,requestKey:randomUUID()};
   await assert.rejects(excursionCommand(f.o,q.id,fetchRecord,f.store),rejects(403));
@@ -302,6 +307,10 @@ test('repeated logger collection checks the physical serial, rotated key and cur
   const archive=await readZipParts(await excursionArchive(f.re,q.id,fetchRecord,f.store)) as Map<string,Buffer>;
   const inspection=JSON.parse(archive.get('inspection.json')!.toString());
   assert.equal(inspection.digest,independent.digest);
+  const historyPoints=inspection.record.disposition.data.history.points;
+  assert.deepEqual(historyPoints.map((p:{celsius:number})=>p.celsius),[4,10,6]);
+  assert.deepEqual(historyPoints.map((p:{runId:string})=>p.runId),[run.id,excursion.id,restored.id]);
+  assert.ok(archive.get(inspection.temperatureReadings)!.toString().includes(excursion.resultHash));
   assert.deepEqual(inspection.sources.map((s:{role:string})=>s.role).sort(),['affected-stock','calibration','signatory-authority','signed-decision']);
   for(const source of inspection.sources)assert.equal(createHash('sha256').update(archive.get(source.entry)!).digest('hex'),source.sha256);
   assert.match(JSON.stringify(independent),/TEST-001/);assert.match(JSON.stringify(independent),/TEST-QD-1/);
@@ -342,6 +351,11 @@ test('repeated logger collection checks the physical serial, rotated key and cur
    assert.equal(bundle.site.decisions[0].excursion.disposition,'QUARANTINE');assert.equal(bundle.site.decisions[0].excursion.assessorId,f.re.userId);
    assert.deepEqual(bundle.sources.flatMap((s:{roles:string[]})=>s.roles).filter((r:string)=>r.startsWith('excursion-')).sort(),['excursion-authority','excursion-calibration','excursion-disposition','excursion-stock']);
    for(const source of bundle.sources)assert.equal(createHash('sha256').update(files.get(source.entry)!).digest('hex'),source.sha256);
+   assert.deepEqual(files.get(bundle.temperatureReadings[0].entry),archive.get(inspection.temperatureReadings));
+   await db.connectorRun.update({where:{id:restored.id},data:{resultHash:'0'.repeat(64)}});
+   await assert.rejects(excursionCommand(f.re,q.id,fetchRecord,f.store),rejects(409));
+   await assert.rejects(siteInspectionArchive(f.re,id,f.store),rejects(409));
+   await db.connectorRun.update({where:{id:restored.id},data:{resultHash:restored.resultHash}});
    const originalCase=await db.qualityCase.findUniqueOrThrow({where:{id:q.id}});
    await db.qualityCase.update({where:{id:q.id},data:{rootCause:'A changed investigation requires another decision.'}});
    assert.equal((await siteQualification(f.o,id)).status,'REASSESSMENT_REQUIRED');
@@ -358,7 +372,7 @@ test('repeated logger collection checks the physical serial, rotated key and cur
   await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
   assert.equal((await verifyConnectorNow(f.o,saved.id,updated.version)).outcome,'INCOMPLETE');
   const history=await db.connectorRun.findMany({where:{organizationId:f.a.id,connectorId:saved.id},orderBy:{capturedAt:'asc'},select:{outcome:true}});
-  assert.deepEqual(history.map(read=>read.outcome),['INCOMPLETE','OBSERVED','OBSERVED','FOLLOW_UP','INCOMPLETE']);
+  assert.deepEqual(history.map(read=>read.outcome),['INCOMPLETE','OBSERVED','OBSERVED','FOLLOW_UP','OBSERVED','INCOMPLETE']);
  }finally{globalThis.fetch=original;await f.cleanup();}
 });
 

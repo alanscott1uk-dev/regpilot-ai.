@@ -117,6 +117,20 @@ test('independent site applicability assessment keeps the shortlist blind until 
   assert.deepEqual(await changeApplicabilityAssessment(f.ad,{...body,labels:[...body.labels].reverse()}),saved);
   const reviewed=(await applicabilityAssessment(f.o,saved.id)).selected!;
   assert.deepEqual(reviewed.score,{correctAlert:0,falseAlert:10,missed:10,correctExclusion:0,uncertain:0,precision:0,recall:0});
+  assert.equal(view.queueEstimate,null);
+  assert.equal(reviewed.queueEstimate?.shortlisted,12);assert.equal(reviewed.queueEstimate?.other,12);
+  const extended={...report,items:[...items,...Array.from({length:96},(_,n)=>{
+   const path='/guidance/tax-extra-'+n;
+   return {...items[1],id:seed(path),revision:seed([path,1]),path,url:'https://www.gov.uk'+path};
+  })]};
+  const weighted=await changeApplicabilityAssessment(f.o,{...start,scope:start.scope+' Extended feed.',requestKey:randomUUID()},async()=>extended);
+  const sample=(await applicabilityAssessment(f.ad,weighted.id)).selected!;
+  let kept=0,missed=0;
+  await changeApplicabilityAssessment(f.ad,{action:'REVIEW',assessmentId:weighted.id,sampleHash:sample.sampleHash,
+   labels:sample.rows.map(row=>({id:row.id,verdict:(row.publishers.includes('mhra')?++kept<=8:++missed<=2)?'APPLIES':'OUTSIDE_SCOPE',reason:'Reviewed against the documented operations at this test site.'}))});
+  const outcome=(await applicabilityAssessment(f.o,weighted.id)).selected!;
+  assert.equal(outcome.score?.recall,0.8);assert.equal(outcome.queueEstimate?.other,108);
+  assert.ok(Math.abs(outcome.queueEstimate!.recall!-(12*0.8)/(12*0.8+108*0.2))<1e-9);
   const {assessOfficialIndexes}=await import('../lib/horizon/official-indexes');
   const day=new Date(Date.now()-86400000).toISOString();
   const missing='https://www.gov.uk/drug-safety-update/absent-from-collection';
