@@ -11,6 +11,10 @@ export async function starterProgrammeCustomerJourney({review,upload,db,app,org,
   review.goto(app+'/team/programmes?'+new URLSearchParams({organizationId:org.id}))
  ]);
  const list=await bounded(listResponse.json(),'Starter programme choices');assert.equal(listResponse.status(),200,list.error||'starter choices unavailable');
+ const search=review.getByRole('searchbox',{name:'Find an audit programme',exact:true});
+ await search.fill('GDP self-inspection');await review.getByRole('button',{name:'Choose UK medicines wholesale GDP self-inspection',exact:true}).waitFor();
+ await search.fill('Cyber Essentials');await review.getByRole('button',{name:'Choose UK Cyber Essentials v3.3',exact:true}).waitFor();
+ await search.fill('UK GDPR');await review.getByRole('button',{name:'Choose UK GDPR accountability',exact:true}).waitFor();await search.fill('');
  assert.equal(list.organizationId,org.id);assert.equal(list.canCreate,true);assert.equal(list.programmesLimited,false);
  const pack=list.packs.find(pack=>pack.id==='business-foundations');assert.ok(pack);assert.equal(pack.items.length,6);
  const before={tasks:await db.obligation.count({where:{organizationId:org.id}}),events:await db.auditEvent.count({where:{organizationId:org.id,action:'starter_programme.created'}}),evidence:await db.evidence.count({where:{organizationId:org.id}})};
@@ -113,6 +117,22 @@ export async function starterProgrammeCustomerJourney({review,upload,db,app,org,
  const csv=await readFile(await (await downloadReady).path(),'utf8');
  assert.equal(csv.split('\r\n').length,94);assert.match(csv,/APPLIES/);assert.match(csv,/UNASSESSED/);
  await writeFile(artifactDir+'/statement-of-applicability.csv',csv);
+ const combined=list.packs.find(p=>p.id==='soc2-iso27001');
+ await review.getByRole('button',{name:'Choose '+combined.title,exact:true}).click();
+ await review.getByLabel('Why this programme fits',{exact:true}).fill('The fictional site uses one set of approved access and monitoring records to support two audit programmes.');
+ for(const item of combined.items.slice(2))await review.getByRole('checkbox',{name:'Include '+item.title,exact:true}).uncheck();
+ await review.getByLabel('Assign selected tasks to',{exact:true}).selectOption(editor.id);
+ await review.getByRole('button',{name:'Apply owner to selected tasks',exact:true}).click();
+ await review.getByRole('button',{name:'Preview programme',exact:true}).click();
+ await review.getByRole('checkbox',{name:'I have reviewed these tasks, owners and dates.',exact:true}).check();
+ await review.getByRole('button',{name:'Create 2 tasks',exact:true}).click();
+ const joint=review.getByRole('region',{name:'Shared SOC 2 and ISO evidence',exact:true});
+ await joint.getByRole('button',{name:'Compare controls and evidence',exact:true}).click();
+ await joint.getByText(/4 of 93 Annex A controls have a task mapped to SOC 2/).waitFor();
+ const csvReady=review.waitForEvent('download');await joint.getByRole('button',{name:'Download joint evidence CSV',exact:true}).click();
+ const jointCsv=await readFile(await (await csvReady).path(),'utf8');
+ assert.match(jointCsv,/CC6.2/);assert.match(jointCsv,/A\.5\.16/);assert.match(jointCsv,/APPLIES/);assert.match(jointCsv,/UNASSESSED/);
+ await writeFile(artifactDir+'/soc2-iso27001-evidence.csv',jointCsv);
  passed('A reviewer decided one ISO Annex A reference and downloaded all 93 references, including unassessed controls without linked tasks.');
  return {programmeId:applied.id,packId:pack.id,taskIds:applied.taskIds,createdTasks:2,previewReadOnly:true,preservedExistingEvidence:true};
 }
