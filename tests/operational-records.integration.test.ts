@@ -188,6 +188,70 @@ test('managed AI access, renewal and successive sync receipts are isolated to th
  }finally{await f.cleanup();}
 });
 
+test('a hosted monitor resumes only after scoped broker reauthorisation and earns recovery only after a new complete upstream sync',async()=>{
+ const {marketplaceAction}=await import('../lib/server/integration-marketplace');
+ const {customerSourceProof,customerBenchmarkPage}=await import('../lib/server/customer-source-proof');
+ const {completedManagedSync,monitoringProduct}=await import('../lib/connectors/monitoring-product');
+ const f=await assuranceFixture(),original=globalThis.fetch;
+ Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:'true',REGPILOT_CONNECTORS_ENABLED:'true',REGPILOT_CONNECTOR_ENCRYPTION_KEY:'cd'.repeat(32),
+  SUPABASE_URL:'https://auth.invalid',SUPABASE_PUBLISHABLE_KEY:'fictional',REGPILOT_MARKETPLACE_ENABLED:'true',REGPILOT_NANGO_API_KEY:token});
+ const integration='regpilot-slack',connectionId='workspace-membership',model='Member',scope={integration,connectionId},ownerTags={organization_id:f.a.id,regpilot_integration:integration};
+ let tags:Record<string,string>={...ownerTags},issued:Record<string,string>={},fault=false,upstream=new Date(Date.now()-5000).toISOString(),size=1;
+ globalThis.fetch=async(input,init)=>{
+  const url=new URL(String(input));assert.equal(url.origin,'https://api.nango.dev');
+  if(url.pathname==='/integrations')return Response.json({data:[{unique_key:integration,provider:'slack'}]});
+  if(url.pathname==='/connections')return Response.json({connections:[{provider:'slack',provider_config_key:integration,connection_id:connectionId,tags,errors:fault?[{type:'auth'}]:[]}]});
+  if(url.pathname==='/sync/status')return Response.json({syncs:[{connection_id:connectionId,status:'SUCCESS',finishedAt:upstream,recordCount:{Member:size}}]});
+  if(url.pathname==='/records')return Response.json({records:[{id:'private-user',mfa:true,orphan:false,reviewed:upstream,_nango_metadata:{last_modified_at:upstream,last_action:'UPDATED'}}],next_cursor:null});
+  assert.equal(url.pathname,'/connect/sessions/reconnect');issued=JSON.parse(String(init?.body)).tags;
+  return Response.json({data:{connect_link:'https://connect.nango.dev/?session_token=stub-private',expires_at:new Date(Date.now()+600000).toISOString()}});
+ };
+ try{
+  const pack=await db.programmeImport.create({data:{organizationId:f.a.id,createdById:f.o.userId,inputHash:f.a.id,method:'SEARCH',status:'ACCEPTED',evidenceManifest:[]}});
+  const control=await db.managedControl.create({data:{organizationId:f.a.id,importId:pack.id,proposalKey:'identity',title:'Identity check',description:'Check approved access',testProcedure:'Inspect mapped accounts',theme:'identity',ownerId:f.editor.id,scheduledById:f.owner.id,intervalDays:30,nextReviewAt:new Date()}});
+  const bound=await marketplaceAction(f.o,{action:'BIND_POLICY',...scope,model,policy:{profile:'identity',mapping:{mfaEnabled:'mfa',orphaned:'orphan',accessReviewedAt:'reviewed'}}});
+  assert.ok('policyId' in bound&&bound.controls.some(c=>c.id===control.id));
+  const input={provider:'NANGO_SYNC',scope:integration+'/'+connectionId,record:model,reference:'slack/'+bound.policyId,controlId:control.id,intervalHours:24,version:0,enabled:true,consent:true};
+  await assert.rejects(saveConnector(f.out,input),rejects(409));
+  const [monitor,again]=await Promise.all([saveConnector(f.o,input),saveConnector(f.o,input)]);assert.deepEqual(monitor,again);
+  const selected=await marketplaceAction(f.o,{action:'MONITOR',monitorId:monitor.id});assert.ok('grant' in selected&&selected.grant?.id===connectionId&&selected.model===model);
+  await assert.rejects(marketplaceAction(f.out,{action:'MONITOR',monitorId:monitor.id}),rejects(404));
+  async function collect(){
+   await db.evidenceConnector.update({where:{id:monitor.id},data:{nextRunAt:new Date()}});
+   const job=await claimConnector();assert.equal(job?.id,monitor.id);
+   return executeConnector(job!,undefined,{deferAutomation:true});
+  }
+  assert.equal(await collect(),'OBSERVED');assert.equal((await customerSourceProof(f.o,monitor.id)).productKey,'SLACK');
+  fault=true;assert.equal(await collect(),'ATTENTION');
+  const paused=await db.evidenceConnector.findUniqueOrThrow({where:{id:monitor.id}});assert.equal(paused.enabled,false);assert.equal(paused.failureCode,'CREDENTIAL_REJECTED');
+  const portfolio=await customerBenchmarkPage(f.o);assert.ok(portfolio.connections.some(c=>c.id===monitor.id&&!c.qualified&&c.failures===1));
+  const renew={...scope,action:'RENEW'},verify={...scope,action:'VERIFY_RENEWAL'};
+  await marketplaceAction(f.o,renew);const oldTags={...issued};await marketplaceAction(f.o,renew);
+  await assert.rejects(marketplaceAction(f.ed,verify),rejects(403));
+  await assert.rejects(marketplaceAction(f.ad,verify),rejects(409));
+  fault=false;await assert.rejects(marketplaceAction(f.ad,verify),rejects(409));
+  tags={...oldTags};await assert.rejects(marketplaceAction(f.ad,verify),rejects(409));
+  tags={...issued,organization_id:f.b.id};await assert.rejects(marketplaceAction(f.out,verify),rejects(409));
+  tags={...issued,end_user_id:f.admin.id};await assert.rejects(marketplaceAction(f.ad,verify),rejects(409));
+  tags={...issued};const [verified,replayed]=await Promise.all([marketplaceAction(f.ad,verify),marketplaceAction(f.ad,verify)]);
+  assert.ok('resumed' in verified&&verified.resumed===1);assert.deepEqual(replayed,verified);
+  assert.equal(await collect(),'INCOMPLETE');let proof=await customerSourceProof(f.o,monitor.id);
+  assert.equal(proof.depth.recoveries.length,0,'broker cache from before the renewal cannot prove restoration');
+  upstream=new Date().toISOString();size=2;assert.equal(await collect(),'INCOMPLETE');
+  assert.equal((await customerSourceProof(f.o,monitor.id)).depth.recoveries.length,0,'incomplete populations cannot prove a recovery');
+  upstream=new Date().toISOString();size=1;assert.equal(await collect(),'OBSERVED');proof=await customerSourceProof(f.o,monitor.id);
+  assert.equal(proof.rotated,true);assert.equal(proof.depth.recoveries.length,1);assert.equal(proof.qualifies,false);assert.equal(proof.category,'UNCONFIRMED');
+  assert.equal(proof.depth.failures[0].stage?.label,'Verify the workspace grant');
+  const audits=await db.auditEvent.findMany({where:{organizationId:f.a.id}});
+  assert.doesNotMatch(JSON.stringify(audits),/stub-private|private-user/);
+  assert.equal(monitoringProduct('GITHUB_WORKFLOW'),monitoringProduct('NANGO_SYNC','github-app'));
+  assert.equal(monitoringProduct('NANGO_SYNC','unknown-app'),null);assert.equal(monitoringProduct('EUROPE_PMC'),null);
+  const latest=await db.connectorRun.findFirstOrThrow({where:{connectorId:monitor.id},orderBy:{capturedAt:'desc'}});
+  const {observationSchema}=await import('../lib/connectors/observation');const reading=observationSchema.parse(latest.result);
+  assert.ok(completedManagedSync(reading));assert.equal(completedManagedSync({...reading,engine:'managed-sync-metadata-v1'}),null);
+ }finally{globalThis.fetch=original;await f.cleanup();}
+});
+
 test('repeated logger collection checks the physical serial, rotated key and current certificate review on each collection',async()=>{
  const f=await assuranceFixture(),original=globalThis.fetch;
  Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:'true',REGPILOT_CONNECTORS_ENABLED:'true',REGPILOT_UBIBOT_ENABLED:'true',REGPILOT_CONNECTOR_ENCRYPTION_KEY:'dc'.repeat(32),SUPABASE_URL:'https://auth.invalid',SUPABASE_PUBLISHABLE_KEY:'fictional'});

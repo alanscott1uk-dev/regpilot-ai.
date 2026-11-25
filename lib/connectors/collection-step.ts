@@ -9,7 +9,7 @@ export const collectionSteps={
  runs:['Read completed runs','Check the workflow run history and Actions access for the monitored branch.'],
  jobs:['Read the jobs for this attempt','Inspect the recorded run attempt and job visibility in GitHub Actions.'],
  integration:['Find the managed integration','Check the enabled provider configuration in the integration directory.'],
- grant:['Verify the workspace grant','Open the connected account in Company integrations and check its authorisation and workspace.'],
+ grant:['Verify the workspace grant','Open this account in Company integrations. Renew its authorisation with the provider, then verify renewal to resume its paused monitors.'],
  model:['Read sync status','Check the selected model, last completed sync and reported population.'],
  records:['Read the synced records','Check the configured model and read permission for its records.']
 } as const;

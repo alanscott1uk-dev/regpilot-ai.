@@ -14,7 +14,8 @@ export async function saveManagedPolicy(ctx:AuthorizedContext,scope:ModelScope,p
   const where={organizationId:ctx.organizationId,entityType:'ManagedControlPolicy',entityId:fingerprint,action:'sync.policy-bound'};
   const prior=await tx.auditEvent.findFirst({where,select:{id:true}});
   const event=prior??await tx.auditEvent.create({data:{...where,id:randomUUID(),actorId:ctx.userId,details},select:{id:true}});
-  return {policyId:event.id,profile:bound.profile};
+  const controls=await tx.managedControl.findMany({where:{organizationId:ctx.organizationId,enabled:true},orderBy:[{title:'asc'},{id:'asc'}],select:{id:true,title:true},take:1000});
+  return {policyId:event.id,profile:bound.profile,controls};
  });
 }
 export async function readManagedPolicy(org:string,id:string,scope:ModelScope){

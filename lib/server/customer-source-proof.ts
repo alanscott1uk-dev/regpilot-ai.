@@ -1,4 +1,5 @@
 import type {Prisma} from '@prisma/client';
+import {monitoringProduct,completedManagedSync,publicMonitoringProducts} from '../connectors/monitoring-product';
 import {missingMonitoringEvidence} from '../monitoring-criteria';
 import {monitoringDepth} from './monitoring-depth';
 import {maxWorkspaceConnectorTargets} from '../connectors/capacity';
@@ -31,6 +32,7 @@ export async function declareSource(ctx:AuthorizedContext,input:z.infer<typeof d
   await requireMember(tx,ctx,ADMIN);
   const row=await tx.evidenceConnector.findFirst({where:{organizationId:ctx.organizationId,id:input.connectionId,version:input.configVersion}});
   if(!row)throw new IntelligenceError('Refresh the connection before recording its source.',409);
+  if(input.category==='CUSTOMER'&&publicMonitoringProducts.has(row.provider))throw new IntelligenceError('This publication is a public source. Customer ownership applies to an organisation’s own system.',409);
   if(row.configuredById===ctx.userId&&input.category==='CUSTOMER')throw new IntelligenceError('A second workspace administrator must confirm customer ownership.',403);
   const scopeHash=connectorScopeHash(row);
   const query={...where(ctx.organizationId,row.id),action:'connector.source-declared'};
@@ -46,7 +48,7 @@ export async function sourceOwnership(tx:Prisma.TransactionClient,ctx:Authorized
  if(!mark?.actorId||info?.scopeHash!==connectorScopeHash(row)||info.version!==row.version)return null;
  try{await requireMember(tx,{...ctx,userId:mark.actorId},ADMIN);}
  catch(e){if(e instanceof IntelligenceError&&e.status===403)return null;throw e;}
- if(info.category==='CUSTOMER'&&mark.actorId===row.configuredById)return null;
+ if(info.category==='CUSTOMER'&&(mark.actorId===row.configuredById||publicMonitoringProducts.has(row.provider)))return null;
  return {id:mark.id,actor:mark.actorId,category:info.category,scopeHash:info.scopeHash,version:info.version};
 }
 export async function customerSourceProof(ctx:AuthorizedContext,id:string){
@@ -64,11 +66,14 @@ export async function customerSourceProof(ctx:AuthorizedContext,id:string){
    versions.add(d.version);
    if(d.credentialReplaced&&typeof d.previousVersion==='number'){versions.add(d.previousVersion);rotations.push({before:d.previousVersion,after:d.version,at:change.createdAt});}
   }
+  const managed=row.provider==='NANGO_SYNC';
   const usable=captures.slice(0,100).flatMap(run=>{
    const obs=verifiedObservation(run);
    if(!versions.has(run.configVersion)||!obs||(!required[row.provider]&&(!obs.checks.length||obs.checks.some(c=>c.status==='UNKNOWN')))||!(required[row.provider]??[]).every(id=>obs.checks.some(c=>c.id===id&&(c.status==='PASS'||id==='logger-temperature'&&c.status==='FAIL'))))return [];
+   const upstream=managed?completedManagedSync(obs):null;
+   if(managed&&upstream===null)return [];
    const sample=obs.checks.find(c=>c.id==='logger-fresh')?.observed;
-   return [{run,obs,sample}];
+   return [{run,obs,sample,upstream}];
   });
   const latest=usable[0],now=Date.now();
   let current=!!latest&&row.control.enabled&&connectorProviderEnabled(row.provider)&&observationCurrent(latest.run,row,latest.run.id===captures[0]?.id,now);
@@ -77,17 +82,27 @@ export async function customerSourceProof(ctx:AuthorizedContext,id:string){
    const age=now-stamp,day=new Date(now).toISOString().slice(0,10);
    current=age>=0&&age<=Number(parts[6])*60000&&day>=parts[2]&&day<parts[3]&&await calibrationStillCurrent(tx,row,latest!.obs);
   }
-  const repeat=current&&usable.some(old=>old.run.configVersion===row.version&&latest!.run.capturedAt.getTime()-old.run.capturedAt.getTime()>=row.intervalHours*3600000&&(row.provider!=='UBIBOT'||old.sample!==latest!.sample));
-  const rotated=rotations.some(r=>r.after===row.version&&usable.some(a=>a.run.configVersion===r.before)&&usable.some(a=>a.run.configVersion===r.after));
+  const repeat=current&&usable.some(old=>old.run.configVersion===row.version&&latest!.run.capturedAt.getTime()-old.run.capturedAt.getTime()>=row.intervalHours*3600000&&(row.provider!=='UBIBOT'||old.sample!==latest!.sample)&&(!managed||old.upstream!<latest!.upstream!));
+  const rotated=rotations.some(r=>r.after===row.version&&usable.some(a=>a.run.configVersion===r.before)&&usable.some(a=>a.run.configVersion===r.after&&(!managed||a.upstream!>r.at.getTime())));
   const recorded=(await sourceOwnership(tx,ctx,row))?.category??'UNCONFIRMED';
   const isModel=isModelConnector(row.provider);
   const binding=isModel?await tx.auditEvent.findFirst({where:{organizationId:ctx.organizationId,entityType:'WorkspaceAiProvider',entityId:ctx.organizationId},orderBy:[{createdAt:'desc'},{id:'desc'}],select:{id:true,action:true}}):null;
   const inference=binding?.action==='ai.provider-linked'?await tx.auditEvent.findFirst({where:{...audit,action:'ai.customer-inference',AND:[{details:{path:['version'],equals:row.version}},{details:{path:['bindingId'],equals:binding.id}}]},orderBy:[{createdAt:'desc'},{id:'desc'}],select:{id:true}}):null;
   const depth=await monitoringDepth(tx,ctx.organizationId,id,scopeHash,row.version,row.intervalHours,captures,rotations);
-  const productKey=['PRIVATE_AI_MODEL','NANGO_SYNC','WORKFORCE_LEAVER'].includes(row.provider)?null:['GITHUB_WORKFLOW','GITHUB_SCIM'].includes(row.provider)?'GITHUB':row.provider==='AWS_ORGANIZATIONS'?'AWS':row.provider;
+  let managedSlug:string|undefined;
+  if(managed){
+   const basis=readRecordKeys('NANGO_SYNC',row.repository,row.branch).reference?.split('/');
+   if(basis?.length===2&&z.uuid().safeParse(basis[1]).success&&latest)managedSlug=basis[0];
+   const times=new Map(usable.map(r=>[r.run.id,r.upstream!]));
+   const pair=depth.cadenceReceipts;
+   const older=pair&&times.get(pair.older),newer=pair&&times.get(pair.newer);
+   if(typeof older!=='number'||typeof newer!=='number'||newer<=older){depth.cadence=false;depth.cadenceReceipts=null;}
+   depth.recoveries=depth.recoveries.filter(r=>times.has(r.before)&&(times.get(r.after)??0)>Date.parse(r.replacedAt));
+  }
+  const productKey=monitoringProduct(row.provider,managedSlug);
   const gaps=missingMonitoringEvidence({productKey,category:recorded,current,repeat,rotated,cadence:depth.cadence,recovered:depth.recoveries.length>0,inference:isModel?!!inference:null});
   const qualifies=gaps.length===0;
-  return {depth,productKey,gaps,qualifies,connectorId:id,provider:row.provider,version:row.version,category:recorded,current,repeat,rotated,inference:isModel?!!inference:null,customerVerified:recorded==='CUSTOMER'&&current&&repeat&&rotated&&(!isModel||!!inference),sourceReceiptId:current?latest!.run.id:null,inferenceReceiptId:inference?.id??null,intervalHours:row.intervalHours,historyTruncated:captures.length>100||changes.length>50,checkedAt:new Date(now).toISOString()};
+  return {depth,productKey,gaps,qualifies,connectorId:id,provider:row.provider,version:row.version,category:recorded,current,repeat,rotated,inference:isModel?!!inference:null,customerVerified:(!managed||!!productKey)&&recorded==='CUSTOMER'&&current&&repeat&&rotated&&(!isModel||!!inference),sourceReceiptId:current?latest!.run.id:null,inferenceReceiptId:inference?.id??null,intervalHours:row.intervalHours,historyTruncated:captures.length>100||changes.length>50,checkedAt:new Date(now).toISOString()};
  });
 }
 
@@ -95,12 +110,12 @@ export async function customerSourceProof(ctx:AuthorizedContext,id:string){
 export async function customerBenchmarkPage(ctx:AuthorizedContext,after?:string){
  const page=await transaction(ctx,async tx=>{
   await requireMember(tx,ctx,ADMIN);
-  return tx.evidenceConnector.findMany({where:{organizationId:ctx.organizationId,enabled:true,...(after?{id:{gt:after}}:{})},orderBy:{id:'asc'},take:9,select:{id:true,repository:true}});
+  return tx.evidenceConnector.findMany({where:{organizationId:ctx.organizationId,provider:{notIn:[...publicMonitoringProducts]},OR:[{enabled:true},{failureCode:{not:null}}],...(after?{id:{gt:after}}:{})},orderBy:{id:'asc'},take:9,select:{id:true,repository:true,provider:true,enabled:true,failureCode:true}});
  });
  const connections=[];
- for(const {id,repository} of page.slice(0,8)){
+ for(const {id,repository,provider,enabled,failureCode} of page.slice(0,8)){
   const p=await customerSourceProof(ctx,id);
-  connections.push({id,target:repository,product:p.productKey??p.provider,qualified:p.qualifies,gaps:p.gaps,category:p.category,latestScheduledAt:p.depth.latestScheduledAt,cadenceReceipts:p.depth.cadenceReceipts,scheduledReads:p.depth.scheduledReads,
+  connections.push({id,target:repository,paused:!enabled,renewHostedAccount:provider==='NANGO_SYNC'&&failureCode==='CREDENTIAL_REJECTED',product:p.productKey??p.provider,qualified:p.qualifies,gaps:p.gaps,category:p.category,latestScheduledAt:p.depth.latestScheduledAt,cadenceReceipts:p.depth.cadenceReceipts,scheduledReads:p.depth.scheduledReads,
    failures:p.depth.failures.length,verifiedRecoveries:p.depth.recoveries.length,checkedAt:p.checkedAt});
  }
  return {organizationId:ctx.organizationId,target:500,connections,after:page.length>8?page[7].id:null};

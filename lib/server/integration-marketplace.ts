@@ -1,3 +1,5 @@
+import {readRecordKeys} from '../connectors/operational-records';
+import {beginManagedRenewal,verifyManagedRenewal} from './managed-renewal';
 import {directBinding,modelConnections,readModelConnection,verifyModelConnection} from './direct-model-account';
 import {resourcePolicy} from '../connectors/resource-control';
 import {saveManagedPolicy,readManagedPolicy} from './managed-control-policy';
@@ -12,9 +14,10 @@ import {hashValue} from '../regulatory/intelligence';
 const fields={integration:brokerId,connectionId:brokerId};
 const actions=z.discriminatedUnion('action',[
  z.object({action:z.literal('ENABLE'),slug:brokerId}).strict(),
+ z.object({action:z.literal('MONITOR'),monitorId:z.uuid()}).strict(),
  z.object({action:z.literal('DIRECTORY')}).strict(),z.object({action:z.literal('AVAILABLE')}).strict(),
  z.object({action:z.enum(['CONNECT','GRANTS']),integration:brokerId}).strict(),
- z.object({action:z.enum(['RENEW','MODELS']),...fields}).strict(),
+ z.object({action:z.enum(['RENEW','VERIFY_RENEWAL','MODELS']),...fields}).strict(),
  z.object({action:z.literal('BIND_POLICY'),...fields,model:sourceModel,policy:resourcePolicy}).strict(),
  z.object({action:z.literal('COLLECT'),...fields,model:sourceModel,policyId:z.uuid().optional()}).strict(),
  z.object({action:z.literal('SET_DIRECT_AI'),connectionId:z.uuid(),configVersion:z.number().int().positive(),previous:z.uuid().nullable(),confirmDrafting:z.literal(true)}).strict(),
@@ -66,14 +69,29 @@ export async function marketplaceAction(ctx:AuthorizedContext,raw:unknown,fetche
  }
  if(d.action==='AVAILABLE'){const integrations=key?await enabledIntegrations(key,fetcher,ctx.organizationId):[];await allow();return {integrations,direct:await modelConnections(ctx),ai:await aiChoice(ctx),enabled:!!key,selfService:!!key&&process.env.REGPILOT_MARKETPLACE_SELF_SERVICE_ENABLED==='true'};}
  if(!key)throw new IntelligenceError('Managed integrations await configuration.',503);
- const sources=await enabledIntegrations(key,fetcher,ctx.organizationId),source=sources.find(s=>s.integration===d.integration);
+ const sources=await enabledIntegrations(key,fetcher,ctx.organizationId);
+ if(d.action==='MONITOR'){
+  const row=await transaction(ctx,async tx=>{await requireMember(tx,ctx,ADMIN);
+   return tx.evidenceConnector.findFirst({where:{id:d.monitorId,organizationId:ctx.organizationId,provider:'NANGO_SYNC'},select:{repository:true,branch:true}});
+  });
+  if(!row)throw new IntelligenceError('The selected monitor is unavailable for this workspace.',404);
+  const target=readRecordKeys('NANGO_SYNC',row.repository,row.branch),[integration,id]=target.scope.split('/');
+  const matched=sources.find(s=>s.integration===integration&&s.provider===target.reference?.split('/')[0]);
+  if(!matched)throw new IntelligenceError('The hosted integration is unavailable.',409);
+  const grants=await workspaceGrants(ctx.organizationId,matched,key,fetcher,id);
+  if(grants.length!==1)throw new IntelligenceError('The provider connection could not be confirmed for this workspace.',409);
+  await allow();return {source:matched,grant:{id:grants[0].id,healthy:grants[0].healthy},model:target.record};
+ }
+ const source=sources.find(s=>s.integration===d.integration);
  if(!source)throw new IntelligenceError('This integration is unavailable.',404);
  const tags={regpilot_integration:source.integration},config={key,integration:source.integration};
- if(d.action==='CONNECT'||d.action==='RENEW'){
-  if(d.action==='RENEW')await checkGrant(ctx.organizationId,source,d.connectionId,key,fetcher,true);
-  await allow();return hostedConnectSession(ctx.organizationId,ctx.userId,config,fetcher,tags,d.action==='RENEW'?d.connectionId:undefined);
+ if(d.action==='CONNECT'){await allow();return hostedConnectSession(ctx.organizationId,ctx.userId,config,fetcher,tags);}
+ if(d.action==='RENEW'){
+  await checkGrant(ctx.organizationId,source,d.connectionId,key,fetcher,true);
+  await allow();return beginManagedRenewal(ctx,source,d.connectionId,key,fetcher);
  }
- if(d.action==='GRANTS'){const grants=await workspaceGrants(ctx.organizationId,source,key,fetcher);await allow();return {grants};}
+ if(d.action==='VERIFY_RENEWAL')return verifyManagedRenewal(ctx,source,d.connectionId,key,fetcher);
+ if(d.action==='GRANTS'){const grants=await workspaceGrants(ctx.organizationId,source,key,fetcher);await allow();return {grants:grants.map(({id,healthy})=>({id,healthy}))};}
  if(d.action==='MODELS'){
   await checkGrant(ctx.organizationId,source,d.connectionId,key,fetcher);
   const deployed=await deployedModels(source,d.connectionId,key,fetcher);

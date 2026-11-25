@@ -1,6 +1,7 @@
 'use client';
 
 import {useState} from 'react';
+import {publicMonitoringProducts} from '../../../lib/connectors/monitoring-product';
 import {monitoringGaps,type MonitoringGap} from '../../../lib/monitoring-criteria';
 import {workspaceHref,type useWorkspaceContext} from '../../../lib/client/workspace-context';
 import type {customerBenchmarkPage,customerSourceProof,proofTargets} from '../../../lib/server/customer-source-proof';
@@ -57,13 +58,14 @@ export default function SourceVerification({workspace,locked}:{workspace:ReturnT
  <p>Inspect checks, scheduled reads and credential recovery for a connected product. Ownership is recorded separately for each workspace connection.</p>
  <fieldset disabled={busy||locked}><legend>Verification records</legend>
  <button type="button" onClick={()=>void benchmark()}>Check customer monitoring coverage</button>
- {score&&<><p role="status">{new Set(score.filter(r=>r.qualified).map(r=>r.product)).size} of 500 distinct products qualified across {score.length} active workspace connections.</p>
+ {score&&<><p role="status">{new Set(score.filter(r=>r.qualified).map(r=>r.product)).size} of 500 distinct products qualified across {score.length} workspace connections. {score.filter(r=>r.paused).length} paused for attention.</p>
  {score.length>0&&<><label>Filter monitoring evidence<select value={filter} onChange={e=>setFilter(e.target.value as typeof filter)}>
  <option value="all">All connections</option><option value="qualified">Qualified connections</option>
  {(Object.keys(monitoringGaps) as MonitoringGap[]).map(key=><option key={key} value={key}>{monitoringGaps[key]} ({score.filter(row=>row.gaps.includes(key)).length})</option>)}</select></label>
  {visible.length===0&&<p>No connections match this filter.</p>}
  <ul>{visible.map(row=><li key={row.id}>
  <strong>{row.product}</strong> · {row.target} · {row.qualified?'Qualified':row.gaps.map(key=>monitoringGaps[key]).join(' · ')}
+ {row.renewHostedAccount&&<> · <a href={'/team/developers?'+new URLSearchParams({organizationId:org,monitor:row.id})+'#managed-connection'}>Renew this provider account</a></>}
  <button type="button" onClick={()=>{select(row.id);void read('proof',row.id);}}>Inspect connection {row.id.slice(0,8)}</button>
  </li>)}</ul><button type="button" onClick={()=>exportPortfolio(score)}>Download full monitoring benchmark</button></>}</>}
  <button type="button" onClick={()=>void read('list')}>Refresh verification records</button>
@@ -80,7 +82,7 @@ export default function SourceVerification({workspace,locked}:{workspace:ReturnT
  <p>Checked {new Date(proof.checkedAt).toLocaleString('en-GB')}. Source classification: {proof.category.toLowerCase()}.</p>
  {proof.sourceReceiptId&&<p>Collection receipt {proof.sourceReceiptId}</p>}{proof.inferenceReceiptId&&<p>Generation receipt {proof.inferenceReceiptId}</p>}
  {proof.historyTruncated&&<p>This view covers the most recent 100 collections and 50 configuration changes.</p>}
- <label>Source classification <select value={category} onChange={e=>{classify(e.target.value);confirm(false);}}><option value="UNCONFIRMED">Unconfirmed</option><option value="STAGING">Staging or test system</option><option value="CUSTOMER">Customer-owned system</option></select></label>
+ <label>Source classification <select value={category} onChange={e=>{classify(e.target.value);confirm(false);}}><option value="UNCONFIRMED">Unconfirmed</option><option value="STAGING">Staging or test system</option><option value="CUSTOMER" disabled={publicMonitoringProducts.has(proof.provider)}>Customer-owned system</option></select></label>
  <label><input type="checkbox" checked={confirmed} onChange={e=>confirm(e.target.checked)}/> I reviewed the source ownership and confirm this classification for the selected configuration.</label>
  <button type="button" disabled={!confirmed||category===proof.category} onClick={()=>void read('declare')}>Record source classification</button></>}
  </fieldset><p><a href={workspaceHref('/team/operations?view=connections',org)}>Configure a source in Operations</a></p>

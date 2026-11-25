@@ -196,6 +196,11 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
  if(google&&!googleWorkspaceEnabled())throw new IntelligenceError("Google Workspace collection awaits activation",503);
  if(extra&&!connectorProviderEnabled(provider!))throw new IntelligenceError("This provider awaits activation",503);
  const raw=parsed.data;if(raw.provider==="COMPANIES_HOUSE"&&raw.token?.includes(":"))throw new IntelligenceError("Use a valid Companies House API key");
+ if(raw.provider==='NANGO_SYNC'&&raw.reference.includes('/')){
+  await transaction(ctx,tx=>requireMember(tx,ctx,ADMIN));
+  const [integration,connectionId]=raw.scope.split('/'),[provider,policy]=raw.reference.split('/');
+  await (await import('./managed-control-policy')).readManagedPolicy(ctx.organizationId,policy,{integration,connectionId,provider,model:raw.record});
+ }
  if(raw.provider==="OKTA"){
   await transaction(ctx,tx=>requireMember(tx,ctx,ADMIN));
   const matches=await oktaConnections(ctx.organizationId,nangoConfig(),fetch,raw.connectionId);
@@ -215,9 +220,16 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
   if(targetChanged&&v.provider==="WORKFORCE_LEAVER"&&!addingBambooCompany)throw new IntelligenceError("Create a separate connection for a different leaver, ticket or directory identity",409);
   if(targetChanged&&registerProviders.includes(v.provider)&&await tx.vendor.findFirst({where:{organizationId:ctx.organizationId,signalConnectorId:old.id},select:{id:true}}))throw new IntelligenceError("This register is linked to a supplier. Create a connection for the new legal entity and select it in the supplier review.",409);
   if(targetChanged&&credentialRequired&&!v.token)throw new IntelligenceError("Supply a newly scoped credential when changing target");
-  if(!old&&await tx.evidenceConnector.count({where:{organizationId:ctx.organizationId}})>=maxWorkspaceConnectorTargets)throw new IntelligenceError("The workspace has reached its "+maxWorkspaceConnectorTargets+" saved connection limit",429);
   const id=old?.id||randomUUID();const data={provider:v.provider,controlId:v.controlId,repository,branch:v.branch,configuredById:ctx.userId,enabled:v.enabled,intervalHours:v.intervalHours,encryptedSecret:v.token?encryptConnectorSecret(v.token,ctx.organizationId,id):old?.encryptedSecret??null,encryptedWebhookSecret:old&&old.repository===repository&&old.branch===v.branch?old.encryptedWebhookSecret:null,webhookVersion:old?(old.repository===repository&&old.branch===v.branch?old.webhookVersion:old.webhookVersion+1):0,nextRunAt:new Date(),leaseToken:null,leaseUntil:null,attempts:0,failureCode:null};
-  if(!old&&await tx.evidenceConnector.findUnique({where:{organizationId_repository_branch:{organizationId:ctx.organizationId,repository:data.repository,branch:data.branch}}}))throw new IntelligenceError("This target already has a connector",409);
+  if(!old){
+   const existing=await tx.evidenceConnector.findUnique({where:{organizationId_repository_branch:{organizationId:ctx.organizationId,repository:data.repository,branch:data.branch}}});
+   if(existing){
+    if(v.provider==='NANGO_SYNC'&&existing.provider===v.provider&&existing.controlId===data.controlId&&existing.intervalHours===data.intervalHours&&existing.enabled&&data.enabled&&!existing.failureCode)
+     return {id:existing.id,version:existing.version};
+    throw new IntelligenceError("This target already has a connector",409);
+   }
+   if(await tx.evidenceConnector.count({where:{organizationId:ctx.organizationId}})>=maxWorkspaceConnectorTargets)throw new IntelligenceError("The workspace has reached its "+maxWorkspaceConnectorTargets+" saved connection limit",429);
+  }
   const saved=old?await tx.evidenceConnector.update({where:{id},data:{...data,version:{increment:1}}}):await tx.evidenceConnector.create({data:{id,organizationId:ctx.organizationId,...data}});
   await tx.connectorControlLink.deleteMany({where:{connectorId:id,organizationId:ctx.organizationId,controlId:v.controlId}});
   const scopeHash=connectorScopeHash(saved);
@@ -316,7 +328,8 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector,man
     job.lastSuccessAt&&job.nextRunAt.getTime()>=job.lastSuccessAt.getTime()+job.intervalHours*3600000-1000?'SCHEDULED':'INITIAL';
    const previous=await tx.connectorRun.findFirst({where:{organizationId:job.organizationId,connectorId:job.id},orderBy:[{capturedAt:"desc"},{id:"desc"}]});
    const trustedPrevious=previous?.configVersion===job.version?verifiedObservation(previous):null;
-   const checked=job.provider==="UBIBOT"?await applyLoggerCalibration(tx,job,result):result;
+   const checked=job.provider==="UBIBOT"?await applyLoggerCalibration(tx,job,result):
+    job.provider==='NANGO_SYNC'?await (await import('./managed-renewal')).checkSyncAfterRenewal(tx,job,result):result;
    const reconciled=reconcileObservation(checked,trustedPrevious);
    const outcome=observationOutcome(reconciled),signalHash=hashValue({engine:reconciled.engine,checks:reconciled.checks});
    const changes=signalChanges(reconciled,trustedPrevious);
