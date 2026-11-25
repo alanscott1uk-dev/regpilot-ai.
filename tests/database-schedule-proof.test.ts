@@ -20,5 +20,9 @@ test('scheduled database proof requires the release, attempt, successful admissi
  assert.match((await databaseScheduleProof(sha,read)).prometheus!.receiptUrl,/artifacts\/71$/);
  job.steps[0].conclusion='failure';assert.equal((await databaseScheduleProof(sha,read)).prometheus,null);
  job.steps[0].conclusion='success';
+ assert.equal((await databaseScheduleProof(sha,read)).managed,null);
+ job.steps[0].name='Verify managed grant renewal and upstream sync freshness';
+ artifact.name='managed-grant-recovery-'+sha+'-1';assert.match((await databaseScheduleProof(sha,read)).managed!.receiptUrl,/artifacts\/71$/);
+ job.steps[0].conclusion='skipped';assert.equal((await databaseScheduleProof(sha,read)).managed,null);
  artifact.workflow_run.head_sha='e'.repeat(40);assert.equal((await databaseScheduleProof(sha,read)).rows.length,0);
 });

@@ -155,6 +155,15 @@ test('benchmark reasons use the same criteria as the qualified product total',()
  assert.equal(sameKnownChecks([{id:'a',status:'PASS'}],[{id:'a',status:'UNKNOWN'}]),false);
 });
 
+test('two scheduled reads must span distinct completed upstream syncs for a hosted control',async()=>{
+ const {advancesUpstream}=await import('../lib/connectors/monitoring-product');
+ assert.equal(advancesUpstream(1000,1000),false);
+ assert.equal(advancesUpstream(1000,999),false);
+ assert.equal(advancesUpstream(null,1001),false);
+ assert.equal(advancesUpstream(1000,undefined),false);
+ assert.equal(advancesUpstream(1000,1001),true);
+});
+
 test('release impact compares the exact revisions, accounts for renamed files and reports incomplete or diverged histories',async()=>{
  const {validationChangeReview}=await import('../lib/server/validation-change-review');
  const base='a'.repeat(40),release='b'.repeat(40),api='https://api.github.com/repos/alanscott1uk-dev/regpilot-ai./compare/'+base+'...'+release;

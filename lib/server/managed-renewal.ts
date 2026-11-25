@@ -46,11 +46,11 @@ export async function verifyManagedRenewal(ctx:AuthorizedContext,source:Integrat
   const request=await tx.auditEvent.findFirst({where:{...scope,id:renewalId,action:'integration.renewal-started'},select:{id:true,createdAt:true,actorId:true}});
   if(!request||grant.renewedBy!==request.actorId)throw new IntelligenceError('The provider has not confirmed a renewal started by this workspace.',409);
   const where={...scope,action:'integration.renewal-verified',details:{path:['requestId'],equals:request.id}};
+  const latest=await tx.auditEvent.findFirst({where:{...scope,action:'integration.renewal-started'},orderBy:[{createdAt:'desc'},{id:'desc'}],select:{id:true}});
+  if(latest?.id!==request.id)throw new IntelligenceError('Complete the most recent renewal for this connection.',409);
   const prior=await tx.auditEvent.findFirst({where,select:{id:true,details:true}});
   const saved=z.object({resumed:z.number().int().nonnegative()});
   if(prior)return {receiptId:prior.id,resumed:saved.parse(prior.details).resumed};
-  const latest=await tx.auditEvent.findFirst({where:{...scope,action:'integration.renewal-started'},orderBy:[{createdAt:'desc'},{id:'desc'}],select:{id:true}});
-  if(latest?.id!==request.id)throw new IntelligenceError('Complete the most recent renewal for this connection.',409);
   const sources=await tx.evidenceConnector.findMany({where:{organizationId:ctx.organizationId,provider:'NANGO_SYNC',
    repository:'nango_sync:'+source.integration+':'+connectionId,enabled:false,failureCode:'CREDENTIAL_REJECTED',control:{enabled:true}}});
   let resumed=0;

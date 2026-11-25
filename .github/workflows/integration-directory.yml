@@ -72,6 +72,17 @@ jobs:
           curl -fsS --retry 30 --retry-all-errors --retry-delay 2 http://127.0.0.1:8194/api/health -o /dev/null
           docker exec --user git rp-gitea gitea admin user create --username quality-reader --password "$REGPILOT_TEST_APP_PASSWORD" --email quality@example.invalid --must-change-password=false
           node --import tsx scripts/check-live-business-apps.ts
+      - name: Verify managed grant renewal and upstream sync freshness
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --import tsx --test --test-reporter tap --test-name-pattern='a hosted monitor resumes only' tests/operational-records.integration.test.ts | tee managed-grant-recovery.tap
+      - uses: actions/upload-artifact@v4
+        with:
+          name: managed-grant-recovery-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: managed-grant-recovery.tap
+          if-no-files-found: error
+          retention-days: 30
       - uses: actions/upload-artifact@v4
         with:
           name: business-application-recovery-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}

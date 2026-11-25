@@ -1,5 +1,5 @@
 import type {Prisma} from '@prisma/client';
-import {monitoringProduct,completedManagedSync,publicMonitoringProducts} from '../connectors/monitoring-product';
+import {monitoringProduct,completedManagedSync,publicMonitoringProducts,advancesUpstream} from '../connectors/monitoring-product';
 import {missingMonitoringEvidence} from '../monitoring-criteria';
 import {monitoringDepth} from './monitoring-depth';
 import {maxWorkspaceConnectorTargets} from '../connectors/capacity';
@@ -82,8 +82,8 @@ export async function customerSourceProof(ctx:AuthorizedContext,id:string){
    const age=now-stamp,day=new Date(now).toISOString().slice(0,10);
    current=age>=0&&age<=Number(parts[6])*60000&&day>=parts[2]&&day<parts[3]&&await calibrationStillCurrent(tx,row,latest!.obs);
   }
-  const repeat=current&&usable.some(old=>old.run.configVersion===row.version&&latest!.run.capturedAt.getTime()-old.run.capturedAt.getTime()>=row.intervalHours*3600000&&(row.provider!=='UBIBOT'||old.sample!==latest!.sample)&&(!managed||old.upstream!<latest!.upstream!));
-  const rotated=rotations.some(r=>r.after===row.version&&usable.some(a=>a.run.configVersion===r.before)&&usable.some(a=>a.run.configVersion===r.after&&(!managed||a.upstream!>r.at.getTime())));
+  const repeat=current&&usable.some(old=>old.run.configVersion===row.version&&latest!.run.capturedAt.getTime()-old.run.capturedAt.getTime()>=row.intervalHours*3600000&&(row.provider!=='UBIBOT'||old.sample!==latest!.sample)&&(!managed||advancesUpstream(old.upstream,latest!.upstream)));
+  const rotated=rotations.some(r=>r.after===row.version&&usable.some(a=>a.run.configVersion===r.before)&&usable.some(a=>a.run.configVersion===r.after&&(!managed||advancesUpstream(r.at.getTime(),a.upstream))));
   const recorded=(await sourceOwnership(tx,ctx,row))?.category??'UNCONFIRMED';
   const isModel=isModelConnector(row.provider);
   const binding=isModel?await tx.auditEvent.findFirst({where:{organizationId:ctx.organizationId,entityType:'WorkspaceAiProvider',entityId:ctx.organizationId},orderBy:[{createdAt:'desc'},{id:'desc'}],select:{id:true,action:true}}):null;
@@ -93,11 +93,11 @@ export async function customerSourceProof(ctx:AuthorizedContext,id:string){
   if(managed){
    const basis=readRecordKeys('NANGO_SYNC',row.repository,row.branch).reference?.split('/');
    if(basis?.length===2&&z.uuid().safeParse(basis[1]).success&&latest)managedSlug=basis[0];
-   const times=new Map(usable.map(r=>[r.run.id,r.upstream!]));
+   const times=new Map(usable.map(r=>[r.run.id,r.upstream]));
    const pair=depth.cadenceReceipts;
    const older=pair&&times.get(pair.older),newer=pair&&times.get(pair.newer);
-   if(typeof older!=='number'||typeof newer!=='number'||newer<=older){depth.cadence=false;depth.cadenceReceipts=null;}
-   depth.recoveries=depth.recoveries.filter(r=>times.has(r.before)&&(times.get(r.after)??0)>Date.parse(r.replacedAt));
+   if(!advancesUpstream(older,newer)){depth.cadence=false;depth.cadenceReceipts=null;}
+   depth.recoveries=depth.recoveries.filter(r=>times.has(r.before)&&advancesUpstream(Date.parse(r.replacedAt),times.get(r.after)));
   }
   const productKey=monitoringProduct(row.provider,managedSlug);
   const gaps=missingMonitoringEvidence({productKey,category:recorded,current,repeat,rotated,cadence:depth.cadence,recovered:depth.recoveries.length>0,inference:isModel?!!inference:null});

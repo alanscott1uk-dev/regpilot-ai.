@@ -18,6 +18,10 @@ export function monitoringProduct(provider:string,managedSlug?:string){
  return Object.hasOwn(directNames,provider)?directNames[provider]:provider;
 }
 
+export function advancesUpstream(earlier:number|null|undefined,later:number|null|undefined){
+ return typeof earlier==='number'&&typeof later==='number'&&Number.isFinite(earlier)&&Number.isFinite(later)&&later>earlier;
+}
+
 /** The exact policy model must have a completed upstream run and known, reconciled controls. */
 export function completedManagedSync(observation:Observation):number|null{
  if(!observation.engine.startsWith('managed-control-')||

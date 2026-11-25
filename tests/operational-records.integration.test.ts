@@ -242,6 +242,8 @@ test('a hosted monitor resumes only after scoped broker reauthorisation and earn
   upstream=new Date().toISOString();size=1;assert.equal(await collect(),'OBSERVED');proof=await customerSourceProof(f.o,monitor.id);
   assert.equal(proof.rotated,true);assert.equal(proof.depth.recoveries.length,1);assert.equal(proof.qualifies,false);assert.equal(proof.category,'UNCONFIRMED');
   assert.equal(proof.depth.failures[0].stage?.label,'Verify the workspace grant');
+  await marketplaceAction(f.o,renew);
+  await assert.rejects(marketplaceAction(f.o,verify),rejects(409),'an earlier verified receipt cannot complete a newly opened renewal');
   const audits=await db.auditEvent.findMany({where:{organizationId:f.a.id}});
   assert.doesNotMatch(JSON.stringify(audits),/stub-private|private-user/);
   assert.equal(monitoringProduct('GITHUB_WORKFLOW'),monitoringProduct('NANGO_SYNC','github-app'));
