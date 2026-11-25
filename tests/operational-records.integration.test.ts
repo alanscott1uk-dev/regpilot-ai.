@@ -48,6 +48,18 @@ test("nine operational sources can be configured, collected and exported within 
       await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
       const rejected=await verifyConnectorNow(f.o,saved.id,saved.version);
       assert.equal(rejected.observed,false);
+      if(row.provider==='GITHUB_SCIM'){
+       const {customerSourceProof}=await import('../lib/server/customer-source-proof');
+       const past=await customerSourceProof(f.o,saved.id);
+       assert.equal(past.depth.failures[0].stage?.label,'Read the configured record');
+       assert.match(past.depth.failures[0].stage!.guidance,/credential/);
+       const {operationsWorkspace}=await import('../lib/server/operations-service');
+       const {exportConnectorHealth}=await import('../lib/server/connector-health-service');
+       const operations=await operationsWorkspace(f.o,undefined,saved.id);
+       assert.equal(operations.connectors[0].failureStage?.label,'Read the configured record');
+       const failureExport=await exportConnectorHealth(f.o,{filter:'collection-failed'});
+       assert.match(failureExport.csv,/Read the configured record/);
+      }
       assert.equal((await db.evidenceConnector.findUniqueOrThrow({where:{id:saved.id}})).failureCode,'CREDENTIAL_REJECTED');
       const renewed=await saveConnector(f.o,{...input,id:saved.id,version:saved.version,token:acceptedCredential});
       const before=await verificationReceipt(f.o,saved.id);
@@ -426,4 +438,27 @@ test('live publication changes reach a private workspace control and its follow-
       }
     }
   } finally {await f.cleanup();}
+});
+
+test('a sealed independent publisher sample distinguishes observed items, missing records and incomplete coverage',async()=>{
+ const {coverageSample,measureCoverage}=await import('../lib/horizon/coverage-sample');
+ const {recordPublicationSample,publicationSamples}=await import('../lib/server/publication-sample');
+ const {PUBLISHERS,validateReport}=await import('../lib/horizon/model');
+ const f=await assuranceFixture(),today=new Date(),stamp=today.toISOString(),on=new Date(+today-2*86400000).toISOString().slice(0,10);
+ try{
+  const url='https://www.gov.uk/guidance/test-sample',sample={title:'External publication sample',publisher:'mhra',method:'Assessor selected the dated records from the original authority list.',entries:[{on,url},{on,url:url+'-missing'}]};
+  const report=validateReport({format:'regpilot-horizon-v1',previousAvailable:true,codeCommit:'a'.repeat(40),runId:'1',generatedAt:stamp,windowStart:new Date(+today-30*86400000).toISOString(),limitations:[],feeds:PUBLISHERS.map(p=>({id:p.id,state:'available',checkedAt:stamp,total:1,retrieved:1,reason:null})),items:[{id:'a'.repeat(32),revision:'b'.repeat(32),path:'/guidance/test-sample',url,title:'Fictional publication',summary:'Fictional public metadata',documentType:'guide',kind:'Guidance',publisherIds:['mhra'],updatedAt:on+'T12:00:00Z',firstSeenAt:stamp,observedAt:stamp,discovery:'FIRST_SEEN'}]});
+  const id=crypto.randomUUID();await recordPublicationSample(f.o,{action:'SEAL',id,sample});
+  const score={action:'SCORE',id,confirmed:true};
+  await assert.rejects(recordPublicationSample(f.o,score,async()=>{throw Error('Early read');}),rejects(403));
+  await assert.rejects(recordPublicationSample(f.out,score,async()=>report),rejects(404));
+  await recordPublicationSample(f.ad,score,async()=>report);await recordPublicationSample(f.ad,score,async()=>{throw Error('Already decided');});
+  const recorded=(await publicationSamples(f.o)).samples[0].result!;assert.equal(recorded.found,1);assert.equal(recorded.missing,1);assert.equal(recorded.measurable,2);
+  const partial={...report,feeds:report.feeds.map(p=>p.id==='mhra'?{...p,state:'limited' as const}:p)};
+  assert.equal(measureCoverage(sample,partial).indeterminate,1);
+  const wrong={...report,items:report.items.map(i=>({...i,publisherIds:['dhsc']}))};assert.equal(measureCoverage(sample,wrong).wrongPublisher,1);
+  const fda=coverageSample.parse({...sample,publisher:'us-fda',entries:[{on,url:'https://api.fda.gov/drug/enforcement.json?search=recall_number%3A%22D-123-2026%22'}]});
+  assert.equal(measureCoverage(fda,report).rows[0].url,'https://api.fda.gov/drug/enforcement.json?search=recall_number:%22D-123-2026%22');
+  assert.throws(()=>coverageSample.parse({...sample,entries:[sample.entries[0],sample.entries[0]]}));assert.throws(()=>coverageSample.parse({...sample,entries:[{on,url:'https://other.example/'}]}));
+ }finally{await f.cleanup();}
 });

@@ -24,7 +24,7 @@ async function apply(ctx:AuthorizedContext,input:StarterPlan,token:string){const
 test('starter programme preview, concurrent adoption and replay keep one owned task set through real generic completion',async()=>{
  const f=await setup(),{owner,reviewer,editor,viewer,foreign}=f,input=plan(editor.userId);
  try{
-  const empty=await starterProgrammeWorkspace(owner);assert.deepEqual(empty.packs.map(p=>p.id),['business-foundations','people-access','supplier-continuity','nhs-digital-health-england','soc2-iso27001','uk-gdp-cold-chain','uk-gmp-site-validation']);assert.equal(empty.programmes.length,0);assert.equal(empty.programmesLimited,false);assert.equal(empty.members.length,3);
+  const empty=await starterProgrammeWorkspace(owner);assert.deepEqual(empty.packs.map(p=>p.id),['business-foundations','people-access','supplier-continuity','nhs-digital-health-england','soc2-iso27001','uk-gdp-cold-chain','uk-gmp-site-validation','nist-csf-2']);assert.equal(empty.programmes.length,0);assert.equal(empty.programmesLimited,false);assert.equal(empty.members.length,3);
   const proposed=await preview(owner,input);assert.equal(proposed.total,2);assert.equal(await db.obligation.count({where:{organizationId:owner.organizationId}}),0);assert.equal(await db.auditEvent.count({where:{organizationId:owner.organizationId}}),0,'preview records no tasks or audit events');
   await assert.rejects(()=>preview(editor,input),(error:any)=>error.status===403);await assert.rejects(()=>preview(viewer,input),(error:any)=>error.status===403);
   await assert.rejects(()=>preview(owner,{...input,items:[{...input.items[0],assigneeId:foreign.userId}]}),(error:any)=>error.status===409);
@@ -80,5 +80,14 @@ test('a mapped evidence task is shared by both audit references in the saved pro
   assert.ok(rows[1].includes('SOC 2 Security')&&rows[2].includes('ISO/IEC 27001:2022'));
   const task=await db.obligation.findFirstOrThrow({where:{id:saved.taskIds[0],organizationId:f.owner.organizationId}});
   assert.ok(task.notes?.includes('CC6.2')&&task.notes.includes('A.5.18'));assert.equal(task.status,'OPEN');
+
+  const nist=STARTER_PACKS.find(p=>p.id==='nist-csf-2')!,nistPlan=plan(f.editor.userId,nist);
+  const {assigneeId,dueDate}=nistPlan.items[0];
+  nistPlan.items=nist.items.map(({key,title,why,description})=>({key,title,why,description,assigneeId,dueDate}));
+  const nistPreview=await preview(f.owner,nistPlan),adopted=await apply(f.owner,nistPlan,nistPreview.token);
+  const selected=(await starterProgrammeWorkspace(f.owner,adopted.id)).selected!;
+  assert.equal(new Set(adopted.taskIds).size,22);
+  assert.equal(new Set(selected.items.flatMap(item=>item.mappings??[])).size,106);
+  assert.equal(programmeMappingCsv(selected).split('\r\n').length,107);
  }finally{await f.clean();}
 });

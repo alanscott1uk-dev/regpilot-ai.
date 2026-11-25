@@ -3,6 +3,7 @@ import {useRef,useState} from 'react';
 import type {useWorkspaceContext} from '../../../lib/client/workspace-context';
 import type {siteQualification} from '../../../lib/server/site-qualification-service';
 
+import type {validationChangeReview} from '../../../lib/server/validation-change-review';
 import type {softwareValidation} from '../../../lib/server/software-validation';
 type Pack=Awaited<ReturnType<typeof softwareValidation>>;
 type Packet=Awaited<ReturnType<typeof siteQualification>>;
@@ -12,7 +13,7 @@ const labels:Record<string,string>={AWAITING_DECISION:'Awaiting a site decision'
 
 export default function SiteDecision({w,id,files,participant}:{w:Workspace;id:string;files:{id:string;filename:string}[];participant:boolean}){
  const [packet,setPacket]=useState<Packet|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
- const [software,setSoftware]=useState<Pack|null>(null);
+ const [software,setSoftware]=useState<Pack|null>(null),[delta,setDelta]=useState<Awaited<ReturnType<typeof validationChangeReview>>|null>(null);
  const pending=useRef(false),keys=useRef(new Map<string,string>());
  const url='/api/workspace/trials/'+id+'/site?'+new URLSearchParams({organizationId:w.organizationId});
  async function run(operation:()=>Promise<Packet>){
@@ -61,6 +62,13 @@ export default function SiteDecision({w,id,files,participant}:{w:Workspace;id:st
    <h4>Software validation for this release</h4><p><code>{packet.protocol.release}</code></p>
    <button type="button" disabled={busy} onClick={()=>void run(async()=>{setSoftware(null);const valid=w.capture();const result:Pack=await w.request(url.replace('/site?','/release-validation?'));if(result.revision!==packet.protocol.release)throw Error('The validation revision changed. Refresh the dossier.');if(valid())setSoftware(result);return packet;})}>Find executed release tests</button>
    {software&&<div><p>{({MISSING:'No validation run was found for this revision.',RUNNING:'Validation is running.',FAILED:'The latest validation run did not pass.',UNAVAILABLE:'The validation archive is unavailable or expired.',AVAILABLE:'Supplier tests passed on this exact revision.'})[software.state]}</p>{'runUrl' in software&&<a href={software.runUrl} target="_blank" rel="noreferrer">View execution record</a>}{software.state==='AVAILABLE'&&<p><a href={software.downloadUrl}>Download validation pack from GitHub</a> · Available until {software.expiresAt.slice(0,10)}<br/>Archive digest <code>{software.digest}</code></p>}</div>}
+   <form onSubmit={e=>{e.preventDefault();const baseline=String(new FormData(e.currentTarget).get('baseline')),valid=w.capture();void run(async()=>{
+    const bundle=await w.request(url.replace('/site?','/release-validation?')+'&baseline='+encodeURIComponent(baseline));
+    if(bundle.dossier?.trialId!==id||bundle.dossier.organizationId!==w.organizationId||bundle.changes?.baseline!==baseline||bundle.changes.release!==packet.protocol.release)throw Error('The comparison does not match this site protocol.');
+    if(valid()){setDelta(bundle.changes);setSoftware(bundle.validation);const a=document.createElement('a'),object=URL.createObjectURL(new Blob([JSON.stringify(bundle,null,2)],{type:'application/json'}));a.href=object;a.download='site-release-review-'+packet.protocol.release.slice(0,12)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(object),1000);}
+    return bundle.dossier;
+   });}}><fieldset disabled={busy}><legend>Review the upgrade from a previous release</legend><label>Previously assessed version (40-character Git revision)<input name="baseline" pattern="[a-f0-9]{40}" required maxLength={40}/></label><button>Compare releases and download review dossier</button></fieldset></form>
+   {delta&&<p>{delta.state==='COMPARED'?delta.files.length+' changed files':delta.state==='DIVERGED'?'The revisions have different histories. Review both branches.':delta.state==='FILE_LIMIT'?'The file list reached GitHub’s 300-file limit.':'Review the full comparison on GitHub.'}{'requirementIds' in delta&&delta.requirementIds?.length?' · Suggested supplier tests '+delta.requirementIds.join(', '):''} · <a href={delta.compareUrl} target="_blank" rel="noreferrer">Inspect the changes</a></p>}
    <button type="button" disabled={busy} onClick={download}>Download site dossier</button>
    {!participant&&packet.finishedAt&&(withdrawing||packet.status==='AWAITING_DECISION')&&
     <form onSubmit={e=>{e.preventDefault();submit(new FormData(e.currentTarget));}}><fieldset disabled={busy}><legend>Record the signed site decision</legend>

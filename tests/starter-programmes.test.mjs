@@ -4,7 +4,7 @@ import {STARTER_PACKS,parseStarterProgramme,readStarterProgrammeJson,StarterProg
 const owner='123e4567-e89b-42d3-a456-426614174000',now=new Date('2026-11-19T12:00:00Z');
 const input=(pack=STARTER_PACKS[0])=>({packId:pack.id,packVersion:pack.version,name:pack.title,scopeRationale:'These operational starting points fit the fictional team and its selected activities.',items:pack.items.map(({key,title,description,why})=>({key,title,description,why,assigneeId:owner,dueDate:'2026-12-01'}))});
 test('all starter packs can be adopted with their original editable guidance and explicit owners',()=>{
- for(const pack of STARTER_PACKS){const result=parseStarterProgramme(input(pack),now);const count=pack.id==='soc2-iso27001'?12:6;assert.equal(result.items.length,count);assert.equal(new Set(result.items.map(item=>item.key)).size,count);assert.equal(result.items.every(item=>item.assigneeId===owner),true);}
+ for(const pack of STARTER_PACKS){const result=parseStarterProgramme(input(pack),now);const count=pack.id==='nist-csf-2'?22:pack.id==='soc2-iso27001'?12:6;if(pack.id==='nist-csf-2')assert.equal(new Set(pack.items.flatMap(i=>i.mappings)).size,106);assert.equal(result.items.length,count);assert.equal(new Set(result.items.map(item=>item.key)).size,count);assert.equal(result.items.every(item=>item.assigneeId===owner),true);}
  const changed=input();changed.items=changed.items.slice(0,2).reverse();changed.items[0].title='Our own chosen operating task';assert.equal(parseStarterProgramme(changed,now).items[1].title,changed.items[0].title,'selection is editable and returns canonical pack order');
 });
 test('starter planning rejects invented tasks, silent approvals, ambiguous items and impossible target dates',()=>{

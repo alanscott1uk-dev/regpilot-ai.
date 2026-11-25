@@ -1,10 +1,11 @@
+import {failureStage} from '../connectors/collection-step';
 import {sameKnownChecks,scheduledEvidence} from '../monitoring-criteria';
 import {z} from 'zod';
 import type {Prisma} from '@prisma/client';
 import {verifiedObservation} from './connector-observation';
 
 const readEvent=z.object({runId:z.uuid(),scopeHash:z.string(),resultHash:z.string(),collectionMode:z.enum(['MANUAL','SCHEDULED','RETRY','INITIAL','EVENT']),configVersion:z.number()});
-const failure=z.object({scopeHash:z.string(),configVersion:z.number(),code:z.string()});
+const failure=z.object({scopeHash:z.string(),configVersion:z.number(),code:z.string(),step:z.string().optional()});
 type Capture={id:string;configVersion:number;capturedAt:Date;result:Prisma.JsonValue;resultHash:string;signalHash:string;outcome:string};
 type Rotation={before:number;after:number;at:Date};
 export async function monitoringDepth(tx:Prisma.TransactionClient,org:string,id:string,scopeHash:string,version:number,interval:number,captures:Capture[],rotations:Rotation[]){
@@ -21,7 +22,7 @@ export async function monitoringDepth(tx:Prisma.TransactionClient,org:string,id:
   return [{id:r.id,at:r.capturedAt.toISOString(),version:r.configVersion,mode:p.data.collectionMode,
    hash:r.resultHash,checks:obs.checks.map(c=>({id:c.id,label:c.label,status:c.status}))}];
  });
- const failures=failed.slice(0,100).flatMap(e=>{const p=failure.safeParse(e.details);return p.success?[{id:e.id,at:e.createdAt.toISOString(),version:p.data.configVersion,code:p.data.code}]:[];});
+ const failures=failed.slice(0,100).flatMap(e=>{const p=failure.safeParse(e.details);return p.success?[{id:e.id,at:e.createdAt.toISOString(),version:p.data.configVersion,code:p.data.code,stage:failureStage(p.data.step)}]:[];});
  const schedule=scheduledEvidence(reads,version,interval,Date.now());
  const recoveries=rotations.filter(r=>r.after===version).flatMap(change=>{
   const incident=failures.find(f=>f.version===change.before&&f.code==='CREDENTIAL_REJECTED'&&Date.parse(f.at)<=change.at.getTime());

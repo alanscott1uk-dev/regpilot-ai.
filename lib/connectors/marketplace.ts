@@ -1,4 +1,5 @@
 import {z} from 'zod';
+import {atStep} from './collection-step';
 import {profiles,evaluateResource,type ResourcePolicy,type RuleState} from './resource-control';
 import type {ConnectorCheck} from './github';
 import {createHash,createHmac} from 'node:crypto';
@@ -95,18 +96,18 @@ export async function deployedModels(source:Integration,id:string,key:string,fet
 }
 export async function readSync(org:string,source:Integration,id:string,model:string,key:string,fetcher:typeof fetch=fetch,policy?:ResourcePolicy){
  sourceModel.parse(model);
- await checkGrant(org,source,id,key,fetcher);
- const deployed=await deployedModels(source,id,key,fetcher).catch(error=>{
+ await atStep('grant',()=>checkGrant(org,source,id,key,fetcher));
+ const deployed=await atStep('model',()=>deployedModels(source,id,key,fetcher)).catch(error=>{
   if(error instanceof CollectionError&&error.code==='ACCESS_DENIED'&&source.models.includes(model))return [];
   throw error;
  });
  const pipeline=deployed.find(entry=>entry.name===model);
- if(!pipeline&&!source.models.includes(model))throw new CollectionError('INVALID_TARGET');
+ if(!pipeline&&!source.models.includes(model))throw new CollectionError('INVALID_TARGET',undefined,'model');
  const q=new URLSearchParams({model,limit:'50'}),seen=new Set<string>(),items=[] as {id:string;changed:string;action:string}[];
  const evaluated:{resource:string;states:RuleState[]}[]=[],now=Date.now();
  let more=false;
  for(let page=0;page<4;page++){
-  const result=await get('/records?'+q,key,fetcher,{'Connection-Id':id,'Provider-Config-Key':source.integration});
+  const result=await atStep('records',()=>get('/records?'+q,key,fetcher,{'Connection-Id':id,'Provider-Config-Key':source.integration}));
   const records=z.array(z.object({id:z.union([z.string().min(1).max(512),z.number().safe()]),_nango_metadata:z.object({last_modified_at:z.iso.datetime({offset:true}),last_action:z.enum(['ADDED','UPDATED','DELETED'])})})).max(50).parse(result.records);
   for(const [index,row] of records.entries()){
    items.push({id:String(row.id),changed:row._nango_metadata.last_modified_at,action:row._nango_metadata.last_action});
@@ -118,11 +119,11 @@ export async function readSync(org:string,source:Integration,id:string,model:str
   more=result.next_cursor!=null;
   if(!more)break;
   const cursor=z.string().min(1).max(4096).parse(result.next_cursor);
-  if(seen.has(cursor))throw new CollectionError('INVALID_RESPONSE');seen.add(cursor);q.set('cursor',cursor);
+  if(seen.has(cursor))throw new CollectionError('INVALID_RESPONSE',undefined,'records');seen.add(cursor);q.set('cursor',cursor);
  }
- if(new Set(items.map(i=>i.id)).size!==items.length)throw new CollectionError('INVALID_RESPONSE');
+ if(new Set(items.map(i=>i.id)).size!==items.length)throw new CollectionError('INVALID_RESPONSE',undefined,'records');
  const sorted=items.sort((a,b)=>a.id.localeCompare(b.id)||a.changed.localeCompare(b.changed));
- const finalPipeline=policy&&pipeline?(await deployedModels(source,id,key,fetcher)).find(p=>p.name===model):undefined;
+ const finalPipeline=policy&&pipeline?(await atStep('model',()=>deployedModels(source,id,key,fetcher))).find(p=>p.name===model):undefined;
  const populationComplete=!!policy&&!!pipeline&&!!finalPipeline&&pipeline.state==='FRESH'&&finalPipeline.state==='FRESH'&&pipeline.finishedAt===finalPipeline.finishedAt&&pipeline.expected===evaluated.length&&finalPipeline.expected===evaluated.length&&!more;
  const rules:ConnectorCheck[]=policy?profiles[policy.profile].rules.map((rule,index)=>{
   const failed=evaluated.filter(row=>row.states[index]==='FAIL'),unknown=evaluated.filter(row=>row.states[index]==='UNKNOWN');
@@ -140,8 +141,8 @@ export async function readSync(org:string,source:Integration,id:string,model:str
 export async function managedSyncObservation(org:string,target:{scope:string;record:string;reference?:string},fetcher:typeof fetch=fetch,policy?:ResourcePolicy):Promise<import('./observation').Observation>{
  const key=brokerKey();if(!key)throw new CollectionError('PROVIDER_DISABLED');
  const [integration,connectionId]=target.scope.split('/');
- const source=(await enabledIntegrations(key,fetcher,org)).find(s=>s.integration===integration&&s.provider===target.reference);
- if(!source)throw new CollectionError('TARGET_MISMATCH');
+ const source=(await atStep('integration',()=>enabledIntegrations(key,fetcher,org))).find(s=>s.integration===integration&&s.provider===target.reference);
+ if(!source)throw new CollectionError('TARGET_MISMATCH',undefined,'integration');
  const sample=await readSync(org,source,connectionId,target.record,key,fetcher,policy);
  await checkGrant(org,source,connectionId,key,fetcher);
  return {engine:policy?'managed-control-'+policy.profile+'-v1':'managed-sync-metadata-v1',capturedAt:new Date().toISOString(),sourceUrl:'https://nango.dev/docs/api-integrations/'+source.provider,

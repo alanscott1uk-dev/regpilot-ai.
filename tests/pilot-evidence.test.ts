@@ -148,6 +148,15 @@ test('benchmark reasons use the same criteria as the qualified product total',()
  assert.equal(sameKnownChecks([{id:'a',status:'PASS'}],[{id:'a',status:'UNKNOWN'}]),false);
 });
 
+test('release impact compares the exact revisions, accounts for renamed files and reports incomplete or diverged histories',async()=>{
+ const {validationChangeReview}=await import('../lib/server/validation-change-review');
+ const base='a'.repeat(40),release='b'.repeat(40),api='https://api.github.com/repos/alanscott1uk-dev/regpilot-ai./compare/'+base+'...'+release;
+ const raw={url:api,base_commit:{sha:base},merge_base_commit:{sha:base},ahead_by:1,behind_by:0,status:'ahead',files:[{filename:'lib/data.ts',previous_filename:'lib/logger-calibration.ts',status:'renamed'}]};
+ const get=(data:unknown)=>validationChangeReview(base,release,async u=>{assert.equal(String(u),api+'?per_page=1&page=1');return Response.json(data);});
+ const result=await get(raw);assert.equal(result.state,'COMPARED');assert.ok(result.requirementIds?.includes('PH-01'));
+ assert.equal((await get({...raw,status:'diverged'})).state,'DIVERGED');assert.equal((await get({...raw,files:Array(300).fill(raw.files[0])})).state,'FILE_LIMIT');
+ await assert.rejects(get({...raw,url:'https://other.example/'}));
+});
 test('software validation locates a current artifact only for the exact release, run, repository and final attempt',async()=>{
  const {softwareValidation}=await import('../lib/server/software-validation');
  const revision='c'.repeat(40),repo='alanscott1uk-dev/regpilot-ai.',run={id:110,run_attempt:2,path:'.github/workflows/release-validation.yml',repository:{full_name:repo},head_repository:{full_name:repo},head_sha:revision,status:'completed',conclusion:'success'};
