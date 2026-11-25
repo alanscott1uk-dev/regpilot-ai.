@@ -10,6 +10,7 @@ import {CollectionError} from '../connectors/collection-error';
 import {pdAccount,pdAccounts,pdAction,pdApp,pdConfig,pdLink,readProduct,productObservation,sampleHash} from '../connectors/pipedream';
 import {recipeFor,productSearch,productTotal} from '../connectors/product-recipes';
 import {connectorsEnabled} from './connector-flags';
+import {stagingProductHistory} from './staging-product-probe';
 
 const digest=z.string().regex(/^[a-f0-9]{64}$/);
 const selection=z.object({app:pdApp,action:pdAction});
@@ -51,8 +52,8 @@ export async function productMonitorCommand(ctx:AuthorizedContext,input:unknown,
  await transaction(ctx,tx=>requireMember(tx,ctx,ADMIN));
  if(cmd.op==='SEARCH'){
   const matches=productSearch(cmd.q);
-  const paused=await db.evidenceConnector.findMany({where:{organizationId:org,provider:'PIPEDREAM_READ',enabled:false,failureCode:'CREDENTIAL_REJECTED'},orderBy:{id:'asc'},take:100,select:{id:true,version:true,repository:true}});
-  return {total:productTotal,matches:matches.length,products:matches.slice(cmd.offset,cmd.offset+40),enabled:connectorsEnabled()&&!!pdConfig(),paused};
+  const [history,paused]=await Promise.all([stagingProductHistory(org),db.evidenceConnector.findMany({where:{organizationId:org,provider:'PIPEDREAM_READ',enabled:false,failureCode:'CREDENTIAL_REJECTED'},orderBy:{id:'asc'},take:100,select:{id:true,version:true,repository:true}})]);
+  return {total:productTotal,matches:matches.length,products:matches.slice(cmd.offset,cmd.offset+40),enabled:connectorsEnabled()&&!!pdConfig(),paused,history};
  }
  const cfg=pdConfig();if(!connectorsEnabled()||!cfg)throw new IntelligenceError('Connect the Pipedream project in deployment settings to enable hosted reads.',503);
  if(cmd.op==='START_RENEWAL'||cmd.op==='VERIFY_RENEWAL'){

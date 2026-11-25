@@ -30,3 +30,30 @@ export async function runStagingProductProbe(target:NonNullable<ReturnType<typeo
    step:error instanceof CollectionError?error.step??'grant':'grant',checkedAt:new Date().toISOString()};
  }
 }
+
+const receiptSchema=z.discriminatedUnion('state',[
+ z.object({state:z.literal('read'),checkedAt:z.iso.datetime(),count:z.number().int().nonnegative(),digest:z.string().regex(/^[a-f0-9]{64}$/)}),
+ z.object({state:z.literal('attention'),checkedAt:z.iso.datetime(),code:z.string().regex(/^[A-Z_]{2,40}$/)})
+]);
+
+/** Only the organisation whose account was authorised can see the retained worker readings. */
+export async function stagingProductHistory(org:string){
+ const target=stagingProbeTarget();
+ if(!target||target.org!==org)return null;
+ const {db}=await import('./db');
+ const since=new Date(Date.now()-24*3600000);
+ const runs=await db.workerRun.findMany({where:{slot:0,startedAt:{gte:since},finishedAt:{not:null},
+  summary:{path:['stagingProduct','scopeHash'],equals:target.scopeHash}},
+  orderBy:{startedAt:'desc'},take:48,select:{summary:true,startedAt:true,finishedAt:true}});
+ const receipts=runs.flatMap(r=>{
+  const row=z.object({stagingProduct:receiptSchema}).safeParse(r.summary);
+  if(!row.success||!r.finishedAt)return [];
+  const item=row.data.stagingProduct,time=Date.parse(item.checkedAt);
+  return time>=r.startedAt.getTime()-1000&&time<=r.finishedAt.getTime()+1000?[item]:[];
+ });
+ const reads=receipts.filter(r=>r.state==='read');
+ const last=reads[0],latest=receipts[0];
+ return {product:target.recipe.name,action:target.recipe.action,hours:new Set(reads.map(r=>r.checkedAt.slice(0,13))).size,
+  reads:reads.length,lastReadAt:last?.checkedAt??null,count:last?.count??null,latestError:latest?.state==='attention'?latest.code:null};
+}
+export type StagingProductHistory=NonNullable<Awaited<ReturnType<typeof stagingProductHistory>>>;

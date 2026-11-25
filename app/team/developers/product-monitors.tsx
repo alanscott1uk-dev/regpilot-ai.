@@ -1,6 +1,7 @@
 'use client';
 import {useEffect,useState} from 'react';
 import type {useWorkspaceContext} from '../../../lib/client/workspace-context';
+import type {StagingProductHistory} from '../../../lib/server/staging-product-probe';
 import type {ProductRead} from '../../../lib/connectors/product-recipes';
 import styles from '../questionnaires/questionnaires.module.css';
 
@@ -13,13 +14,15 @@ export default function ProductMonitors({workspace,controls}:{workspace:ReturnTy
  const [link,setLink]=useState(''),[sample,setSample]=useState<{count:number;digest:string}|null>(null),[paused,setPaused]=useState<Paused[]>([]);
  const [renewal,setRenewal]=useState<{id:string;version:number;requestId:string}|null>(null);
  const {request,organizationId,capture}=workspace;
+ const [latest,setLatest]=useState<{org:string;value:StagingProductHistory}|null>(null);
+ const history=latest?.org===organizationId?latest?.value:null;
  const current=products.find(p=>p.app+'/'+p.action===selected);
  function clearSelection(){setAccounts([]);setAccount('');setLink('');setSample(null);setRenewal(null);setNotice('');setError('');}
  useEffect(()=>{
   let stale=false;const valid=capture();
   const timer=window.setTimeout(async()=>{
    try{const r=await request('/api/workspace/product-monitors',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({organizationId,op:'SEARCH',q:query})});
-    if(stale||!valid())return;setProducts(r.products);setEnabled(r.enabled);setPaused(r.paused);setSelected(r.products[0]?r.products[0].app+'/'+r.products[0].action:'');clearSelection();
+    if(stale||!valid())return;setProducts(r.products);setLatest(r.history?{org:organizationId,value:r.history}:null);setEnabled(r.enabled);setPaused(r.paused);setSelected(r.products[0]?r.products[0].app+'/'+r.products[0].action:'');clearSelection();
    }catch(e){if(!stale&&valid())setError(e instanceof Error?e.message:'Could not load product reads.');}
   },200);
   return ()=>{stale=true;window.clearTimeout(timer);};
@@ -41,6 +44,11 @@ export default function ProductMonitors({workspace,controls}:{workspace:ReturnTy
  }
  return <section className={styles.panel} id="product-monitors"><h2>Hourly product monitoring</h2>
   <p>Connect a customer account and choose the inventory that an hourly control should track. <a href="/product-integrations">Browse supported product reads</a></p>
+  {history&&<section aria-label="Connected account monitoring"><h3>{history.product} · {history.action.replace(/-/g,' ')}</h3>
+   {history.lastReadAt?<p>{history.reads} successful worker {history.reads===1?'read':'reads'} across {history.hours} UTC {history.hours===1?'hour':'hours'} in the past 24 hours.
+    Latest inventory at {new Date(history.lastReadAt).toLocaleString('en-GB',{timeZone:'UTC'})} UTC contained {history.count} {history.count===1?'record':'records'}.</p>:<p>Awaiting the first successful worker read.</p>}
+   {history.latestError&&<p role="status">The latest read needs attention ({history.latestError}).</p>}
+  </section>}
   <fieldset disabled={busy}><label>Find a product <input value={query} maxLength={100} onChange={e=>{clearSelection();setSelected('');setProducts([]);setQuery(e.target.value);}}/></label>
   <label>Inventory read <select value={selected} onChange={e=>{clearSelection();setSelected(e.target.value);}}>{products.map(p=><option key={p.app+'/'+p.action} value={p.app+'/'+p.action}>{p.name} · {p.action}</option>)}</select></label>
   {enabled&&current?<><button type="button" onClick={()=>operate('CONNECT')}>Authorise account</button> <button type="button" onClick={()=>operate('ACCOUNTS')}>Refresh linked accounts</button></>:<p>Hosted reads require a Pipedream Connect project in this deployment. <a href="/product-monitors/setup.txt">Set up a project</a></p>}

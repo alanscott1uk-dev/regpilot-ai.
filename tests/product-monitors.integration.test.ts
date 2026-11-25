@@ -8,7 +8,7 @@ import {productReads,productTotal} from '../lib/connectors/product-recipes';
 import {generateKeyPairSync} from 'node:crypto';
 import {jwtVerify} from 'jose';
 import {pdSample,readProduct,pdLink} from '../lib/connectors/pipedream';
-import {runStagingProductProbe} from '../lib/server/staging-product-probe';
+import {runStagingProductProbe,stagingProbeTarget,stagingProductHistory} from '../lib/server/staging-product-probe';
 import {pdConfig,pdProjectHealth} from '../lib/connectors/pipedream-client';
 import {monitoringProduct} from '../lib/connectors/monitoring-product';
 
@@ -119,6 +119,28 @@ test('every published product emits a pinned account-scoped read and keeps provi
   assert.equal(reads,1);assert.equal(validations,2);assert.equal(returned.count,1);
   assert.match(returned.keys[0],/^[a-f0-9]{64}$/);
   assert.notEqual(pdSample(['customer-inventory-id'],other,product).digest,returned.digest);
+ }
+});
+test('scheduled inventory history is visible only in the authorised workspace and counts actual hours',async()=>{
+ setup();const f=await assuranceFixture(),oldEnv=process.env.VERCEL_ENV,oldTarget=process.env.REGPILOT_PIPEDREAM_STAGING_PROBE;
+ const ids:string[]=[];
+ try{
+  process.env.VERCEL_ENV='preview';process.env.REGPILOT_PIPEDREAM_STAGING_PROBE=JSON.stringify({org:f.a.id,account:'apn_history',app:'github',action:'list-repositories'});
+  const {scopeHash}=stagingProbeTarget()!;
+  const previousHour=Math.floor(Date.now()/3600000)*3600000-3600000;
+  for(const [instant,state] of [[previousHour+10000,'read'],[previousHour+20000,'read'],[Date.now()-1,'attention']] as const){
+   const time=new Date(instant),receipt=state==='read'?{count:2,digest:'a'.repeat(64)}:{code:'CREDENTIAL_REJECTED'};
+   const row=await db.workerRun.create({data:{invocationKey:'history-'+f.a.id+'-'+instant,startedAt:time,finishedAt:time,leaseUntil:time,state:'COMPLETED',
+    summary:{stagingProduct:{scopeHash,state,checkedAt:time.toISOString(),...receipt}}}});
+   ids.push(row.id);
+  }
+  const result=await stagingProductHistory(f.a.id);
+  assert.equal(result?.reads,2);assert.equal(result?.hours,1);assert.equal(result?.count,2);assert.equal(result?.latestError,'CREDENTIAL_REJECTED');
+  assert.equal(await stagingProductHistory(f.b.id),null);assert.ok(!JSON.stringify(result).includes(scopeHash));
+ }finally{
+  if(oldEnv===undefined)delete process.env.VERCEL_ENV;else process.env.VERCEL_ENV=oldEnv;
+  if(oldTarget===undefined)delete process.env.REGPILOT_PIPEDREAM_STAGING_PROBE;else process.env.REGPILOT_PIPEDREAM_STAGING_PROBE=oldTarget;
+  await db.workerRun.deleteMany({where:{id:{in:ids}}});await f.cleanup();
  }
 });
 test('an hourly product monitor rejects another tenant, detects inventory drift and recovers the original grant for the same control',async()=>{
