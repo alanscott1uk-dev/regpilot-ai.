@@ -173,3 +173,15 @@ test('FDA recalls enter the same review filters with publisher-bound record link
  const later=await collectHorizon(report,(u,i)=>new URL(String(u)).hostname==='api.fda.gov'?Promise.resolve(new Response(null,{status:403})):gb.fetch(u,i),new Date(+now+60_000));
  assert.equal(later.feeds.at(-1)?.state,'unavailable');assert.equal(later.items.find(i=>i.id===fda.id)?.observedAt,report.generatedAt);
 });
+
+test('FDA records awaiting a recall number are grouped under their official event and changes remain detectable',async()=>{
+ const read=(reverse=false,reason='First observation')=>async(u:Parameters<typeof fetch>[0],i?:RequestInit)=>{
+  if(new URL(String(u)).hostname!=='api.fda.gov')return fixture().fetch(u,i);
+  const records=['first','second'].map(product=>({event_id:'99896',recall_number:'',product_type:'Drugs',product_description:product,code_info:'A',status:'Ongoing',report_date:'20261111',reason_for_recall:reason}));
+  return Response.json({meta:{results:{skip:0,total:2}},results:reverse?records.reverse():records});
+ };
+ const first=await collectHorizon(null,read(),now),record=first.items.find(i=>i.publisherIds.includes('us-fda'))!;
+ assert.equal(first.feeds.at(-1)?.retrieved,2);assert.equal(record.url,'https://api.fda.gov/drug/enforcement.json?search=event_id:99896');assert.match(record.summary,/2 unnumbered/);
+ const again=await collectHorizon(first,read(true),new Date(+now+60000));assert.equal(again.items.find(i=>i.id===record.id)?.discovery,'UNCHANGED');
+ const changed=await collectHorizon(first,read(false,'Revised reason'),new Date(+now+60000));assert.equal(changed.items.find(i=>i.id===record.id)?.discovery,'METADATA_UPDATED');
+});

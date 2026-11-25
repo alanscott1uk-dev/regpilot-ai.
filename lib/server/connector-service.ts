@@ -93,6 +93,7 @@ function storedTarget(settings:ConnectorSettings):{repository:string;branch:stri
   case "NHSBSA_MAPPING":case "CLINICALTRIALS_GOV":case "OPENFDA_RECALL":case "DAILYMED_LABEL":case "EUROPE_PMC":case "MHRA_GUIDANCE":
   case "NANGO_SYNC":return recordKeys(settings.provider,settings);
   case "OPENAI_PROJECT_MODEL":case "PRIVATE_AI_MODEL":
+  case "GITHUB_SCIM":case "ATLASSIAN_SCIM":case "STATUSPAGE_COMPONENT":case "ZENDESK_TICKET":
   case "KEYCLOAK_REALM":
   case "GITHUB_WORKFLOW":
   case "UBIBOT":

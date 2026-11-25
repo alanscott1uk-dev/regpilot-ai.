@@ -21,8 +21,10 @@ const originalPublishers=new Set<string>(PUBLISHERS.slice(0,12).map(p=>p.id));
 export function horizonSourceUrl(path:string,publishers:string[]){
  if(publishers.includes('us-fda')){
   const number=/^\/us-fda\/drug-recalls\/(d-\d{1,6}-\d{4})$/.exec(path)?.[1];
-  if(publishers.length!==1||!number)throw Error('Invalid FDA publication identity');
-  return 'https://api.fda.gov/drug/enforcement.json?search=recall_number:%22'+number.toUpperCase()+'%22';
+  const event=/^\/us-fda\/drug-events\/([1-9]\d{0,11})$/.exec(path)?.[1];
+  if(publishers.length!==1||(!event&&!number))throw Error('Invalid FDA publication identity');
+  if(event)return 'https://api.fda.gov/drug/enforcement.json?search=event_id:'+event;
+  return 'https://api.fda.gov/drug/enforcement.json?search=recall_number:%22'+number!.toUpperCase()+'%22';
  }
  if(path.startsWith('/us-fda/'))throw Error('Invalid GOV.UK publication identity');
  return 'https://www.gov.uk'+path;

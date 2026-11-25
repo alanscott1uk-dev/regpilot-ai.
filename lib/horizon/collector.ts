@@ -61,6 +61,7 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
  const prior=new Map((old?.items||[]).filter(i=>Date.parse(i.updatedAt)>=Date.parse(windowStart)).map(i=>[i.id,i]));
  const collected=new Map<string,HorizonItem>(),feeds:HorizonReport['feeds']=new Array(PUBLISHERS.length);let cursor=0;
  async function worker(){while(cursor<PUBLISHERS.length){const index=cursor++,publisher=PUBLISHERS[index];let total:number|null=null,retrieved=0,indexChanged=false;const staged:HorizonItem[]=[];const seen=new Set<string>();
+  const openEvents=new Map<string,{item:HorizonItem;revisions:string[]}>();
   const priorFeed=old?.feeds.find(f=>f.id===publisher.id);
   if(priorFeed?.state==='unavailable'&&(priorFeed.reason==='RETRY_REQUIRES_REVIEW'||priorFeed.retryAt&&Date.parse(priorFeed.retryAt)>now.getTime())){feeds[index]={...priorFeed,retrieved:0};continue;}
   const feedMetrics={requests:0,retries:0};
@@ -84,14 +85,22 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
     const timestamp=typeof row.public_timestamp==='string'?Date.parse(row.public_timestamp):NaN;
     if(!Number.isFinite(timestamp)||timestamp>now.getTime()+300000)throw new CollectionError('INVALID_PUBLICATION_TIMESTAMP');const updatedAt=new Date(timestamp).toISOString();
     if(!Array.isArray(row.organisations)||!row.organisations.some((o:any)=>o?.slug===publisher.slug))throw new CollectionError('UNVERIFIED_PUBLISHER');
-    if(seen.has(path))throw new CollectionError('DUPLICATE_PAGE');seen.add(path);retrieved++;
+    const event=publisher.id==='us-fda'&&path.startsWith('/us-fda/drug-events/'),key=event?path+'/'+row.recordKey:path;
+    if(seen.has(key))throw new CollectionError('DUPLICATE_PAGE');seen.add(key);retrieved++;
     if(Date.parse(updatedAt)<Date.parse(windowStart))continue;
     const url=horizonSourceUrl(path,[publisher.id]),title=plain(row.title,240),summary=plain(row.description,360),documentType=plain(row.content_store_document_type,100);
     if(!title||!documentType)throw new CollectionError('INVALID_PUBLICATION_METADATA');
     const id=digest(url),revision=digest(JSON.stringify({title,summary,documentType,updatedAt})),before=prior.get(id);
-    staged.push({id,revision,path,url,title,summary,documentType,kind:itemKind(path,documentType),publisherIds:[publisher.id],updatedAt,firstSeenAt:before?.firstSeenAt||generatedAt,observedAt:generatedAt,discovery:!old?'BASELINE':!before?'FIRST_SEEN':before.revision!==revision?'METADATA_UPDATED':'UNCHANGED'});
+    const item:HorizonItem={id,revision,path,url,title,summary,documentType,kind:itemKind(path,documentType),publisherIds:[publisher.id],updatedAt,firstSeenAt:before?.firstSeenAt||generatedAt,observedAt:generatedAt,discovery:!old?'BASELINE':!before?'FIRST_SEEN':before.revision!==revision?'METADATA_UPDATED':'UNCHANGED'};
+    if(event){const group=openEvents.get(path)??{item,revisions:[]};group.revisions.push(revision);if(item.updatedAt>group.item.updatedAt)group.item=item;openEvents.set(path,group);}else staged.push(item);
    }
    if(retrieved>=raw.total)break;
+  }
+  for(const {item,revisions} of openEvents.values()){
+   const before=prior.get(item.id);item.revision=digest(revisions.sort().join('/'));item.title='FDA drug recall event '+item.path.split('/').pop();
+   item.summary=revisions.length+' unnumbered drug recall '+(revisions.length===1?'record. ':'records. ')+(revisions.length===1?item.summary:'Open the FDA event for the individual products and reasons.');
+   item.summary=item.summary.slice(0,360);
+   item.discovery=!old?'BASELINE':!before?'FIRST_SEEN':before.revision===item.revision?'UNCHANGED':'METADATA_UPDATED';staged.push(item);
   }
   for(const item of staged)if(collected.has(item.id)&&collected.get(item.id)!.revision!==item.revision)throw new CollectionError('INCONSISTENT_PUBLICATION');
   for(const item of staged){const existing=collected.get(item.id);if(existing){existing.publisherIds=[...new Set([...existing.publisherIds,publisher.id])];}else collected.set(item.id,item);}

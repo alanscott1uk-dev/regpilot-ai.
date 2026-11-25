@@ -39,7 +39,10 @@ def validate(data, expected_commit=None, max_age_hours=2):
         path=item['path'];assert isinstance(path,str) and len(path)<=450 and re.fullmatch('/[a-z0-9][a-z0-9/-]*',path) and '//' not in path and not path.endswith('/') and not path.startswith('/api/')
         if 'us-fda' in item['publisherIds']:
             number=re.fullmatch('/us-fda/drug-recalls/(d-[0-9]{1,6}-[0-9]{4})',path)
-            assert number and item['publisherIds']==['us-fda'] and item['url']=='https://api.fda.gov/drug/enforcement.json?search=recall_number:%22'+number[1].upper()+'%22'
+            event=re.fullmatch('/us-fda/drug-events/([1-9][0-9]{0,11})',path)
+            assert item['publisherIds']==['us-fda'] and (number or event)
+            expected='recall_number:%22'+number[1].upper()+'%22' if number else 'event_id:'+event[1]
+            assert item['url']=='https://api.fda.gov/drug/enforcement.json?search='+expected
         else:assert not path.startswith('/us-fda/') and item['url']=='https://www.gov.uk'+path
         for key,limit in [('title',240),('summary',360),('documentType',100)]:assert isinstance(item[key],str) and len(item[key])<=limit
         assert item['title'] and item['kind'] in ('Safety alert','Consultation','Regulation or decision','Guidance','Policy','News','Other publication')

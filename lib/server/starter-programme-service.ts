@@ -76,9 +76,11 @@ export async function planStarterProgramme(ctx:AuthorizedContext,input:unknown,a
   return {organizationId:ctx.organizationId,id:event.id,packId:plan.packId,reused:false,taskIds:items.map(item=>item.taskId),href:link('/team/programmes',ctx.organizationId,{programmeId:event.id})};
  });
 }
-async function programmeView(tx:Tx,ctx:AuthorizedContext,saved:ReturnType<typeof readRecord>){
+async function programmeView(tx:Tx,ctx:AuthorizedContext,saved:ReturnType<typeof readRecord>,includeReviewedFiles:boolean){
  const record=saved.record,tasks=await tx.obligation.findMany({where:{organizationId:ctx.organizationId,id:{in:record.items.map(item=>item.taskId)}},select:{id:true,title:true,status:true,assigneeId:true,ownerName:true,dueDate:true,automationKey:true}}),ownerIds=[...new Set(tasks.flatMap(task=>task.assigneeId?[task.assigneeId]:[]))];
  const people=await tx.membership.findMany({where:{organizationId:ctx.organizationId,userId:{in:ownerIds}},select:{userId:true,role:true,user:{select:{email:true}}}}),today=new Date().toISOString().slice(0,10);
+ const files=includeReviewedFiles?await tx.evidence.findMany({where:{organizationId:ctx.organizationId,obligationId:{in:tasks.map(t=>t.id)},reviewStatus:'APPROVED',scanStatus:'CLEAN',reviewedAt:{not:null}},orderBy:[{obligationId:'asc'},{id:'asc'}],take:1001,select:{id:true,obligationId:true,sha256:true,reviewVersion:true,reviewedAt:true,uploadedById:true,reviewerId:true}}):[];
+ const visible=files.slice(0,1000).filter(f=>f.reviewedAt&&f.uploadedById&&f.reviewerId&&f.uploadedById!==f.reviewerId&&sha.safeParse(f.sha256).success);
  const items=record.items.map(item=>{
   const found=tasks.find(task=>task.id===item.taskId),task=found?.automationKey===item.automationKey?found:null,attention:string[]=[];
   if(!task)attention.push('The saved task is unavailable or no longer matches this programme.');
@@ -86,9 +88,9 @@ async function programmeView(tx:Tx,ctx:AuthorizedContext,saved:ReturnType<typeof
    if(!task.assigneeId||!people.some(person=>person.userId===task.assigneeId&&WRITER.includes(person.role)&&allowedEmail(person.user.email,process.env.REGPILOT_AI_ALLOWED_EMAILS)))attention.push('Choose a current eligible owner in Tasks.');
    if(task.dueDate.toISOString().slice(0,10)<today)attention.push('The working target date has passed.');
   }
-  return {key:item.key,title:item.title,description:item.description,why:item.why,evidenceHint:item.evidenceHint,...(item.mappings?{mappings:item.mappings}:{}),assigneeId:item.assigneeId,ownerName:item.ownerName,dueDate:item.dueDate,task:task?{id:task.id,title:task.title,status:task.status,assigneeId:task.assigneeId,ownerName:task.ownerName,dueDate:task.dueDate.toISOString().slice(0,10),href:link('/team/work',ctx.organizationId,{taskId:task.id})}:null,attention};
+  return {...(includeReviewedFiles?{reviewedFiles:visible.filter(f=>f.obligationId===task?.id).map(f=>({id:f.id,sha256:f.sha256,version:f.reviewVersion,reviewedAt:f.reviewedAt!.toISOString()}))}:{}),key:item.key,title:item.title,description:item.description,why:item.why,evidenceHint:item.evidenceHint,...(item.mappings?{mappings:item.mappings}:{}),assigneeId:item.assigneeId,ownerName:item.ownerName,dueDate:item.dueDate,task:task?{id:task.id,title:task.title,status:task.status,assigneeId:task.assigneeId,ownerName:task.ownerName,dueDate:task.dueDate.toISOString().slice(0,10),href:link('/team/work',ctx.organizationId,{taskId:task.id})}:null,attention};
  });
- return {id:saved.id,packId:record.packId,packVersion:record.packVersion,name:record.name,createdAt:record.createdAt,total:items.length,completed:items.filter(item=>item.task?.status==='COMPLETE').length,needsAttention:items.filter(item=>item.attention.length).length,href:link('/team/programmes',ctx.organizationId,{programmeId:saved.id}),scopeRationale:record.scopeRationale,recordHash:saved.recordHash,items,scope:record.scope};
+ return {evidenceLimited:files.length>1000,id:saved.id,packId:record.packId,packVersion:record.packVersion,name:record.name,createdAt:record.createdAt,total:items.length,completed:items.filter(item=>item.task?.status==='COMPLETE').length,needsAttention:items.filter(item=>item.attention.length).length,href:link('/team/programmes',ctx.organizationId,{programmeId:saved.id}),scopeRationale:record.scopeRationale,recordHash:saved.recordHash,items,scope:record.scope};
 }
 export async function starterProgrammeWorkspace(ctx:AuthorizedContext,programmeId?:string){
  if(programmeId&&!id.safeParse(programmeId).success)throw new IntelligenceError('Invalid starter programme identifier');
@@ -97,7 +99,7 @@ export async function starterProgrammeWorkspace(ctx:AuthorizedContext,programmeI
   if(events.length>STARTER_PROGRAMME_LIMIT)throw new IntelligenceError('The starter programme history exceeds the supported review window. An administrator must reconcile it before continuing.',409);
   const saved=events.map(event=>readRecord(ctx,event));if(new Set(saved.map(item=>item.record.packId)).size!==saved.length)throw new IntelligenceError('The starter programme history contains duplicate pack records. An administrator must reconcile it.',409);
   if(programmeId&&!saved.some(item=>item.id===programmeId))throw new IntelligenceError('Starter programme not found in this company',404);
-  const views=await Promise.all(saved.map(item=>programmeView(tx,ctx,item))),allMembers=canCreate?await tx.membership.findMany({where:{organizationId:ctx.organizationId,role:{in:['OWNER','ADMIN','EDITOR']}},orderBy:{userId:'asc'},take:101,select:{userId:true,user:{select:{email:true}}}}):[];
+  const views=await Promise.all(saved.map(item=>programmeView(tx,ctx,item,canCreate&&item.id===programmeId))),allMembers=canCreate?await tx.membership.findMany({where:{organizationId:ctx.organizationId,role:{in:['OWNER','ADMIN','EDITOR']}},orderBy:{userId:'asc'},take:101,select:{userId:true,user:{select:{email:true}}}}):[];
   return {organizationId:ctx.organizationId,role:actor.role,canCreate,packs:STARTER_PACKS,members:allMembers.slice(0,100).filter(member=>allowedEmail(member.user.email,process.env.REGPILOT_AI_ALLOWED_EMAILS)).map(member=>({id:member.userId,email:member.user.email})),membersLimited:allMembers.length>100,programmes:views.map(({scopeRationale:_,recordHash:__,items:___,scope:____,...summary})=>summary),programmesLimited:false as const,selected:programmeId?views.find(item=>item.id===programmeId)!:null};
  },{isolationLevel:'RepeatableRead',maxWait:5000,timeout:12000});
  const latest=await db.$transaction(tx=>requireMember(tx,ctx));if(latest.role!==result.role)throw new IntelligenceError('Your workspace role changed. Refresh the starter programmes.',409);

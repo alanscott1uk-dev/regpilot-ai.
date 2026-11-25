@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID,createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
-import {exchange} from '../public/portal-helper/bridge.js';
+const source=await readFile(new URL('../public/portal-helper/bridge.js',import.meta.url));
+const {exchange}=await import('data:text/javascript;base64,'+source.toString('base64'));
 
 test('packaged helper ties a transfer to one reviewer, workspace, questionnaire, original buyer tab and expiry',async()=>{
  const home='https://stage.example.test/team/questionnaires',popup='chrome-extension://test/popup.html',sender={url:home,frameId:0,tab:{id:2}};

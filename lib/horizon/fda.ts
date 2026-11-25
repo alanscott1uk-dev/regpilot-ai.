@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import {CollectionError} from '../connectors/collection-error';
 import {readBoundedJson} from '../connectors/bounded-http';
 
@@ -16,10 +17,14 @@ export async function fdaSearchPage(windowStart:string,generatedAt:string,offset
  const meta=data?.meta?.results;
  if(!Number.isSafeInteger(meta?.total)||meta.total<0||meta.skip!==offset||!Array.isArray(data.results)||data.results.length>count)throw new CollectionError('INVALID_RESPONSE_SHAPE');
  const results=data.results.map((r:Record<string,unknown>)=>{
-  if(typeof r.recall_number!=='string'||!/^D-\d{1,6}-\d{4}$/.test(r.recall_number)||typeof r.report_date!=='string'||!/^\d{8}$/.test(r.report_date)||typeof r.product_description!=='string'||!r.product_description.trim()||typeof r.reason_for_recall!=='string'||typeof r.status!=='string'||r.product_type!=='Drugs')throw new CollectionError('INVALID_PUBLICATION_METADATA');
+  const numbered=typeof r.recall_number==='string'&&/^D-\d{1,6}-\d{4}$/.test(r.recall_number);
+  const provisional=r.recall_number===''&&typeof r.event_id==='string'&&/^[1-9]\d{0,11}$/.test(r.event_id);
+  if((!numbered&&!provisional)||typeof r.report_date!=='string'||!/^\d{8}$/.test(r.report_date)||typeof r.product_description!=='string'||!r.product_description.trim()||typeof r.reason_for_recall!=='string'||typeof r.status!=='string'||r.product_type!=='Drugs')throw new CollectionError('INVALID_PUBLICATION_METADATA');
   const day=r.report_date.slice(0,4)+'-'+r.report_date.slice(4,6)+'-'+r.report_date.slice(6);
   if(!Number.isFinite(Date.parse(day))||new Date(day).toISOString().slice(0,10)!==day||r.report_date<stamp(windowStart)||r.report_date>stamp(generatedAt))throw new CollectionError('INVALID_PUBLICATION_TIMESTAMP');
-  return {title:r.recall_number+' · '+r.product_description,description:r.status+' · '+r.reason_for_recall,link:'/us-fda/drug-recalls/'+r.recall_number.toLowerCase(),public_timestamp:day+'T00:00:00Z',content_store_document_type:'drug_recall',organisations:[{slug:'us-fda'}]};
+  const recordKey=createHash('sha256').update(JSON.stringify([r.event_id,r.product_description,r.code_info])).digest('hex');
+  const classification=typeof r.classification==='string'?r.classification+' · ':'';
+  return {recordKey,title:(numbered?r.recall_number:'FDA event '+r.event_id)+' · '+r.product_description,description:classification+r.status+' · '+r.reason_for_recall,link:numbered?'/us-fda/drug-recalls/'+String(r.recall_number).toLowerCase():'/us-fda/drug-events/'+r.event_id,public_timestamp:day+'T00:00:00Z',content_store_document_type:'drug_recall',organisations:[{slug:'us-fda'}]};
  });
  return {count,raw:{total:meta.total as number,results}};
 }
