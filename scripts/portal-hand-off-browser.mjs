@@ -1,3 +1,4 @@
+import {installedPortalPairing} from './portal-pairing-browser.mjs';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 
@@ -16,7 +17,7 @@ export async function portalBrowserJourney(browser,base,viewport,name){
   assert.equal(await page.getByLabel('How is access reviewed?').inputValue(),one[0].answer);
   assert.equal(await page.getByLabel('Which unsupported statement applies?').inputValue(),'');assert.equal(await page.evaluate(()=>globalThis.submits),0);
   await assert.rejects(()=>page.evaluate(([c,a])=>globalThis.questionnaireFields(c,a),[capture,one]));
-  const file=await context.request.get(base+'/api/tools/portal-helper');assert.equal(file.status(),200);assert.equal((await file.body()).readUInt32LE(0),0x04034b50);
+  const file=await context.request.get(base+'/api/tools/portal-helper');assert.equal(file.status(),200);const zip=await file.body();assert.equal(zip.readUInt32LE(0),0x04034b50);if(name==='desktop')await installedPortalPairing(zip);
   await page.goto(base+'/trust/directory');await page.getByRole('heading',{name:'Public trust directory'}).waitFor();
   await page.getByLabel('Company or publication title').fill('Unknown buyer');await page.getByRole('button',{name:'Search public summaries'}).click();await page.getByRole('status').filter({hasText:'No current public summary'}).waitFor();
   return {scenario:'portal-handoff-'+name,passed:true,fieldCount:capture.fields.length,filled:1,automaticallySubmitted:false};

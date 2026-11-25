@@ -1,11 +1,12 @@
+import {fdaSearchPage} from './fda';
 import {CollectionError} from '../connectors/collection-error';
 import {resilientGet} from '../connectors/resilient-http';
 import {createHash} from 'node:crypto';
-import {PUBLISHERS,MAX_PUBLISHER_RESULTS,MAX_RETAINED_ITEMS,MAX_REPORT_BYTES,horizonPath,validateReport,type HorizonItem,type HorizonReport} from './model';
+import {PUBLISHERS,MAX_PUBLISHER_RESULTS,MAX_RETAINED_ITEMS,MAX_REPORT_BYTES,horizonSourceUrl,horizonPath,validateReport,type HorizonItem,type HorizonReport} from './model';
 const digest=(s:string)=>createHash('sha256').update(s).digest('hex').slice(0,32);
 const plain=(v:unknown,max:number)=>typeof v==='string'?v.replace(/<[^>]*>/g,' ').replace(/[\x00-\x1f\x7f]/g,' ').replace(/\s+/g,' ').trim().slice(0,max):'';
 export function itemKind(path:string,type:string):HorizonItem['kind']{
- if(path.startsWith('/drug-device-alerts/')||type==='medical_safety_alert'||type==='product_safety_alert_report')return 'Safety alert';
+ if(type==='drug_recall'||path.startsWith('/drug-device-alerts/')||type==='medical_safety_alert'||type==='product_safety_alert_report')return 'Safety alert';
  if(type.includes('consultation'))return 'Consultation';
  if(/regulation|decision|statutory|notice/.test(type))return 'Regulation or decision';
  if(/guidance|guide|manual/.test(type))return 'Guidance';
@@ -63,12 +64,12 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
   const priorFeed=old?.feeds.find(f=>f.id===publisher.id);
   if(priorFeed?.state==='unavailable'&&(priorFeed.reason==='RETRY_REQUIRES_REVIEW'||priorFeed.retryAt&&Date.parse(priorFeed.retryAt)>now.getTime())){feeds[index]={...priorFeed,retrieved:0};continue;}
   const feedMetrics={requests:0,retries:0};
-  const retryRead=resilientGet(fetcher,'https://www.gov.uk',{accept:'application/json'},{timeoutMs:90000,maxRequests:60,metrics:feedMetrics});
+  const retryRead=resilientGet(fetcher,publisher.id==='us-fda'?'https://api.fda.gov':'https://www.gov.uk',{accept:'application/json'},{timeoutMs:90000,maxRequests:60,metrics:feedMetrics});
   try{
    let pageSize = MAX_SEARCH_PAGE;
    while (retrieved < MAX_PUBLISHER_RESULTS) {
     const offset = retrieved;
-    const page = await readSearchPage(publisher.slug, windowStart, generatedAt, offset,
+    const page = publisher.id==='us-fda'?await fdaSearchPage(windowStart,generatedAt,offset,retryRead):await readSearchPage(publisher.slug, windowStart, generatedAt, offset,
      Math.min(pageSize, MAX_PUBLISHER_RESULTS-offset), retryRead);
     const {raw} = page;
     pageSize = page.count;
@@ -85,7 +86,7 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
     if(!Array.isArray(row.organisations)||!row.organisations.some((o:any)=>o?.slug===publisher.slug))throw new CollectionError('UNVERIFIED_PUBLISHER');
     if(seen.has(path))throw new CollectionError('DUPLICATE_PAGE');seen.add(path);retrieved++;
     if(Date.parse(updatedAt)<Date.parse(windowStart))continue;
-    const url='https://www.gov.uk'+path,title=plain(row.title,240),summary=plain(row.description,360),documentType=plain(row.content_store_document_type,100);
+    const url=horizonSourceUrl(path,[publisher.id]),title=plain(row.title,240),summary=plain(row.description,360),documentType=plain(row.content_store_document_type,100);
     if(!title||!documentType)throw new CollectionError('INVALID_PUBLICATION_METADATA');
     const id=digest(url),revision=digest(JSON.stringify({title,summary,documentType,updatedAt})),before=prior.get(id);
     staged.push({id,revision,path,url,title,summary,documentType,kind:itemKind(path,documentType),publisherIds:[publisher.id],updatedAt,firstSeenAt:before?.firstSeenAt||generatedAt,observedAt:generatedAt,discovery:!old?'BASELINE':!before?'FIRST_SEEN':before.revision!==revision?'METADATA_UPDATED':'UNCHANGED'});
@@ -109,10 +110,10 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
  const previousHistory=old?[summarize(old),...(old.pipeline?.history||[])]:[];
  const history=[...new Map(previousHistory.filter(h=>h.generatedAt!==generatedAt).map(h=>[h.generatedAt,h])).values()].sort((a,b)=>b.generatedAt.localeCompare(a.generatedAt)).slice(0,48);
  return validateReport({pipeline:{cadenceMinutes:60,durationMs:Date.now()-started,...metrics,retentionLimited:collected.size>items.length,history},format:'regpilot-horizon-v1',generatedAt,windowStart,...provenance,previousAvailable:!!old,feeds,items,limitations:[
-  'Discovery metadata from selected GOV.UK publishers over the last 30 days. This is not complete UK regulatory coverage.',
+  'Discovery metadata from selected GOV.UK publishers and US FDA drug recall enforcement reports over the last 30 days. Review the jurisdiction of each source.',
   'Each publisher is bounded to 2,000 results per run and the retained feed to 10,000 records or 4 MB, whichever is reached first. Limits and unavailable feeds are explicit; older items keep their original observation time.',
   'Publication timestamps and metadata changes are not legal effective dates or proof of changed obligations. Applicability and jurisdiction require review.',
   'Publisher/activity matching and category priority are transparent sorting aids, not legal assessments. Full text, linked attachments and independently reviewed requirements are handled separately.',
-  'Public metadata is attributed to GOV.UK. Contains public sector information licensed under the Open Government Licence v3.0.'
+  'GOV.UK records contain public sector information licensed under the Open Government Licence v3.0. US drug recall data is supplied by openFDA.'
  ]},now.getTime());
 }

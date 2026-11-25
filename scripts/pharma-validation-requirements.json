@@ -1,0 +1,44 @@
+[
+  {
+    "id": "PH-01",
+    "requirement": "Bind each logger observation to serial, current calibration and credential history",
+    "file": "tests/operational-records.integration.test.ts",
+    "test": "repeated logger collection checks the physical serial, rotated key and current certificate review on each collection"
+  },
+  {
+    "id": "PH-02",
+    "requirement": "Reconcile affected stock and retain the independent recount",
+    "file": "tests/capa.integration.test.ts",
+    "test": "independent controlled-stock review retains discrepancies and every recount in the case export"
+  },
+  {
+    "id": "PH-03",
+    "requirement": "Keep excursion ownership until the recipient accepts the handover",
+    "file": "tests/capa.integration.test.ts",
+    "test": "a temperature excursion retains accountability until the named recipient accepts the outstanding checks"
+  },
+  {
+    "id": "PH-04",
+    "requirement": "Require independent closure supported by reviewed evidence",
+    "file": "tests/capa.integration.test.ts",
+    "test": "closure needs actual action proof, verified bytes, the planned observation and an independent decision"
+  },
+  {
+    "id": "PH-05",
+    "requirement": "Bind the signed site decision to the release, configuration and test evidence",
+    "file": "tests/trial-support.integration.test.ts",
+    "test": "a site decision binds the live build, the named configuration, reviewed tests and signatory authority"
+  },
+  {
+    "id": "PH-06",
+    "requirement": "Retain the operator’s excursion actions and an independently retrievable record",
+    "file": "tests/trial-support.integration.test.ts",
+    "test": "an internal first-time excursion trial requires the participant’s own case action and accounts for corrections and help"
+  },
+  {
+    "id": "PH-07",
+    "requirement": "Enforce independent, current and tenant-scoped document authorisation",
+    "file": "tests/policy-effectivity.integration.test.ts",
+    "test": "exact authenticated authorisation is tenant-scoped, independent, fresh, immutable and recoverable after a lost response"
+  }
+]

@@ -3,6 +3,8 @@ import {useRef,useState} from 'react';
 import type {useWorkspaceContext} from '../../../lib/client/workspace-context';
 import type {siteQualification} from '../../../lib/server/site-qualification-service';
 
+import type {softwareValidation} from '../../../lib/server/software-validation';
+type Pack=Awaited<ReturnType<typeof softwareValidation>>;
 type Packet=Awaited<ReturnType<typeof siteQualification>>;
 type Workspace=ReturnType<typeof useWorkspaceContext>;
 const labels:Record<string,string>={AWAITING_DECISION:'Awaiting a site decision',APPROVED_FOR_SITE_USE:'Approved for the recorded site use',
@@ -10,6 +12,7 @@ const labels:Record<string,string>={AWAITING_DECISION:'Awaiting a site decision'
 
 export default function SiteDecision({w,id,files,participant}:{w:Workspace;id:string;files:{id:string;filename:string}[];participant:boolean}){
  const [packet,setPacket]=useState<Packet|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
+ const [software,setSoftware]=useState<Pack|null>(null);
  const pending=useRef(false),keys=useRef(new Map<string,string>());
  const url='/api/workspace/trials/'+id+'/site?'+new URLSearchParams({organizationId:w.organizationId});
  async function run(operation:()=>Promise<Packet>){
@@ -55,6 +58,9 @@ export default function SiteDecision({w,id,files,participant}:{w:Workspace;id:st
    <p>Protocol and results fingerprint <code>{packet.basisHash}</code></p>
    {packet.blockers.length>0&&<ul>{packet.blockers.map(reason=><li key={reason}>{reason}</li>)}</ul>}
    {packet.decisions.map(d=><div key={d.id}><p>{d.input.decision} · {d.input.signatory}, {d.input.role} · {d.at}</p><p>{d.input.rationale}</p></div>)}
+   <h4>Software validation for this release</h4><p><code>{packet.protocol.release}</code></p>
+   <button type="button" disabled={busy} onClick={()=>void run(async()=>{setSoftware(null);const valid=w.capture();const result:Pack=await w.request(url.replace('/site?','/release-validation?'));if(result.revision!==packet.protocol.release)throw Error('The validation revision changed. Refresh the dossier.');if(valid())setSoftware(result);return packet;})}>Find executed release tests</button>
+   {software&&<div><p>{({MISSING:'No validation run was found for this revision.',RUNNING:'Validation is running.',FAILED:'The latest validation run did not pass.',UNAVAILABLE:'The validation archive is unavailable or expired.',AVAILABLE:'Supplier tests passed on this exact revision.'})[software.state]}</p>{'runUrl' in software&&<a href={software.runUrl} target="_blank" rel="noreferrer">View execution record</a>}{software.state==='AVAILABLE'&&<p><a href={software.downloadUrl}>Download validation pack from GitHub</a> · Available until {software.expiresAt.slice(0,10)}<br/>Archive digest <code>{software.digest}</code></p>}</div>}
    <button type="button" disabled={busy} onClick={download}>Download site dossier</button>
    {!participant&&packet.finishedAt&&(withdrawing||packet.status==='AWAITING_DECISION')&&
     <form onSubmit={e=>{e.preventDefault();submit(new FormData(e.currentTarget));}}><fieldset disabled={busy}><legend>Record the signed site decision</legend>

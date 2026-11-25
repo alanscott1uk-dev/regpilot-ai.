@@ -24,7 +24,7 @@ async function apply(ctx:AuthorizedContext,input:StarterPlan,token:string){const
 test('starter programme preview, concurrent adoption and replay keep one owned task set through real generic completion',async()=>{
  const f=await setup(),{owner,reviewer,editor,viewer,foreign}=f,input=plan(editor.userId);
  try{
-  const empty=await starterProgrammeWorkspace(owner);assert.deepEqual(empty.packs.map(p=>p.id),['business-foundations','people-access','supplier-continuity','nhs-digital-health-england']);assert.equal(empty.programmes.length,0);assert.equal(empty.programmesLimited,false);assert.equal(empty.members.length,3);
+  const empty=await starterProgrammeWorkspace(owner);assert.deepEqual(empty.packs.map(p=>p.id),['business-foundations','people-access','supplier-continuity','nhs-digital-health-england','soc2-iso27001','uk-gdp-cold-chain','uk-gmp-site-validation']);assert.equal(empty.programmes.length,0);assert.equal(empty.programmesLimited,false);assert.equal(empty.members.length,3);
   const proposed=await preview(owner,input);assert.equal(proposed.total,2);assert.equal(await db.obligation.count({where:{organizationId:owner.organizationId}}),0);assert.equal(await db.auditEvent.count({where:{organizationId:owner.organizationId}}),0,'preview records no tasks or audit events');
   await assert.rejects(()=>preview(editor,input),(error:any)=>error.status===403);await assert.rejects(()=>preview(viewer,input),(error:any)=>error.status===403);
   await assert.rejects(()=>preview(owner,{...input,items:[{...input.items[0],assigneeId:foreign.userId}]}),(error:any)=>error.status===409);
@@ -63,4 +63,19 @@ test('starter programme creation rolls back atomically and invalid history canno
   await db.obligation.update({where:{id:created.taskIds[0]},data:{assigneeId:null,ownerName:'Unassigned',dueDate:new Date(Date.now()-2*86400000)}});const open=await starterProgrammeWorkspace(owner,event.id);assert.equal(open.selected?.needsAttention,1);assert.equal(open.selected?.items[0].attention.length,2,'live owner/date issues remain visible while the original plan is retained');
   await db.obligation.update({where:{id:created.taskIds[1]},data:{automationKey:null}});const broken=await starterProgrammeWorkspace(owner,event.id);assert.equal(broken.selected?.needsAttention,2);assert.equal(broken.selected?.items[1].task,null,'a mismatched task identity is not silently treated as complete');
  }finally{if(trigger)await db.$executeRawUnsafe('DROP TRIGGER IF EXISTS regpilot_test_starter_rollback ON public."Obligation"');await db.$executeRawUnsafe('DROP FUNCTION IF EXISTS public.regpilot_test_starter_rollback()');await f.clean();await db.$disconnect();}
+});
+
+test('a mapped evidence task is shared by both audit references in the saved programme and export',async()=>{
+ const {programmeMappingCsv}=await import('../lib/programme-mapping');
+ const f=await setup();
+ try{
+  const pack=STARTER_PACKS.find(p=>p.id==='soc2-iso27001')!,input=plan(f.editor.userId,pack),previewed=await preview(f.owner,input);
+  assert.equal(previewed.items[0].mappings?.length,2);
+  const saved=await apply(f.owner,input,previewed.token),view=(await starterProgrammeWorkspace(f.owner,saved.id)).selected!;
+  const csv=programmeMappingCsv(view),rows=csv.split('\r\n');
+  assert.equal(rows.length,5);assert.ok(rows[1].includes(saved.taskIds[0])&&rows[2].includes(saved.taskIds[0]));
+  assert.ok(rows[1].includes('SOC 2 Security')&&rows[2].includes('ISO/IEC 27001:2022'));
+  const task=await db.obligation.findFirstOrThrow({where:{id:saved.taskIds[0],organizationId:f.owner.organizationId}});
+  assert.ok(task.notes?.includes('CC6.2')&&task.notes.includes('A.5.18'));assert.equal(task.status,'OPEN');
+ }finally{await f.clean();}
 });

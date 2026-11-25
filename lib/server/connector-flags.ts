@@ -17,6 +17,10 @@ export const gleifEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_GLEIF_EN
 export const awsEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_AWS_ENABLED==="true"&&brokerRole.safeParse(process.env.REGPILOT_AWS_BROKER_ROLE_ARN).success;
 export const awsOrganizationEnabled=()=>awsEnabled()&&process.env.REGPILOT_AWS_ORGANIZATIONS_ENABLED==="true";
 const providerGates=new Map<string,()=>boolean>(Object.entries({
+ GITHUB_SCIM:()=>connectorsEnabled()&&process.env.REGPILOT_GITHUB_SCIM_ENABLED!=="false",
+ ATLASSIAN_SCIM:()=>connectorsEnabled()&&process.env.REGPILOT_ATLASSIAN_SCIM_ENABLED!=="false",
+ STATUSPAGE_COMPONENT:()=>connectorsEnabled()&&process.env.REGPILOT_STATUSPAGE_COMPONENT_ENABLED!=="false",
+ ZENDESK_TICKET:()=>connectorsEnabled()&&process.env.REGPILOT_ZENDESK_TICKET_ENABLED!=="false",
  NHSBSA_MAPPING:connectorsEnabled,CLINICALTRIALS_GOV:connectorsEnabled,OPENFDA_RECALL:connectorsEnabled,DAILYMED_LABEL:connectorsEnabled,EUROPE_PMC:connectorsEnabled,MHRA_GUIDANCE:connectorsEnabled,
  OPENAI_PROJECT_MODEL:()=>connectorsEnabled(),
  PRIVATE_AI_MODEL:()=>connectorsEnabled()&&!!process.env.REGPILOT_PRIVATE_MODEL_HOST,

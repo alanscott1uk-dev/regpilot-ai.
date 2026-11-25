@@ -4,12 +4,13 @@ import {collectHorizon,boundedJson} from '../lib/horizon/collector';
 import {emptyHorizonView, matchingPhrase, matchesHorizonView, searchPhrases, watchlistFilters} from '../lib/horizon/watchlists';
 import {PUBLISHERS,describeFeedIssue,rankItem,reportState,validateReport} from '../lib/horizon/model';
 const now=new Date('2026-11-12T02:00:00Z');
-function fixture(change='',fail='',total=1){const calls:string[]=[];return {calls,fetch:(async(url:any,init:any)=>{const u=new URL(String(url)),slug=u.searchParams.get('filter_organisations')!,start=Number(u.searchParams.get('start'));calls.push(u.href);assert.equal(u.origin,'https://www.gov.uk');assert.equal(u.pathname,'/api/search.json');assert.equal(init.redirect,'error');if(slug===fail)return new Response(null,{status:503});return Response.json({total,results:Array.from({length:Math.min(Number(u.searchParams.get('count')),Math.max(0,total-start))},(_,n)=>({title:'Fictional guidance '+change,description:'Fictional test metadata only.',link:'/guidance/'+slug+'-'+(start+n),public_timestamp:'2026-11-11T12:00:00Z',content_store_document_type:'detailed_guide',organisations:[{slug}] }))});}) as typeof fetch};}
+const ukCount=PUBLISHERS.length-1;
+function fixture(change='',fail='',total=1){const calls:string[]=[];return {calls,fetch:(async(url:any,init:any)=>{const u=new URL(String(url)),slug=u.searchParams.get('filter_organisations')!,start=Number(u.searchParams.get('start'));calls.push(u.href);if(u.origin==='https://api.fda.gov')return Response.json({meta:{results:{skip:0,total:0}},results:[]});assert.equal(u.origin,'https://www.gov.uk');assert.equal(u.pathname,'/api/search.json');assert.equal(init.redirect,'error');if(slug===fail)return new Response(null,{status:503});return Response.json({total,results:Array.from({length:Math.min(Number(u.searchParams.get('count')),Math.max(0,total-start))},(_,n)=>({title:'Fictional guidance '+change,description:'Fictional test metadata only.',link:'/guidance/'+slug+'-'+(start+n),public_timestamp:'2026-11-11T12:00:00Z',content_store_document_type:'detailed_guide',organisations:[{slug}] }))});}) as typeof fetch};}
 test('horizon verifies publishers, bounds requests and compares persisted metadata without inventing legal changes',async()=>{
- const f=fixture(),first=await collectHorizon(null,f.fetch,now);assert.equal(first.items.length,12);assert.ok(first.items.every(i=>i.discovery==='BASELINE'));assert.equal(reportState(first,now.getTime()),'current');
+ const f=fixture(),first=await collectHorizon(null,f.fetch,now);assert.equal(first.items.length,ukCount);assert.ok(first.items.every(i=>i.discovery==='BASELINE'));assert.equal(reportState(first,now.getTime()),'current');
  const next=await collectHorizon(first,fixture().fetch,new Date(now.getTime()+60000));assert.ok(next.items.every(i=>i.discovery==='UNCHANGED'));
  const changed=await collectHorizon(first,fixture('revised').fetch,new Date(now.getTime()+60000));assert.ok(changed.items.every(i=>i.discovery==='METADATA_UPDATED'));
- assert.equal(f.calls.length,12);assert.match(first.limitations.join(' '),/not legal effective dates/);
+ assert.equal(f.calls.length,PUBLISHERS.length);assert.match(first.limitations.join(' '),/not legal effective dates/);
 });
 test('horizon retains known metadata through outages without refreshing its observation time',async()=>{
  const first=await collectHorizon(null,fixture().fetch,now),later=new Date(now.getTime()+13*3600000);
@@ -19,7 +20,7 @@ test('horizon retains known metadata through outages without refreshing its obse
  assert.equal(reportState(next,later.getTime()+13*3600000),'stale');
 });
 test('result caps remain visible and malicious publisher, path, date and duplicate data cannot enter the feed',async()=>{
- const f=fixture('','',2001),r=await collectHorizon(null,f.fetch,now);assert.equal(f.calls.length,24);assert.ok(r.feeds.every(x=>x.state==='limited'));assert.ok(r.items.length>1500&&r.items.length<=10000);assert.ok(Buffer.byteLength(JSON.stringify(r))<4_000_000);assert.equal(r.pipeline?.retentionLimited,true);
+ const f=fixture('','',2001),r=await collectHorizon(null,f.fetch,now);assert.equal(f.calls.length,ukCount*2+1);assert.ok(r.feeds.filter(f=>f.id!=='us-fda').every(x=>x.state==='limited'));assert.ok(r.items.length>1500&&r.items.length<=10000);assert.ok(Buffer.byteLength(JSON.stringify(r))<4_000_000);assert.equal(r.pipeline?.retentionLimited,true);
  for(const change of [{link:'https://evil.invalid/'},{organisations:[{slug:'other-authority'}]},{public_timestamp:'2099-01-01T00:00:00Z'}]){
   const base=fixture();const bad=(async(url:any,init:any)=>{const body=await (await base.fetch(url,init)).json();Object.assign(body.results[0],change);return Response.json(body);}) as typeof fetch;
   const report=await collectHorizon(null,bad,now);assert.equal(report.items.length,0);assert.ok(report.feeds.every(x=>x.state==='unavailable'));
@@ -39,15 +40,15 @@ test('public reader refuses oversized, redirected and non-JSON responses',async(
 
 test('expanded horizon completes more than 100 results and records prior published runs',async()=>{
  const first=await collectHorizon(null,fixture('','',120).fetch,now);
- assert.equal(first.items.length,1440);assert.ok(first.feeds.every(f=>f.state==='available'&&f.retrieved===120));assert.equal(first.pipeline?.requests,12);
+ assert.equal(first.items.length,120*ukCount);assert.ok(first.feeds.every(f=>f.state==='available'&&f.retrieved===(f.id==='us-fda'?0:120)));assert.equal(first.pipeline?.requests,PUBLISHERS.length);
  const next=await collectHorizon(first,fixture().fetch,new Date(now.getTime()+60000));
- assert.equal(next.pipeline?.history[0].publications,1440);assert.equal(next.pipeline?.history[0].generatedAt,first.generatedAt);
+ assert.equal(next.pipeline?.history[0].publications,120*ukCount);assert.equal(next.pipeline?.history[0].generatedAt,first.generatedAt);
  assert.equal(reportState(next,now.getTime()+4*3600000),'stale');
  assert.throws(()=>validateReport({...next,pipeline:{...next.pipeline,history:[next.pipeline!.history[0],next.pipeline!.history[0]]}},now.getTime()+60000));
 });
 test('changing provider totals never claim complete collection',async()=>{
  const f=fixture('','',1501);const report=await collectHorizon(null,async(u,o)=>{const response=await f.fetch(u,o),data=await response.json();if(new URL(String(u)).searchParams.get('start')==='1500'){data.total=1500;data.results=[];}return Response.json(data);},now);
- assert.ok(report.feeds.every(f=>f.state==='limited'&&f.reason==='INDEX_CHANGED'));
+ assert.ok(report.feeds.filter(f=>f.id!=='us-fda').every(f=>f.state==='limited'&&f.reason==='INDEX_CHANGED'));
 });
 
 test('publisher cooldown survives published checkpoints and skips early retry while preserving old observation time',async()=>{
@@ -55,8 +56,8 @@ test('publisher cooldown survives published checkpoints and skips early retry wh
  const failed=await collectHorizon(initial,async(u,o)=>new URL(String(u)).searchParams.get('filter_organisations')===PUBLISHERS[0].slug?new Response(null,{status:429,headers:{'retry-after':'7200'}}):f.fetch(u,o),new Date(now.getTime()+60000));
  assert.equal(failed.feeds[0].failureCount,1);assert.equal(failed.feeds[0].reason,'RATE_LIMITED');
  const next=fixture();const recovered=await collectHorizon(failed,next.fetch,new Date(now.getTime()+3600000));
- assert.equal(next.calls.length,11);assert.equal(recovered.feeds[0].checkedAt,failed.generatedAt);assert.equal(recovered.items.find(i=>i.publisherIds.includes('mhra'))?.observedAt,initial.generatedAt);
- const due=fixture();const fresh=await collectHorizon(recovered,due.fetch,new Date(now.getTime()+3*3600000));assert.equal(due.calls.length,12);assert.equal(fresh.feeds[0].failureCount,0);assert.equal(fresh.feeds[0].state,'available');
+ assert.equal(next.calls.length,PUBLISHERS.length-1);assert.equal(recovered.feeds[0].checkedAt,failed.generatedAt);assert.equal(recovered.items.find(i=>i.publisherIds.includes('mhra'))?.observedAt,initial.generatedAt);
+ const due=fixture();const fresh=await collectHorizon(recovered,due.fetch,new Date(now.getTime()+3*3600000));assert.equal(due.calls.length,PUBLISHERS.length);assert.equal(fresh.feeds[0].failureCount,0);assert.equal(fresh.feeds[0].state,'available');
 });
 
 test('discovery diagnostics distinguish safe failure reasons without accepting partial data or refreshing old observations',async()=>{
@@ -80,7 +81,7 @@ test('discovery diagnostics distinguish safe failure reasons without accepting p
   const feed=result.feeds.find(f=>f.id==='hmrc')!;
   assert.equal(feed.state,'unavailable');assert.equal(feed.reason,scenario.reason);assert.equal(feed.retrieved,0);
   assert.equal(feed.failureCount,1);assert.equal(feed.retryAt,new Date(later.getTime()+900000).toISOString());
-  assert.equal(result.feeds.filter(f=>f.state==='available').length,11);
+  assert.equal(result.feeds.filter(f=>f.state==='available').length,PUBLISHERS.length-1);
   assert.deepEqual(result.items.filter(i=>i.publisherIds.includes('hmrc')),baseline.items.filter(i=>i.publisherIds.includes('hmrc')));
   assert.doesNotMatch(JSON.stringify(result),/secret|Private provider|private-unknown|invalid-private/);
  }
@@ -98,7 +99,7 @@ test('larger reads avoid unstable offset boundaries and oversized pages retry at
  assert.deepEqual(seen,['0:1500','0:750','0:375','0:187','0:93','93:93']);
  assert.equal(result.feeds.find(f=>f.id==='hmrc')?.state,'available');
  assert.equal(result.feeds.find(f=>f.id==='hmrc')?.retrieved,120);
- assert.equal(result.pipeline?.requests,17);
+ assert.equal(result.pipeline?.requests,PUBLISHERS.length+5);
 });
 
 test('an incorrect offset or truncated publisher page cannot replace a previously observed feed', async () => {
@@ -153,4 +154,22 @@ test('saved filters validate vocabulary, reject oversized terms, and keep provid
  assert.match(describeFeedIssue('DUPLICATE_PAGE'),/duplicate publication/);
  assert.match(describeFeedIssue('HTTP_STATUS_403'),/HTTP 403/);
  assert.equal(describeFeedIssue('private error detail'),describeFeedIssue('__proto__'));
+});
+
+test('FDA recalls enter the same review filters with publisher-bound record links and survive an upstream outage',async()=>{
+ const gb=fixture();
+ const fake=async(input:Parameters<typeof fetch>[0],init?:RequestInit)=>{
+  if(new URL(String(input)).hostname!=='api.fda.gov')return gb.fetch(input,init);
+  const u=new URL(String(input));assert.match(u.searchParams.get('search')!,/^report_date:\[/);
+  return Response.json({meta:{results:{skip:0,total:1}},results:[{recall_number:'D-123-2026',report_date:'20261110',product_type:'Drugs',status:'Ongoing',product_description:'Fictional tablets',reason_for_recall:'Fictional stability result'}]});
+ };
+ const report=await collectHorizon(null,fake,now),fda=report.items.find(i=>i.publisherIds.includes('us-fda'))!;
+ assert.equal(fda.kind,'Safety alert');assert.match(fda.url,/^https:\/\/api\.fda\.gov\/drug\/enforcement\.json/);
+ assert.ok(matchesHorizonView(fda,{...emptyHorizonView,publisher:'us-fda',topic:'medicines'},report.generatedAt,false));
+ assert.throws(()=>validateReport({...report,items:[{...fda,publisherIds:['mhra']}]},now.getTime()));
+ const old={...report,feeds:report.feeds.slice(0,12),items:report.items.filter(i=>report.feeds.slice(0,12).some(f=>i.publisherIds.includes(f.id)))};
+ assert.doesNotThrow(()=>validateReport(old,now.getTime()));
+ assert.throws(()=>validateReport({...old,feeds:[...old.feeds.slice(1),report.feeds.at(-1)]},now.getTime()));
+ const later=await collectHorizon(report,(u,i)=>new URL(String(u)).hostname==='api.fda.gov'?Promise.resolve(new Response(null,{status:403})):gb.fetch(u,i),new Date(+now+60_000));
+ assert.equal(later.feeds.at(-1)?.state,'unavailable');assert.equal(later.items.find(i=>i.id===fda.id)?.observedAt,report.generatedAt);
 });

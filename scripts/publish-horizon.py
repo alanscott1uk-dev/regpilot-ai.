@@ -3,6 +3,7 @@ import datetime, json, os, pathlib, re, sys, urllib.request, urllib.error, base6
 REPOSITORY='alanscott1uk-dev/regpilot-ai.'
 BRANCH='regpilot-public-feed'
 PUBLISHERS={'mhra','home-office','hmrc','companies-house','business-trade','cma','environment-agency','defra','dwp','product-safety','dsit','dhsc'}
+ALL_PUBLISHERS=PUBLISHERS|{'ukhsa','vmd','hse','us-fda'}
 def validate(data, expected_commit=None, max_age_hours=2):
     assert set(data)-{'pipeline'}=={'format','generatedAt','windowStart','codeCommit','runId','previousAvailable','feeds','items','limitations'}
     assert data['format']=='regpilot-horizon-v1'
@@ -19,7 +20,7 @@ def validate(data, expected_commit=None, max_age_hours=2):
     if expected_commit: assert data['codeCommit']==expected_commit
     assert data['runId'] is None or re.fullmatch('[0-9]{1,30}',data['runId'])
     assert isinstance(data['limitations'],list) and len(data['limitations'])<=8 and all(isinstance(v,str) and len(v)<=400 for v in data['limitations'])
-    feeds=data['feeds'];assert len(feeds)==12 and {f['id'] for f in feeds}==PUBLISHERS
+    feeds=data['feeds'];manifest={f['id'] for f in feeds};assert len(feeds)==len(manifest) and manifest in (PUBLISHERS,ALL_PUBLISHERS)
     for f in feeds:
         assert set(f)-{'retryAt','failureCount'}=={'id','state','checkedAt','total','retrieved','reason'}
         if 'failureCount' in f:assert type(f['failureCount']) is int and 0<=f['failureCount']<=100
@@ -36,10 +37,13 @@ def validate(data, expected_commit=None, max_age_hours=2):
         assert re.fullmatch('[a-f0-9]{32}',item['id']) and item['id'] not in ids;ids.add(item['id'])
         assert re.fullmatch('[a-f0-9]{32}',item['revision'])
         path=item['path'];assert isinstance(path,str) and len(path)<=450 and re.fullmatch('/[a-z0-9][a-z0-9/-]*',path) and '//' not in path and not path.endswith('/') and not path.startswith('/api/')
-        assert item['url']=='https://www.gov.uk'+path
+        if 'us-fda' in item['publisherIds']:
+            number=re.fullmatch('/us-fda/drug-recalls/(d-[0-9]{1,6}-[0-9]{4})',path)
+            assert number and item['publisherIds']==['us-fda'] and item['url']=='https://api.fda.gov/drug/enforcement.json?search=recall_number:%22'+number[1].upper()+'%22'
+        else:assert not path.startswith('/us-fda/') and item['url']=='https://www.gov.uk'+path
         for key,limit in [('title',240),('summary',360),('documentType',100)]:assert isinstance(item[key],str) and len(item[key])<=limit
         assert item['title'] and item['kind'] in ('Safety alert','Consultation','Regulation or decision','Guidance','Policy','News','Other publication')
-        assert isinstance(item['publisherIds'],list) and 1<=len(item['publisherIds'])<=12 and set(item['publisherIds'])<=PUBLISHERS
+        assert isinstance(item['publisherIds'],list) and 1<=len(item['publisherIds'])<=len(manifest) and set(item['publisherIds'])<=manifest
         assert date(item['firstSeenAt'])<=date(item['observedAt'])<=generated;date(item['updatedAt'])
         assert item['discovery'] in ('BASELINE','FIRST_SEEN','METADATA_UPDATED','UNCHANGED')
     if 'pipeline' in data:
@@ -53,8 +57,8 @@ def validate(data, expected_commit=None, max_age_hours=2):
             assert date(h['generatedAt'])<=generated and h['generatedAt'] not in seen;seen.add(h['generatedAt'])
             assert h['runId'] is None or re.fullmatch('[0-9]{1,30}',h['runId'])
             assert type(h['publications']) is int and 0<=h['publications']<=10000
-            for k in ['available','limited','unavailable']:assert type(h[k]) is int and 0<=h[k]<=12
-            assert h['available']+h['limited']+h['unavailable']==12
+            for k in ['available','limited','unavailable']:assert type(h[k]) is int and 0<=h[k]<=len(ALL_PUBLISHERS)
+            assert h['available']+h['limited']+h['unavailable'] in (len(PUBLISHERS),len(ALL_PUBLISHERS))
     return data
 
 def main():

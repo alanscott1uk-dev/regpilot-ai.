@@ -50,11 +50,12 @@ test("obligation library: source registration, versioning, scope, cross-collecti
   await assert.rejects(()=>reviewRevision(maker,rev,{version:1,decision:"ACCEPTED",notes,scopeConfirmed:true}),(e:any)=>e.status===403);
   await reviewRevision(reviewer,rev,{version:1,decision:"ACCEPTED",notes,scopeConfirmed:true});
   const refCase={action:'PROPOSE',id:randomUUID(),spec:{revisionId:rev,nation:'Northern Ireland',activity:'Widget staff training',on:'2026-11-21',facts:{employeeCount:12},expected:'NO_MATCH',rationale:'The independently sourced Scottish rule excludes the NI example.'}};
-  await changeTerritorialCase(maker,refCase);await assert.rejects(()=>changeTerritorialCase(maker,{action:'VALIDATE',id:refCase.id,decision:'ACCEPT'}),(e:any)=>e.status===403);
-  assert.equal((await territorialReport(reviewer)).metrics.scored,0);
-  await changeTerritorialCase(reviewer,{action:'VALIDATE',id:refCase.id,decision:'ACCEPT'});
+  const independent={reference:'NO_MATCH',rationale:'The source scope and the dated scenario support this territorial assessment.'};
+  await changeTerritorialCase(maker,refCase);await assert.rejects(()=>changeTerritorialCase(maker,{action:'VALIDATE',id:refCase.id,decision:'ACCEPT',...independent}),(e:any)=>e.status===403);
+  const blind=await territorialReport(reviewer);assert.equal(blind.metrics.scored,0);assert.equal(blind.cases[0].spec.expected,null);assert.equal(blind.cases[0].spec.rationale,null);assert.ok(blind.cases[0].sourceUrl);assert.equal(blind.cases[0].predicted,null);
+  await changeTerritorialCase(reviewer,{action:'VALIDATE',id:refCase.id,decision:'ACCEPT',...independent});
   const measured=await territorialReport(reviewer);assert.equal(measured.metrics.correct,1);assert.equal(measured.cases[0].predicted,'NO_MATCH');
-  const missed={...refCase,id:randomUUID(),spec:{...refCase.spec,expected:'MATCH'}};await changeTerritorialCase(maker,missed);await changeTerritorialCase(reviewer,{action:'VALIDATE',id:missed.id,decision:'ACCEPT'});assert.equal((await territorialReport(reviewer)).metrics.missedApplicable,1);
+  const missed={...refCase,id:randomUUID(),spec:{...refCase.spec}};await changeTerritorialCase(maker,missed);await changeTerritorialCase(reviewer,{action:'VALIDATE',id:missed.id,decision:'ACCEPT',...independent,reference:'MATCH'});const blindResults=await territorialReport(reviewer);assert.equal(blindResults.metrics.missedApplicable,1);assert.equal(blindResults.metrics.disagreements,1);assert.equal(blindResults.nations['Northern Ireland'].applicable,1);assert.equal(blindResults.nations.Scotland.scored,0);
   const d2=await draftRequirements(maker,{...intake,collection:"Fictional framework B",clauses:[{...intake.clauses[0],reference:"B-1"}]}),rev2=d2.revisionIds[0];await reviewRevision(reviewer,rev2,{version:1,decision:"ACCEPTED",notes,scopeConfirmed:true});
   const statement=(collection:string)=>applicabilityStatementPage(reviewer,{collection});
   assert.equal((await statement(intake.collection)).rows[0].state,'SCOPE_REVIEW');

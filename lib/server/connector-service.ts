@@ -49,6 +49,10 @@ const googleSchema=googleTarget.extend({provider:z.literal("GOOGLE_WORKSPACE"),c
 const microsoftSchema=microsoftTarget.extend({provider:z.enum(["MICROSOFT365","INTUNE"]),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:z.string().min(16).max(512).regex(/^[^\r\n\0]+$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)});
 const extraFields={controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().refine(validCredential).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)};
 const extraSchema=z.discriminatedUnion("provider",[
+ recordTargets.GITHUB_SCIM.extend({...extraFields,provider:z.literal("GITHUB_SCIM")}).strict(),
+ recordTargets.ATLASSIAN_SCIM.extend({...extraFields,provider:z.literal("ATLASSIAN_SCIM")}).strict(),
+ recordTargets.STATUSPAGE_COMPONENT.extend({...extraFields,provider:z.literal("STATUSPAGE_COMPONENT")}).strict(),
+ recordTargets.ZENDESK_TICKET.extend({...extraFields,provider:z.literal("ZENDESK_TICKET")}).strict(),
  recordTargets.NHSBSA_MAPPING.extend({...extraFields,provider:z.literal("NHSBSA_MAPPING")}).omit({token:true}).strict(),
  recordTargets.CLINICALTRIALS_GOV.extend({...extraFields,provider:z.literal("CLINICALTRIALS_GOV")}).omit({token:true}).strict(),
  recordTargets.OPENFDA_RECALL.extend({...extraFields,provider:z.literal("OPENFDA_RECALL")}).omit({token:true}).strict(),

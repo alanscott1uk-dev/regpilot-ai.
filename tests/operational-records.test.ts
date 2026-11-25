@@ -11,7 +11,7 @@ for (const row of records) {
       assert.equal(String(url), row.url);
       assert.equal(options?.method, "GET");
       assert.equal(options?.redirect, "error");
-      const expected = provider === "AZURE_DEVOPS" ? "Basic " + Buffer.from(":" + token).toString("base64") : "Bearer " + token;
+      const expected = provider === "AZURE_DEVOPS" ? "Basic " + Buffer.from(":" + token).toString("base64") : (provider==="STATUSPAGE_COMPONENT"?"OAuth ":"Bearer ") + token;
       assert.equal(new Headers(options?.headers).get("Authorization"), expected);
       return Response.json({...body, privateText:"never-retain"});
     };
@@ -34,7 +34,11 @@ test("unreadable and incomplete records cannot pass their checks", async () => {
     {result:{sys_id:records[1].target.record,closed_at:"unparseable"}},
     {id:93,project:{id:cloud},status:"inProgress",result:"succeeded"},
     {id:"842",version:{number:-1}},
-    {audit_id:"audit_cde",template_id:"template_abc",audit_data:{date_completed:"2099-01-01T00:00:00Z"}}
+    {audit_id:"audit_cde",template_id:"template_abc",audit_data:{date_completed:"2099-01-01T00:00:00Z"}},
+    {"id":"identity-19","schemas":["urn:ietf:params:scim:schemas:core:2.0:User"]},
+    {"id":"identity-19","schemas":["urn:ietf:params:scim:schemas:core:2.0:User"]},
+    {"id":"comp0001","page_id":"page0001"},
+    {"ticket":{"id":721}}
   ];
   for (const [i,row] of records.entries()) {
     const result = await collectOperationalRecord(row.provider,row.target,token,async()=>Response.json(incomplete[i]));

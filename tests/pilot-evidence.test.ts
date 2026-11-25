@@ -147,3 +147,13 @@ test('benchmark reasons use the same criteria as the qualified product total',()
  assert.deepEqual(missingMonitoringEvidence({...complete,category:'STAGING',productKey:null,cadence:false,recovered:false,inference:false}),['product','ownership','cadence','recovery','inference']);
  assert.equal(sameKnownChecks([{id:'a',status:'PASS'}],[{id:'a',status:'UNKNOWN'}]),false);
 });
+
+test('software validation locates a current artifact only for the exact release, run, repository and final attempt',async()=>{
+ const {softwareValidation}=await import('../lib/server/software-validation');
+ const revision='c'.repeat(40),repo='alanscott1uk-dev/regpilot-ai.',run={id:110,run_attempt:2,path:'.github/workflows/release-validation.yml',repository:{full_name:repo},head_repository:{full_name:repo},head_sha:revision,status:'completed',conclusion:'success'};
+ const artifact={id:112,name:'pharma-validation-'+revision+'-2',expired:false,digest:'sha256:'+'d'.repeat(64),expires_at:new Date(Date.now()+100000).toISOString(),workflow_run:{id:110,head_sha:revision}};
+ const check=(r=run,a=artifact)=>softwareValidation(revision,async u=>Response.json(String(u).includes('/artifacts?')?{artifacts:[a]}:{workflow_runs:[r]}));
+ const good=await check();assert.equal(good.state,'AVAILABLE');assert.ok(good.state==='AVAILABLE'&&good.downloadUrl.endsWith('/110/artifacts/112'));
+ assert.equal((await check({...run,head_repository:{full_name:'other/repo'}})).state,'MISSING');assert.equal((await check({...run,conclusion:'failure'})).state,'FAILED');
+ for(const item of [{...artifact,expired:true},{...artifact,name:artifact.name.slice(0,-1)+'1'},{...artifact,digest:''},{...artifact,workflow_run:{id:111,head_sha:revision}}])assert.equal((await check(run,item)).state,'UNAVAILABLE');
+});
