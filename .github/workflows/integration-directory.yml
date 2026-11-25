@@ -207,9 +207,15 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-python@v5
-        if: matrix.engine == 'mongodb'
         with:
           python-version: '3.12'
+      - name: Install the native SQL driver named in the source plan
+        if: contains(fromJSON('["postgres","mysql","mssql","clickhouse"]'), matrix.engine)
+        env:
+          DATABASE_ENGINE: ${{ matrix.engine }}
+        run: |
+          python -c "import os,sys; sys.path.insert(0,'public/database-bridge'); from native_sql import plan_for; print(*plan_for(os.environ['DATABASE_ENGINE'])['install'].split(),sep='\n')" > "$RUNNER_TEMP/sql-driver.txt"
+          python -m pip install -r "$RUNNER_TEMP/sql-driver.txt"
       - name: Install MongoDB fixture driver
         if: matrix.engine == 'mongodb'
         run: python -m pip install pymongo==4.13.2

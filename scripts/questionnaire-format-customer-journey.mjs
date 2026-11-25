@@ -60,7 +60,7 @@ export async function runQuestionnaireFormatJourney({upload,review,app,org,edito
  await packages.getByRole('button',{name:'Get pairing code for the buyer bookmark',exact:true}).click();
  const code=await packages.getByLabel('Buyer bookmark pairing code').inputValue();
  const buyer=await review.context().newPage(),buyerUrl='https://buyer.example.invalid/security?review=fixture';
- const buyerHTML='<html lang="en"><title>Fictional buyer</title><form><label>'+question+'<textarea></textarea></label><label>Which unknown question remains blank?<textarea></textarea></label><label>Customer note<textarea>Existing buyer text</textarea></label><button>Submit</button></form><script>window.submits=0;document.forms[0].onsubmit=e=>{e.preventDefault();window.submits++};</script></html>';
+ const buyerHTML='<html lang="en"><title>Fictional buyer</title><form><label>'+question+'<textarea></textarea></label><label>Which unknown question remains blank?<textarea></textarea></label><label for="buyer-note">Customer note</label><textarea id="buyer-note">Existing buyer text</textarea><button>Submit</button></form><script>window.submits=0;document.forms[0].onsubmit=e=>{e.preventDefault();window.submits++};</script></html>';
  await buyer.route('https://buyer.example.invalid/**',r=>r.fulfill({contentType:'text/html',body:buyerHTML}));
  async function openExchange(url){
   await buyer.goto(url);await buyer.evaluate(address=>{location.href=address;},bookmarkUrl);

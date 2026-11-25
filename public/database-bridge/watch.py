@@ -30,7 +30,7 @@ def write_json(path, value):
 
 recovery_steps = {
     "PLAN": "Download the test and its matching source plan again. Check the definition and version.",
-    "IMAGE": "Verify the installed source image and its approved digest.",
+    "IMAGE": "Verify the collector and its approved digest. For native SQL, check the driver version in the source plan.",
     "CONFIG": "Check the local configuration file and the authorised source network.",
     "ACCESS": "Check connectivity and the read account. Renew its credential if required and run the access check.",
     "DISCOVERY": "Confirm the reader can discover the required schema and streams.",

@@ -21,7 +21,7 @@ export default function TestBuilder({sources}: {sources: Source[]}) {
     try {
       if (file.size > 65536) throw Error('Choose one source plan under 64 KiB.');
       const plan = JSON.parse(await file.text());
-      if (plan?.format !== 'regpilot-airbyte-source-v1' ||
+      if (!['regpilot-airbyte-source-v1','regpilot-native-sql-v1'].includes(plan?.format) ||
           !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(plan.definitionId) ||
           !/^sha256:[0-9a-f]{64}$/.test(plan.artifactDigest) || typeof plan.name !== 'string' ||
           !plan.name.length || plan.name.length > 200 || typeof plan.version !== 'string' ||

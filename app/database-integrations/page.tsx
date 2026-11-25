@@ -1,3 +1,4 @@
+import nativePlans from '../../public/database-bridge/native-plans.json';
 import TestBuilder from './test-builder';
 import {sourceCatalogue,registryFilters,sourceKinds,planPath} from '../../lib/server/source-registry';
 import css from '../integration-directory/directory.module.css';
@@ -14,6 +15,8 @@ export default async function Sources({searchParams}:{searchParams:Promise<Recor
   return <main className={css.main}>
     <nav className={css.nav}><a href="/">RegPilot AI</a><a href="/integration-directory">Integration directory</a><a href="/integration-benchmark">Verified monitoring benchmark</a></nav>
     <header className={css.header}><h1>Database and source integrations</h1><p>Choose a source, download its collection plan and evaluate a control on your own infrastructure.</p></header>
+    <section className={css.panel}><h2>Native SQL monitoring</h2><p>Run scheduled checks on your own database using a read-only account. The collector reads the control field and the record identifier you select. <a href="/api/tools/database-bridge">Download the collector</a> · <a href="/database-bridge/setup.txt">Setup instructions</a></p>
+    <div className={css.pages}>{Object.entries(nativePlans).map(([engine,plan])=><a key={engine} href={'/api/tools/database-bridge/'+engine} download>{plan.name} plan</a>)}</div></section>
     <section className={css.panel}><div className={css.intro}><h2>Source catalogue</h2><a href={href(data?.page||1)}>Refresh view</a></div>
     {data?<><p><strong>{data.counts.total} source definitions</strong> from Airbyte · {data.counts.databases} database definitions · {data.counts.plans} collection plans with a checked image digest</p>
     {data.counts.plans>0&&<p><a href="/api/database-integrations/manifest">Download all {data.counts.plans} checked plans</a></p>}
@@ -25,7 +28,7 @@ export default async function Sources({searchParams}:{searchParams:Promise<Recor
     {data.entries.map(row=><tr key={row.id}><td>{row.name}{row.workspace_tested&&<> · <a href={'#test-'+row.id}>View collection test</a></>}</td><td>{kinds[row.kind]||row.kind}</td><td>{row.version}</td><td>{row.artifact_verified?<a href={planPath(row.id,row.version)} aria-label={'Download '+row.name+' plan'}>Download JSON</a>:row.plan_available?'Image check pending or unavailable':'Provider-managed'}</td></tr>)}</tbody></table></div>:<p>No matching source. <a href="/database-integrations">Clear filters</a></p>}
     
     {data.pages>1&&<nav className={css.pages} aria-label="Source pages">{data.page>1&&<a href={href(data.page-1)}>Previous</a>}<span>Page {data.page} of {data.pages}</span>{data.page<data.pages&&<a href={href(data.page+1)}>Next</a>}</nav>}</>:<p role="status">The staging source catalogue is unavailable.</p>}</section>
-    <section className={css.panel}><TestBuilder sources={(data?.entries ?? []).filter(row=>row.artifact_verified).map(({id,name,version})=>({id,name,version}))}/></section>
+    <section className={css.panel}><TestBuilder sources={[...Object.values(nativePlans).map(plan=>({id:plan.definitionId,name:plan.name+' (native SQL)',version:plan.version})), ...(data?.entries ?? []).filter(row=>row.artifact_verified).map(({id,name,version})=>({id,name,version}))]}/></section>
     {data&&data.acceptance.length>0&&<section className={css.panel}><h2>Database collection tests</h2>
     <p>These tests use disposable databases. Each test reads a held record, rotates the source credential, checks the retired credential is rejected and submits both collection receipts to a private test workspace.</p>
     <div className={css.scroll}><table><thead><tr><th>Database</th><th>First read</th><th>After correction</th><th>Test record</th></tr></thead><tbody>

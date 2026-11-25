@@ -14,6 +14,26 @@ bridge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge)
 
 
+class NativeSqlTests(unittest.TestCase):
+    def test_published_plans_match_installed_module_and_driver_before_source_access(self):
+        import importlib.util
+        path = Path(__file__).resolve().parents[1] / "public" / "database-bridge"
+        spec = importlib.util.spec_from_file_location("native_sql", path / "native_sql.py")
+        native = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(native)
+        plans = json.loads((path / "native-plans.json").read_text())
+        self.assertEqual(set(plans), {"postgres", "mysql", "mssql", "clickhouse"})
+        from unittest.mock import patch
+        for engine, plan in plans.items():
+            self.assertEqual(native.plan_for(engine), plan)
+            with patch.object(native, "version", return_value=plan["driverVersion"]):
+                self.assertEqual(native.verify(plan, plan["artifactDigest"]), "regpilot/sql-" + engine + "@" + plan["artifactDigest"])
+                with self.assertRaises(ValueError):
+                    native.verify({**plan, "definitionId": str(uuid4())}, plan["artifactDigest"])
+            with patch.object(native, "version", return_value="0.0.0"), self.assertRaises(ValueError):
+                native.verify(plan, plan["artifactDigest"])
+
+
 class DatabaseBridgeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

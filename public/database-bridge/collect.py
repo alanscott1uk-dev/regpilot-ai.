@@ -261,7 +261,15 @@ def run(args):
         raise CollectionError("The selected source differs from the downloaded plan.")
     apply_test_definition(args, plan)
     args.failure_stage = 'IMAGE'
-    pinned = pin_image(plan, args.digest)
+    native = plan.get("format") == "regpilot-native-sql-v1"
+    if native:
+        import native_sql
+        try:
+            pinned = native_sql.verify(plan, args.digest)
+        except (ImportError, ValueError, KeyError) as error:
+            raise CollectionError("Check the native collector digest and install the driver specified in the plan.") from error
+    else:
+        pinned = pin_image(plan, args.digest)
     args.failure_stage = 'CONFIG'
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}", args.network) or args.network in ("host", "none"):
         raise CollectionError("Select a bridge network with authorised source access.")
@@ -269,14 +277,22 @@ def run(args):
         folder = Path(tmp).resolve()
         if ":" in str(folder):
             raise CollectionError("Select a temporary directory without a colon in its path.")
-        config = local_json(folder, "config.json", json.loads(args.config.read_text()))
+        configuration = json.loads(args.config.read_text())
+        config = None if native else local_json(folder, "config.json", configuration)
+        def source(command, handler, catalog=None, fields=()):
+            if not native:
+                return protocol(pinned, args.network, config, command, handler, catalog, decimal_records=command == "read")
+            try:
+                return native_sql.run(plan["engine"], configuration, command, handler, catalog, fields)
+            except Exception as error:
+                raise CollectionError("Native SQL collection stopped at " + args.failure_stage + ". Check the account, source and selected columns.") from error
         if args.check_access or getattr(args, 'scheduled_diagnostics', False):
             args.failure_stage = 'ACCESS'
             statuses = []
             def connection(msg):
                 if msg.get("type") == "CONNECTION_STATUS":
                     statuses.append(msg["connectionStatus"]["status"])
-            protocol(pinned, args.network, config, "check", connection)
+            source("check", connection)
             if statuses != ["SUCCEEDED"]:
                 raise CollectionError("The source did not confirm access.")
             if args.check_access:
@@ -286,7 +302,7 @@ def run(args):
         def discovered(msg):
             if msg.get("type") == "CATALOG":
                 streams.extend(msg["catalog"]["streams"])
-        protocol(pinned, args.network, config, "discover", discovered)
+        source("discover", discovered)
         if args.list_streams:
             if not streams:
                 raise CollectionError("Discovery returned no streams.")
@@ -354,7 +370,7 @@ def run(args):
             if findings:
                 findings.observe(row["data"], {"matched": "PASS", "different": "FAIL"}.get(category, "UNKNOWN"))
         args.failure_stage = 'READ'
-        protocol(pinned, args.network, config, "read", checked, selected, decimal_records=True)
+        source("read", checked, selected, list(dict.fromkeys([parts[0]] + ([findings.path[0]] if findings else []))))
     args.failure_stage = 'RECEIPT'
     total = sum(counts.values())
     status = "FAIL" if counts["different"] else "UNKNOWN" if not total or counts["missing"] or counts.get("invalid") else "PASS"
@@ -365,7 +381,7 @@ def run(args):
     envelope = {"idempotencyKey": key, "body": {"controlId": control, "externalId": "dbsync/" + str(UUID(plan["definitionId"])) + "/" + key,
                 "observedAt": stamp(now), "validUntil": stamp(now + timedelta(days=1)),
                 "summary": "Operator-run source collection evaluated a selected stream against its configured control.",
-                "checks": [{"key": "source-runtime", "label": "Installed source image", "status": "PASS", "observed": pinned,
+                "checks": [{"key": "source-runtime", "label": "Verified native SQL collector" if native else "Installed source image", "status": "PASS", "observed": pinned,
                             "detail": "Collection plan version " + plan["version"]},
                            {"key": "stream-population", "label": "Selected stream population", "status": "PASS" if total else "UNKNOWN",
                             "observed": str(total), "detail": "Records returned by a completed full refresh."},

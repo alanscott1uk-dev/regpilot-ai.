@@ -58,5 +58,11 @@
     "requirement": "Detect an instrument-identified excursion between collections. Retain the reported hour, sample count, minimum and maximum through the stock decision and independent retrieval.",
     "file": "tests/operational-records.integration.test.ts",
     "test": "an instrument-identified hourly excursion carries its reported range and stock decision through a signed site inspection even after the current reading recovers"
+  },
+  {
+    "id": "PH-11",
+    "requirement": "Link a monitored control failure to one deviation and its owned corrective work. Independently authorise closure only after verified recovery of the same check, including after credential rotation.",
+    "file": "tests/capa.integration.test.ts",
+    "test": "a failed monitored control opens one deviation and requires a fresh same-target recovery and independent effectiveness decision"
   }
 ]

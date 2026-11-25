@@ -5,6 +5,8 @@ import {db} from '../lib/server/db';
 import type {AuthorizedContext} from '../lib/server/authorization';
 import {searchWorkspaceRecords} from '../lib/server/workspace-record-search';
 import {qualityInspectionText} from '../lib/quality-inspection';
+import {saveConnector,verifyConnectorNow} from '../lib/server/connector-service';
+import {records,token} from './helpers/operational-record-fixtures';
 import {saveStockReconciliation,changeQualityHandover,createQualityCase,investigateQualityCase,addQualityAction,prepareQualityEffectiveness,decideQualityEffectiveness,reopenQualityCase,qualityWorkspace,exportQualityCase} from '../lib/server/capa-service';
 import {createEvidence,reviewEvidence} from '../lib/server/evidence-service';
 import {workCompletion,completeWork} from '../lib/server/work-completion-service';
@@ -20,7 +22,7 @@ async function setup(){
  const owner:AuthorizedContext={organizationId:orgs[0].id,userId:users[0].id,role:'OWNER'},reviewer:AuthorizedContext={...owner,userId:users[1].id,role:'ADMIN'},editor:AuthorizedContext={...owner,userId:users[2].id,role:'EDITOR'},uploader:AuthorizedContext={...owner,userId:users[3].id,role:'ADMIN'},viewer:AuthorizedContext={...owner,userId:users[4].id,role:'VIEWER'},foreign:AuthorizedContext={organizationId:orgs[1].id,userId:users[5].id,role:'OWNER'};
  await db.membership.createMany({data:[owner,reviewer,editor,uploader,viewer,foreign]});const previous=process.env.REGPILOT_AI_ALLOWED_EMAILS;process.env.REGPILOT_AI_ALLOWED_EMAILS=users.map(user=>user.email).join(',');
  const objects=new Map<string,Uint8Array>(),storage:EvidenceObjectStore={async put(key,bytes){objects.set(key,Uint8Array.from(bytes));},async get(key){const bytes=objects.get(key);if(!bytes)throw new Error('Missing fictional quality proof');return Uint8Array.from(bytes);},async remove(key){objects.delete(key);}};
- const clean=async()=>{if(previous===undefined)delete process.env.REGPILOT_AI_ALLOWED_EMAILS;else process.env.REGPILOT_AI_ALLOWED_EMAILS=previous;for(const model of [db.qualityOperation,db.qualityEffectiveness,db.qualityAction,db.qualityCase,db.auditEvent,db.evidence,db.obligation,db.membership] as any[])await model.deleteMany({where:{organizationId:{in:orgs.map(org=>org.id)}}});await db.organization.deleteMany({where:{id:{in:orgs.map(org=>org.id)}}});await db.user.deleteMany({where:{id:{in:users.map(user=>user.id)}}});};
+ const clean=async()=>{if(previous===undefined)delete process.env.REGPILOT_AI_ALLOWED_EMAILS;else process.env.REGPILOT_AI_ALLOWED_EMAILS=previous;for(const model of [db.qualityOperation,db.qualityEffectiveness,db.qualityAction,db.qualityCase,db.automationEvent,db.auditEvent,db.evidence,db.obligation,db.connectorRun,db.evidenceConnector,db.managedControl,db.programmeImport,db.membership] as any[])await model.deleteMany({where:{organizationId:{in:orgs.map(org=>org.id)}}});await db.organization.deleteMany({where:{id:{in:orgs.map(org=>org.id)}}});await db.user.deleteMany({where:{id:{in:users.map(user=>user.id)}}});};
  return {owner,reviewer,editor,uploader,viewer,foreign,objects,storage,clean};
 }
 type Fixture=Awaited<ReturnType<typeof setup>>;
@@ -201,4 +203,58 @@ test('independent controlled-stock review retains discrepancies and every recoun
   await db.evidence.update({where:{id:newCount.countId},data:{reviewVersion:{increment:1}}});
   assert.ok((await exportQualityCase(f.owner,created.id)).blockers?.some(message=>message.includes('stock evidence has changed')));
  }finally{await f.clean();}
+});
+
+test('a failed monitored control opens one deviation and requires a fresh same-target recovery and independent effectiveness decision',async()=>{
+ const f=await setup(), original=globalThis.fetch;
+ const flags={REGPILOT_WORKSPACE_ENABLED:'true',REGPILOT_CONNECTORS_ENABLED:'true',REGPILOT_CONNECTOR_ENCRYPTION_KEY:'dc'.repeat(32),
+  SUPABASE_URL:'https://auth.invalid',SUPABASE_PUBLISHABLE_KEY:'fictional',REGPILOT_PAGERDUTY_SERVICE_ENABLED:'true'};
+ const old=Object.fromEntries(Object.keys(flags).map(k=>[k,process.env[k]]));
+ Object.assign(process.env,flags);
+ try{
+  const organizationId=f.owner.organizationId,site=records.find(r=>r.provider==='PAGERDUTY_SERVICE')!;
+  const programme=await db.programmeImport.create({data:{organizationId,createdById:f.owner.userId,inputHash:organizationId,method:'SEARCH',status:'ACCEPTED',evidenceManifest:[]}});
+  const control=await db.managedControl.create({data:{organizationId,importId:programme.id,proposalKey:'alarm',title:'Warehouse alarm routing',description:'Review alarm service health',testProcedure:'Check alarm service status',theme:'quality',ownerId:f.editor.userId,scheduledById:f.owner.userId,intervalDays:7,nextReviewAt:new Date()}});
+  const input={provider:site.provider,...site.target,controlId:control.id,version:0,consent:true,enabled:true,intervalHours:1,token};
+  const connector=await saveConnector(f.owner,input);
+  let body=site.changed, active=token;
+  globalThis.fetch=async(url,options)=>{assert.equal(String(url),site.url);return new Headers(options?.headers).get('authorization')==='Token token='+active?Response.json(body):new Response(null,{status:401});};
+  assert.equal((await verifyConnectorNow(f.owner,connector.id,connector.version)).outcome,'FOLLOW_UP');
+  const failed=await db.connectorRun.findFirstOrThrow({where:{connectorId:connector.id}});
+  const monitoring={runId:failed.id,checkId:site.changedCheck};
+  const draft={...fields(f.editor.userId),monitoring};
+  await assert.rejects(()=>createQualityCase(f.foreign,{...draft,ownerId:f.foreign.userId}),status(404));
+  await assert.rejects(()=>createQualityCase(f.editor,{...draft,monitoring:{...monitoring,checkId:'unknown'}}),status(409));
+  const [one,two]=await Promise.all([createQualityCase(f.editor,draft),createQualityCase(f.editor,{...draft,requestKey:randomUUID()})]);
+  assert.equal(one.caseId,two.caseId);assert.equal([one,two].filter(r=>r.reused).length,1);
+  const lookup=await qualityWorkspace(f.editor,{monitorRunId:failed.id,monitorCheckId:site.changedCheck});
+  assert.equal(lookup.monitorSelection?.caseId,one.caseId);assert.equal(lookup.monitorSelection?.source.resultHash,failed.resultHash);
+  const investigationResult=await investigateQualityCase(f.editor,one.caseId,investigation(one.version,f.editor.userId));
+  const followUp=lookup.monitorSelection!.source.taskId;
+  assert.ok(followUp,'The source run links its existing corrective work');
+  const action=await addQualityAction(f.editor,one.caseId,{requestKey:randomUUID(),version:investigationResult.version,kind:'CORRECTIVE',purpose:'Restore warehouse alarm coverage and confirm its response.',taskId:followUp});
+  const file=await approvedFile(f,action.taskId!);await complete(f,action.taskId!);
+  const review=await prepareQualityEffectiveness(f.editor,one.caseId,assessment(action.caseVersion,[file.id]),{storage:f.storage});
+  const approval=decision(review.version,review.caseVersion);
+  await assert.rejects(()=>decideQualityEffectiveness(f.reviewer,review.id,approval,{storage:f.storage}),status(409));
+  active=token+'-renewed';body=site.good;
+  await db.evidenceConnector.update({where:{id:connector.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
+  assert.equal((await verifyConnectorNow(f.owner,connector.id,connector.version)).observed,false);
+  const renewed=await saveConnector(f.owner,{...input,id:connector.id,version:connector.version,token:active});
+  await db.evidenceConnector.update({where:{id:connector.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
+  await verifyConnectorNow(f.owner,connector.id,renewed.version);
+  const opened=await exportQualityCase(f.viewer,one.caseId);
+  assert.equal(opened.monitoring?.latest?.status,'PASS');assert.equal(opened.monitoring?.latest?.fresh,true);
+  assert.equal(opened.case?.status,'EFFECTIVENESS_DUE');
+  await assert.rejects(()=>decideQualityEffectiveness(f.editor,review.id,approval,{storage:f.storage}),status(403));
+  await decideQualityEffectiveness(f.reviewer,review.id,approval,{storage:f.storage});
+  const closed=await exportQualityCase(f.viewer,one.caseId);
+  assert.equal(closed.closureCurrent,true);assert.match(qualityInspectionText(closed),new RegExp(failed.resultHash));
+  assert.match(JSON.stringify(closed.history?.find(item=>item.action==='quality.effectiveness_decided')?.details),new RegExp(opened.monitoring!.latest!.resultHash));
+  await db.connectorRun.update({where:{id:failed.id},data:{signalHash:'0'.repeat(64)}});
+  await assert.rejects(()=>exportQualityCase(f.viewer,one.caseId),status(409));
+ }finally{
+  globalThis.fetch=original;for(const [k,v] of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;
+  await f.clean();
+ }
 });

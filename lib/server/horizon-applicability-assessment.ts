@@ -13,7 +13,7 @@ import {hashValue} from '../regulatory/intelligence';
 
 const entity='ScottishApplicabilityAssessment',frozen='horizon.assessment_frozen',decided='horizon.assessment_reviewed';
 const key=z.string().regex(/^[a-f0-9]{32,64}$/);
-const item=z.object({id:key,revision:key,title:z.string().min(1),url:z.url(),publishers:z.array(z.string()),suggested:z.boolean(),collection:z.enum(['FOUND','WRONG_PUBLISHER','MISSING','INDETERMINATE']).optional(),index:z.url().optional(),indexDigest:key.optional()});
+const item=z.object({id:key,revision:key,title:z.string().min(1),url:z.url(),publishers:z.array(z.string()),suggested:z.boolean(),feedRevision:key.optional(),collection:z.enum(['FOUND','WRONG_PUBLISHER','MISSING','INDETERMINATE']).optional(),index:z.url().optional(),indexDigest:key.optional()});
 const sample=z.object({profile:wholesaleView.optional(),method:z.enum(['INDEX','QUEUE']).optional(),population:z.number().int().positive().optional(),queuePopulation:z.object({shortlisted:z.number().int().positive(),other:z.number().int().positive()}).optional(),scope:z.string().min(15).max(400),snapshot:z.iso.datetime(),release:z.string().nullable(),unavailable:z.array(z.string()),rows:z.array(item).min(2).max(20)});
 const judgement=z.object({id:key,verdict:z.enum(['APPLIES','OUTSIDE_SCOPE','UNCERTAIN']),reason:z.string().trim().min(10).max(350)}).strict();
 const labels=z.array(judgement).min(2).max(20);
@@ -50,7 +50,7 @@ function visible(state:Awaited<ReturnType<typeof detail>>,userId:string,tasks:Ma
  const {first,facts,hash,event,review}=state,byId=new Map(review?.labels.map(l=>[l.id,l]));
  const counts={correctAlert:0,falseAlert:0,missed:0,correctExclusion:0,uncertain:0};
  let unavailableComparisons=0,missedAtCollection=0;
- const rows=facts.rows.map(({suggested,collection,index,indexDigest,...row})=>{
+ const rows=facts.rows.map(({suggested,collection,index,indexDigest,feedRevision,...row})=>{
   const label=byId.get(row.id);
   if(!label)return {...row,assessment:null,followUp:null};
   if(label.verdict==='UNCERTAIN')counts.uncertain++;
@@ -60,7 +60,7 @@ function visible(state:Awaited<ReturnType<typeof detail>>,userId:string,tasks:Ma
   const issue=correction(state,{...row,suggested,collection,index,indexDigest});
   const task=issue?tasks.get(issue.key):null;
   const followUp=issue?{reason:issue.reason,task:task?{id:task.id,status:task.status,owner:task.ownerName,dueDate:task.dueDate.toISOString().slice(0,10)}:null}:null;
-  return {...row,followUp,assessment:{suggested,collection,index,indexDigest,verdict:label.verdict,reason:label.reason}};
+  return {...row,followUp,assessment:{suggested,collection,index,indexDigest,feedRevision:facts.method==='INDEX'?feedRevision??null:row.revision,verdict:label.verdict,reason:label.reason}};
  });
  const ratio=(part:number,total:number)=>total?part/total:null;
  const population=facts.queuePopulation;
@@ -101,7 +101,7 @@ async function publisherSample(report:HorizonReport,seed:string,profile:Wholesal
    if(distinct.has(row.url))continue;
    const stored=byUrl.get(row.url);
    distinct.set(row.url,{id:hashValue(row.url),revision:hashValue([row.url,row.on,row.title]),url:row.url,title:row.title,publishers:[index.publisher],
-    suggested:!!stored&&Boolean(scottishPharmaReason(stored,profile)),collection:row.outcome,index:index.index,indexDigest:index.sha256});
+    suggested:!!stored&&Boolean(scottishPharmaReason(stored,profile)),...(stored?{feedRevision:stored.revision}:{}),collection:row.outcome,index:index.index,indexDigest:index.sha256});
   }
  }
  if(distinct.size<2)throw invalid('The official publisher indexes returned fewer than two eligible records. Try the publisher sample again after the next collection.');

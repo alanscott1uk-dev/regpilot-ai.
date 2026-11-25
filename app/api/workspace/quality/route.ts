@@ -8,7 +8,7 @@ export const maxDuration=60;
 export async function GET(request:Request){
  try{
   if(!workspaceConfigured())throw new IntelligenceError('Private workspace awaits activation',503);
-  const params=new URL(request.url).searchParams,keys=['organizationId','caseId','requestKey','q','status','page','taskQ','taskPage'];
+  const params=new URL(request.url).searchParams,keys=['organizationId','caseId','requestKey','q','status','page','taskQ','taskPage','monitorRunId','monitorCheckId'];
   if([...params.keys()].some(key=>!keys.includes(key)||params.getAll(key).length!==1))throw new IntelligenceError('Use one value for each supported quality queue filter');
   const ctx=await authorisedWorkspaceContext(request,validId(params.get('organizationId')));
   return reply(await qualityWorkspace(ctx,Object.fromEntries([...params.entries()].filter(([key])=>key!=='organizationId'))));

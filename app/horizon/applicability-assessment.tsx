@@ -1,10 +1,11 @@
 'use client';
+import type {ReviewedSiteScope} from '../../lib/horizon/reviewed-shortlist';
 import {useRef,useState} from 'react';
 import type {useWorkspaceContext} from '../../lib/client/workspace-context';
 import type {applicabilityAssessment} from '../../lib/server/horizon-applicability-assessment';
 type View=Awaited<ReturnType<typeof applicabilityAssessment>>;
 const percent=(n:number|null)=>n===null?'No measurable denominator':Math.round(n*100)+'%';
-export function ApplicabilityAssessment({workspace,profile}:{workspace:ReturnType<typeof useWorkspaceContext>;profile:import('../../lib/horizon/watchlists').WholesaleView}){
+export function ApplicabilityAssessment({workspace,profile,onApply}:{onApply:(review:ReviewedSiteScope)=>void;workspace:ReturnType<typeof useWorkspaceContext>;profile:import('../../lib/horizon/watchlists').WholesaleView}){
  const [data,setData]=useState<View|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
  const pending=useRef(false),startKey=useRef({identity:'',id:''});
  const url='/api/workspace/horizon/assessment?'+new URLSearchParams({organizationId:workspace.organizationId});
@@ -25,6 +26,12 @@ export function ApplicabilityAssessment({workspace,profile}:{workspace:ReturnTyp
  {selected.coverage&&<p>{selected.coverage.missedAtCollection} applicable publications were absent from the collected feed. {selected.coverage.unavailableComparisons} labelled records had inconclusive collection evidence and were excluded from the rates.</p>}
  <p>Sample precision {percent(selected.score.precision)} · Sample recall {percent(selected.score.recall)} · Independent decision {selected.reviewedAt}</p>
  {selected.method==='QUEUE'&&(selected.queueEstimate?<p>Estimated recall across this collected feed: <strong>{percent(selected.queueEstimate.recall)}</strong>. The reviewer assessed {selected.queueEstimate.sampledAlerts} of {selected.queueEstimate.shortlisted} shortlisted publications and {selected.queueEstimate.sampledOthers} of {selected.queueEstimate.other} others. Each group is weighted by its size.</p>:<p>A feed-wide estimate requires both recorded population sizes and a definite judgement for each sampled publication.</p>)}
+ {selected.profile===profile&&selected.reviewedAt&&<button type="button" onClick={()=>onApply({id:selected.id,scope:selected.scope,profile,reviewedAt:selected.reviewedAt!,
+  rows:selected.rows.flatMap(row=>{
+   const decision=row.assessment;
+   if(!decision||decision.verdict==='UNCERTAIN'||decision.collection==='INDETERMINATE')return [];
+   return [{url:row.url,title:row.title,revision:decision.feedRevision,applies:decision.verdict==='APPLIES',reason:decision.reason,missing:decision.collection==='MISSING'}];
+  })})}>Apply this site review to the live shortlist</button>}
  <button type="button" onClick={()=>{const a=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(selected,null,2)],{type:'application/json'}));a.href=url;a.download='applicability-assessment-'+selected.id+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}}>Download reviewed publications and results</button>
  <ul>{selected.rows.map(r=><li key={r.id}><a href={r.url}>{r.title}</a> · {r.assessment?.suggested?'Shortlisted':'Outside shortlist'} · {r.assessment?.verdict} · {r.assessment?.reason}{r.assessment?.index&&<> · <a href={r.assessment.index}>Official index</a> · {r.assessment.collection}</>}
  {r.followUp&&(r.followUp.task?<p><a href={'/team/work?'+new URLSearchParams({organizationId:workspace.organizationId,taskId:r.followUp.task.id})}>{r.followUp.reason}</a> · {r.followUp.task.owner} · {r.followUp.task.dueDate} · {r.followUp.task.status}</p>:

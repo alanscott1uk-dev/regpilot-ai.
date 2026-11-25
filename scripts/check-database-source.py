@@ -1,4 +1,4 @@
-"""Read a disposable database with the installed vendor connector before and after credential rotation."""
+"""Read a disposable database with the installed source collector before and after credential rotation."""
 import json
 import os
 import re
@@ -35,10 +35,20 @@ source = "airbyte/source-" + kind
 network = "regpilot-" + kind
 instance = "evidence-" + kind
 admin, first, second = [secrets.token_hex(20) for _ in range(3)]
-command("docker", "pull", source + ":" + version, stdout=subprocess.DEVNULL)
-digests = json.loads(command("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", source + ":" + version,
-                             capture_output=True).stdout)
-digest = next(d.split("@")[1] for d in digests if d.startswith(source + "@"))
+native = kind in ("postgres", "mysql", "mssql", "clickhouse")
+if native:
+    sys.path.insert(0, str(Path("public/database-bridge").resolve()))
+    from native_sql import plan_for
+    collection_plan = plan_for(kind)
+    source = "regpilot/sql-" + kind
+    definition, version, digest = (collection_plan[key] for key in ("definitionId", "version", "artifactDigest"))
+else:
+    command("docker", "pull", source + ":" + version, stdout=subprocess.DEVNULL)
+    digests = json.loads(command("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", source + ":" + version,
+                                 capture_output=True).stdout)
+    digest = next(d.split("@")[1] for d in digests if d.startswith(source + "@"))
+    collection_plan = {"format": "regpilot-airbyte-source-v1", "image": source, "version": version,
+                       "definitionId": definition, "artifactDigest": digest}
 command("docker", "network", "create", network)
 stack = ExitStack()
 try:
@@ -85,10 +95,18 @@ try:
             cfg = {"host":instance, "port":8123, "database":"evidence", "username":"source_reader", "ssl":False}
         def config_for(password):
             return {**cfg,"password":password}
+    if native:
+        source_config = config_for
+        address = command("docker", "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
+                          instance, capture_output=True).stdout.strip()
+        def config_for(password):
+            settings = source_config(password)
+            return {**{key: settings[key] for key in ("port", "database", "username", "password", "schemas") if key in settings},
+                    "host": address, "transport": "private-network"}
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
         plan, config = folder / "plan.json", folder / "config.json"
-        plan.write_text(json.dumps({"format": "regpilot-airbyte-source-v1", "image": source, "version": version, "definitionId": definition, "artifactDigest": digest}))
+        plan.write_text(json.dumps(collection_plan))
         config.write_text(json.dumps(config_for(first)))
         command_base = [sys.executable, "public/database-bridge/collect.py", "--config", str(config), "--plan", str(plan),
                         "--digest", digest, "--network", network]

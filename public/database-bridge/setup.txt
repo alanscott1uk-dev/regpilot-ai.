@@ -1,3 +1,9 @@
+Native SQL collection
+
+PostgreSQL, MySQL, Microsoft SQL Server and ClickHouse can run directly on an authorised Python host. Download the individual native SQL plan and the collection ZIP from /database-integrations. Unpack the ZIP. In a Python virtual environment, install the package versions in the plan's install field with python -m pip install. Keep native_sql.py beside collect.py and watch.py. The runner verifies the native module digest and the selected driver version on each invocation.
+
+Use a private local config with host, port, database, username and password. PostgreSQL and SQL Server accept a schemas list, defaulting to public and dbo respectively. TLS verifies the server by default. Set caFile to the path of your trusted CA bundle for a private certificate authority. An explicitly selected private-network transport is available on a trusted local network. Use a read-only account restricted to approved tables or views. Only the selected control and optional resource identifier columns are read. A scan exceeding 20,000 rows fails and requires a narrower view. Checks, discovery, rules, submission and scheduling use the same commands below. Native SQL runs on the host network.
+
 Manual database and API collection
 
 1. Download a JSON plan from /database-integrations. Review the connector licence, version and configuration instructions at the documentation URL in the plan. Install the approved vendor image on an authorised Linux host with Python 3.10+ and Docker. Verify the image digest through your approved software supply process. The runner requires the local image tag, the independently approved repository digest and the digest in the checked plan to match.
