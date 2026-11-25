@@ -60,7 +60,9 @@ test('project signing binds the issuer, audience and scope and returns only a ve
   const receipt=await pdProjectHealth(fetcher);
   assert.equal(receipt.accounts,3);assert.deepEqual(Object.keys(receipt).sort(),['accounts','checkedAt','environment']);
   await pdProjectHealth(fetcher);assert.equal(seen.size,2);
-  await pdLink('794e38e1-b6aa-40ab-9b5f-925f87138d6a','github',fetcher);assert.equal(seen.size,3);
+  const link=new URL(await pdLink('794e38e1-b6aa-40ab-9b5f-925f87138d6a','github',fetcher));
+  assert.equal(link.searchParams.get('app'),'github');assert.equal(link.searchParams.get('oauthScopeProfile'),'read_only');
+  assert.equal(seen.size,3);
   wrongProject=true;await assert.rejects(pdProjectHealth(fetcher),(e:{code:string})=>e.code==='TARGET_MISMATCH');
   wrongProject=false;omitTotal=true;await assert.rejects(pdProjectHealth(fetcher),(e:{code:string})=>e.code==='INVALID_RESPONSE');
  }finally{

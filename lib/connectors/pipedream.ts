@@ -37,6 +37,9 @@ export async function pdLink(org:string,app:string,fetcher:typeof fetch=fetch){
  const r=await pdRequest('connect:tokens:create','/tokens',fetcher,{external_user_id:user(org),app_id:pdApp.parse(app),expires_in:900,scope:accountLinkScopes});
  const u=typeof r.connect_link_url==='string'?URL.parse(r.connect_link_url):null;
  if(!u||u.protocol!=='https:'||!(u.hostname==='pipedream.com'||u.hostname.endsWith('.pipedream.com'))||u.username||u.password||!Number.isFinite(Date.parse(r.expires_at))||Date.parse(r.expires_at)<=Date.now())throw new CollectionError('INVALID_RESPONSE');
+ u.searchParams.set('app',app);
+ // Pipedream's hosted GitHub flow has a two-scope read-only profile for monitoring and renewal.
+ if(app==='github')u.searchParams.set('oauthScopeProfile','read_only');
  return u.href;
 }
 
