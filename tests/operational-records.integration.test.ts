@@ -554,8 +554,20 @@ test('live publication changes reach a private workspace control and its follow-
       const input={provider,...source.target,...baseline,controlId:control.id,version:0,consent:true,enabled:true,intervalHours:24};
       await assert.rejects(saveConnector(f.out,input),rejects(404));
       const connection=await saveConnector(f.o,input);
-      const observed=await verifyConnectorNow(f.o,connection.id,connection.version);
-      assert.equal(observed.outcome,'FOLLOW_UP',provider);
+      let observed=await verifyConnectorNow(f.o,connection.id,connection.version);
+      if(observed.outcome==='RETRY_SCHEDULED'){
+        const failure=await db.evidenceConnector.findUniqueOrThrow({where:{id:connection.id},select:{failureCode:true,lastSuccessAt:true}});
+        assert.ok(failure.failureCode==='PROVIDER_TIMEOUT'||failure.failureCode==='PROVIDER_UNAVAILABLE',provider+' reported '+failure.failureCode);
+        assert.equal(failure.lastSuccessAt,null);
+        assert.equal(await db.connectorRun.count({where:{connectorId:connection.id}}),0);
+        console.info(provider+' recorded '+failure.failureCode+' before its first observation. Retrying the same connection once.');
+        await new Promise(resolve=>setTimeout(resolve,10_000));
+        observed=await verifyConnectorNow(f.o,connection.id,connection.version);
+      }
+      if(observed.outcome!=='FOLLOW_UP'){
+        const connectionState=await db.evidenceConnector.findUniqueOrThrow({where:{id:connection.id},select:{failureCode:true}});
+        assert.fail(provider+' returned '+observed.outcome+' ('+(connectionState.failureCode??'no provider failure')+'). Expected the live revision to create a follow-up.');
+      }
       const run=await db.connectorRun.findFirstOrThrow({where:{connectorId:connection.id}});
       assert.equal((await exportConnectorRun(f.o,run.id)).currentAtExport,true);
       await assert.rejects(exportConnectorRun(f.out,run.id),rejects(404));

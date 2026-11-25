@@ -80,7 +80,9 @@ async function recall(input:RegisterTarget,read:Read,asOf:string){
 export async function collectPublicRegister(provider:PublicRegister,target:RegisterTarget,fetcher:typeof fetch=fetch,capturedAt=new Date().toISOString()):Promise<Observation>{
  const input=registerTargets[provider].strict().safeParse(target);
  if(!input.success)throw new CollectionError('INVALID_TARGET');
- const read=providerReader(fetcher,{});
+ // Europe PMC's full bibliographic record can take longer than a standard read.
+ // Keep its complete request, including retries, within the 90-second connector lease.
+ const read=providerReader(fetcher,{},provider==='EUROPE_PMC'?45_000:undefined);
  const result=await ({NHSBSA_MAPPING:mapping,CLINICALTRIALS_GOV:trial,OPENFDA_RECALL:recall,DAILYMED_LABEL:labelHistory,EUROPE_PMC:publication,MHRA_GUIDANCE:guidance}[provider])(input.data,read,capturedAt,check);
  return {...result,engine:provider.toLowerCase()+'-v1',capturedAt};
 }
