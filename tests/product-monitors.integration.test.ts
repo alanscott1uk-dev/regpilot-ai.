@@ -89,12 +89,12 @@ test('the staging probe validates its precise grant on both sides of a read and 
  const read=await runStagingProductProbe(target,fetcher);
  assert.ok(read.state==='read');assert.equal(read.providerHealth,false);assert.equal(read.count,1);assert.equal(calls,1);assert.equal(grants,2);
  assert.ok(!JSON.stringify(read).includes('private source name')&&!JSON.stringify(read).includes(account));
- await assert.rejects(readProduct(org,account,recipe,fetcher),(e:{code:string})=>e.code==='CREDENTIAL_REJECTED');
- flags={dead:true};const dead=await runStagingProductProbe(target,fetcher);assert.equal(dead.state,'attention');assert.equal(calls,1);
+ const monitored=await readProduct(org,account,recipe,fetcher);assert.equal(monitored.count,1);assert.equal(monitored.digest,read.digest);
+ flags={dead:true};const dead=await runStagingProductProbe(target,fetcher);assert.equal(dead.state,'attention');assert.equal(calls,2);
  flags={healthy:false,error:'missing scope private source name'};
- const failed=await runStagingProductProbe(target,fetcher);assert.ok(failed.state==='attention');assert.equal(failed.code,'INSUFFICIENT_SCOPE');assert.equal(calls,1);
+ const failed=await runStagingProductProbe(target,fetcher);assert.ok(failed.state==='attention');assert.equal(failed.code,'INSUFFICIENT_SCOPE');assert.equal(calls,2);
  flags={};grants=0;revokeAfter=true;
- const changed=await runStagingProductProbe(target,fetcher);assert.ok(changed.state==='attention');assert.equal(changed.code,'CREDENTIAL_REJECTED');assert.equal(calls,2);
+ const changed=await runStagingProductProbe(target,fetcher);assert.ok(changed.state==='attention');assert.equal(changed.code,'CREDENTIAL_REJECTED');assert.equal(calls,3);
 });
 test('every published product emits a pinned account-scoped read and keeps provider identifiers private',async()=>{
  setup();assert.ok(productTotal>500);
@@ -134,7 +134,9 @@ test('an hourly product monitor rejects another tenant, detects inventory drift 
   }
   if(path.endsWith('/tokens'))return Response.json({connect_link_url:'https://pipedream.com/_static/connect.html?token=fixture',expires_at:new Date(Date.now()+300000).toISOString()});
   assert.equal(path,'/v1/connect/proj_unitFixture/actions/run');
-  assert.equal(JSON.parse(String(options?.body)).external_user_id,'regpilot-'+f.a.id);return Response.json({ret:rows});
+  assert.equal(JSON.parse(String(options?.body)).external_user_id,'regpilot-'+f.a.id);
+  if(!healthy)return Response.json({error:{message:'Bad credentials'}});
+  return Response.json({ret:rows});
  };
  try{
   const programme=await db.programmeImport.create({data:{organizationId:f.a.id,createdById:f.o.userId,inputHash:f.a.id,method:'SEARCH',status:'ACCEPTED',evidenceManifest:[]}});

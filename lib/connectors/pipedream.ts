@@ -25,7 +25,7 @@ export async function pdAccounts(org:string,app:string,fetcher:typeof fetch=fetc
   accounts.push(...raw.data.map((row:unknown)=>accountRow.parse(row)));
   if(raw.data.length<100||total===accounts.length){
    return accounts.filter(r=>r.app.name_slug===app)
-    .map(r=>({id:r.id,name:r.name||r.id,healthy:r.healthy===true&&!r.dead,providerHealth:r.healthy??null,dead:r.dead===true,errorCode:r.error?pdFailure(r.error,'PROVIDER_REPORTED_ERROR'):null,updatedAt:r.updated_at??null}));
+    .map(r=>({id:r.id,name:r.name||r.id,healthy:r.healthy===true&&!r.dead&&!r.error,canVerify:!r.dead&&!r.error,providerHealth:r.healthy??null,dead:r.dead===true,errorCode:r.error?pdFailure(r.error,'PROVIDER_REPORTED_ERROR'):null,updatedAt:r.updated_at??null}));
   }
   const next=raw.page_info?.end_cursor;
   if(typeof next!=='string'||!next||next.length>1024||cursors.has(next))throw new CollectionError('INVALID_RESPONSE');
@@ -74,34 +74,27 @@ export function pdSample(ret:unknown,org:string,recipe:ProductRead):Sample{
  const keys=(ids as string[]).map(id=>createHmac('sha256',Buffer.from(salt,'hex')).update(JSON.stringify([org,recipe.app,recipe.action,id])).digest('hex')).sort();
  return {keys,digest:sampleHash(keys),count:keys.length};
 }
-export async function readProduct(org:string,account:string,recipe:ProductRead,fetcher:typeof fetch=fetch){
- pdAccount.parse(account);
- const assertGrant=async()=>{
-  const accountRow=(await pdAccounts(org,recipe.app,fetcher)).find((x:{id:string})=>x.id===account);
-  if(!accountRow||!accountRow.healthy)throw new CollectionError('CREDENTIAL_REJECTED');
- };
- await atStep('grant',assertGrant);
- const sample=await actionSample(org,account,recipe,fetcher,assertGrant);
- await atStep('grant',assertGrant);
- return sample;
-}
 async function actionSample(org:string,account:string,recipe:ProductRead,fetcher:typeof fetch,assertGrant:()=>Promise<void>){
  const raw=await atStep('records',async()=>{
   try{return await pdRequest('connect:actions:*','/actions/run',fetcher,{id:recipe.app+'-'+recipe.action,version:recipe.version,
    external_user_id:user(org),configured_props:{...recipe.fixedProps,[recipe.prop]:{authProvisionId:account}}});}
   catch(error){
+   if(error instanceof CollectionError&&error.code==='CREDENTIAL_REJECTED')error.step='grant';
    if(error instanceof CollectionError&&error.code==='ACCESS_DENIED')await atStep('grant',assertGrant);
    throw error;
   }
  });
  const error=raw?.error||(Array.isArray(raw?.os)?raw.os.find((item:{err?:unknown})=>item?.err)?.err:null);
- if(!raw||!Object.hasOwn(raw,'ret')||error)throw new CollectionError(pdFailure(error,'INVALID_RESPONSE'),undefined,'records');
+ if(!raw||!Object.hasOwn(raw,'ret')||error){
+  const code=pdFailure(error,'INVALID_RESPONSE');
+  throw new CollectionError(code,undefined,code==='CREDENTIAL_REJECTED'?'grant':'records');
+ }
  return atStep('records',async()=>pdSample(raw.ret,org,recipe));
 }
 
-/** Exercise a specifically authorised development account while a new grant is awaiting provider health.
- * This diagnostic never sets a monitor baseline or re-enables a paused control. */
-export async function probeProduct(org:string,account:string,recipe:ProductRead,fetcher:typeof fetch=fetch){
+/** Pipedream can report false immediately after a valid authorisation. Check ownership and explicit
+ * failures before and after the signed action. Only its actual upstream response establishes a read. */
+export async function readProduct(org:string,account:string,recipe:ProductRead,fetcher:typeof fetch=fetch){
  pdAccount.parse(account);
  let providerHealth:boolean|null=null;
  const check=async()=>{
@@ -113,7 +106,7 @@ export async function probeProduct(org:string,account:string,recipe:ProductRead,
  await atStep('grant',check);
  const sample=await actionSample(org,account,recipe,fetcher,check);
  await atStep('grant',check);
- return {providerHealth,count:sample.count,digest:sample.digest};
+ return {...sample,providerHealth:providerHealth as boolean|null};
 }
 export function productObservation(recipe:ProductRead,sample:Sample,expected:string[]):Observation{
  const baseline=new Set(expected),current=new Set(sample.keys);

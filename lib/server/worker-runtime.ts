@@ -1,6 +1,7 @@
 import {maxConnectorEventsPerTick,runAutomationBatch,finalizeAutomationTick} from './automation-queue';
 import {finalizeCollectionTick,collectionAttention} from './collection-health';
 import {Prisma} from '@prisma/client';
+import {z} from 'zod';
 import {db} from './db';
 import {runStagingProductProbe,stagingProbeTarget} from './staging-product-probe';
 import {pdConfig,pdProjectHealth} from '../connectors/pipedream-client';
@@ -68,9 +69,18 @@ export async function runCronWorker(execute?:()=>Promise<TickResult>,now=new Dat
 async function dueStagingProductProbe(){
  const target=stagingProbeTarget();
  if(!target)return null;
- const lastHour=await db.workerRun.findFirst({where:{slot:0,finishedAt:{gte:new Date(Date.now()-3600000)},
+ const hourStart=new Date(Math.floor(Date.now()/3600000)*3600000);
+ const thisHour=await db.workerRun.findFirst({where:{slot:0,startedAt:{gte:hourStart},
   summary:{path:['stagingProduct','scopeHash'],equals:target.scopeHash}},select:{id:true}});
- return lastHour?null:runStagingProductProbe(target);
+ if(thisHour)return null;
+ const reading=await runStagingProductProbe(target);
+ if(reading.state!=='read')return reading;
+ const prev=await db.workerRun.findFirst({where:{slot:0,startedAt:{lt:hourStart},AND:[
+  {summary:{path:['stagingProduct','scopeHash'],equals:target.scopeHash}},{summary:{path:['stagingProduct','state'],equals:'read'}}
+ ]},orderBy:{startedAt:'desc'},select:{summary:true}});
+ const previous=z.object({stagingProduct:z.object({checkedAt:z.string(),digest:z.string()})}).safeParse(prev?.summary);
+ return {...reading,inventory:previous.success?(previous.data.stagingProduct.digest===reading.digest?'unchanged':'changed'):'first',
+  previousReadAt:previous.success?previous.data.stagingProduct.checkedAt:null};
 }
 async function runClaimedRuntime(claim:Awaited<ReturnType<typeof claimRuntime>>,execute:(()=>Promise<TickResult>)|undefined,slot:number,checkCollections:boolean):Promise<RuntimeResult>{
  if(claim.kind==='busy')return {status:409,body:{ok:false,state:'busy'}};

@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {pdConfig} from '../connectors/pipedream-client';
-import {pdApp,pdAction,pdAccount,probeProduct} from '../connectors/pipedream';
+import {pdApp,pdAction,pdAccount,readProduct} from '../connectors/pipedream';
 import {recipeFor} from '../connectors/product-recipes';
 import {CollectionError} from '../connectors/collection-error';
 
@@ -23,8 +23,8 @@ export async function runStagingProductProbe(target:NonNullable<ReturnType<typeo
  const {scopeHash,recipe}=target;
  const metadata={scopeHash,app:recipe.app,action:recipe.action,version:recipe.version};
  try{
-  const reading=await probeProduct(target.org,target.account,recipe,fetcher);
-  return {...metadata,...reading,state:'read' as const,checkedAt:new Date().toISOString()};
+  const {count,digest,providerHealth}=await readProduct(target.org,target.account,recipe,fetcher);
+  return {...metadata,count,digest,providerHealth,state:'read' as const,checkedAt:new Date().toISOString()};
  }catch(error){
   return {...metadata,state:'attention' as const,code:error instanceof CollectionError?error.code:'INVALID_RESPONSE',
    step:error instanceof CollectionError?error.step??'grant':'grant',checkedAt:new Date().toISOString()};

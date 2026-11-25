@@ -13,7 +13,7 @@ Use development for testing and production for the paid customer-facing project.
 
 In Company integrations, open Hourly product monitoring. Choose the product read, authorise the customer's account, refresh the linked accounts and read a sample. Select the receiving control and approve the sample. The worker rechecks the account grant and compares the returned identifiers hourly. Raw records stay out of RegPilot's stored comparison. Missing permissions, changing pages, very large results or unsupported identifier shapes can limit an individual integration.
 
-An unusable grant pauses the monitor. In Accounts requiring renewal, reauthorise the original account, then verify the updated grant. The next successful scheduled run supplies the recovery evidence. Different products can expose different breadths of inventory through their published read.
+A new account can show a negative health flag while the provider accepts its authorised reads. RegPilot tests the selected account directly and verifies the grant again after the read. A rejected credential pauses the monitor. In Accounts requiring renewal, reauthorise the original account, then verify the updated grant. The next successful scheduled run supplies the recovery evidence. Different products can expose different breadths of inventory through their published read.
 
 Counts of published actions, actually connected accounts and sustained hourly monitoring are available separately. Customer ownership, real cadence and observed recovery require customer records in the private workspace.
 

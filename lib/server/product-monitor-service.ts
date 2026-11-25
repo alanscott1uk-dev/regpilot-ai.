@@ -71,7 +71,7 @@ export async function productMonitorCommand(ctx:AuthorizedContext,input:unknown,
   }
   const start=await db.auditEvent.findFirst({where:{...events,id:cmd.requestId,action:'product.renewal-started',details:{path:['incidentId'],equals:incident.id}}});
   const grant=(await pdAccounts(org,v.app,fetcher)).find(g=>g.id===v.account);
-  if(!start||!grant?.healthy||!grant.updatedAt||!(Date.parse(grant.updatedAt)>start.createdAt.getTime()&&Date.parse(grant.updatedAt)<=Date.now()+1000))throw new IntelligenceError('Finish reauthorising the original account, then verify its updated grant.',409);
+  if(!start||!grant?.canVerify||!grant.updatedAt||!(Date.parse(grant.updatedAt)>start.createdAt.getTime()&&Date.parse(grant.updatedAt)<=Date.now()+1000))throw new IntelligenceError('Finish reauthorising the original account, then verify its updated grant.',409);
   const sample=await readProduct(org,v.account,recipe,fetcher);
   if(!sample.count)throw new IntelligenceError('The renewed account returned no identifiable resources.',409);
   return transaction(ctx,async tx=>{
