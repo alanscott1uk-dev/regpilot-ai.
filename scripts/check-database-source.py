@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from uuid import uuid4
 from contextlib import ExitStack
-from database_fixtures import cockroachdb, mongodb, tidb
+from database_fixtures import cockroachdb, mongodb, mssql, tidb
 
 
 def command(*args, **kwargs):
@@ -19,8 +19,9 @@ def command(*args, **kwargs):
 
 kind = sys.argv[1]
 pg = kind == "postgres"
-extra = {"tidb":tidb, "mongodb":mongodb, "cockroachdb":cockroachdb}
+extra = {"mssql":mssql, "tidb":tidb, "mongodb":mongodb, "cockroachdb":cockroachdb}
 engines = {
+    "mssql": (None, "5.1.3", "b5ea17b1-f170-46dc-bc31-cc744ca984c1", None),
     "tidb": (None, "0.3.5", "0dad1a35-ccf8-4d03-b73e-6788c00b13ae", None),
     "cockroachdb": (None, "0.2.5", "9fa5862c-da7c-11eb-8d19-0242ac130003", None),
     "mongodb": (None, "3.0.2", "b2e713cd-cc36-4c0a-b5bd-b47cb8a0561e", None),

@@ -24,6 +24,39 @@ def wait_for(probe):
 
 
 @contextmanager
+def mssql(network, host, first, second):
+    admin = "Rp!" + secrets.token_hex(24)
+    docker("pull", "mcr.microsoft.com/mssql/server:2022-latest")
+    docker("run", "-d", "--name", host, "--network", network,
+           "-e", "ACCEPT_EULA=Y", "-e", "MSSQL_PID=Developer", "-e", "MSSQL_SA_PASSWORD",
+           "mcr.microsoft.com/mssql/server:2022-latest", env=dict(os.environ, MSSQL_SA_PASSWORD=admin))
+
+    def sql(statement, required=True):
+        return docker("exec", "-i", "-e", "SQLCMDPASSWORD", host, "/opt/mssql-tools18/bin/sqlcmd",
+                      "-S", "localhost", "-U", "sa", "-C", "-b", input_text=statement,
+                      env=dict(os.environ, SQLCMDPASSWORD=admin), required=required)
+
+    wait_for(lambda: sql("SELECT 1;", False).returncode == 0)
+    sql("CREATE DATABASE evidence;")
+    sql("CREATE LOGIN source_reader WITH PASSWORD=N'Rp!" + first + "';")
+    sql("USE evidence; CREATE USER source_reader FOR LOGIN source_reader; "
+        "CREATE TABLE dbo.release_gate(id int PRIMARY KEY, decision varchar(32)); "
+        "INSERT INTO dbo.release_gate VALUES(1,'accepted'),(2,'accepted'),(3,'hold'); "
+        "ALTER ROLE db_datareader ADD MEMBER source_reader; GRANT VIEW DEFINITION TO source_reader;")
+
+    def rotate():
+        sql("USE evidence; UPDATE dbo.release_gate SET decision='accepted' WHERE id=3;")
+        sql("ALTER LOGIN source_reader WITH PASSWORD=N'Rp!" + second + "';")
+
+    def config(password):
+        return {"host":host,"port":1433,"database":"evidence","schemas":["dbo"],"username":"source_reader",
+                "password":"Rp!"+password,"replication_method":{"method":"STANDARD"},
+                "ssl_mode":{"mode":"encrypted_trust_server_certificate"},"tunnel_method":{"tunnel_method":"NO_TUNNEL"}}
+
+    yield config, rotate
+
+
+@contextmanager
 def tidb(network, host, first, second):
     docker("run","-d","--name",host,"--network",network,"pingcap/tidb:v8.5.3",
            "--store=unistore","--path=","--host=0.0.0.0")
