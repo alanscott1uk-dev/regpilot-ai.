@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && node scripts/check-staging-database.mjs && next build",
+    "build": "prisma generate && node scripts/check-staging-database.mjs && node --import tsx scripts/check-pipedream-staging.ts && next build",
     "start": "next start",
     "db:validate": "prisma validate",
     "db:generate": "prisma generate",

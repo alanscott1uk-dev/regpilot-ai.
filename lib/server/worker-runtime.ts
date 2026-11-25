@@ -2,6 +2,8 @@ import {maxConnectorEventsPerTick,runAutomationBatch,finalizeAutomationTick} fro
 import {finalizeCollectionTick,collectionAttention} from './collection-health';
 import {Prisma} from '@prisma/client';
 import {db} from './db';
+import {pdConfig,pdProjectHealth} from '../connectors/pipedream-client';
+import {CollectionError} from '../connectors/collection-error';
 import {workspaceConfigured} from './ai-auth';
 import {executeScheduledTick} from '../cron-tick.mjs';
 import {monitoringEnabled,runMonitoringBatch} from './monitoring-service';
@@ -68,6 +70,10 @@ async function runClaimedRuntime(claim:Awaited<ReturnType<typeof claimRuntime>>,
  let result:TickResult&{maintenance?:unknown};
  // Stop admitting new provider work early enough to finish bounded reads and writes.
  const admissionDeadline=Date.now()+20000;
+ const projectRead=!execute&&slot===0&&connectorsEnabled()&&pdConfig()
+  ?pdProjectHealth().then(receipt=>({state:'verified' as const,...receipt})).catch((error:unknown)=>({
+   state:'error' as const,checkedAt:new Date().toISOString(),code:error instanceof CollectionError?error.code:'NETWORK_ERROR'
+  })):null;
  try{
   result=await executeWithMaintenance(execute||(()=>executeScheduledTick({
    ...(monitoringEnabled()?{sources:()=>runMonitoringBatch(12,3,admissionDeadline)}:{}),
@@ -80,8 +86,10 @@ async function runClaimedRuntime(claim:Awaited<ReturnType<typeof claimRuntime>>,
   result=await finalizeIntegrationDeliveryTick(result);
   if(checkCollections)result=await finalizeCollectionTick(result);
  }catch{const failed={state:'failed' as const,processed:0,attention:1};result={ok:false,modules:{sources:failed,connectors:failed,controlReviews:failed}};}
+ const project=await projectRead;
+ const summary=project?{...result,pipedreamProject:project}:result;
  const state=result.ok?'COMPLETED':'FAILED';
- const finished=await db.workerRun.updateMany({where:{id:claim.run.id,state:'RUNNING',leaseUntil:{gt:new Date()}},data:{state,finishedAt:new Date(),summary:result as unknown as Prisma.InputJsonValue}});
+ const finished=await db.workerRun.updateMany({where:{id:claim.run.id,state:'RUNNING',leaseUntil:{gt:new Date()}},data:{state,finishedAt:new Date(),summary:summary as unknown as Prisma.InputJsonValue}});
  if(finished.count!==1)return {status:503,body:{ok:false,state:'interrupted'}};
  return {status:result.ok?200:503,body:{...result,state:state.toLowerCase(),reused:false}};
 }

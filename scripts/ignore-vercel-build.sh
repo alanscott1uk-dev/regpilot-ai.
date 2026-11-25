@@ -20,6 +20,7 @@ if [ "$VERCEL_GIT_COMMIT_REF" = "feature/traceability-benchmark-batch-20261106" 
       'Forward closed MQTT windows with durable recovery on customer sites|d0e115f1543430ca3e238466a7c48e08f7c3907e') exit 1 ;;
       'Verify automatic logger delivery with the pinned Eclipse broker image|36f034a48ac2958f845cd0b377cf1d614a07c974') exit 1 ;;
       'Run verified paid product reads and cloud controls hourly|149b0b4a57e784ce2a8d37ccb7731e9caf794d82') exit 1 ;;
+      'Authenticate the staging product broker with a project-scoped signing key|272bd75c5360be21f3b5f24c571afa82dbd72143') exit 1 ;;
     esac
   fi
   exit 0
