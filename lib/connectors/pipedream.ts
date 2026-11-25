@@ -1,6 +1,6 @@
 import {createHash,createHmac} from 'node:crypto';
 import {z} from 'zod';
-import {accountLinkScopes,pdRequest} from './pipedream-client';
+import {accountLinkScopes,pdFailure,pdRequest} from './pipedream-client';
 export {pdConfig} from './pipedream-client';
 import {CollectionError} from './collection-error';
 import {atStep} from './collection-step';
@@ -11,7 +11,7 @@ export const pdAccount=z.string().regex(/^apn_[A-Za-z0-9]{1,90}$/);
 export const pdApp=z.string().regex(/^[a-z0-9_]{1,78}$/);
 export const pdAction=z.string().regex(/^[a-z0-9-]{1,118}$/);
 const user=(org:string)=>'regpilot-'+z.uuid().parse(org);
-const accountRow=z.object({id:pdAccount,healthy:z.boolean(),dead:z.boolean().nullable().optional(),app:z.object({name_slug:z.string()}),name:z.string().nullable().optional(),updated_at:z.string().optional()});
+const accountRow=z.object({id:pdAccount,healthy:z.boolean().nullish(),dead:z.boolean().nullish(),error:z.unknown().optional(),app:z.object({name_slug:z.string()}),name:z.string().nullable().optional(),updated_at:z.string().optional()});
 export async function pdAccounts(org:string,app:string,fetcher:typeof fetch=fetch){
  const params=new URLSearchParams({external_user_id:user(org),app:pdApp.parse(app),include_credentials:'false',limit:'100'});
  const accounts:z.infer<typeof accountRow>[]=[];
@@ -25,7 +25,7 @@ export async function pdAccounts(org:string,app:string,fetcher:typeof fetch=fetc
   accounts.push(...raw.data.map((row:unknown)=>accountRow.parse(row)));
   if(raw.data.length<100||total===accounts.length){
    return accounts.filter(r=>r.app.name_slug===app)
-    .map(r=>({id:r.id,name:r.name||r.id,healthy:r.healthy&&!r.dead,updatedAt:r.updated_at??null}));
+    .map(r=>({id:r.id,name:r.name||r.id,healthy:r.healthy===true&&!r.dead,providerHealth:r.healthy??null,dead:r.dead===true,errorCode:r.error?pdFailure(r.error,'PROVIDER_REPORTED_ERROR'):null,updatedAt:r.updated_at??null}));
   }
   const next=raw.page_info?.end_cursor;
   if(typeof next!=='string'||!next||next.length>1024||cursors.has(next))throw new CollectionError('INVALID_RESPONSE');
@@ -81,6 +81,11 @@ export async function readProduct(org:string,account:string,recipe:ProductRead,f
   if(!accountRow||!accountRow.healthy)throw new CollectionError('CREDENTIAL_REJECTED');
  };
  await atStep('grant',assertGrant);
+ const sample=await actionSample(org,account,recipe,fetcher,assertGrant);
+ await atStep('grant',assertGrant);
+ return sample;
+}
+async function actionSample(org:string,account:string,recipe:ProductRead,fetcher:typeof fetch,assertGrant:()=>Promise<void>){
  const raw=await atStep('records',async()=>{
   try{return await pdRequest('connect:actions:*','/actions/run',fetcher,{id:recipe.app+'-'+recipe.action,version:recipe.version,
    external_user_id:user(org),configured_props:{...recipe.fixedProps,[recipe.prop]:{authProvisionId:account}}});}
@@ -89,10 +94,26 @@ export async function readProduct(org:string,account:string,recipe:ProductRead,f
    throw error;
   }
  });
- if(!raw||!Object.hasOwn(raw,'ret')||raw.error||Array.isArray(raw.os)&&raw.os.some((item:{err?:unknown})=>item?.err))throw new CollectionError('INVALID_RESPONSE',undefined,'records');
- const sample=await atStep('records',async()=>pdSample(raw.ret,org,recipe));
- await atStep('grant',assertGrant);
- return sample;
+ const error=raw?.error||(Array.isArray(raw?.os)?raw.os.find((item:{err?:unknown})=>item?.err)?.err:null);
+ if(!raw||!Object.hasOwn(raw,'ret')||error)throw new CollectionError(pdFailure(error,'INVALID_RESPONSE'),undefined,'records');
+ return atStep('records',async()=>pdSample(raw.ret,org,recipe));
+}
+
+/** Exercise a specifically authorised development account while a new grant is awaiting provider health.
+ * This diagnostic never sets a monitor baseline or re-enables a paused control. */
+export async function probeProduct(org:string,account:string,recipe:ProductRead,fetcher:typeof fetch=fetch){
+ pdAccount.parse(account);
+ let providerHealth:boolean|null=null;
+ const check=async()=>{
+  const grant=(await pdAccounts(org,recipe.app,fetcher)).find(r=>r.id===account);
+  if(!grant||grant.dead)throw new CollectionError('CREDENTIAL_REJECTED');
+  if(grant.errorCode)throw new CollectionError(grant.errorCode);
+  providerHealth=grant.providerHealth;
+ };
+ await atStep('grant',check);
+ const sample=await actionSample(org,account,recipe,fetcher,check);
+ await atStep('grant',check);
+ return {providerHealth,count:sample.count,digest:sample.digest};
 }
 export function productObservation(recipe:ProductRead,sample:Sample,expected:string[]):Observation{
  const baseline=new Set(expected),current=new Set(sample.keys);

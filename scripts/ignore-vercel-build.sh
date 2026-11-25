@@ -22,6 +22,7 @@ if [ "$VERCEL_GIT_COMMIT_REF" = "feature/traceability-benchmark-batch-20261106" 
       'Run verified paid product reads and cloud controls hourly|149b0b4a57e784ce2a8d37ccb7731e9caf794d82') exit 1 ;;
       'Authenticate the staging product broker with a project-scoped signing key|272bd75c5360be21f3b5f24c571afa82dbd72143') exit 1 ;;
       'Use the read-only GitHub scope profile for inventory monitoring|2f17fcfa1f6ba13d5cfed3d26576f16d70b33145') exit 1 ;;
+      'Verify scoped customer product reads on the staging worker|3a09aacf9ce3c7a5aeb7caee1c17e26ea23f3a05') exit 1 ;;
     esac
   fi
   exit 0

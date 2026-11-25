@@ -2,6 +2,7 @@ import {maxConnectorEventsPerTick,runAutomationBatch,finalizeAutomationTick} fro
 import {finalizeCollectionTick,collectionAttention} from './collection-health';
 import {Prisma} from '@prisma/client';
 import {db} from './db';
+import {runStagingProductProbe,stagingProbeTarget} from './staging-product-probe';
 import {pdConfig,pdProjectHealth} from '../connectors/pipedream-client';
 import {CollectionError} from '../connectors/collection-error';
 import {workspaceConfigured} from './ai-auth';
@@ -64,13 +65,22 @@ export async function runCronWorker(execute?:()=>Promise<TickResult>,now=new Dat
  const claim=await claimRuntime('cron:'+Math.floor(now.getTime()/300000),0,capacity);
  return runClaimedRuntime(claim,execute,0,true);
 }
+async function dueStagingProductProbe(){
+ const target=stagingProbeTarget();
+ if(!target)return null;
+ const lastHour=await db.workerRun.findFirst({where:{slot:0,finishedAt:{gte:new Date(Date.now()-3600000)},
+  summary:{path:['stagingProduct','scopeHash'],equals:target.scopeHash}},select:{id:true}});
+ return lastHour?null:runStagingProductProbe(target);
+}
 async function runClaimedRuntime(claim:Awaited<ReturnType<typeof claimRuntime>>,execute:(()=>Promise<TickResult>)|undefined,slot:number,checkCollections:boolean):Promise<RuntimeResult>{
  if(claim.kind==='busy')return {status:409,body:{ok:false,state:'busy'}};
  if(claim.kind==='reused')return {status:claim.run.state==='COMPLETED'?200:claim.run.state==='RUNNING'?409:503,body:{ok:claim.run.state==='COMPLETED',state:claim.run.state.toLowerCase(),reused:true}};
  let result:TickResult&{maintenance?:unknown};
  // Stop admitting new provider work early enough to finish bounded reads and writes.
  const admissionDeadline=Date.now()+20000;
- const projectRead=!execute&&slot===0&&connectorsEnabled()&&pdConfig()
+ const checkHosted=!execute&&slot===0&&connectorsEnabled()&&!!pdConfig();
+ const productRead=checkHosted?dueStagingProductProbe().catch(()=>({state:'attention',code:'INVALID_CONFIGURATION',checkedAt:new Date().toISOString()})):null;
+ const projectRead=checkHosted
   ?pdProjectHealth().then(receipt=>({state:'verified' as const,...receipt})).catch((error:unknown)=>({
    state:'error' as const,checkedAt:new Date().toISOString(),code:error instanceof CollectionError?error.code:'NETWORK_ERROR'
   })):null;
@@ -86,8 +96,8 @@ async function runClaimedRuntime(claim:Awaited<ReturnType<typeof claimRuntime>>,
   result=await finalizeIntegrationDeliveryTick(result);
   if(checkCollections)result=await finalizeCollectionTick(result);
  }catch{const failed={state:'failed' as const,processed:0,attention:1};result={ok:false,modules:{sources:failed,connectors:failed,controlReviews:failed}};}
- const project=await projectRead;
- const summary=project?{...result,pipedreamProject:project}:result;
+ const [project,product]=await Promise.all([projectRead,productRead]);
+ const summary={...result,...(project?{pipedreamProject:project}:{}),...(product?{stagingProduct:product}:{})};
  const state=result.ok?'COMPLETED':'FAILED';
  const finished=await db.workerRun.updateMany({where:{id:claim.run.id,state:'RUNNING',leaseUntil:{gt:new Date()}},data:{state,finishedAt:new Date(),summary:summary as unknown as Prisma.InputJsonValue}});
  if(finished.count!==1)return {status:503,body:{ok:false,state:'interrupted'}};

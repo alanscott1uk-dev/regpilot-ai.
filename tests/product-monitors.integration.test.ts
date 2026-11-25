@@ -8,6 +8,7 @@ import {productReads,productTotal} from '../lib/connectors/product-recipes';
 import {generateKeyPairSync} from 'node:crypto';
 import {jwtVerify} from 'jose';
 import {pdSample,readProduct,pdLink} from '../lib/connectors/pipedream';
+import {runStagingProductProbe} from '../lib/server/staging-product-probe';
 import {pdConfig,pdProjectHealth} from '../lib/connectors/pipedream-client';
 import {monitoringProduct} from '../lib/connectors/monitoring-product';
 
@@ -69,6 +70,31 @@ test('project signing binds the issuer, audience and scope and returns only a ve
   if(previousKey)process.env.REGPILOT_PIPEDREAM_PRIVATE_KEY=previousKey;else delete process.env.REGPILOT_PIPEDREAM_PRIVATE_KEY;
   setup();
  }
+});
+test('the staging probe validates its precise grant on both sides of a read and records no source identifiers',async()=>{
+ setup();
+ const org='794e38e1-b6aa-40ab-9b5f-925f87138d6a',account='apn_probe';
+ const recipe=productReads.find(p=>p.app==='github'&&p.action==='list-repositories')!;
+ const target={org,account,recipe,scopeHash:'d'.repeat(64)};
+ let flags:{healthy?:boolean;dead?:boolean;error?:string}={healthy:false},calls=0,grants=0,revokeAfter=false;
+ const fetcher:typeof fetch=async(input)=>{
+  const url=new URL(String(input));
+  if(url.pathname.endsWith('/oauth/token'))return Response.json({access_token:'probe-token',expires_in:300});
+  if(url.pathname.endsWith('/accounts')){
+   assert.equal(url.searchParams.get('external_user_id'),'regpilot-'+org);grants++;
+   return Response.json({data:[{id:account,app:{name_slug:'github'},...flags,...(revokeAfter&&grants===2?{dead:true}:{})}],page_info:{total_count:1}});
+  }
+  calls++;return Response.json({ret:[{id:719,full_name:'private source name'}]});
+ };
+ const read=await runStagingProductProbe(target,fetcher);
+ assert.ok(read.state==='read');assert.equal(read.providerHealth,false);assert.equal(read.count,1);assert.equal(calls,1);assert.equal(grants,2);
+ assert.ok(!JSON.stringify(read).includes('private source name')&&!JSON.stringify(read).includes(account));
+ await assert.rejects(readProduct(org,account,recipe,fetcher),(e:{code:string})=>e.code==='CREDENTIAL_REJECTED');
+ flags={dead:true};const dead=await runStagingProductProbe(target,fetcher);assert.equal(dead.state,'attention');assert.equal(calls,1);
+ flags={healthy:false,error:'missing scope private source name'};
+ const failed=await runStagingProductProbe(target,fetcher);assert.ok(failed.state==='attention');assert.equal(failed.code,'INSUFFICIENT_SCOPE');assert.equal(calls,1);
+ flags={};grants=0;revokeAfter=true;
+ const changed=await runStagingProductProbe(target,fetcher);assert.ok(changed.state==='attention');assert.equal(changed.code,'CREDENTIAL_REJECTED');assert.equal(calls,2);
 });
 test('every published product emits a pinned account-scoped read and keeps provider identifiers private',async()=>{
  setup();assert.ok(productTotal>500);

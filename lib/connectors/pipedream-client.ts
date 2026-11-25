@@ -22,10 +22,22 @@ type Config=NonNullable<ReturnType<typeof pdConfig>>;
 type Access={token:string;until:number};
 const access=new Map<Scope,{key:string;promise:Promise<Access>}>();
 
+// Only these fixed error codes may leave the adapter. Upstream messages can contain customer values.
+export function pdFailure(value:unknown,fallback:string){
+ if(!value)return fallback;
+ const message=JSON.stringify(value).slice(0,8192).toLowerCase();
+ if(/billing|plan (?:does not|doesn't|upgrade)|upgrade (?:your|the) plan|subscription required/.test(message))return 'PLAN_REQUIRED';
+ if(/insufficient.scope|missing (?:permission|scope)|requires? the.+scope/.test(message))return 'INSUFFICIENT_SCOPE';
+ if(/revoked|bad credentials|invalid.grant/.test(message))return 'CREDENTIAL_REJECTED';
+ if(/version.{0,80}(?:not found|not published)|component.{0,50}not found/.test(message))return 'ACTION_UNAVAILABLE';
+ return fallback;
+}
+
 async function jsonResponse(res:Response,limit:number){
  if(!res.ok){
-  await res.body?.cancel();
-  const code=res.status===429?'RATE_LIMITED':res.status===403||res.status===401?'ACCESS_DENIED':res.status===404?'TARGET_MISMATCH':'PROVIDER_UNAVAILABLE';
+  const fallback=res.status===402?'PLAN_REQUIRED':res.status===429?'RATE_LIMITED':res.status===403||res.status===401?'ACCESS_DENIED':res.status===404?'TARGET_MISMATCH':res.status===400||res.status===422?'INVALID_REQUEST':'PROVIDER_UNAVAILABLE';
+  const detail=await readBoundedJson(res,8192).catch(()=>null);
+  const code=pdFailure(detail,fallback);
   const retry=Number(res.headers.get('Retry-After'));
   throw new CollectionError(code,Number.isFinite(retry)&&retry>0?Math.min(3600,retry):undefined);
  }
