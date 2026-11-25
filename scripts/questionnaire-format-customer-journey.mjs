@@ -73,7 +73,9 @@ export async function runQuestionnaireFormatJourney({upload,review,app,org,edito
  passed('A buyer questionnaire was created from two pasted portal labels. The current approved answer was suggested for one and the unmatched row remained empty. The returned table preserved blank rows for spreadsheet entry.');
  // Drive the signed-in intake with the browser bridge contract. The installed Chrome test exercises the real extension boundary.
  const nonce=randomUUID(),captured={format:'regpilot-portal-fields-v1',origin:'https://buyer.example.invalid',pageHash:createHash('sha256').update('https://buyer.example.invalid/private/original').digest('hex'),fields:[question]};
- await upload.addInitScript(({nonce,captured,orgId})=>{
+ await checkpoint('receive buyer fields on the fresh review tab opened by the helper');
+ const portalTab=await upload.context().newPage(),transfer=portalTab.getByRole('region',{name:'Import a questionnaire',exact:true});
+ await portalTab.addInitScript(({nonce,captured,orgId})=>{
   if(location.hash!=='#portal-import='+nonce)return;
   Object.defineProperty(window.chrome??(window.chrome={}),'runtime',{configurable:true,value:{sendMessage:(_extension,m,reply)=>{
    if(m.nonce!==nonce||m.organizationId!==orgId)return reply({ok:false});
@@ -82,17 +84,18 @@ export async function runQuestionnaireFormatJourney({upload,review,app,org,edito
    reply({ok:false});
   }}});
  },{nonce,captured,orgId:org.id});
- await upload.goto(app+'/team/questionnaires'+query+'#portal-import='+nonce);
- await paste.getByRole('button',{name:'Use buyer questions in this workspace'}).click();
- await paste.getByText('Captured 1 field labels from '+captured.origin+'.',{exact:false}).waitFor();
- assert.equal(await paste.getByLabel('Questions, one per line',{exact:true}).inputValue(),question);
- await paste.getByLabel('Questionnaire title',{exact:true}).fill('Saved buyer portal');
- await paste.getByLabel('Buyer or recipient',{exact:true}).fill('Fictional buyer');
- await paste.getByLabel('Scope of the answers',{exact:true}).fill(scope);
- await paste.getByLabel('Question owner',{exact:true}).selectOption(editor.id);
- await paste.getByLabel('I checked the questions, recipient, product and scope.',{exact:true}).check();
- const single=await action(upload,'/api/workspace/questionnaires','POST',()=>paste.getByRole('button',{name:'Create questionnaire from 1 question',exact:true}).click(),201);
- await upload.waitForFunction(id=>sessionStorage.getItem('test-bound-questionnaire')===id,single.id);
+ await portalTab.goto(app+'/team/questionnaires'+query+'#portal-import='+nonce);
+ await transfer.getByRole('button',{name:'Use buyer questions in this workspace'}).click();
+ await transfer.getByText('Captured 1 field label from '+captured.origin+'.',{exact:false}).waitFor();
+ assert.equal(await transfer.getByLabel('Questions, one per line',{exact:true}).inputValue(),question);
+ await transfer.getByLabel('Questionnaire title',{exact:true}).fill('Saved buyer portal');
+ await transfer.getByLabel('Buyer or recipient',{exact:true}).fill('Fictional buyer');
+ await transfer.getByLabel('Scope of the answers',{exact:true}).fill(scope);
+ await transfer.getByLabel('Question owner',{exact:true}).selectOption(editor.id);
+ await transfer.getByLabel('I checked the questions, recipient, product and scope.',{exact:true}).check();
+ const single=await action(portalTab,'/api/workspace/questionnaires','POST',()=>transfer.getByRole('button',{name:'Create questionnaire from 1 question',exact:true}).click(),201);
+ await portalTab.waitForFunction(id=>sessionStorage.getItem('test-bound-questionnaire')===id,single.id);
+ await portalTab.close();
  const source=await db.auditEvent.findFirstOrThrow({where:{entityId:single.id,action:'customer_assurance.questionnaire_imported'}});
  assert.deepEqual(source.details.portalDestination,{origin:captured.origin,pageHash:captured.pageHash});
  passed('A buyer-tab capture created a private questionnaire directly, retained its destination and returned the new questionnaire identity to the helper.');

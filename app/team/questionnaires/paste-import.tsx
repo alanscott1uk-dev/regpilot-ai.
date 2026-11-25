@@ -1,15 +1,14 @@
 'use client';
-import {useEffect,useRef,useState} from 'react';
+import {useRef,useState} from 'react';
 import type {Member,Product,Request,Write} from './types';
 import {portalBridge} from '../../../lib/client/portal-bridge';
 import {identifyPortal,portalFields,type PortalFields} from '../../../lib/portal-questionnaire';
 import css from './questionnaires.module.css';
 
-type Props={capture:()=>()=>boolean;organizationId:string;members:Member[];products:Product[];request:Request;write:Write;locked:boolean;onCreated:(id:string)=>Promise<void>};
-export function PasteImport({capture,organizationId,members,products,request,write,locked,onCreated}:Props){
+type Props={nonce:string;capture:()=>()=>boolean;organizationId:string;members:Member[];products:Product[];request:Request;write:Write;locked:boolean;onCreated:(id:string)=>Promise<void>};
+export function PasteImport({nonce,capture,organizationId,members,products,request,write,locked,onCreated}:Props){
  const key=useRef({payload:'',id:''}),[questions,setQuestions]=useState(''),[error,setError]=useState('');
- const [nonce,setNonce]=useState(''),[buyer,setBuyer]=useState<PortalFields|null>(null),[reading,setReading]=useState(false);
- useEffect(()=>{setNonce(/^#portal-import=([a-f0-9-]{36})$/i.exec(location.hash)?.[1]??'');},[]);
+ const [buyer,setBuyer]=useState<PortalFields|null>(null),[reading,setReading]=useState(false);
  async function receive(){
   const valid=capture();setReading(true);setError('');
   try{const reply=await portalBridge({action:'READ_IMPORT',organizationId,nonce}),page=portalFields.parse(reply.capture);
@@ -47,10 +46,10 @@ export function PasteImport({capture,organizationId,members,products,request,wri
  }
  return <details className={css.support} open={nonce?true:undefined}><summary>{nonce?'Start from the buyer tab':'Start from questions copied from a buyer portal or email'}</summary>
  {nonce&&!buyer&&<button type="button" disabled={reading||locked} onClick={()=>void receive()}>Use buyer questions in this workspace</button>}
- {buyer&&<p>Captured {buyer.fields.length} field labels from {buyer.origin}. Review the wording, owner and recipient below.</p>}
+ {buyer&&<p>Captured {buyer.fields.length} field {buyer.fields.length===1?'label':'labels'} from {buyer.origin}. Review the wording, owner and recipient below.</p>}
  <form onSubmit={e=>{e.preventDefault();void submit(new FormData(e.currentTarget));}}><fieldset disabled={locked} className={css.fieldset}><legend>Paste buyer questions</legend>
- <label>Questions, one per line<textarea required rows={6} maxLength={120100} value={questions} onChange={e=>setQuestions(e.target.value)}/></label>
- <p aria-live="polite">{rows.length} questions · Existing approved answers will be suggested for review.</p>
+ <label>Questions, one per line<textarea aria-label="Questions, one per line" required rows={6} maxLength={120100} value={questions} onChange={e=>setQuestions(e.target.value)}/></label>
+ <p aria-live="polite">{rows.length} {rows.length===1?'question':'questions'} · Existing approved answers will be suggested for review.</p>
  <div className={css.formGrid}><label>Questionnaire title<input name="title" minLength={3} maxLength={160} required/></label>
  {!buyer&&<label>Original buyer portal URL (optional)<input name="portalUrl" type="url" maxLength={3000} placeholder="https://…"/></label>}
  <label>Buyer or recipient<input name="recipient" minLength={2} maxLength={160} required/></label><label>Scope of the answers<input name="scope" minLength={2} maxLength={120} required/></label>

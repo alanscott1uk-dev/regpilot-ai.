@@ -15,6 +15,7 @@ import css from './questionnaires.module.css';
 
 type Workspace=ReturnType<typeof useWorkspaceContext>;
 type Filter='all'|'unfinished'|'supported'|'gaps'|'conflicts'|'confirmed'|'unresolved';
+function buyerTransferNonce(){return /^#portal-import=([a-f0-9-]{36})$/i.exec(window.location.hash)?.[1]??'';}
 function linkedRecord(){
  const params=new URLSearchParams(window.location.search),id=params.get('questionnaireId'),question=params.get('questionId');
  if(params.getAll('questionnaireId').length>1||params.getAll('questionId').length>1||id&&(!workUuid(id)||params.getAll('organizationId').length!==1||!workUuid(params.get('organizationId')))||question&&(!workUuid(question)||!id))return {id:'',question:'',error:'This questionnaire link is incomplete or invalid. Choose a saved questionnaire below.'};
@@ -29,23 +30,28 @@ function recordLink(organizationId:string,id:string,questionId=''){
 const productLabel=(value:{reference:string;productName?:string})=>value.reference+(value.productName?' · '+value.productName:'');
 export default function Questionnaires(){
  const workspace=useWorkspaceContext(),[locked,setLocked]=useState(false);
- const [buyerImport,setBuyerImport]=useState(false);
- useEffect(()=>setBuyerImport(/^#portal-import=[a-f0-9-]{36}$/i.test(location.hash)),[]);
+ const [portalNonce,setPortalNonce]=useState('');
+ useEffect(()=>{
+  const readTransfer=()=>setPortalNonce(buyerTransferNonce());
+  readTransfer();
+  window.addEventListener('hashchange',readTransfer);
+  window.addEventListener('regpilot-workspace-navigation',readTransfer);
+  return ()=>{window.removeEventListener('hashchange',readTransfer);window.removeEventListener('regpilot-workspace-navigation',readTransfer);};
+ },[]);
  const current=workspace.organisations.find(organization=>organization.id===workspace.organizationId);
  useEffect(()=>setLocked(false),[workspace.revision]);
  return <div className={shell.app}><WorkspaceNav/><main className={shell.main}><div className={css.topline}><span>Customer assurance / Questionnaires</span><span>PRIVATE WORKSPACE</span></div><header className={css.hero}><div><span className={css.eyebrow}>CUSTOMER QUESTIONS, COMPANY KNOWLEDGE, SUPPORTING PROOF</span><h1>Customer questionnaires</h1><p>Import the customer’s workbook, find approved responses and prepare missing answers from evidence. Review the exact wording before exporting or sharing.</p></div><aside className={css.heroAside}><strong>One response workspace</strong>File import · answer reuse · grounded drafts · reviewed export</aside></header>
   {workspace.error&&<div className={css.error} role="alert">{workspace.error}<div className={css.actions}><button type="button" onClick={()=>void workspace.refreshContext()}>Refresh access</button></div></div>}
-  {workspace.loading?<p role="status" className={css.empty}>Opening your workspace…</p>:!workspace.signedIn?<section className={css.panel}><h2>Sign in to your workspace</h2><p>Use your approved email to open your organisation’s questionnaires and evidence.</p>{buyerImport&&<p>Keep this tab open. If your sign-in email opens a new tab, return here to review the buyer’s questions. The helper on the buyer page can bring you back.</p>}<EmailSignIn destination="/team/questionnaires"/>{buyerImport&&<button type="button" onClick={()=>void workspace.refreshContext()}>Continue after signing in</button>}</section>:<>
+  {workspace.loading?<p role="status" className={css.empty}>Opening your workspace…</p>:!workspace.signedIn?<section className={css.panel}><h2>Sign in to your workspace</h2><p>Use your approved email to open your organisation’s questionnaires and evidence.</p>{portalNonce&&<p>Keep this tab open. If your sign-in email opens a new tab, return here to review the buyer’s questions. The helper on the buyer page can bring you back.</p>}<EmailSignIn destination="/team/questionnaires"/>{portalNonce&&<button type="button" onClick={()=>void workspace.refreshContext()}>Continue after signing in</button>}</section>:<>
    <section className={css.toolbar}><label>Organisation<select aria-label="Organisation" value={workspace.organizationId} disabled={locked} onChange={event=>workspace.chooseOrganization(event.target.value)}><option value="" disabled>Choose an organisation</option>{workspace.organisations.map(organization=><option key={organization.id} value={organization.id}>{organization.name}</option>)}</select></label><div className={css.actions}><a className={css.link} href={workspaceHref('/team/answers',workspace.organizationId)}>Approved answer library →</a><a className={css.link} href={workspaceHref('/team/evidence',workspace.organizationId)}>Evidence library →</a><a className={css.link} href={workspaceHref('/team/products',workspace.organizationId)}>Products and evidence →</a></div></section>
-   {!workspace.organizationId?<section className={css.panel}><h2>Choose an available organisation</h2><p>The requested company’s records will not be opened in another organisation.</p>{!workspace.organisations.length&&<a className={css.link} href="/team/setup">Set up your organisation →</a>}</section>:current?.role==='VIEWER'?<section className={css.panel}><h2>Response preparation needs editor access</h2><p>An editor, administrator or owner can work with customer questionnaires. Ask an administrator to assign the work to an eligible colleague.</p></section>:<QuestionnaireDesk key={workspace.userId+':'+workspace.organizationId+':'+workspace.revision} workspace={workspace} onLocked={setLocked}/>}
+   {!workspace.organizationId?<section className={css.panel}><h2>Choose an available organisation</h2><p>The requested company’s records will not be opened in another organisation.</p>{!workspace.organisations.length&&<a className={css.link} href="/team/setup">Set up your organisation →</a>}</section>:current?.role==='VIEWER'?<section className={css.panel}><h2>Response preparation needs editor access</h2><p>An editor, administrator or owner can work with customer questionnaires. Ask an administrator to assign the work to an eligible colleague.</p></section>:<QuestionnaireDesk key={workspace.userId+':'+workspace.organizationId+':'+workspace.revision+':'+portalNonce} workspace={workspace} portalNonce={portalNonce} onLocked={setLocked}/>}
   </>}
  </main></div>;
 }
-function QuestionnaireDesk({workspace,onLocked}:{workspace:Workspace;onLocked:(locked:boolean)=>void}){
+function QuestionnaireDesk({workspace,portalNonce,onLocked}:{workspace:Workspace;portalNonce:string;onLocked:(locked:boolean)=>void}){
  const {organizationId,userId,request,requestResponse,capture}=workspace;
  const [overview,setOverview]=useState<Overview|null>(null),[detail,setDetail]=useState<Detail|null>(null),[automation,setAutomation]=useState<Automation|null>(null),[selectedId,setSelectedId]=useState(''),[selectedQuestion,setSelectedQuestion]=useState('');
  const [loading,setLoading]=useState(true),[reading,setReading]=useState(false),[error,setError]=useState(''),[automationError,setAutomationError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(''),[unknown,setUnknown]=useState<WriteAction<unknown>|null>(null),[checking,setChecking]=useState(false);
- useEffect(()=>{if(/^#portal-import=[a-f0-9-]{36}$/i.test(location.hash))setShowImport(true);},[]);
  const [showImport,setShowImport]=useState(false),[filter,setFilter]=useState<Filter>('unfinished'),[search,setSearch]=useState(''),[selectedQuestions,setSelectedQuestions]=useState<string[]>([]),[batch,setBatch]=useState<Automation|null>(null),[batchChoices,setBatchChoices]=useState<Record<string,string>>({}),[batchConfirmed,setBatchConfirmed]=useState(false),[previewing,setPreviewing]=useState(false);
  const [coverageProduct,setCoverageProduct]=useState<string|null>(null);
  const questionFilters=useRef<HTMLDivElement>(null);
@@ -64,7 +70,7 @@ function QuestionnaireDesk({workspace,onLocked}:{workspace:Workspace;onLocked:(l
  async function loadRecord(id:string,preferredQuestion=''){
   if(!id)return;const serial=++recordSerial.current,valid=capture();setReading(true);setError('');setAutomationError('');
   const results=await Promise.allSettled([request(base+'/'+id+query),request(base+'/'+id+'/automation'+query)]);
-  if(!alive.current||!valid()||serial!==recordSerial.current||selection.current!==id)return;
+  if(!alive.current||!valid()||serial!==recordSerial.current||selection.current!==id||buyerTransferNonce()!==portalNonce)return;
   const record=results[0],insights=results[1];
   if(record.status==='rejected'){setDetail(null);setAutomation(null);setError(record.reason instanceof Error?record.reason.message:'This questionnaire could not be opened.');setReading(false);return;}
   const value:Detail=record.value;if(value?.questionnaire?.id!==id||!Array.isArray(value.questions)){setDetail(null);setAutomation(null);setError('The requested questionnaire was not returned.');setReading(false);return;}
@@ -77,11 +83,11 @@ function QuestionnaireDesk({workspace,onLocked}:{workspace:Workspace;onLocked:(l
   setSelectedQuestions(previous=>previous.filter(questionId=>value.questions.some(question=>question.id===questionId&&question.status!=='READY')));setReading(false);
  }
  async function openRecord(id:string,questionId=''){
-  if(!workUuid(id))return;selection.current=id;questionSelection.current=questionId;setSelectedId(id);setSelectedQuestion(questionId);setDetail(null);setAutomation(null);setBatch(null);setBatchChoices({});setSelectedQuestions([]);setBatchConfirmed(false);setReviewNotes('');setTransitionNotes('');setShowImport(false);setFilter('unfinished');setCoverageProduct(null);setSearch('');recordLink(organizationId,id,questionId);await loadRecord(id,questionId);
+  if(!alive.current||!workUuid(id)||buyerTransferNonce()!==portalNonce)return;selection.current=id;questionSelection.current=questionId;setSelectedId(id);setSelectedQuestion(questionId);setDetail(null);setAutomation(null);setBatch(null);setBatchChoices({});setSelectedQuestions([]);setBatchConfirmed(false);setReviewNotes('');setTransitionNotes('');setShowImport(false);setFilter('unfinished');setCoverageProduct(null);setSearch('');recordLink(organizationId,id,questionId);await loadRecord(id,questionId);
  }
  async function refresh(){setBatch(null);setBatchConfirmed(false);await refreshOverview();if(selection.current)await loadRecord(selection.current);}
  useEffect(()=>{const valid=capture();const linked=linkedRecord();if(linked.error)setError(linked.error);
-  void refreshOverview().then(async()=>{if(!alive.current||!valid())return;if(linked.id)await openRecord(linked.id,linked.question);}).catch(problem=>{if(alive.current&&valid()){setOverview(null);setError(problem instanceof Error?problem.message:'The questionnaire workspace could not be loaded.');}}).finally(()=>{if(alive.current&&valid())setLoading(false);});
+  void refreshOverview().then(async()=>{if(!alive.current||!valid())return;if(linked.id&&!portalNonce)await openRecord(linked.id,linked.question);}).catch(problem=>{if(alive.current&&valid()){setOverview(null);setError(problem instanceof Error?problem.message:'The questionnaire workspace could not be loaded.');}}).finally(()=>{if(alive.current&&valid())setLoading(false);});
  },[]);
  const write:Write=async action=>{
   if(mutation.current)return;mutation.current=true;setBusy(action.label);setError('');setNotice('');const valid=capture();let acknowledged=false;
@@ -169,7 +175,7 @@ function QuestionnaireDesk({workspace,onLocked}:{workspace:Workspace;onLocked:(l
     {group.questionnaireCount>group.links.length&&<small>Showing the latest {group.links.length} questionnaires.</small>}
    </article>)}</div>
   </section>}
-  {admin&&(showImport||!!overview&&!overview.questionnaires.length)&&<ImportPanel requestResponse={requestResponse} organizationId={organizationId} members={overview?.members||[]} products={overview?.products||[]} request={request} capture={capture} write={write} locked={locked} onCreated={async id=>{await refreshOverview();await openRecord(id);}}/>}
+  {admin&&(portalNonce||showImport||!!overview&&!overview.questionnaires.length)&&<ImportPanel key={organizationId+portalNonce} portalNonce={portalNonce} requestResponse={requestResponse} organizationId={organizationId} members={overview?.members||[]} products={overview?.products||[]} request={request} capture={capture} write={write} locked={locked} onCreated={async id=>{await refreshOverview();await openRecord(id);}}/>}
   {reading&&!detail&&<p className={css.empty} role="status">Opening the selected questionnaire and its answer knowledge…</p>}
   {detail&&questionnaire&&<section className={css.panel+' '+css.anchor} aria-label="Questionnaire response workspace"><div className={css.heading}><div><span className={css.eyebrow}>02 / PREPARE THE RESPONSE</span><h2>{questionnaire.title}</h2><p>Prepared for {questionnaire.recipient} · {questionnaire.scope}</p></div><span className={css.badge}>{questionnaire.status==='APPROVED'?'Approval recorded':questionnaire.status==='WITHDRAWN'?'Withdrawn':'Draft disclosure'}</span></div>
    {automationError&&<p className={css.warning} role="alert">{automationError}</p>}
