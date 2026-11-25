@@ -1,3 +1,5 @@
+import {collectUbiBotHistory} from './ubibot-history';
+import {collectServiceHealth,serviceHealthTargets} from './service-health';
 import {collectTandD} from './tandd';
 import {temperatureObservation} from './temperature-logger';
 import {atStep} from './collection-step';
@@ -30,14 +32,14 @@ export const calibrationBasis=z.string().max(120).refine(value=>{
  return !extra.length&&z.uuid().safeParse(file).success&&/^[1-9]\d{0,6}$/.test(version)&&z.iso.date().safeParse(from).success&&z.iso.date().safeParse(until).success&&from<until&&numeric(low)&&numeric(high)&&Number(low)<Number(high)&&/^[1-9]\d{0,3}$/.test(age)&&Number(age)<=1440;
 });
 export const recordTargets = {
-  ...registerTargets, PROMETHEUS_ALERT_RULE:prometheusTarget,
+  ...serviceHealthTargets,...registerTargets, PROMETHEUS_ALERT_RULE:prometheusTarget,
   ...customerTargets,...workspaceRecordTargets,...applicationTargets,
   OPENAI_PROJECT_MODEL:openAiProjectTarget, PRIVATE_AI_MODEL:privateModelTarget,
   KEYCLOAK_REALM:keycloakTarget,
   GITHUB_WORKFLOW:workflowTarget,
   NANGO_SYNC:z.object({scope:z.string().max(201).regex(/^(?:regpilot-|rpw-)[A-Za-z0-9._-]{1,92}\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/),record:z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,79}$/),reference:z.string().refine(v=>{const [provider,policy,...rest]=v.split('/');return !rest.length&&/^[a-z0-9][a-z0-9_-]{0,79}$/.test(provider)&&(policy===undefined||z.uuid().safeParse(policy).success);})}),
   TANDD_WEBSTORAGE:z.object({scope:z.string().regex(/^[1-9]\d?$/),record:z.string().regex(/^[0-9a-fA-F]{8}$/).toUpperCase(),reference:calibrationBasis}),
-  UBIBOT:z.object({scope:number,record:z.string().regex(/^[A-Za-z0-9_-]{3,60}$/),reference:calibrationBasis}),
+  UBIBOT:z.object({scope:number,record:z.string().regex(/^[A-Za-z0-9_-]{3,60}$/),reference:z.string().max(120).refine(v=>calibrationBasis.safeParse(v.replace(/\/history$/,"")).success)}),
   BENCHLING:z.object({scope:slug,record:z.string().regex(/^(?:[a-z]{1,8}_[A-Za-z0-9]{1,48}|[a-f0-9-]{36})$/),reference:z.string().regex(/^etr_[A-Za-z0-9]{1,48}\/ent_[A-Za-z0-9]{1,48}$|^etr_[A-Za-z0-9]{1,48}\/usr_[A-Za-z0-9]{1,48}$/)}),
   JIRA: z.object({scope: guid, record: z.string().toUpperCase().regex(/^[A-Z][A-Z0-9_]{1,19}-[1-9]\d{0,10}$/)}),
   SERVICENOW: z.object({scope: slug, record: z.string().toLowerCase().regex(/^[a-f0-9]{32}$/)}),
@@ -91,6 +93,7 @@ export async function collectOperationalRecord(provider: RecordProvider, target:
   const get = providerReader(fetcher, {Authorization: auth});
 
   switch (provider) {
+    case "PAGERDUTY_SERVICE":case "HEALTHCHECKS_JOB":return collectServiceHealth(provider,{scope,record,reference:reference!},token,fetcher);
     case "PROMETHEUS_ALERT_RULE":return collectPrometheus({scope,record,reference:reference!},token,fetcher);
     case "GITEA_REPOSITORY":case "GRAFANA_DASHBOARD":return collectApplication(provider,{scope,record,reference:reference!},token,fetcher);
     case "SLACK_MEMBER":case "BOX_USER":case "ASANA_TASK":return collectWorkspaceRecord(provider,{scope,record,reference:reference!},token,fetcher);
@@ -109,9 +112,10 @@ export async function collectOperationalRecord(provider: RecordProvider, target:
       const sample=values?.field1,value=sample?.value,stamp=sample?.created_at;
       const celsius=typeof value==="number"&&Number.isFinite(value)?value:undefined;
       const ms=typeof stamp==="number"&&Number.isInteger(stamp)&&stamp>0&&stamp<1e11?stamp*1000:NaN;
-      return temperatureObservation({engine:'ubibot-temperature-1.0.0',source,reference:reference!,celsius,sampleMs:ms,certificateHash,
+      const point=temperatureObservation({engine:'ubibot-temperature-1.0.0',source,reference:reference!,celsius,sampleMs:ms,certificateHash,
        temperatureLabel:'Latest internal temperature within limits',
        limitation:'Point reading for serial '+record+' from field1. The site binds the certificate and limits. Continuous interval coverage requires a logger window.'});
+      return reference!.endsWith('/history')?collectUbiBotHistory(point,scope,record,reference!,token,fetcher):point;
     }
     case "BENCHLING": {
       const [entryId,reviewer]=reference!.split("/"),base="https://"+scope+".benchling.com/api/v2";

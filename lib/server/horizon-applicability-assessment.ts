@@ -2,7 +2,8 @@ import {z} from 'zod';
 import {randomUUID} from 'node:crypto';
 import type {Prisma} from '@prisma/client';
 import {transaction,IntelligenceError} from './intelligence-service';
-import {requireMember,ADMIN} from './workspace-member';
+import {allowedEmail} from '../ai/security.mjs';
+import {requireMember,ADMIN,WRITER} from './workspace-member';
 import type {AuthorizedContext} from './authorization';
 import {readPublicHorizon} from './horizon-service';
 import {scottishPharmaReason,wholesaleView,type WholesaleView} from '../horizon/watchlists';
@@ -18,6 +19,7 @@ const judgement=z.object({id:key,verdict:z.enum(['APPLIES','OUTSIDE_SCOPE','UNCE
 const labels=z.array(judgement).min(2).max(20);
 export const assessmentAction=z.discriminatedUnion('action',[
  z.object({action:z.literal('START'),profile:wholesaleView.default('scottish-pharma-wholesale'),requestKey:z.uuid(),method:z.enum(['INDEX','QUEUE']).default('QUEUE'),scope:z.string().trim().min(15).max(400)}).strict(),
+ z.object({action:z.literal('FOLLOW_UP'),assessmentId:z.uuid(),sampleHash:key,publicationId:key,ownerId:z.uuid(),dueDate:z.iso.date()}).strict(),
  z.object({action:z.literal('REVIEW'),assessmentId:z.uuid(),sampleHash:z.string().regex(/^[a-f0-9]{64}$/),labels}).strict()
 ]);
 type Tx=Prisma.TransactionClient;
@@ -33,18 +35,32 @@ async function detail(tx:Tx,c:AuthorizedContext,id:string){
  if(review&&(review.sampleHash!==sealed.hash||hashValue(review.labels)!==review.hash||event!.actorId===first.actorId))throw invalid('The assessment decision failed its integrity check.');
  return {first,facts,hash:sealed.hash,event,review};
 }
-function visible(state:Awaited<ReturnType<typeof detail>>,userId:string){
+type AssessmentState=Awaited<ReturnType<typeof detail>>;
+function correction(state:AssessmentState,row:AssessmentState['facts']['rows'][number]){
+ const label=state.review?.labels.find(l=>l.id===row.id);
+ if(!label)return null;
+ const reason=label.verdict==='UNCERTAIN'?'Resolve site applicability':
+  label.verdict==='APPLIES'&&!row.suggested?'Investigate missed publication':
+  label.verdict==='OUTSIDE_SCOPE'&&row.suggested?'Investigate false alert':
+  row.collection==='INDETERMINATE'?'Verify source collection':null;
+ if(!reason)return null;
+ return {reason,label,key:hashValue(['horizon-assessment-correction',state.facts.scope,state.facts.profile??'scottish-pharma-wholesale',row.url,row.revision,reason])};
+}
+function visible(state:Awaited<ReturnType<typeof detail>>,userId:string,tasks:Map<string,{id:string;status:string;ownerName:string;dueDate:Date}>){
  const {first,facts,hash,event,review}=state,byId=new Map(review?.labels.map(l=>[l.id,l]));
  const counts={correctAlert:0,falseAlert:0,missed:0,correctExclusion:0,uncertain:0};
  let unavailableComparisons=0,missedAtCollection=0;
  const rows=facts.rows.map(({suggested,collection,index,indexDigest,...row})=>{
   const label=byId.get(row.id);
-  if(!label)return {...row,assessment:null};
+  if(!label)return {...row,assessment:null,followUp:null};
   if(label.verdict==='UNCERTAIN')counts.uncertain++;
   else if(collection==='INDETERMINATE')unavailableComparisons++;
   else if(suggested){if(label.verdict==='APPLIES')counts.correctAlert++;else counts.falseAlert++;}
   else if(label.verdict==='APPLIES'){counts.missed++;if(collection==='MISSING')missedAtCollection++;}else counts.correctExclusion++;
-  return {...row,assessment:{suggested,collection,index,indexDigest,verdict:label.verdict,reason:label.reason}};
+  const issue=correction(state,{...row,suggested,collection,index,indexDigest});
+  const task=issue?tasks.get(issue.key):null;
+  const followUp=issue?{reason:issue.reason,task:task?{id:task.id,status:task.status,owner:task.ownerName,dueDate:task.dueDate.toISOString().slice(0,10)}:null}:null;
+  return {...row,followUp,assessment:{suggested,collection,index,indexDigest,verdict:label.verdict,reason:label.reason}};
  });
  const ratio=(part:number,total:number)=>total?part/total:null;
  const population=facts.queuePopulation;
@@ -67,7 +83,12 @@ export async function applicabilityAssessment(c:AuthorizedContext,id?:string){
   await requireMember(tx,c,ADMIN);
   const recent=await tx.auditEvent.findMany({where:{organizationId:c.organizationId,entityType:entity,action:frozen},orderBy:[{createdAt:'desc'},{id:'desc'}],take:12,select:{id:true,createdAt:true}});
   const selected=id??recent[0]?.id;
-  return {recent:recent.map(x=>({id:x.id,at:x.createdAt.toISOString()})),selected:selected?visible(await detail(tx,c,selected),c.userId):null};
+  const state=selected?await detail(tx,c,selected):null;
+  const issueKeys=state?.review?state.facts.rows.flatMap(row=>correction(state,row)?.key??[]):[];
+  const tasks=issueKeys.length?await tx.obligation.findMany({where:{organizationId:c.organizationId,automationKey:{in:issueKeys}},select:{id:true,status:true,ownerName:true,dueDate:true,automationKey:true}}):[];
+  const members=issueKeys.length?await tx.membership.findMany({where:{organizationId:c.organizationId,role:{in:['OWNER','ADMIN','EDITOR']}},select:{user:{select:{id:true,email:true}}},orderBy:{userId:'asc'},take:100}):[];
+  return {recent:recent.map(x=>({id:x.id,at:x.createdAt.toISOString()})),members:members.map(m=>m.user).filter(u=>allowedEmail(u.email,process.env.REGPILOT_AI_ALLOWED_EMAILS)),
+   selected:state?visible(state,c.userId,new Map(tasks.map(t=>[t.automationKey!,t]))):null};
  });
 }
 async function publisherSample(report:HorizonReport,seed:string,profile:WholesaleView,compare:typeof assessOfficialIndexes){
@@ -87,7 +108,7 @@ async function publisherSample(report:HorizonReport,seed:string,profile:Wholesal
  const ranked=[...distinct.values()].map(row=>({row,order:hashValue([seed,row.id])})).sort((a,b)=>a.order.localeCompare(b.order));
  return {method:'INDEX' as const,population:distinct.size,rows:ranked.slice(0,20).map(r=>r.row),failures:comparison.indexes.filter(i=>i.state!=='READ'||i.unrecognised).map(i=>i.name+' · '+(i.state==='READ'?'unrecognised entries':'index unavailable'))};
 }
-export async function changeApplicabilityAssessment(c:AuthorizedContext,input:unknown,read=readPublicHorizon,compare=assessOfficialIndexes){
+export async function changeApplicabilityAssessment(c:AuthorizedContext,input:unknown,read=readPublicHorizon,compare=assessOfficialIndexes):Promise<{id:string;taskId?:string}>{
  const action=assessmentAction.parse(input);
  if(action.action==='START'){
   const replay=await transaction(c,async tx=>{
@@ -126,6 +147,23 @@ export async function changeApplicabilityAssessment(c:AuthorizedContext,input:un
  return transaction(c,async tx=>{
   await requireMember(tx,c,ADMIN);
   const state=await detail(tx,c,action.assessmentId);
+  if(action.action==='FOLLOW_UP'){
+   if(!state.review||action.sampleHash!==state.hash)throw invalid('Finish the independent review before recording follow-up.');
+   const row=state.facts.rows.find(r=>r.id===action.publicationId),issue=row&&correction(state,row);
+   if(!row||!issue)throw invalid('Select a reviewed publication with an unresolved finding.');
+   const where={organizationId_automationKey:{organizationId:c.organizationId,automationKey:issue.key}};
+   const existing=await tx.obligation.findUnique({where,select:{id:true}});
+   if(existing)return {id:state.first.id,taskId:existing.id};
+   const today=new Date().toISOString().slice(0,10);
+   if(action.dueDate<today||Date.parse(action.dueDate)-Date.parse(today)>365*86400000)throw invalid('Choose a review date within the next year.');
+   const owner=await requireMember(tx,{...c,userId:action.ownerId},WRITER);
+   const task=await tx.obligation.create({data:{organizationId:c.organizationId,automationKey:issue.key,assigneeId:action.ownerId,ownerName:owner.email,
+    dueDate:new Date(action.dueDate+'T00:00:00Z'),title:(issue.reason+' · '+row.title).slice(0,160),category:'Regulatory applicability correction',
+    sourceUrl:row.url,notes:[state.facts.scope,issue.label.reason,'Independent assessment '+state.first.id,'Publication revision '+row.revision].join('\n')},select:{id:true}});
+   await tx.auditEvent.create({data:{...lookup(c.organizationId,state.first.id,'horizon.assessment_follow_up'),actorId:c.userId,details:{
+    sampleHash:state.hash,reviewHash:state.review.hash,publicationId:row.id,revision:row.revision,taskId:task.id,reason:issue.reason,ownerId:action.ownerId,dueDate:action.dueDate}}});
+   return {id:state.first.id,taskId:task.id};
+  }
   if(c.userId===state.first.actorId)throw new IntelligenceError('A different quality reviewer must classify the publications.',403);
   if(action.sampleHash!==state.hash)throw invalid('Review the same frozen sample before submitting.');
   const byId=new Map(action.labels.map(l=>[l.id,l]));

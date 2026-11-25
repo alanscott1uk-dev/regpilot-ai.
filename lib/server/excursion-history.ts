@@ -1,3 +1,4 @@
+import type {ReportedHour} from '../temperature-window';
 import type {Prisma} from '@prisma/client';
 import {temperatureHistory,type TemperatureHistory} from '../excursion-history';
 import {hashValue} from '../regulatory/intelligence';
@@ -7,7 +8,7 @@ import {IntelligenceError} from './intelligence-service';
 const day=86400000;
 const fields={id:true,result:true,resultHash:true,signalHash:true,outcome:true,configVersion:true} as const;
 type Run=Prisma.ConnectorRunGetPayload<{select:typeof fields}>;
-type Anchor={runId:string;connectorId:string;resultHash:string;sampleAt:string;calibration:string};
+type Anchor={runId:string;connectorId:string;resultHash:string;sampleAt:string;calibration:string;reportedHour?:ReportedHour};
 const unavailable=()=>new IntelligenceError('A retained temperature reading could not be verified against its source receipt.',409);
 
 function point(run:Run,anchor:Anchor,from:string,through:string){
@@ -32,17 +33,25 @@ export async function captureTemperatureHistory(tx:Prisma.TransactionClient,org:
  const rows=await tx.connectorRun.findMany({where:{...where,configVersion:origin.configVersion,id:{not:origin.id},
   capturedAt:{gte:from,lte:new Date(through.getTime()+day)}},orderBy:[{capturedAt:'desc'},{id:'asc'}],take:101,select:fields});
  const start=from.toISOString(),end=through.toISOString(),selected=point(origin,anchor,start,end);
- if(!selected||selected.status!=='FAIL')throw unavailable();
- const points=[selected,...rows.slice(0,100).flatMap(run=>point(run,anchor,start,end)??[])];
+ const window=verifiedObservation(origin)?.hourlyTemperature;
+ if(anchor.reportedHour){
+  const matched=window?.hours.find(h=>h.start===anchor.sampleAt);
+  if(!matched||hashValue(matched)!==hashValue(anchor.reportedHour))throw unavailable();
+ }else if(!selected||selected.status!=='FAIL')throw unavailable();
+ const points=[...(selected?[selected]:[]),...rows.slice(0,100).flatMap(run=>point(run,anchor,start,end)??[])];
  points.sort((a,b)=>a.at.localeCompare(b.at)||a.runId.localeCompare(b.runId));
- return temperatureHistory.parse({from:start,through:end,version:origin.configVersion,limited:rows.length>100,points});
+ return temperatureHistory.parse({from:start,through:end,version:origin.configVersion,limited:rows.length>100,hourlyTemperature:window,points});
 }
 
 export async function verifyTemperatureHistory(tx:Prisma.TransactionClient,org:string,anchor:Anchor,history:TemperatureHistory){
- const ids=history.points.map(p=>p.runId);
+ const ids=[...new Set([anchor.runId,...history.points.map(p=>p.runId)])];
  const rows=await tx.connectorRun.findMany({where:{organizationId:org,connectorId:anchor.connectorId,configVersion:history.version,id:{in:ids}},select:fields});
  const byId=new Map(rows.map(run=>[run.id,run]));
  if(rows.length!==ids.length||byId.get(anchor.runId)?.resultHash!==anchor.resultHash)throw unavailable();
+ if(history.hourlyTemperature){
+  const original=verifiedObservation(byId.get(anchor.runId))?.hourlyTemperature;
+  if(!original||hashValue(original)!==hashValue(history.hourlyTemperature))throw unavailable();
+ }
  for(const stored of history.points){
   const current=point(byId.get(stored.runId)!,anchor,history.from,history.through);
   if(!current||hashValue(current)!==hashValue(stored))throw unavailable();

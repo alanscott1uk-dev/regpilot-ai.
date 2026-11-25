@@ -4,7 +4,7 @@ import {STARTER_PACKS,parseStarterProgramme,readStarterProgrammeJson,StarterProg
 const owner='123e4567-e89b-42d3-a456-426614174000',now=new Date('2026-11-19T12:00:00Z');
 const input=(pack=STARTER_PACKS[0])=>({packId:pack.id,packVersion:pack.version,name:pack.title,scopeRationale:'These operational starting points fit the fictional team and its selected activities.',items:pack.items.map(({key,title,description,why})=>({key,title,description,why,assigneeId:owner,dueDate:'2026-12-01'}))});
 test('all starter packs can be adopted with their original editable guidance and explicit owners',()=>{
- for(const pack of STARTER_PACKS){const result=parseStarterProgramme(input(pack),now);const sizes={'soc2-iso27001-scoped':38,'soc2-iso27001-joint':24,'nist-800-53b-low':18,'nist-800-53b-moderate':18,'nist-800-53b-high':18,'nist-800-53b-privacy':16,'soc2-security':13,'iso27001-annex-a':19,'nist-csf-2':22,'soc2-iso27001':12,'uk-gdpr-accountability':7,'uk-gdp-self-inspection':10};const count=sizes[pack.id]??6;if(pack.id==='nist-csf-2')assert.equal(new Set(pack.items.flatMap(i=>i.mappings)).size,106);assert.equal(result.items.length,count);assert.equal(new Set(result.items.map(item=>item.key)).size,count);assert.equal(result.items.every(item=>item.assigneeId===owner),true);}
+ for(const pack of STARTER_PACKS){const result=parseStarterProgramme(input(pack),now);const sizes={'us-fda-part-11':6,'eu-gmp-annex-11':10,'pharma-electronic-records-joint':10,'soc2-iso27001-scoped':38,'soc2-iso27001-joint':24,'nist-800-53b-low':18,'nist-800-53b-moderate':18,'nist-800-53b-high':18,'nist-800-53b-privacy':16,'soc2-security':13,'iso27001-annex-a':19,'nist-csf-2':22,'soc2-iso27001':12,'uk-gdpr-accountability':7,'uk-gdp-self-inspection':10};const count=sizes[pack.id]??6;if(pack.id==='nist-csf-2')assert.equal(new Set(pack.items.flatMap(i=>i.mappings)).size,106);assert.equal(result.items.length,count);assert.equal(new Set(result.items.map(item=>item.key)).size,count);assert.equal(result.items.every(item=>item.assigneeId===owner),true);}
  const changed=input();changed.items=changed.items.slice(0,2).reverse();changed.items[0].title='Our own chosen operating task';assert.equal(parseStarterProgramme(changed,now).items[1].title,changed.items[0].title,'selection is editable and returns canonical pack order');
 });
 test('all optional SOC 2 criteria appear once and each activity offers a mapped ISO sample',()=>{
@@ -33,4 +33,15 @@ test('programme request bodies enforce byte limits and valid UTF-8 before JSON p
  assert.deepEqual(await readStarterProgrammeJson(request(JSON.stringify({text:'£'.repeat(9000)}))),{text:'£'.repeat(9000)});
  await assert.rejects(()=>readStarterProgrammeJson(request(JSON.stringify({text:'£'.repeat(33000)}))),(error)=>error.status===413);
  await assert.rejects(()=>readStarterProgrammeJson(request(new Uint8Array([0xc3,0x28]))),(error)=>error.status===400);
+});
+
+test('one joint pharmaceutical plan covers each Part 11 section and all 17 Annex 11 sections with the same evidence tasks',()=>{
+ const get=id=>STARTER_PACKS.find(p=>p.id===id);
+ const us=get('us-fda-part-11'),eu=get('eu-gmp-annex-11'),joint=get('pharma-electronic-records-joint');
+ const refs=items=>new Set(items.flatMap(i=>i.mappings));
+ assert.deepEqual(refs(eu.items),new Set(Array.from({length:17},(_,i)=>'EU GMP Annex 11 · Section '+(i+1))));
+ assert.deepEqual(refs(us.items),new Set(['11.1','11.2','11.3','11.10','11.30','11.50','11.70','11.100','11.200','11.300'].map(r=>'21 CFR Part 11 · § '+r)));
+ assert.deepEqual(refs(joint.items),new Set([...refs(us.items),...refs(eu.items)]));
+ assert.equal(joint.items.find(i=>i.key==='signatures').sources.length,2);
+ assert.equal(joint.items.length,10);
 });

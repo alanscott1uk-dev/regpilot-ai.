@@ -1,3 +1,4 @@
+import {temperatureWindowCsv} from '../temperature-window';
 import {verifyInspectionTemperatures} from './excursion-pilot';
 import {temperatureCsv} from '../excursion-history';
 import {hashValue} from '../regulatory/intelligence';
@@ -52,7 +53,10 @@ export async function siteInspectionArchive(ctx:AuthorizedContext,id:string,stor
   if(!excursion?.history)continue;
   const entry='temperature-'+excursion.receiptId+'.csv';
   entries.push({name:entry,bytes:Buffer.from(temperatureCsv(excursion.history))});
-  temperatureReadings.push({entry,caseId:excursion.caseId,receiptId:excursion.receiptId});
+  const window=excursion.history.hourlyTemperature;
+  const rangesEntry='hourly-ranges-'+excursion.receiptId+'.csv';
+  if(window)entries.push({name:rangesEntry,bytes:Buffer.from(temperatureWindowCsv(window))});
+  temperatureReadings.push({entry,...(window?{rangesEntry}:{}),caseId:excursion.caseId,receiptId:excursion.receiptId});
  }
  const manifest={temperatureReadings,format:'regpilot-site-inspection-v1',site:current,supplier:{entry:'supplier-validation.zip',...release.meta},sources};
  return makeAuditZip([{name:'site-inspection.json',bytes:Buffer.from(JSON.stringify(manifest,null,2))},...entries]);

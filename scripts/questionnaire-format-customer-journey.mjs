@@ -51,6 +51,36 @@ export async function runQuestionnaireFormatJourney({upload,review,app,org,edito
  assert.equal(await copyRegion.getByRole('button',{name:'Copy answer for '+question,exact:true}).count(),1);
  passed('A signed-in reviewer prepared an approved answer for a buyer portal in a browser without an extension or file transfer. The unrecognised buyer question received no answer.');
 
+ await checkpoint('fill an independent buyer origin through the bookmark and the one-time RegPilot pairing code');
+ await packages.getByText('Fill the buyer’s form with a browser bookmark',{exact:true}).click();
+ const bookmark=packages.getByText('RegPilot questionnaire',{exact:true});
+ await bookmark.locator('xpath=self::a[starts-with(@href,"javascript:")]').waitFor();
+ const bookmarkUrl=await bookmark.getAttribute('href');
+ await packages.getByRole('checkbox',{name:'I independently checked the destination, questions, product scope, answers and citations.',exact:true}).check();
+ await packages.getByRole('button',{name:'Get pairing code for the buyer bookmark',exact:true}).click();
+ const code=await packages.getByLabel('Buyer bookmark pairing code').inputValue();
+ const buyer=await review.context().newPage(),buyerUrl='https://buyer.example.invalid/security?review=fixture';
+ const buyerHTML='<html lang="en"><title>Fictional buyer</title><form><label>'+question+'<textarea></textarea></label><label>Which unknown question remains blank?<textarea></textarea></label><label>Customer note<textarea>Existing buyer text</textarea></label><button>Submit</button></form><script>window.submits=0;document.forms[0].onsubmit=e=>{e.preventDefault();window.submits++};</script></html>';
+ await buyer.route('https://buyer.example.invalid/**',r=>r.fulfill({contentType:'text/html',body:buyerHTML}));
+ async function openExchange(url){
+  await buyer.goto(url);await buyer.evaluate(address=>{location.href=address;},bookmarkUrl);
+  const opened=buyer.waitForEvent('popup');await buyer.getByRole('button',{name:'Fill reviewed answers',exact:true}).click();
+  const page=await opened;await page.getByLabel('One-time pairing code').fill(code);return page;
+ }
+ const wrong=await openExchange(buyerUrl+'&different=yes');await wrong.getByRole('button',{name:'Fill approved fields'}).click();
+ await wrong.getByText(/The code expired, the approval changed, or the buyer page does not match/).waitFor();
+ assert.equal(await buyer.getByLabel(question,{exact:true}).inputValue(),'');await wrong.close();
+ const exchange=await openExchange(buyerUrl);await exchange.getByRole('button',{name:'Fill approved fields'}).click();
+ await exchange.getByText(/Filled 1 reviewed field/).waitFor();
+ assert.equal(await buyer.getByLabel(question,{exact:true}).inputValue(),answer);
+ assert.equal(await buyer.getByLabel('Which unknown question remains blank?',{exact:true}).inputValue(),'');
+ assert.equal(await buyer.getByLabel('Customer note',{exact:true}).inputValue(),'Existing buyer text');assert.equal(await buyer.evaluate(()=>window.submits),0);
+ await exchange.close();
+ const replay=await openExchange(buyerUrl);await replay.getByRole('button',{name:'Fill approved fields'}).click();
+ await replay.getByText(/The code expired, the approval changed, or the buyer page does not match/).waitFor();
+ await replay.close();await buyer.close();
+ passed('The bookmark filled an approved answer on the exact buyer URL without an extension or file transfer. A different page and a reused code were refused. Existing buyer text and unanswered questions were preserved, with no form submitted.');
+
  await checkpoint('import a buyer portal directly from pasted questions and recover the approved answer suggestion');
  await upload.goto(app+'/team/questionnaires'+query);
  await upload.getByRole('button',{name:'Import questionnaire',exact:true}).click();

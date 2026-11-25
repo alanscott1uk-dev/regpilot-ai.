@@ -1,4 +1,5 @@
 import {z} from 'zod';
+import {temperatureWindowCsv,reportedHour,type ReportedHour} from '../temperature-window';
 import {temperatureHistory,temperatureCsv} from '../excursion-history';
 import {captureTemperatureHistory,verifyTemperatureHistory} from './excursion-history';
 import {Prisma,type QualityCase} from '@prisma/client';
@@ -20,7 +21,7 @@ import type {EvidenceObjectStore} from './evidence-storage';
 
 const text=z.string().trim().min(2).max(140);
 const base={requestKey:z.uuid(),version:z.number().int().positive()};
-const link=z.object({...base,action:z.literal('LINK'),runId:z.uuid(),site:text,stock:z.array(text).min(1).max(50).refine(a=>new Set(a).size===a.length),stockEvidenceId:z.uuid()}).strict();
+const link=z.object({...base,action:z.literal('LINK'),runId:z.uuid(),hourStart:z.iso.datetime().optional(),site:text,stock:z.array(text).min(1).max(50).refine(a=>new Set(a).size===a.length),stockEvidenceId:z.uuid()}).strict();
 const decide=z.object({...base,action:z.literal('DECIDE'),disposition:z.enum(['QUARANTINE','RETURN','REJECT','RELEASE']),sourceRef:text,signatory:text,
  decidedAt:z.iso.datetime(),rationale:z.string().trim().min(20).max(1500),decisionEvidenceId:z.uuid(),authorityEvidenceId:z.uuid(),confirmed:z.literal(true)}).strict();
 const retrieve=z.object({...base,action:z.literal('RETRIEVE')}).strict();
@@ -30,7 +31,7 @@ const pack=(v:unknown):Prisma.InputJsonValue=>JSON.parse(JSON.stringify(v));
 type Tx=Prisma.TransactionClient;
 const problem=(message:string)=>new IntelligenceError(message,409);
 const basis=(r:QualityCase)=>({caseId:r.id,cycle:r.cycle,occurredOn:r.occurredAt.toISOString().slice(0,10),impact:r.impact,containment:r.containment,investigation:r.investigationNotes,rootCause:r.rootCause});
-const attachment=z.object({runId:z.uuid(),connectorId:z.uuid(),resultHash:z.string(),signalHash:z.string(),provider:z.enum(loggerProviders).optional(),channel:z.string(),serial:z.string(),sampleAt:z.iso.datetime(),temperature:z.string(),
+const attachment=z.object({runId:z.uuid(),connectorId:z.uuid(),resultHash:z.string(),signalHash:z.string(),provider:z.enum(loggerProviders).optional(),channel:z.string(),serial:z.string(),sampleAt:z.iso.datetime(),reportedHour:reportedHour.optional(),temperature:z.string(),
  calibration:z.string(),calibrationApprovalId:z.uuid().optional(),calibrationApproverId:z.uuid().optional(),site:text,stock:z.array(text),stockEvidenceId:z.uuid(),files:reviewedFilesSchema});
 const decision=z.object({disposition:decide.shape.disposition,sourceRef:text,signatory:text,decidedAt:z.iso.datetime(),rationale:z.string(),decisionEvidenceId:z.uuid(),authorityEvidenceId:z.uuid(),
  files:reviewedFilesSchema,history:temperatureHistory.optional(),basisHash:z.string(),attachmentHash:z.string(),investigation:z.string(),rootCause:z.string()});
@@ -58,32 +59,50 @@ async function checkSource(tx:Tx,row:QualityCase,reading:z.infer<typeof attachme
 }
 type LoggerRun=Prisma.ConnectorRunGetPayload<{include:{connector:true}}>;
 const londonDay=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'});
-async function qualifiedReading(tx:Tx,row:QualityCase,run:LoggerRun|null){
+async function qualifiedReadings(tx:Tx,row:QualityCase,run:LoggerRun|null){
  const observation=verifiedObservation(run);
  const sample=observation?.checks.find(check=>check.id==='logger-fresh'&&check.status==='PASS');
  const temperature=observation?.checks.find(check=>check.id==='logger-temperature'&&check.status==='FAIL');
  const certificate=observation?.checks.find(check=>check.id==='logger-calibration'&&check.status==='PASS');
- if(!run||!isTemperatureLogger(run.connector.provider)||!observation||!sample||!temperature||!certificate||run.configVersion!==run.connector.version)
-  throw problem('Select an out-of-range reading with a verified instrument and reviewed calibration.');
- const time=new Date(sample.observed);
- if(!Number.isFinite(time.getTime())||londonDay.format(time)!==basis(row).occurredOn)
-  throw problem('Choose a reading from the UK occurrence date recorded on this deviation.');
- if(!await calibrationStillCurrent(tx,run.connector,observation))throw problem('Review the current instrument calibration.');
+ if(!run||!isTemperatureLogger(run.connector.provider)||!observation||!certificate||run.configVersion!==run.connector.version)
+  throw problem('Select a verified instrument with independently reviewed calibration.');
  const keys=readRecordKeys(run.connector.provider,run.connector.repository,run.connector.branch);
+ const [,,from,due,low,high]=keys.reference!.split('/');
+ const candidates:{sampleAt:string;temperature:string;reportedHour?:ReportedHour}[]=[];
+ const onCaseDate=(at:string)=>londonDay.format(new Date(at))===basis(row).occurredOn;
+ if(sample&&temperature&&Number.isFinite(Date.parse(sample.observed))&&onCaseDate(sample.observed))
+  candidates.push({sampleAt:sample.observed,temperature:temperature.observed});
+ const window=observation.hourlyTemperature;
+ if(window?.instrumentSerial===keys.record){
+  for(const h of window.hours){
+   if(!onCaseDate(h.start)||h.start.slice(0,10)<from||h.start.slice(0,10)>=due||h.minimum>=Number(low)&&h.maximum<=Number(high))continue;
+   candidates.push({sampleAt:h.start,reportedHour:h,temperature:'Reported hourly range '+h.minimum+' to '+h.maximum+' °C · limits '+low+' to '+high+' °C'});
+  }
+ }
+ if(!candidates.length)throw problem('Choose an out-of-range reading or instrument-identified hour on the UK occurrence date.');
+ if(!await calibrationStillCurrent(tx,run.connector,observation))throw problem('Review the current instrument calibration.');
  const approval=z.uuid().safeParse(certificate.observed.split(' · instrument review ').at(-1));
  const reviewer=approval.success?await tx.auditEvent.findFirst({where:{id:approval.data,organizationId:row.organizationId,entityType:'EvidenceConnector',entityId:run.connectorId,action:'logger.calibration-approved'},select:{actorId:true}}):null;
  if(!approval.success||!reviewer?.actorId)throw problem('A verified instrument review is required for this reading.');
- return {runId:run.id,connectorId:run.connectorId,resultHash:run.resultHash,signalHash:run.signalHash,provider:run.connector.provider,channel:keys.scope,serial:keys.record,
-  sampleAt:sample.observed,temperature:temperature.observed,calibration:certificate.observed,certificateId:keys.reference!.split('/')[0],calibrationApprovalId:approval.data,calibrationApproverId:reviewer.actorId};
+ const provider=run.connector.provider;
+ return candidates.map(value=>({...value,runId:run.id,connectorId:run.connectorId,resultHash:run.resultHash,signalHash:run.signalHash,provider,channel:keys.scope,serial:keys.record,
+  calibration:certificate.observed,certificateId:keys.reference!.split('/')[0],calibrationApprovalId:approval.data,calibrationApproverId:reviewer.actorId!}));
 }
 async function matchingReadings(tx:Tx,row:QualityCase){
  const day=row.occurredAt.getTime(),hour=3600000;
  // The longest accepted logger freshness window is one day. Include the UK midnight offset.
  const runs=await tx.connectorRun.findMany({where:{organizationId:row.organizationId,connector:{provider:{in:[...loggerProviders]}},outcome:'FOLLOW_UP',
-  capturedAt:{gte:new Date(day-2*hour),lt:new Date(day+49*hour)}},orderBy:[{capturedAt:'desc'},{id:'desc'}],take:41,include:{connector:true}});
- const readings=[];
+  capturedAt:{gte:new Date(day-2*hour),lt:new Date(day+52*hour)}},orderBy:[{capturedAt:'desc'},{id:'desc'}],take:41,include:{connector:true}});
+ const readings=[],seenHours=new Set<string>();
  for(const run of runs.slice(0,40)){
-  try{const {runId,provider,serial,channel,sampleAt,temperature}=await qualifiedReading(tx,row,run);readings.push({runId,provider,serial,channel,sampleAt,temperature});}
+  try{
+   for(const {runId,provider,serial,channel,sampleAt,temperature,reportedHour} of await qualifiedReadings(tx,row,run)){
+    const key=run.connectorId+'@'+run.configVersion+'@'+sampleAt;
+    if(reportedHour&&seenHours.has(key))continue;
+    if(reportedHour)seenHours.add(key);
+    readings.push({runId,provider,serial,channel,sampleAt,temperature,hourStart:reportedHour?.start});
+   }
+  }
   catch(err){if(!(err instanceof IntelligenceError)||err.status!==409)throw err;}
  }
  return {readings,limited:runs.length>40};
@@ -118,7 +137,8 @@ async function processExcursion(c:AuthorizedContext,id:string,raw:unknown,store?
    if(prior&&chain.reading?.id===prior.id)return {row,prior,body:chain.reading.data,files:chain.reading.data.files};
    if(chain.reading||prior)throw problem('An excursion has already been linked in this investigation cycle.');
    const run=await tx.connectorRun.findFirst({where:{id:d.runId,organizationId:c.organizationId,connector:{provider:{in:[...loggerProviders]}}},include:{connector:true}});
-   const reading=await qualifiedReading(tx,row,run);
+   const reading=(await qualifiedReadings(tx,row,run)).find(value=>value.reportedHour?.start===d.hourStart);
+   if(!reading)throw problem('The selected excursion is absent from this instrument receipt.');
    if(reading.certificateId===d.stockEvidenceId)throw problem('Select separate evidence identifying the affected stock.');
    const {certificateId,...measurement}=reading;
    const files=await reviewedFiles(tx,c.organizationId,[certificateId,d.stockEvidenceId]);
@@ -131,7 +151,7 @@ async function processExcursion(c:AuthorizedContext,id:string,raw:unknown,store?
    if(prior&&chain.disposition?.id===prior.id)return {row,prior,body:chain.disposition.data,files:chain.disposition.data.files};
    if(chain.disposition||prior)throw problem('This cycle already has a disposition.');
    if(chain.reading.actorId===c.userId||!row.investigationNotes.trim()||!row.rootCause.trim())throw problem('Complete the investigation and have a separate quality administrator verify the authorised disposition.');
-   if(Date.parse(d.decidedAt)<Date.parse(chain.reading.data.sampleAt)||Date.parse(d.decidedAt)>Date.now())throw problem('The signed decision time must fall between the reading and now.');
+   if(Date.parse(d.decidedAt)<Date.parse(chain.reading.data.sampleAt)+(chain.reading.data.reportedHour?3600000:0)||Date.parse(d.decidedAt)>Date.now())throw problem('The signed decision time must fall between the reading and now.');
    const docIds=[d.decisionEvidenceId,d.authorityEvidenceId];if(new Set([...docIds,...chain.reading.data.files.map(f=>f.id)]).size!==docIds.length+chain.reading.data.files.length)throw problem('Choose separate signed decision and delegation records.');
    const files=await reviewedFiles(tx,c.organizationId,docIds);
    const history=await captureTemperatureHistory(tx,c.organizationId,chain.reading.data,d.decidedAt);
@@ -177,7 +197,7 @@ async function processExcursion(c:AuthorizedContext,id:string,raw:unknown,store?
 }
 
 const qualifiedContext=z.object({release:z.string().regex(/^[a-f0-9]{40}$/),ownership:z.object({id:z.uuid(),actor:z.uuid(),category:z.literal('CUSTOMER'),scopeHash:z.string(),version:z.number().int().positive()})});
-export const siteExcursionSchema=z.object({receiptId:z.uuid(),caseId:z.uuid(),digest:z.string(),assessorId:z.uuid(),at:z.iso.datetime(),site:text,provider:z.enum(loggerProviders).optional(),channel:z.string().optional(),serial:z.string(),temperature:z.string(),sampleAt:z.iso.datetime(),stock:z.array(text),disposition:decide.shape.disposition,sourceRef:text,stockEvidenceId:z.uuid(),decisionEvidenceId:z.uuid(),authorityEvidenceId:z.uuid(),history:temperatureHistory.optional(),qualification:qualifiedContext,files:reviewedFilesSchema});
+export const siteExcursionSchema=z.object({receiptId:z.uuid(),caseId:z.uuid(),digest:z.string(),assessorId:z.uuid(),at:z.iso.datetime(),site:text,provider:z.enum(loggerProviders).optional(),channel:z.string().optional(),serial:z.string(),temperature:z.string(),sampleAt:z.iso.datetime(),reportedHour:reportedHour.optional(),stock:z.array(text),disposition:decide.shape.disposition,sourceRef:text,stockEvidenceId:z.uuid(),decisionEvidenceId:z.uuid(),authorityEvidenceId:z.uuid(),history:temperatureHistory.optional(),qualification:qualifiedContext,files:reviewedFilesSchema});
 export async function siteExcursion(tx:Tx,c:AuthorizedContext,receiptId:string,site:string,release:string,since:Date){
  const event=await tx.auditEvent.findFirst({where:{id:receiptId,organizationId:c.organizationId,entityType,action:'excursion.retrieve',createdAt:{gte:since}}});
  if(!event?.actorId)throw problem('Select an independent excursion retrieval for this site protocol.');
@@ -189,7 +209,7 @@ export async function siteExcursion(tx:Tx,c:AuthorizedContext,receiptId:string,s
   throw problem('The retrieval must match this site, release, independently confirmed customer logger and current investigation.');
  await checkSource(tx,row,reading.data);await assertReviewedFiles(tx,c.organizationId,disposition.data.files);
  if(disposition.data.history)await verifyTemperatureHistory(tx,c.organizationId,reading.data,disposition.data.history);
- return siteExcursionSchema.parse({...(disposition.data.history?{history:disposition.data.history}:{}),receiptId,caseId:row.id,digest:p.digest,assessorId:event.actorId,at:event.createdAt.toISOString(),site,...(reading.data.provider?{provider:reading.data.provider,channel:reading.data.channel}:{}),serial:reading.data.serial,temperature:reading.data.temperature,sampleAt:reading.data.sampleAt,stock:reading.data.stock,disposition:disposition.data.disposition,sourceRef:disposition.data.sourceRef,stockEvidenceId:reading.data.stockEvidenceId,decisionEvidenceId:disposition.data.decisionEvidenceId,authorityEvidenceId:disposition.data.authorityEvidenceId,qualification:proof.data,files:[...reading.data.files,...disposition.data.files]});
+ return siteExcursionSchema.parse({...(disposition.data.history?{history:disposition.data.history}:{}),receiptId,caseId:row.id,digest:p.digest,assessorId:event.actorId,at:event.createdAt.toISOString(),site,...(reading.data.provider?{provider:reading.data.provider,channel:reading.data.channel}:{}),serial:reading.data.serial,temperature:reading.data.temperature,sampleAt:reading.data.sampleAt,reportedHour:reading.data.reportedHour,stock:reading.data.stock,disposition:disposition.data.disposition,sourceRef:disposition.data.sourceRef,stockEvidenceId:reading.data.stockEvidenceId,decisionEvidenceId:disposition.data.decisionEvidenceId,authorityEvidenceId:disposition.data.authorityEvidenceId,qualification:proof.data,files:[...reading.data.files,...disposition.data.files]});
 }
 export async function verifyInspectionTemperatures(tx:Tx,org:string,excursion:z.infer<typeof siteExcursionSchema>){
  if(!excursion.history)return;
@@ -220,6 +240,7 @@ export async function excursionArchive(c:AuthorizedContext,id:string,raw:unknown
  const sources=files.map(({name,file})=>({role:file.id===stock?'affected-stock':file.id===decided.decisionEvidenceId?'signed-decision':file.id===decided.authorityEvidenceId?'signatory-authority':'calibration',entry:name,...file}));
  const history=decided.history;
  if(history)entries.push({name:'temperature-readings.csv',bytes:Buffer.from(temperatureCsv(history))});
- const manifest={...(history?{temperatureReadings:'temperature-readings.csv'}:{}),format:'regpilot-excursion-inspection-v1',...receipt,sources};
+ if(history?.hourlyTemperature)entries.push({name:'hourly-temperature-ranges.csv',bytes:Buffer.from(temperatureWindowCsv(history.hourlyTemperature))});
+ const manifest={...(history?.hourlyTemperature?{hourlyRanges:'hourly-temperature-ranges.csv'}:{}),...(history?{temperatureReadings:'temperature-readings.csv'}:{}),format:'regpilot-excursion-inspection-v1',...receipt,sources};
  return makeAuditZip([{name:'inspection.json',bytes:Buffer.from(JSON.stringify(manifest,null,2))},...entries]);
 }

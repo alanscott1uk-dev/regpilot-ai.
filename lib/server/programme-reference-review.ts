@@ -16,7 +16,7 @@ type ReferenceTask={id:string;title:string;href:string;owner:string;status:strin
 function references(plan:Awaited<ReturnType<typeof programmeReferenceContext>>){
  const index=new Map<string,{reference:string;area:string;taskId:string|null;owner:string;taskStatus:string;reviewedFiles:string[];tasks:ReferenceTask[]}>();
  const add=(reference:string,area:string)=>{if(!index.has(reference))index.set(reference,{reference,area:nistControlTitle(reference)||area,taskId:null,owner:'',taskStatus:'No linked task',reviewedFiles:[],tasks:[]});};
- if((['iso27001-annex-a','soc2-security','soc2-iso27001-joint','soc2-iso27001-scoped'].includes(plan.packId)||plan.packId.startsWith('nist-800-53b-'))&&plan.packVersion===1){
+ if((['iso27001-annex-a','soc2-security','soc2-iso27001-joint','soc2-iso27001-scoped','us-fda-part-11','eu-gmp-annex-11','pharma-electronic-records-joint'].includes(plan.packId)||plan.packId.startsWith('nist-800-53b-'))&&plan.packVersion===1){
   const pack=STARTER_PACKS.find(p=>p.id===plan.packId)!;
   for(const template of pack.items)for(const ref of template.mappings??[])add(ref,template.title);
  }

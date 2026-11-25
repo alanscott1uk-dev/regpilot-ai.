@@ -1,3 +1,4 @@
+import {completeLoggerWindow} from '../temperature-window';
 import {z} from 'zod';
 import type {Prisma} from '@prisma/client';
 import {completedManagedSync} from '../connectors/monitoring-product';
@@ -15,7 +16,7 @@ function sourceTime(provider:string,observation:Observation):number|null{
  if(isTemperatureLogger(provider)){
   const checks=observation.checks;
   const reading=checks.find(check=>check.id==='logger-fresh'&&check.status==='PASS');
-  if(!reading||!checks.some(check=>check.id==='logger-calibration'&&check.status==='PASS')||
+  if(!reading||!completeLoggerWindow(observation)||!checks.some(check=>check.id==='logger-calibration'&&check.status==='PASS')||
      !checks.some(check=>check.id==='logger-temperature'&&check.status!=='UNKNOWN'))return null;
   const at=Date.parse(reading.observed);
   return Number.isFinite(at)?at:null;

@@ -17,6 +17,8 @@ export const gleifEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_GLEIF_EN
 export const awsEnabled=()=>connectorsEnabled()&&process.env.REGPILOT_AWS_ENABLED==="true"&&brokerRole.safeParse(process.env.REGPILOT_AWS_BROKER_ROLE_ARN).success;
 export const awsOrganizationEnabled=()=>awsEnabled()&&process.env.REGPILOT_AWS_ORGANIZATIONS_ENABLED==="true";
 const providerGates=new Map<string,()=>boolean>(Object.entries({
+ PAGERDUTY_SERVICE:()=>connectorsEnabled()&&process.env.REGPILOT_PAGERDUTY_SERVICE_ENABLED!=="false",
+ HEALTHCHECKS_JOB:()=>connectorsEnabled()&&process.env.REGPILOT_HEALTHCHECKS_JOB_ENABLED!=="false",
  PROMETHEUS_ALERT_RULE:()=>connectorsEnabled()&&!!process.env.REGPILOT_PROMETHEUS_HOST,
  GRAFANA_DASHBOARD:connectorsEnabled,GITEA_REPOSITORY:connectorsEnabled,
  SLACK_MEMBER:()=>connectorsEnabled()&&process.env.REGPILOT_SLACK_MEMBER_ENABLED!=="false",

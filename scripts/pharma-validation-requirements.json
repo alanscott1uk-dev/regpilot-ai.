@@ -52,5 +52,11 @@
     "requirement": "Trace a T&D WebStorage Celsius channel and its instrument serial through credential rejection and renewal, independently reviewed calibration, a stock disposition and retrieval of the site inspection archive.",
     "file": "tests/operational-records.integration.test.ts",
     "test": "a T&D WebStorage logger recovers after credential rejection and carries its serial and channel into the signed site inspection"
+  },
+  {
+    "id": "PH-10",
+    "requirement": "Detect an instrument-identified excursion between collections. Retain the reported hour, sample count, minimum and maximum through the stock decision and independent retrieval.",
+    "file": "tests/operational-records.integration.test.ts",
+    "test": "an instrument-identified hourly excursion carries its reported range and stock decision through a signed site inspection even after the current reading recovers"
   }
 ]

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {collectOperationalRecord, readRecordKeys, recordKeys} from "../lib/connectors/operational-records";
 import {observationOutcome, observationSchema, signalChanges} from "../lib/connectors/observation";
-import {records, token, cloud} from "./helpers/operational-record-fixtures";
+import {records, recordAuth, token, cloud} from "./helpers/operational-record-fixtures";
 
 for (const row of records) {
   test(row.provider + " binds source identity and compares current observations", async () => {
@@ -11,8 +11,8 @@ for (const row of records) {
       assert.equal(String(url), row.url);
       assert.equal(options?.method, "GET");
       assert.equal(options?.redirect, "error");
-      const expected = provider === "AZURE_DEVOPS" ? "Basic " + Buffer.from(":" + token).toString("base64") : (provider==="STATUSPAGE_COMPONENT"?"OAuth ":"Bearer ") + token;
-      assert.equal(new Headers(options?.headers).get("Authorization"), expected);
+      const auth=recordAuth(provider,token);
+      assert.equal(new Headers(options?.headers).get(auth.name),auth.value);
       return Response.json({...body, privateText:"never-retain"});
     };
     const keys = recordKeys(provider,target);
@@ -31,6 +31,8 @@ for (const row of records) {
 }
 test("unreadable and incomplete records cannot pass their checks", async () => {
   const incomplete:Record<string,object>={
+    PAGERDUTY_SERVICE:{service:{id:'PABC123',type:'service',self:'https://api.pagerduty.com/services/PABC123',html_url:'https://fixture.pagerduty.com/service-directory/PABC123'}},
+    HEALTHCHECKS_JOB:{unique_key:'a'.repeat(40),slug:'warehouse-backup'},
     JIRA:{key:"QA-13",fields:{project:{key:"QA"},assignee:{},resolution:{}}},
     SERVICENOW:{result:{sys_id:records[1].target.record,closed_at:"unparseable"}},
     AZURE_DEVOPS:{id:93,project:{id:cloud},status:"inProgress",result:"succeeded"},
@@ -335,4 +337,62 @@ test('T&D selects the instrument and Celsius channel and preserves authenticatio
  await assert.rejects(read([selected,selected]),{code:'TARGET_MISMATCH'});
  await assert.rejects(collectOperationalRecord('TANDD_WEBSTORAGE',target,stored,async()=>new Response(null,{status:401})),{code:'CREDENTIAL_REJECTED',step:'tandd-reading'});
  await assert.rejects(collectOperationalRecord('TANDD_WEBSTORAGE',target,stored,async()=>new Response(null,{status:429,headers:{'x-ratelimit-reset':'75'}})),{code:'RATE_LIMITED',retryAfterSeconds:75});
+});
+
+test('customer service monitors bind the account and job, report failures and exclude provider credentials and payloads',async()=>{
+ const target={scope:'acme.pagerduty.com',record:'PABC123',reference:'PDEF456'};
+ const service={id:target.record,type:'service',html_url:'https://acme.pagerduty.com/service-directory/PABC123',self:'https://api.pagerduty.com/services/PABC123',status:'active',escalation_policy:{id:target.reference},summary:'private customer text'};
+ const read=(change:object={})=>collectOperationalRecord('PAGERDUTY_SERVICE',target,token,async(url,init)=>{
+  assert.equal(String(url),service.self);assert.equal(new Headers(init?.headers).get('authorization'),'Token token='+token);
+  return Response.json({service:{...service,...change}});
+ });
+ assert.equal(observationOutcome(await read()),'OBSERVED');
+ assert.equal(observationOutcome(await read({status:'critical'})),'FOLLOW_UP');
+ assert.equal(observationOutcome(await read({escalation_policy:{id:'PDEF789'}})),'FOLLOW_UP');
+ assert.equal(observationOutcome(await read({escalation_policy:{}})),'INCOMPLETE');
+ await assert.rejects(read({html_url:'https://other.pagerduty.com/service-directory/PABC123'}),{code:'TARGET_MISMATCH',step:'pagerduty-service'});
+ const job={scope:'fridge-export',record:'a'.repeat(40),reference:'60'};
+ const heartbeat=(change:object={})=>collectOperationalRecord('HEALTHCHECKS_JOB',job,token,async(url,init)=>{
+  assert.equal(String(url),'https://healthchecks.io/api/v3/checks/'+job.record);assert.equal(new Headers(init?.headers).get('X-Api-Key'),token);
+  return Response.json({unique_key:job.record,slug:job.scope,status:'up',last_ping:new Date(Date.now()-60000).toISOString(),desc:'private customer text',...change});
+ });
+ assert.equal(observationOutcome(await heartbeat()),'OBSERVED');assert.doesNotMatch(JSON.stringify([await read(),await heartbeat()]),/private customer text|fictional-connector-token/);
+ assert.equal(observationOutcome(await heartbeat({status:'grace'})),'FOLLOW_UP');
+ assert.equal(observationOutcome(await heartbeat({last_ping:new Date(Date.now()-90*60000).toISOString()})),'FOLLOW_UP');
+ await assert.rejects(heartbeat({unique_key:'b'.repeat(40)}),{code:'TARGET_MISMATCH',step:'healthchecks-job'});
+ await assert.rejects(heartbeat({ping_url:'fixture-write-capability'}),{code:'TARGET_MISMATCH'});
+ for(const [provider,t] of [['PAGERDUTY_SERVICE',target],['HEALTHCHECKS_JOB',job]] as const){
+  const keys=recordKeys(provider,t);assert.deepEqual(readRecordKeys(provider,keys.repository,keys.branch),t);
+  await assert.rejects(collectOperationalRecord(provider,t,token,async()=>new Response(null,{status:401})),{code:'CREDENTIAL_REJECTED'});
+ }
+});
+
+test('UbiBot hourly extremes reveal a missed point excursion and keep missing or duplicated hours out of a clean result',async()=>{
+ const target={scope:'812',record:'WS1-007',reference:'b1d49814-7d05-4bc0-9a76-dde67d9862de/2/2025-01-01/2030-01-01/2/8/15/history'};
+ async function read(mode:string){
+  return collectOperationalRecord('UBIBOT',target,token,async url=>{
+   const u=new URL(String(url));assert.equal(u.searchParams.get('api_key'),token);
+   if(!u.pathname.endsWith('/summary.json'))return Response.json({result:'success',channel:{channel_id:'812',serial:target.record,last_values:{field1:{value:5,created_at:Math.floor(Date.now()/1000)-30}}}});
+   const start=Date.parse(u.searchParams.get('start')!.replace(' ','T')+'Z');
+   assert.equal(u.searchParams.get('timezone'),'UTC');
+   const feeds=Array.from({length:24},(_,i)=>({created_at:new Date(start+i*3600000).toISOString(),field1:{count:12,min:3,max:mode==='breach'&&i===8?9:6}}));
+   if(mode==='missing')feeds.pop();if(mode==='duplicate')feeds[23]=feeds[0];
+   return Response.json({result:'success',channel:{channel_id:'812',serial:mode==='wrong'?'other':target.record},is_truncated:mode==='truncate',feeds});
+  },'e'.repeat(64));
+ }
+ const receipt=await read('breach');assert.equal(receipt.checks.find(c=>c.id==='logger-temperature')?.status,'PASS');
+ assert.equal(observationOutcome(receipt),'FOLLOW_UP');assert.equal(receipt.hourlyTemperature?.hours[8].maximum,9);assert.equal(receipt.hourlyTemperature?.instrumentSerial,target.record);
+ assert.equal(observationOutcome(await read('missing')),'INCOMPLETE');assert.equal(observationOutcome(await read('truncate')),'INCOMPLETE');assert.equal(observationOutcome(await read('normal')),'OBSERVED');
+ await assert.rejects(read('duplicate'),{code:'INVALID_RESPONSE',step:'logger-history'});
+ await assert.rejects(read('wrong'),{code:'TARGET_MISMATCH',step:'logger-history'});assert.ok(!JSON.stringify(receipt).includes(token));
+});
+
+test('hosted product eligibility merges authentication variants and leaves unknown sources unqualified',async()=>{
+ const {monitoringProduct,managedProductIdentityCount}=await import('../lib/connectors/monitoring-product');
+ assert.ok(managedProductIdentityCount>=500);
+ assert.equal(monitoringProduct('NANGO_SYNC','github-pat'),monitoringProduct('GITHUB_WORKFLOW'));
+ assert.equal(monitoringProduct('NANGO_SYNC','bamboohr-basic'),monitoringProduct('NANGO_SYNC','bamboohr'));
+ assert.equal(monitoringProduct('NANGO_SYNC','bitbucket'),'BITBUCKET');
+ assert.equal(monitoringProduct('NANGO_SYNC','unknown-app'),null);
+ assert.equal(monitoringProduct('NANGO_SYNC','constructor'),null);
 });

@@ -1,3 +1,4 @@
+import {hourlyTemperature} from './temperature-window';
 import {z} from 'zod';
 
 export const temperaturePoint=z.object({
@@ -6,8 +7,8 @@ export const temperaturePoint=z.object({
 });
 export const temperatureHistory=z.object({
  from:z.iso.datetime(),through:z.iso.datetime(),version:z.number().int().positive(),
- limited:z.boolean(),points:z.array(temperaturePoint).min(1).max(101)
-});
+ limited:z.boolean(),hourlyTemperature:hourlyTemperature.optional(),points:z.array(temperaturePoint).max(101)
+}).refine(h=>h.points.length>0||!!h.hourlyTemperature?.hours.length);
 export type TemperatureHistory=z.infer<typeof temperatureHistory>;
 
 export function temperatureSummary(history:TemperatureHistory){
@@ -21,7 +22,7 @@ export function temperatureSummary(history:TemperatureHistory){
  const conflicts=[...samples.values()].filter(values=>values.size>1).length;
  const values=history.points.map(point=>point.celsius);
  const gaps=ordered.slice(1).map((at,index)=>Date.parse(at)-Date.parse(ordered[index]));
- return {samples:samples.size,conflicts,minimum:Math.min(...values),maximum:Math.max(...values),
+ return {samples:samples.size,conflicts,minimum:values.length?Math.min(...values):null,maximum:values.length?Math.max(...values):null,
   largestGapMinutes:gaps.length?Math.max(...gaps)/60000:null};
 }
 

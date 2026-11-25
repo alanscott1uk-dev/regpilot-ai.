@@ -1,6 +1,9 @@
 import {CollectionError} from './collection-error';
 export const collectionSteps={
+ 'pagerduty-service':['Read the PagerDuty service','Check the read-only REST key, account region, service ID and access to the service.'],
+ 'healthchecks-job':['Read the monitored heartbeat','Use the read-only key from the Healthchecks project. Verify the check slug and its read-only unique_key.'],
  'tandd-reading':['Read the T&D temperature channel','Verify the WebStorage read-only ID, password and API key. Check the instrument serial, channel number and Celsius unit.'],
+ 'logger-history':['Read UbiBot hourly temperature history','Check access to the channel summary API and the configured serial. Review missing hours against the instrument export.'],
  'logger-channel':['Read the logger channel','Check the read-only channel key, channel ID and physical serial against the instrument record.'],
  'lab-token':['Authenticate the Benchling application','Verify the app ID and secret for the selected Benchling tenant.'],
  'lab-result':['Read the assay result','Check access to the result and confirm its linked entry ID.'],

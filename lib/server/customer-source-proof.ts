@@ -1,3 +1,4 @@
+import {completeLoggerWindow} from '../temperature-window';
 import type {Prisma} from '@prisma/client';
 import {isTemperatureLogger} from '../connectors/record-catalogue';
 import {monitoringProduct,completedManagedSync,publicMonitoringProducts,advancesUpstream} from '../connectors/monitoring-product';
@@ -72,7 +73,7 @@ export async function customerSourceProof(ctx:AuthorizedContext,id:string,includ
   const managed=row.provider==='NANGO_SYNC';
   const usable=captures.slice(0,100).flatMap(run=>{
    const obs=verifiedObservation(run);
-   if(!versions.has(run.configVersion)||!obs||(!required[row.provider]&&(!obs.checks.length||obs.checks.some(c=>c.status==='UNKNOWN')))||!(required[row.provider]??[]).every(id=>obs.checks.some(c=>c.id===id&&(c.status==='PASS'||id==='logger-temperature'&&c.status==='FAIL'))))return [];
+   if(!versions.has(run.configVersion)||!obs||!completeLoggerWindow(obs)||(!required[row.provider]&&(!obs.checks.length||obs.checks.some(c=>c.status==='UNKNOWN')))||!(required[row.provider]??[]).every(id=>obs.checks.some(c=>c.id===id&&(c.status==='PASS'||id==='logger-temperature'&&c.status==='FAIL'))))return [];
    const upstream=managed?completedManagedSync(obs):null;
    if(managed&&upstream===null)return [];
    const sample=obs.checks.find(c=>c.id==='logger-fresh')?.observed;

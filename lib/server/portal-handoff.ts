@@ -8,10 +8,10 @@ import type {EvidenceObjectStore} from './evidence-storage';
 import {db} from './db';
 import {IntelligenceError,transaction} from './intelligence-service';
 import {hashValue} from '../regulatory/intelligence';
-const issue=z.object({delivery:z.literal('MANUAL_COPY').optional(),capture:portalFields,version:z.number().int().positive(),labels:z.array(z.string().min(3).max(1200)).min(1).max(100).refine(v=>v.length===new Set(v).size),confirm:z.literal(true)}).strict();
+const issue=z.object({delivery:z.enum(['MANUAL_COPY','BUYER_BOOKMARK']).optional(),capture:portalFields,version:z.number().int().positive(),labels:z.array(z.string().min(3).max(1200)).min(1).max(100).refine(v=>v.length===new Set(v).size),confirm:z.literal(true)}).strict();
 const secretHash=(s:string)=>createHash('sha256').update(s).digest('hex');
 const bad=()=>new IntelligenceError('The portal hand-off is unavailable. Return to the approved questionnaire.',404);
-const saved=z.object({delivery:z.literal('MANUAL_COPY').optional(),capture:portalFields,labels:z.array(z.string()).min(1).max(100),approvedHash:z.string().length(64),questionnaireId:z.uuid(),secretHash:z.string().length(64),expiresAt:z.iso.datetime()}).strict();
+const saved=z.object({delivery:z.enum(['MANUAL_COPY','BUYER_BOOKMARK']).optional(),capture:portalFields,labels:z.array(z.string()).min(1).max(100),approvedHash:z.string().length(64),questionnaireId:z.uuid(),secretHash:z.string().length(64),expiresAt:z.iso.datetime()}).strict();
 export async function issuePortalHandoff(ctx:AuthorizedContext,id:string,raw:unknown,store?:EvidenceObjectStore){
  const d=issue.parse(raw);
  await transaction(ctx,async tx=>{
@@ -32,10 +32,15 @@ export async function issuePortalHandoff(ctx:AuthorizedContext,id:string,raw:unk
  });
 }
 export async function redeemPortalHandoff(raw:unknown){
- const d=z.object({handoffId:z.uuid(),secret:z.string().regex(/^[A-Za-z0-9_-]{43}$/),capture:portalFields}).strict().parse(raw);
+ const d=z.object({handoffId:z.uuid(),secret:z.string().regex(/^[A-Za-z0-9_-]{43}$/),capture:portalFields,delivery:z.literal('BUYER_BOOKMARK').optional()}).strict().parse(raw);
  const issued=await db.auditEvent.findFirst({where:{id:d.handoffId,action:'portal.issued',entityType:'QuestionnaireHandoff'}});
  if(!issued)throw bad();const s=saved.parse(issued.details);
- if(Date.parse(s.expiresAt)<=Date.now()||!timingSafeEqual(Buffer.from(s.secretHash,'hex'),Buffer.from(secretHash(d.secret),'hex'))||hashValue(s.capture)!==hashValue(d.capture))throw bad();
+ if(Date.parse(s.expiresAt)<=Date.now()||!timingSafeEqual(Buffer.from(s.secretHash,'hex'),Buffer.from(secretHash(d.secret),'hex')))throw bad();
+ if((d.delivery==='BUYER_BOOKMARK')!==(s.delivery==='BUYER_BOOKMARK'))throw bad();
+ if(d.delivery==='BUYER_BOOKMARK'){
+  if(s.capture.origin!==d.capture.origin||s.capture.pageHash!==d.capture.pageHash||
+     s.labels.some(label=>d.capture.fields.filter(actual=>actual===label).length!==1))throw bad();
+ }else if(hashValue(s.capture)!==hashValue(d.capture))throw bad();
  const ctx:AuthorizedContext={organizationId:issued.organizationId,userId:issued.actorId,role:'ADMIN'};
  return transaction(ctx,async tx=>{
   if(Date.parse(s.expiresAt)<=Date.now())throw bad();

@@ -49,18 +49,20 @@ const schema=githubTarget.extend({provider:z.literal("GITHUB").default("GITHUB")
 const googleSchema=googleTarget.extend({provider:z.literal("GOOGLE_WORKSPACE"),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:googleCredentials.shape.clientSecret.optional(),refreshToken:googleCredentials.shape.refreshToken.optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)}).refine(v=>!!v.clientSecret===!!v.refreshToken,"Rotate both Google credentials together");
 const microsoftSchema=microsoftTarget.extend({provider:z.enum(["MICROSOFT365","INTUNE"]),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:z.string().min(16).max(512).regex(/^[^\r\n\0]+$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)});
 const extraFields={controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().refine(validCredential).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)};
-const loggerInterval=z.union([z.literal(1),z.literal(24),z.literal(168)]);
+const resourceInterval=z.union([z.literal(1),z.literal(24),z.literal(168)]);
 const extraSchema=z.discriminatedUnion("provider",[
- recordTargets.PROMETHEUS_ALERT_RULE.extend({...extraFields,provider:z.literal("PROMETHEUS_ALERT_RULE"),token:z.string().refine(validCredential).regex(/^[^:\s]+:.+$/).optional()}).strict(),
- recordTargets.GITEA_REPOSITORY.extend({...extraFields,provider:z.literal("GITEA_REPOSITORY")}).strict(),
- recordTargets.GRAFANA_DASHBOARD.extend({...extraFields,provider:z.literal("GRAFANA_DASHBOARD")}).strict(),
- recordTargets.SLACK_MEMBER.extend({...extraFields,provider:z.literal("SLACK_MEMBER")}).strict(),
- recordTargets.BOX_USER.extend({...extraFields,provider:z.literal("BOX_USER")}).strict(),
- recordTargets.ASANA_TASK.extend({...extraFields,provider:z.literal("ASANA_TASK")}).strict(),
- recordTargets.GITHUB_SCIM.extend({...extraFields,provider:z.literal("GITHUB_SCIM")}).strict(),
- recordTargets.ATLASSIAN_SCIM.extend({...extraFields,provider:z.literal("ATLASSIAN_SCIM")}).strict(),
- recordTargets.STATUSPAGE_COMPONENT.extend({...extraFields,provider:z.literal("STATUSPAGE_COMPONENT")}).strict(),
- recordTargets.ZENDESK_TICKET.extend({...extraFields,provider:z.literal("ZENDESK_TICKET")}).strict(),
+ recordTargets.PAGERDUTY_SERVICE.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("PAGERDUTY_SERVICE")}).strict(),
+ recordTargets.HEALTHCHECKS_JOB.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("HEALTHCHECKS_JOB")}).strict(),
+ recordTargets.PROMETHEUS_ALERT_RULE.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("PROMETHEUS_ALERT_RULE"),token:z.string().refine(validCredential).regex(/^[^:\s]+:.+$/).optional()}).strict(),
+ recordTargets.GITEA_REPOSITORY.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("GITEA_REPOSITORY")}).strict(),
+ recordTargets.GRAFANA_DASHBOARD.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("GRAFANA_DASHBOARD")}).strict(),
+ recordTargets.SLACK_MEMBER.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("SLACK_MEMBER")}).strict(),
+ recordTargets.BOX_USER.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("BOX_USER")}).strict(),
+ recordTargets.ASANA_TASK.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("ASANA_TASK")}).strict(),
+ recordTargets.GITHUB_SCIM.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("GITHUB_SCIM")}).strict(),
+ recordTargets.ATLASSIAN_SCIM.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("ATLASSIAN_SCIM")}).strict(),
+ recordTargets.STATUSPAGE_COMPONENT.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("STATUSPAGE_COMPONENT")}).strict(),
+ recordTargets.ZENDESK_TICKET.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("ZENDESK_TICKET")}).strict(),
  recordTargets.NHSBSA_MAPPING.extend({...extraFields,provider:z.literal("NHSBSA_MAPPING")}).omit({token:true}).strict(),
  recordTargets.CLINICALTRIALS_GOV.extend({...extraFields,provider:z.literal("CLINICALTRIALS_GOV")}).omit({token:true}).strict(),
  recordTargets.OPENFDA_RECALL.extend({...extraFields,provider:z.literal("OPENFDA_RECALL")}).omit({token:true}).strict(),
@@ -70,16 +72,16 @@ const extraSchema=z.discriminatedUnion("provider",[
  recordTargets.OPENAI_PROJECT_MODEL.extend({...extraFields,provider:z.literal("OPENAI_PROJECT_MODEL")}).strict(),
  recordTargets.PRIVATE_AI_MODEL.extend({...extraFields,provider:z.literal("PRIVATE_AI_MODEL")}).strict(),
  recordTargets.KEYCLOAK_REALM.extend({...extraFields,provider:z.literal("KEYCLOAK_REALM")}).strict(),
- recordTargets.GITHUB_WORKFLOW.extend({...extraFields,provider:z.literal("GITHUB_WORKFLOW")}).strict(),
+ recordTargets.GITHUB_WORKFLOW.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("GITHUB_WORKFLOW")}).strict(),
  recordTargets.NANGO_SYNC.extend({...extraFields,provider:z.literal("NANGO_SYNC")}).omit({token:true}).strict(),
- recordTargets.UBIBOT.extend({...extraFields,intervalHours:loggerInterval,provider:z.literal("UBIBOT")}).strict(),
- recordTargets.TANDD_WEBSTORAGE.extend({...extraFields,intervalHours:loggerInterval,provider:z.literal("TANDD_WEBSTORAGE"),credentials:tanddCredentials.optional()}).omit({token:true}).strict(),
- recordTargets.BENCHLING.extend({...extraFields,provider:z.literal("BENCHLING"),clientId:benchlingClient.optional()}).strict(),
- recordTargets.JIRA.extend({...extraFields,provider:z.literal("JIRA")}).strict(),
- recordTargets.SERVICENOW.extend({...extraFields,provider:z.literal("SERVICENOW")}).strict(),
- recordTargets.AZURE_DEVOPS.extend({...extraFields,provider:z.literal("AZURE_DEVOPS")}).strict(),
- recordTargets.CONFLUENCE.extend({...extraFields,provider:z.literal("CONFLUENCE")}).strict(),
- recordTargets.SAFETYCULTURE.extend({...extraFields,provider:z.literal("SAFETYCULTURE")}).strict(),
+ recordTargets.UBIBOT.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("UBIBOT")}).strict(),
+ recordTargets.TANDD_WEBSTORAGE.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("TANDD_WEBSTORAGE"),credentials:tanddCredentials.optional()}).omit({token:true}).strict(),
+ recordTargets.BENCHLING.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("BENCHLING"),clientId:benchlingClient.optional()}).strict(),
+ recordTargets.JIRA.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("JIRA")}).strict(),
+ recordTargets.SERVICENOW.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("SERVICENOW")}).strict(),
+ recordTargets.AZURE_DEVOPS.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("AZURE_DEVOPS")}).strict(),
+ recordTargets.CONFLUENCE.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("CONFLUENCE")}).strict(),
+ recordTargets.SAFETYCULTURE.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("SAFETYCULTURE")}).strict(),
  workforceTarget.extend({...extraFields,provider:z.literal("WORKFORCE_LEAVER"),credentials:workforceCredentials.optional()}).omit({token:true}).strict(),
  awsOrganizationTarget.extend({...extraFields,provider:z.literal("AWS_ORGANIZATIONS")}).omit({token:true}).strict(),
  awsTarget.extend({...extraFields,provider:z.literal("AWS")}).omit({token:true}).strict(),
@@ -105,6 +107,7 @@ function storedTarget(settings:ConnectorSettings):{repository:string;branch:stri
   case "OPENAI_PROJECT_MODEL":case "PRIVATE_AI_MODEL":
   case "SLACK_MEMBER":case "BOX_USER":case "ASANA_TASK":
   case "GITHUB_SCIM":case "ATLASSIAN_SCIM":case "STATUSPAGE_COMPONENT":case "ZENDESK_TICKET":
+  case "PAGERDUTY_SERVICE":case "HEALTHCHECKS_JOB":
   case "PROMETHEUS_ALERT_RULE":case "GITEA_REPOSITORY":case "GRAFANA_DASHBOARD":
   case "KEYCLOAK_REALM":
   case "GITHUB_WORKFLOW":

@@ -18,7 +18,10 @@ export default function Excursion({organizationId,caseId,version,files,request,r
   if(working.current)return;working.current=true;lock(true);setMessage('');
   try{
    const value:Record<string,unknown>=fields?Object.fromEntries(fields):{};
-   if(action==='LINK')value.stock=String(value.stock).split(/\r?\n/).map(v=>v.trim()).filter(Boolean);
+   if(action==='LINK'){
+    value.stock=String(value.stock).split(/\r?\n/).map(v=>v.trim()).filter(Boolean);
+    const [runId,hourStart]=String(value.runId).split('@');value.runId=runId;if(hourStart)value.hourStart=hourStart;
+   }
    if(action==='DECIDE'){value.confirmed=value.confirmed==='on';value.decidedAt=new Date(String(value.decidedAt)).toISOString();}
    const body={action,version:data?.version??version,...value},key=JSON.stringify(body);
    const requestKey=requestKeys.current.get(key)??crypto.randomUUID();requestKeys.current.set(key,requestKey);
@@ -37,15 +40,16 @@ export default function Excursion({organizationId,caseId,version,files,request,r
  const history=data?.disposition?.data.history,summary=history&&temperatureSummary(history);
  return <details onToggle={e=>{if(e.currentTarget.open&&!data)void load();}}><summary>Temperature excursion and stock disposition</summary>
  {message&&<p role="alert">{message}</p>}{data&&<><p>{data.issue??(data.disposition?'Disposition recorded':data.reading?'Reading linked. Complete the investigation before recording the signed disposition.':'Link the calibrated out-of-range reading to the stock present at the site.')}</p>
- {data.reading&&<p>{data.reading.data.sampleAt} · {data.reading.data.provider&&recordCatalogue[data.reading.data.provider].name+' · '}{data.reading.data.serial} · Channel {data.reading.data.channel} · {data.reading.data.temperature} · {data.reading.data.site} · {data.reading.data.stock.join(', ')}</p>}
+ {data.reading&&<p>{data.reading.data.reportedHour?'Reporting hour beginning ':''}{data.reading.data.sampleAt} · {data.reading.data.provider&&recordCatalogue[data.reading.data.provider].name+' · '}{data.reading.data.serial} · Channel {data.reading.data.channel} · {data.reading.data.temperature} · {data.reading.data.site} · {data.reading.data.stock.join(', ')}</p>}
  {history&&summary&&<details><summary>Calibrated readings supporting this disposition</summary>
- <p>{summary.samples} distinct instrument timestamps · {summary.minimum} to {summary.maximum} °C. {summary.largestGapMinutes===null?'Only one instrument time was observed.':'Longest interval between observations: '+Number(summary.largestGapMinutes.toFixed(1))+' minutes.'}</p>
+ {summary.samples>0&&<p>{summary.samples} distinct instrument timestamps · {summary.minimum} to {summary.maximum} °C. {summary.largestGapMinutes===null?'Only one instrument time was observed.':'Longest interval between observations: '+Number(summary.largestGapMinutes.toFixed(1))+' minutes.'}</p>}
+ {history.hourlyTemperature&&<p>{history.hourlyTemperature.hours.length} reported hourly ranges are included in the inspection files. The published range identifies the hour of a breach. Its exact time and duration require the original trace.</p>}
  <p>Requested window {history.from} to {history.through}. Time outside limits between readings is unknown.</p>
  {history.limited&&<p>Receipt limit reached. The history includes the linked reading and eligible readings from the latest 100 other collections.</p>}
  {summary.conflicts>0&&<p role="alert">Different readings share {summary.conflicts} instrument timestamps. Review the original instrument record.</p>}
  <table><thead><tr><th>Sample UTC</th><th>Temperature</th><th>Within limits</th></tr></thead><tbody>{history.points.map(p=><tr key={p.runId}><td>{p.at}</td><td>{p.celsius} °C</td><td>{p.status==='PASS'?'Yes':'No'}</td></tr>)}</tbody></table></details>}
  {!data.reading&&canEdit&&<form onSubmit={e=>{e.preventDefault();void submit('LINK',new FormData(e.currentTarget));}}><fieldset disabled={busy}><legend>Affected stock</legend>
- <label>Calibrated readings on the case date<select name={manual?undefined:'runId'} disabled={manual} required={!manual}><option value="">Choose a reading</option>{data.candidates.readings.map(r=><option key={r.runId} value={r.runId}>{recordCatalogue[r.provider].name} · {r.serial} · Channel {r.channel} · {new Date(r.sampleAt).toLocaleString('en-GB',{timeZone:'Europe/London',timeZoneName:'short'})} · {r.temperature}</option>)}</select></label>
+ <label>Calibrated readings on the case date<select name={manual?undefined:'runId'} disabled={manual} required={!manual}><option value="">Choose a reading</option>{data.candidates.readings.map(r=><option key={r.runId+(r.hourStart??'')} value={r.runId+(r.hourStart?'@'+r.hourStart:'')}>{recordCatalogue[r.provider].name} · {r.serial} · Channel {r.channel} · {new Date(r.sampleAt).toLocaleString('en-GB',{timeZone:'Europe/London',timeZoneName:'short'})} · {r.temperature}</option>)}</select></label>
  {!data.candidates.readings.length&&<p>No matching collection was found for the case date.</p>}{data.candidates.limited&&<p>Showing eligible readings from the 40 most recent collections around this date.</p>}
  <label><input type="checkbox" checked={manual} onChange={e=>setManual(e.target.checked)}/>Enter a collection ID from a logger receipt</label>{manual&&<label>Logger collection ID<input name="runId" required/></label>}<label>Site and storage location<input name="site" required/></label><label>Stock or lot references, one per line<textarea name="stock" required/></label>
  {file('stockEvidenceId','Stock record for this location and time')}<button>Link reading and stock</button></fieldset></form>}

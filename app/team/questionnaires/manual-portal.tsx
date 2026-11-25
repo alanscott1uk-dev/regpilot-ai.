@@ -1,4 +1,5 @@
 'use client';
+import BuyerBookmark from './buyer-bookmark';
 import {useEffect,useState} from 'react';
 import {portalTable} from '../../../lib/portal-table';
 import {identifyPortal,portalFields,type PortalDestination,type PortalFields} from '../../../lib/portal-questionnaire';
@@ -12,6 +13,7 @@ export function ManualCapture({disabled,savedQuestions,destination,onCapture,onE
   }catch{onError('Enter an HTTPS buyer address and one question per line. Use up to 100 questions of 3–1,200 characters each.');}
  }
  return <details open><summary>Complete a buyer portal without installing the helper</summary>
+  <BuyerBookmark/>
   {destination&&<><p>Original destination · {destination.origin}</p><button type="button" disabled={disabled} onClick={()=>{
    const result=portalFields.safeParse({format:'regpilot-portal-fields-v1',...destination,fields:savedQuestions});
    if(result.success)onCapture(result.data);else onError('Review the saved labels below. Each portal field accepts 3–1,200 characters.');
@@ -21,7 +23,7 @@ export function ManualCapture({disabled,savedQuestions,destination,onCapture,onE
    <label>Buyer questions, one per line<textarea name="questions" defaultValue={savedQuestions.join('\n')} required rows={4} maxLength={120100}/></label>
    <button>Find approved answers</button></fieldset></form></details>;
 }
-export type CopyReceipt={origin:string;expiresAt:string;fields:{label:string;answer:string}[]};
+export type CopyReceipt={origin:string;pageHash:string;expiresAt:string;fields:{label:string;answer:string}[]};
 export function CopyAnswers({receipt,labels}:{receipt:CopyReceipt;labels:string[]}){
  const [expired,setExpired]=useState(false),[notice,setNotice]=useState('');
  useEffect(()=>{setExpired(false);const timer=setTimeout(()=>setExpired(true),Math.max(0,Date.parse(receipt.expiresAt)-Date.now()));return()=>clearTimeout(timer);},[receipt]);

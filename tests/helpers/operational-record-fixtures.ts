@@ -8,6 +8,14 @@ type Case = {
   provider: RecordProvider; target: {scope:string;record:string;reference?:string};
   url: string; good: object; changed: object; wrong: object; changedCheck: string;
 };
+const service={id:'PABC123',type:'service',self:'https://api.pagerduty.com/services/PABC123',html_url:'https://fixture.pagerduty.com/service-directory/PABC123',status:'active',escalation_policy:{id:'PDEF456'}};
+const job={unique_key:'a'.repeat(40),slug:'warehouse-backup',status:'up',last_ping:new Date(Date.now()-60000).toISOString()};
+export function recordAuth(provider:RecordProvider,credential:string){
+ if(provider==='HEALTHCHECKS_JOB')return {name:'X-Api-Key',value:credential};
+ if(provider==='AZURE_DEVOPS')return {name:'Authorization',value:'Basic '+Buffer.from(':'+credential).toString('base64')};
+ const scheme=provider==='PAGERDUTY_SERVICE'?'Token token=':provider==='STATUSPAGE_COMPONENT'?'OAuth ':'Bearer ';
+ return {name:'Authorization',value:scheme+credential};
+}
 export const records: Case[] = [
   {provider:"JIRA", target:{scope:cloud,record:"QA-13"}, url:"https://api.atlassian.com/ex/jira/"+cloud+"/rest/api/3/issue/QA-13?fields=project,status,resolution,assignee",
     good:{key:"QA-13",fields:{project:{key:"QA"},assignee:{accountId:"private-owner"},status:{statusCategory:{key:"done"}},resolution:{id:"1"}}},
@@ -30,5 +38,9 @@ export const records: Case[] = [
   {"provider":"GITHUB_SCIM","target":{"scope":"fictional","record":"identity-19","reference":"inactive"},"url":"https://api.github.com/scim/v2/organizations/fictional/Users/identity-19","good":{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"identity-19","active":false},"changed":{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"identity-19","active":true},"wrong":{"id":"other"},"changedCheck":"expected-state"},
   {"provider":"ATLASSIAN_SCIM","target":{"scope":"8bb4a9de-7359-4067-ba72-36394e8a663f","record":"identity-19","reference":"inactive"},"url":"https://api.atlassian.com/scim/directory/8bb4a9de-7359-4067-ba72-36394e8a663f/Users/identity-19","good":{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"identity-19","active":false},"changed":{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"identity-19","active":true},"wrong":{"id":"other"},"changedCheck":"expected-state"},
   {"provider":"STATUSPAGE_COMPONENT","target":{"scope":"page0001","record":"comp0001","reference":"operational"},"url":"https://api.statuspage.io/v1/pages/page0001/components/comp0001","good":{"id":"comp0001","page_id":"page0001","status":"operational"},"changed":{"id":"comp0001","page_id":"page0001","status":"major_outage"},"wrong":{"id":"comp0001","page_id":"page0002"},"changedCheck":"expected-state"},
-  {"provider":"ZENDESK_TICKET","target":{"scope":"fictional","record":"721","reference":"solved"},"url":"https://fictional.zendesk.com/api/v2/tickets/721.json","good":{"ticket":{"id":721,"status":"solved","assignee_id":31}},"changed":{"ticket":{"id":721,"status":"open","assignee_id":null}},"wrong":{"ticket":{"id":720}},"changedCheck":"expected-state"}
+  {"provider":"ZENDESK_TICKET","target":{"scope":"fictional","record":"721","reference":"solved"},"url":"https://fictional.zendesk.com/api/v2/tickets/721.json","good":{"ticket":{"id":721,"status":"solved","assignee_id":31}},"changed":{"ticket":{"id":721,"status":"open","assignee_id":null}},"wrong":{"ticket":{"id":720}},"changedCheck":"expected-state"},
+  {provider:'PAGERDUTY_SERVICE',target:{scope:'fixture.pagerduty.com',record:service.id,reference:service.escalation_policy.id},url:service.self,
+   good:{service},changed:{service:{...service,status:'critical'}},wrong:{service:{...service,id:'PABC999'}},changedCheck:'service-state'},
+  {provider:'HEALTHCHECKS_JOB',target:{scope:job.slug,record:job.unique_key,reference:'60'},url:'https://healthchecks.io/api/v3/checks/'+job.unique_key,
+   good:job,changed:{...job,status:'down'},wrong:{...job,slug:'other-job'},changedCheck:'heartbeat-state'}
 ];

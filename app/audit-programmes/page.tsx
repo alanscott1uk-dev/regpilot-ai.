@@ -18,7 +18,7 @@ export default async function AuditProgrammes({searchParams}:{searchParams:Promi
  <section className={css.panel}><h2>{pack.items.length} editable tasks</h2><p>Each task can have an owner, a due date and reviewed evidence.</p>
  {pack.items.map(item=><details key={item.key}><summary>{item.title}</summary><p>{item.description}</p><p><strong>Evidence to collect</strong> {item.evidenceHint}</p>
  {!!item.mappings?.length&&<ul>{item.mappings.map(ref=><li key={ref}>{ref}</li>)}</ul>}
- {item.sourceUrl&&<p><a href={item.sourceUrl}>Read the source for this task</a></p>}</details>)}</section></>:
+ {'sources' in item&&Array.isArray(item.sources)?<p>{item.sources.map((s:{url:string;name:string})=><span key={s.url}><a href={s.url}>{s.name}</a>{' '}</span>)}</p>:item.sourceUrl&&<p><a href={item.sourceUrl}>Read the source for this task</a></p>}</details>)}</section></>:
  <><header className={css.header}><h1>Audit and compliance programmes</h1><p>Browse the tasks, evidence requests and framework references before choosing a programme for your workspace.</p></header>
  <form className={css.form} action="/audit-programmes"><label>Find a programme or control<input type="search" name="q" defaultValue={query} maxLength={100} placeholder="e.g. wholesale, SOC 2, A.5.16"/></label><button type="submit">Search</button></form>
  <p>{matches.length} of {STARTER_PACKS.length} programmes</p>{query&&<p><a href="/audit-programmes">Clear search</a></p>}

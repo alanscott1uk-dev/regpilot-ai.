@@ -12,7 +12,7 @@ import {approveLoggerCalibration} from '../lib/server/logger-calibration';
 import {db} from "../lib/server/db";
 import {saveConnector,verifyConnectorNow,exportConnectorRun,claimConnector,executeConnector} from "../lib/server/connector-service";
 import {assuranceFixture,rejects} from "./helpers/assurance-fixture";
-import {records,token} from "./helpers/operational-record-fixtures";
+import {records,recordAuth,token} from "./helpers/operational-record-fixtures";
 
 test("operational connectors can be configured, collected, renewed and exported within their workspace", async () => {
   const f = await assuranceFixture(), original = globalThis.fetch;
@@ -22,7 +22,7 @@ test("operational connectors can be configured, collected, renewed and exported 
     const control = await db.managedControl.create({data:{organizationId:f.a.id,importId:programme.id,proposalKey:"evidence",title:"Operational evidence",description:"Review the source records",testProcedure:"Compare against the expected record",theme:"quality",ownerId:f.editor.id,scheduledById:f.owner.id,intervalDays:30,nextReviewAt:new Date()}});
     for (const row of records) {
       const flag = "REGPILOT_"+row.provider+"_ENABLED";
-      const input = {provider:row.provider,...row.target,controlId:control.id,version:0,consent:true,enabled:true,intervalHours:24,token};
+      const input = {provider:row.provider,...row.target,controlId:control.id,version:0,consent:true,enabled:true,intervalHours:row.provider==='PAGERDUTY_SERVICE'||row.provider==='HEALTHCHECKS_JOB'?1:24,token};
       process.env[flag]="false";
       await assert.rejects(saveConnector(f.o,input),rejects(503));
       process.env[flag]="true";
@@ -31,8 +31,8 @@ test("operational connectors can be configured, collected, renewed and exported 
       let acceptedCredential=token;
       globalThis.fetch=async (url,options) => {
         assert.equal(String(url),row.url);
-        const required=row.provider==="AZURE_DEVOPS"?"Basic "+Buffer.from(":"+acceptedCredential).toString("base64"):(row.provider==="STATUSPAGE_COMPONENT"?"OAuth ":"Bearer ")+acceptedCredential;
-        if(new Headers(options?.headers).get("authorization")!==required)return new Response(null,{status:401});
+        const auth=recordAuth(row.provider,acceptedCredential);
+        if(new Headers(options?.headers).get(auth.name)!==auth.value)return new Response(null,{status:401});
         return Response.json(row.changed);
       };
       const observed = await verifyConnectorNow(f.o,saved.id,saved.version);
@@ -188,19 +188,19 @@ test('managed AI access, renewal and successive sync receipts are isolated to th
  }finally{await f.cleanup();}
 });
 
-test('a hosted monitor resumes only after scoped broker reauthorisation and earns recovery only after a new complete upstream sync',async()=>{
+for(const slug of ['slack','bitbucket'])test(slug==='bitbucket'?'a newly indexed Bitbucket product binds monitored controls to fresh upstream receipts and workspace-scoped credential recovery':'a hosted monitor resumes only after scoped broker reauthorisation and earns recovery only after a new complete upstream sync',async()=>{
  const {marketplaceAction}=await import('../lib/server/integration-marketplace');
  const {customerSourceProof,customerBenchmarkPage}=await import('../lib/server/customer-source-proof');
  const {completedManagedSync,monitoringProduct}=await import('../lib/connectors/monitoring-product');
  const f=await assuranceFixture(),original=globalThis.fetch;
  Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:'true',REGPILOT_CONNECTORS_ENABLED:'true',REGPILOT_CONNECTOR_ENCRYPTION_KEY:'cd'.repeat(32),
   SUPABASE_URL:'https://auth.invalid',SUPABASE_PUBLISHABLE_KEY:'fictional',REGPILOT_MARKETPLACE_ENABLED:'true',REGPILOT_NANGO_API_KEY:token});
- const integration='regpilot-slack',connectionId='workspace-membership',model='Member',scope={integration,connectionId},ownerTags={organization_id:f.a.id,regpilot_integration:integration};
+ const integration='regpilot-'+slug,connectionId='workspace-membership',model='Member',scope={integration,connectionId},ownerTags={organization_id:f.a.id,regpilot_integration:integration};
  let tags:Record<string,string>={...ownerTags},issued:Record<string,string>={},fault=false,upstream=new Date(Date.now()-5000).toISOString(),size=1;
  globalThis.fetch=async(input,init)=>{
   const url=new URL(String(input));assert.equal(url.origin,'https://api.nango.dev');
-  if(url.pathname==='/integrations')return Response.json({data:[{unique_key:integration,provider:'slack'}]});
-  if(url.pathname==='/connections')return Response.json({connections:[{provider:'slack',provider_config_key:integration,connection_id:connectionId,tags,errors:fault?[{type:'auth'}]:[]}]});
+  if(url.pathname==='/integrations')return Response.json({data:[{unique_key:integration,provider:slug}]});
+  if(url.pathname==='/connections')return Response.json({connections:[{provider:slug,provider_config_key:integration,connection_id:connectionId,tags,errors:fault?[{type:'auth'}]:[]}]});
   if(url.pathname==='/sync/status')return Response.json({syncs:[{connection_id:connectionId,status:'SUCCESS',finishedAt:upstream,recordCount:{Member:size}}]});
   if(url.pathname==='/records')return Response.json({records:[{id:'private-user',mfa:true,orphan:false,reviewed:upstream,_nango_metadata:{last_modified_at:upstream,last_action:'UPDATED'}}],next_cursor:null});
   assert.equal(url.pathname,'/connect/sessions/reconnect');issued=JSON.parse(String(init?.body)).tags;
@@ -211,7 +211,7 @@ test('a hosted monitor resumes only after scoped broker reauthorisation and earn
   const control=await db.managedControl.create({data:{organizationId:f.a.id,importId:pack.id,proposalKey:'identity',title:'Identity check',description:'Check approved access',testProcedure:'Inspect mapped accounts',theme:'identity',ownerId:f.editor.id,scheduledById:f.owner.id,intervalDays:30,nextReviewAt:new Date()}});
   const bound=await marketplaceAction(f.o,{action:'BIND_POLICY',...scope,model,policy:{profile:'identity',mapping:{mfaEnabled:'mfa',orphaned:'orphan',accessReviewedAt:'reviewed'}}});
   assert.ok('policyId' in bound&&bound.controls.some(c=>c.id===control.id));
-  const input={provider:'NANGO_SYNC',scope:integration+'/'+connectionId,record:model,reference:'slack/'+bound.policyId,controlId:control.id,intervalHours:24,version:0,enabled:true,consent:true};
+  const input={provider:'NANGO_SYNC',scope:integration+'/'+connectionId,record:model,reference:slug+'/'+bound.policyId,controlId:control.id,intervalHours:24,version:0,enabled:true,consent:true};
   await assert.rejects(saveConnector(f.out,input),rejects(409));
   const [monitor,again]=await Promise.all([saveConnector(f.o,input),saveConnector(f.o,input)]);assert.deepEqual(monitor,again);
   const selected=await marketplaceAction(f.o,{action:'MONITOR',monitorId:monitor.id});assert.ok('grant' in selected&&selected.grant?.id===connectionId&&selected.model===model);
@@ -221,7 +221,7 @@ test('a hosted monitor resumes only after scoped broker reauthorisation and earn
    const job=await claimConnector();assert.equal(job?.id,monitor.id);
    return executeConnector(job!,undefined,{deferAutomation:true});
   }
-  assert.equal(await collect(),'OBSERVED');assert.equal((await customerSourceProof(f.o,monitor.id)).productKey,'SLACK');
+  assert.equal(await collect(),'OBSERVED');assert.equal((await customerSourceProof(f.o,monitor.id)).productKey,slug.toUpperCase());
   fault=true;assert.equal(await collect(),'ATTENTION');
   const paused=await db.evidenceConnector.findUniqueOrThrow({where:{id:monitor.id}});assert.equal(paused.enabled,false);assert.equal(paused.failureCode,'CREDENTIAL_REJECTED');
   const portfolio=await customerBenchmarkPage(f.o);assert.ok(portfolio.connections.some(c=>c.id===monitor.id&&!c.qualified&&c.failures===1));
@@ -254,16 +254,16 @@ test('a hosted monitor resumes only after scoped broker reauthorisation and earn
  }finally{globalThis.fetch=original;await f.cleanup();}
 });
 
-for(const loggerProvider of ['UBIBOT','TANDD_WEBSTORAGE'] as const)test(loggerProvider==='TANDD_WEBSTORAGE'?'a T&D WebStorage logger recovers after credential rejection and carries its serial and channel into the signed site inspection':'repeated logger collection checks the physical serial, rotated key and current certificate review on each collection',async()=>{
+for(const scenario of ['UBIBOT','TANDD_WEBSTORAGE','UBIBOT_HISTORY'] as const)test(scenario==='UBIBOT_HISTORY'?'an instrument-identified hourly excursion carries its reported range and stock decision through a signed site inspection even after the current reading recovers':scenario==='TANDD_WEBSTORAGE'?'a T&D WebStorage logger recovers after credential rejection and carries its serial and channel into the signed site inspection':'repeated logger collection checks the physical serial, rotated key and current certificate review on each collection',async()=>{
  const f=await assuranceFixture(),original=globalThis.fetch;
  Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:'true',REGPILOT_CONNECTORS_ENABLED:'true',REGPILOT_UBIBOT_ENABLED:'true',REGPILOT_CONNECTOR_ENCRYPTION_KEY:'dc'.repeat(32),SUPABASE_URL:'https://auth.invalid',SUPABASE_PUBLISHABLE_KEY:'fictional'});
  try{
   const file=await f.file(),cert=await db.evidence.findUniqueOrThrow({where:{id:file.id}});
   const programme=await db.programmeImport.create({data:{organizationId:f.a.id,createdById:f.o.userId,inputHash:f.a.id,method:'SEARCH',status:'ACCEPTED',evidenceManifest:[]}});
   const control=await db.managedControl.create({data:{organizationId:f.a.id,importId:programme.id,proposalKey:'logger',title:'Logger calibration',description:'Check the current calibrated thermometer',testProcedure:'Read the current channel',theme:'quality',ownerId:f.editor.id,scheduledById:f.owner.id,intervalDays:30,nextReviewAt:new Date()}});
-  const tandd=loggerProvider==='TANDD_WEBSTORAGE';
-  const base={provider:loggerProvider,scope:tandd?'2':'812',record:tandd?'52A021FE':'WS1-fixture',reference:[file.id,cert.reviewVersion,'2025-01-01','2030-01-01',2,8,15].join('/'),controlId:control.id,consent:true,enabled:true,intervalHours:tandd?1:24};
-  let temperature=4,expected=token,rejectCredential=false;
+  const archiveHours=scenario==='UBIBOT_HISTORY',tandd=scenario==='TANDD_WEBSTORAGE',loggerProvider=tandd?'TANDD_WEBSTORAGE':'UBIBOT';
+  const base={provider:loggerProvider,scope:tandd?'2':'812',record:tandd?'52A021FE':'WS1-fixture',reference:[file.id,cert.reviewVersion,'2025-01-01','2030-01-01',2,8,15].join('/')+(archiveHours?'/history':''),controlId:control.id,consent:true,enabled:true,intervalHours:tandd||archiveHours?1:24};
+  let temperature=4,expected=token,rejectCredential=false,intervalFailed=false,failedHour='';
   const credentials=(replaced:boolean)=>tandd?{credentials:{loginId:'qa000001',password:'fixture-pass',apiKey:(replaced?'b':'a').repeat(45)}}:{token:expected};
   const clock=Math.floor(Date.now()/1000);let sensorTime=clock-180;
   globalThis.fetch=async(raw,init)=>{
@@ -275,6 +275,12 @@ for(const loggerProvider of ['UBIBOT','TANDD_WEBSTORAGE'] as const)test(loggerPr
     return Response.json({devices:[{serial:base.record,unixtime:String(sensorTime),channel:[{num:'1',unit:'%',value:'41'},{num:'2',unit:'C',value:String(temperature)}]}]});
    }
    assert.equal(new URL(String(raw)).searchParams.get('api_key'),expected);
+   if(new URL(String(raw)).pathname.endsWith('/summary.json')){
+    const start=Date.parse(new URL(String(raw)).searchParams.get('start')!.replace(' ','T')+'Z');
+    const feeds=Array.from({length:24},(_,i)=>({created_at:new Date(start+i*3600000).toISOString(),field1:{count:12,min:4,max:intervalFailed&&i===23?11:6}}));
+    failedHour=feeds[23].created_at;
+    return Response.json({result:'success',channel:{channel_id:'812',serial:base.record},is_truncated:false,feeds});
+   }
    return Response.json({result:'success',channels:[{channel_id:812,serial:base.record,last_values:{field1:{value:temperature,created_at:sensorTime}}}]});
   };
   const saved=await saveConnector(f.o,{...base,...credentials(false),version:0});
@@ -296,10 +302,10 @@ for(const loggerProvider of ['UBIBOT','TANDD_WEBSTORAGE'] as const)test(loggerPr
   assert.equal((await verifyConnectorNow(f.o,saved.id,updated.version)).outcome,'OBSERVED');
   const run=await db.connectorRun.findFirstOrThrow({where:{connectorId:saved.id},orderBy:{capturedAt:'desc'}});
   assert.equal((await exportConnectorRun(f.o,run.id)).currentAtExport,true);
-  sensorTime=clock-90;temperature=10;await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
+  sensorTime=clock-90;temperature=archiveHours?5:10;intervalFailed=archiveHours;await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
   assert.equal((await verifyConnectorNow(f.o,saved.id,updated.version)).outcome,'FOLLOW_UP');
   const excursion=await db.connectorRun.findFirstOrThrow({where:{connectorId:saved.id},orderBy:{capturedAt:'desc'}});
-  const sampleAt=new Date(sensorTime*1000);
+  const sampleAt=archiveHours?new Date(failedHour):new Date(sensorTime*1000);
   const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(sampleAt));
   const q=await createQualityCase(f.ed,{title:'Fictional storage excursion',kind:'DEVIATION',classification:'MAJOR',requestKey:randomUUID(),
    ownerId:f.ed.userId,occurredAt:today,impact:'The fictional affected lot was segregated pending a decision.',description:'The fixture logger reported a temperature above the site operating limit.',containment:'Segregate the identified stock at the test site until reviewed.'});
@@ -307,13 +313,13 @@ for(const loggerProvider of ['UBIBOT','TANDD_WEBSTORAGE'] as const)test(loggerPr
   const candidates=await excursionWorkspace(f.ed,q.id);
   assert.deepEqual(candidates.candidates.readings.map(r=>r.runId),[excursion.id]);
   await assert.rejects(excursionWorkspace(f.out,q.id),rejects(404));
-  const attach={action:'LINK',requestKey:randomUUID(),version:q.version,runId:excursion.id,site:'Fictional cold room',stock:['TEST-001'],stockEvidenceId:stock.id};
+  const attach={action:'LINK',requestKey:randomUUID(),version:q.version,runId:excursion.id,...(archiveHours?{hourStart:failedHour}:{}),site:'Fictional cold room',stock:['TEST-001'],stockEvidenceId:stock.id};
   await assert.rejects(excursionCommand(f.out,q.id,attach,f.store),rejects(404));
   await assert.rejects(excursionCommand(f.ed,q.id,{...attach,runId:run.id},f.store),rejects(409));
   const linked=await excursionCommand(f.ed,q.id,attach,f.store);assert.equal((await excursionCommand(f.ed,q.id,attach,f.store)).digest,linked.digest);
   const assessed=await investigateQualityCase(f.ed,q.id,{requestKey:randomUUID(),version:q.version+1,ownerId:f.ed.userId,containment:'The identified fictional lot stays segregated pending independent review.',investigationNotes:'Compared the excursion timing against the stock and certificate in the fixture.',rootCause:'The fictional cold-room door was left open during a documented transfer.',effectivenessCriteria:'Verify the handover and logger condition on the next agreed review.',effectivenessDueAt:today});
   const disposition={action:'DECIDE',requestKey:randomUUID(),version:assessed.version,sourceRef:'TEST-QD-1',signatory:'Fictional delegated decision maker',disposition:'QUARANTINE',decidedAt:new Date().toISOString(),rationale:'The signed fixture decision retains the affected lot in quarantine.',decisionEvidenceId:signed.id,authorityEvidenceId:authority.id,confirmed:true};
-  sensorTime=clock-20;temperature=6;
+  sensorTime=clock-20;temperature=6;intervalFailed=false;
   await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
   assert.equal((await verifyConnectorNow(f.o,saved.id,updated.version)).outcome,'OBSERVED');
   const restored=await db.connectorRun.findFirstOrThrow({where:{connectorId:saved.id},orderBy:{capturedAt:'desc'}});
@@ -327,8 +333,13 @@ for(const loggerProvider of ['UBIBOT','TANDD_WEBSTORAGE'] as const)test(loggerPr
   const archive=await readZipParts(await excursionArchive(f.re,q.id,fetchRecord,f.store)) as Map<string,Buffer>;
   const inspection=JSON.parse(archive.get('inspection.json')!.toString());
   assert.equal(inspection.digest,independent.digest);
+  if(archiveHours){
+   assert.equal(inspection.record.reading.data.reportedHour.maximum,11);
+   assert.match(archive.get(inspection.hourlyRanges)!.toString(),/4,11,12/);
+   assert.equal(inspection.record.reading.data.temperature.includes('Reported hourly range'),true);
+  }
   const historyPoints=inspection.record.disposition.data.history.points;
-  assert.deepEqual(historyPoints.map((p:{celsius:number})=>p.celsius),[4,10,6]);
+  assert.deepEqual(historyPoints.map((p:{celsius:number})=>p.celsius),archiveHours?[4,5,6]:[4,10,6]);
   assert.deepEqual(historyPoints.map((p:{runId:string})=>p.runId),[run.id,excursion.id,restored.id]);
   assert.ok(archive.get(inspection.temperatureReadings)!.toString().includes(excursion.resultHash));
   assert.deepEqual(inspection.sources.map((s:{role:string})=>s.role).sort(),['affected-stock','calibration','signatory-authority','signed-decision']);
@@ -373,6 +384,7 @@ for(const loggerProvider of ['UBIBOT','TANDD_WEBSTORAGE'] as const)test(loggerPr
    assert.deepEqual(bundle.sources.flatMap((s:{roles:string[]})=>s.roles).filter((r:string)=>r.startsWith('excursion-')).sort(),['excursion-authority','excursion-calibration','excursion-disposition','excursion-stock']);
    for(const source of bundle.sources)assert.equal(createHash('sha256').update(files.get(source.entry)!).digest('hex'),source.sha256);
    assert.deepEqual(files.get(bundle.temperatureReadings[0].entry),archive.get(inspection.temperatureReadings));
+   if(archiveHours)assert.deepEqual(files.get(bundle.temperatureReadings[0].rangesEntry),archive.get(inspection.hourlyRanges));
    await db.connectorRun.update({where:{id:restored.id},data:{resultHash:'0'.repeat(64)}});
    await assert.rejects(excursionCommand(f.re,q.id,fetchRecord,f.store),rejects(409));
    await assert.rejects(siteInspectionArchive(f.re,id,f.store),rejects(409));

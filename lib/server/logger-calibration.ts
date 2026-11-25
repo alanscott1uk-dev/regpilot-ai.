@@ -1,3 +1,4 @@
+import {completeLoggerWindow} from '../temperature-window';
 import type {EvidenceConnector,Prisma} from '@prisma/client';
 import {z} from 'zod';
 import type {AuthorizedContext} from './authorization';
@@ -63,7 +64,7 @@ export async function calibrationStillCurrent(tx:Prisma.TransactionClient,logger
 }
 
 export function loggerSampleCurrent(logger:Logger,observation:Observation|null,now=Date.now()){
- if(!observation||!isTemperatureLogger(logger.provider))return false;
+ if(!observation||!isTemperatureLogger(logger.provider)||!completeLoggerWindow(observation))return false;
  const sample=observation.checks.find(check=>check.id==='logger-fresh'&&check.status==='PASS');
  if(!sample||!observation.checks.some(check=>check.id==='logger-calibration'&&check.status==='PASS')||
     !observation.checks.some(check=>check.id==='logger-temperature'&&check.status!=='UNKNOWN'))return false;
