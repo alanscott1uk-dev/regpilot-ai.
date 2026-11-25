@@ -13,6 +13,7 @@ const labels:Record<string,string>={AWAITING_DECISION:'Awaiting a site decision'
  REASSESSMENT_REQUIRED:'Reassessment required',WITHHELD:'Site approval withheld',WITHDRAWN:'Site approval withdrawn'};
 
 export default function SiteDecision({w,id,files,participant}:{w:Workspace;id:string;files:{id:string;filename:string}[];participant:boolean}){
+ const [downloadDigest,setDownloadDigest]=useState('');
  const [packet,setPacket]=useState<Packet|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
  const [software,setSoftware]=useState<Pack|null>(null),[delta,setDelta]=useState<Awaited<ReturnType<typeof validationChangeReview>>|null>(null);
  const pending=useRef(false),keys=useRef(new Map<string,string>());
@@ -60,9 +61,10 @@ export default function SiteDecision({w,id,files,participant}:{w:Workspace;id:st
    <p>Tested configuration {packet.protocol.configuration} · Licence reference {packet.protocol.licence}</p>
    {packet.decisions.length>0&&packet.supplier&&<button type="button" disabled={busy} onClick={()=>{const valid=w.capture();void run(async()=>{
     const res=await w.requestResponse(url+'&download=inspection'),blob=await res.blob();
-    if(valid()){const href=URL.createObjectURL(blob),a=document.createElement('a');a.href=href;a.download='regpilot-site-'+id+'.zip';a.click();setTimeout(()=>URL.revokeObjectURL(href),1000);}
+    if(valid()){setDownloadDigest(res.headers.get('Content-Digest')??'');const href=URL.createObjectURL(blob),a=document.createElement('a');a.href=href;a.download='regpilot-site-'+id+'.zip';a.click();setTimeout(()=>URL.revokeObjectURL(href),1000);}
     return load();
    });}}>Download inspection ZIP with release tests, signed site decision and originals</button>}
+   {downloadDigest&&<p>Inspection download digest <code>{downloadDigest}</code>. Give the assessor this digest through the private workspace. <a href="/site-validation/verify.py" download>Download offline cold-chain verifier</a></p>}
    <p>Protocol and results fingerprint <code>{packet.basisHash}</code></p>
    {packet.blockers.length>0&&<ul>{packet.blockers.map(reason=><li key={reason}>{reason}</li>)}</ul>}
    {packet.decisions.map(d=><div key={d.id}><p>{d.input.decision} · {d.input.signatory}, {d.input.role} · {d.at}</p><p>{d.input.rationale}</p></div>)}

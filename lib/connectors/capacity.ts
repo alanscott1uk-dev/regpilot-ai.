@@ -5,7 +5,7 @@ export const connectorHistoryPageSize=20;
 
 // Keep this order stable: the provider index identifies its database advisory lock.
 export const PROVIDERS=['GITHUB','MICROSOFT365','GOOGLE_WORKSPACE','GITLAB','CLOUDFLARE','COMPANIES_HOUSE','VERCEL','SUPABASE','OKTA','INTUNE','OPENSSF_SCORECARD','AWS','GLEIF','WORKFORCE_LEAVER','AWS_ORGANIZATIONS',...recordProviders] as const;
-export const providersWithoutStoredSecrets=["OPENSSF_SCORECARD","AWS","GLEIF","AWS_ORGANIZATIONS","NANGO_SYNC","NHSBSA_MAPPING","CLINICALTRIALS_GOV","OPENFDA_RECALL","DAILYMED_LABEL","EUROPE_PMC","MHRA_GUIDANCE"] as const;
+export const providersWithoutStoredSecrets=["OPENSSF_SCORECARD","AWS","GLEIF","AWS_ORGANIZATIONS","NANGO_SYNC","PIPEDREAM_READ","NHSBSA_MAPPING","CLINICALTRIALS_GOV","OPENFDA_RECALL","DAILYMED_LABEL","EUROPE_PMC","MHRA_GUIDANCE"] as const;
 export function requiresStoredSecret(provider:string){return !(providersWithoutStoredSecrets as readonly string[]).includes(provider);}
 export type ProviderLimits={maxConcurrent:number;perWorkspace:number};
 /** Deployment configuration only. This neither enables a provider nor purchases capacity. */

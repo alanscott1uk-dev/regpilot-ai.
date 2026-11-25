@@ -31,9 +31,9 @@
   },
   {
     "id": "PH-06",
-    "requirement": "Retain the operator\u2019s excursion actions and an independently retrievable record",
+    "requirement": "Retain the operator’s excursion actions and an independently retrievable record",
     "file": "tests/trial-support.integration.test.ts",
-    "test": "an internal first-time excursion trial requires the participant\u2019s own case action and accounts for corrections and help"
+    "test": "an internal first-time excursion trial requires the participant’s own case action and accounts for corrections and help"
   },
   {
     "id": "PH-07",
@@ -70,5 +70,11 @@
     "requirement": "Bind affected database records and the specific SQL control test to corrective work. Require a reviewed later observation covering every failed check from the same source before accepting recovery.",
     "file": "tests/customer-api.integration.test.ts",
     "test": "a SQL corrective action accepts reviewed recovery only for its original rule, records and exact current receipt"
+  },
+  {
+    "id": "PH-13",
+    "requirement": "Keep customer inventories scoped to the authorised site workspace. Detect a changed sample and exercise a scheduled collection after grant renewal on the original controlled source.",
+    "file": "tests/product-monitors.integration.test.ts",
+    "test": "an hourly product monitor rejects another tenant, detects inventory drift and recovers the original grant for the same control"
   }
 ]

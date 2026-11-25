@@ -74,6 +74,7 @@ const extraSchema=z.discriminatedUnion("provider",[
  recordTargets.PRIVATE_AI_MODEL.extend({...extraFields,provider:z.literal("PRIVATE_AI_MODEL")}).strict(),
  recordTargets.KEYCLOAK_REALM.extend({...extraFields,provider:z.literal("KEYCLOAK_REALM")}).strict(),
  recordTargets.GITHUB_WORKFLOW.extend({...extraFields,provider:z.literal("GITHUB_WORKFLOW")}).strict(),
+ recordTargets.PIPEDREAM_READ.extend({...extraFields,provider:z.literal("PIPEDREAM_READ")}).omit({token:true}).strict(),
  recordTargets.NANGO_SYNC.extend({...extraFields,provider:z.literal("NANGO_SYNC")}).omit({token:true}).strict(),
  recordTargets.UBIBOT.extend({...extraFields,provider:z.literal("UBIBOT")}).strict(),
  recordTargets.TANDD_WEBSTORAGE.extend({...extraFields,provider:z.literal("TANDD_WEBSTORAGE"),credentials:tanddCredentials.optional()}).omit({token:true}).strict(),
@@ -104,7 +105,7 @@ function storedTarget(settings:ConnectorSettings):{repository:string;branch:stri
    return {...recordKeys(settings.provider,settings),token:settings.clientId&&settings.token?benchlingCredential(settings.clientId,settings.token):settings.token};
   }
   case "NHSBSA_MAPPING":case "CLINICALTRIALS_GOV":case "OPENFDA_RECALL":case "DAILYMED_LABEL":case "EUROPE_PMC":case "MHRA_GUIDANCE":
-  case "NANGO_SYNC":return recordKeys(settings.provider,settings);
+  case "PIPEDREAM_READ":case "NANGO_SYNC":return recordKeys(settings.provider,settings);
   case "OPENAI_PROJECT_MODEL":case "PRIVATE_AI_MODEL":
   case "SLACK_MEMBER":case "BOX_USER":case "ASANA_TASK":
   case "GITHUB_SCIM":case "ATLASSIAN_SCIM":case "STATUSPAGE_COMPONENT":case "ZENDESK_TICKET":
@@ -143,6 +144,10 @@ export const collectConfiguredConnector:Collector=async(target,secret)=>{
  if(!connectorProviderEnabled(target.provider||"GITHUB"))throw new CollectionError("PROVIDER_DISABLED");
  if(isRecordProvider(target.provider)){
   const configured=readRecordKeys(target.provider,target.repository,target.branch);
+  if(target.provider==="PIPEDREAM_READ"){
+   if(!target.organizationId)throw new CollectionError("WORKSPACE_REQUIRED");
+   return (await import("./product-monitor-service")).collectProductMonitor(target.organizationId,configured);
+  }
   if(target.provider==="NANGO_SYNC"){
    if(!target.organizationId)throw new CollectionError("WORKSPACE_REQUIRED");
    const {managedSyncObservation}=await import("../connectors/marketplace");
@@ -207,6 +212,10 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
  const raw=parsed.data;
  if(raw.intervalHours===1&&!supportsHourlyMonitoring(raw.provider))throw new IntelligenceError("This source supports daily or weekly monitoring");
  if(raw.provider==="COMPANIES_HOUSE"&&raw.token?.includes(":"))throw new IntelligenceError("Use a valid Companies House API key");
+ if(raw.provider==='PIPEDREAM_READ'){
+  await transaction(ctx,tx=>requireMember(tx,ctx,ADMIN));
+  await (await import('./product-monitor-service')).productBinding(ctx.organizationId,raw,raw.controlId);
+ }
  if(raw.provider==='NANGO_SYNC'&&raw.reference.includes('/')){
   await transaction(ctx,tx=>requireMember(tx,ctx,ADMIN));
   const [integration,connectionId]=raw.scope.split('/'),[provider,policy]=raw.reference.split('/');
@@ -227,6 +236,8 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
   if((old?.version||0)!==v.version)throw new IntelligenceError("Connector settings changed",409);
   if(credentialRequired&&!v.token&&!old?.encryptedSecret)throw new IntelligenceError("A restricted provider credential is required");
   const targetChanged=old&&(old.repository!==repository||old.branch!==v.branch);
+  if(old&&v.provider==="PIPEDREAM_READ"&&(targetChanged||old.controlId!==v.controlId||old.failureCode==="CREDENTIAL_REJECTED"&&v.enabled))
+   throw new IntelligenceError("Approve a fresh monitor for a changed scope, or renew its rejected grant in Company integrations.",409);
   const addingBambooCompany=old&&raw.provider==="WORKFORCE_LEAVER"&&raw.bambooCompanyId&&old.branch===v.branch&&repository===old.repository+":"+raw.bambooCompanyId&&!readWorkforceKeys(old.repository,old.branch)?.bambooCompanyId;
   if(targetChanged&&v.provider==="WORKFORCE_LEAVER"&&!addingBambooCompany)throw new IntelligenceError("Create a separate connection for a different leaver, ticket or directory identity",409);
   if(targetChanged&&registerProviders.includes(v.provider)&&await tx.vendor.findFirst({where:{organizationId:ctx.organizationId,signalConnectorId:old.id},select:{id:true}}))throw new IntelligenceError("This register is linked to a supplier. Create a connection for the new legal entity and select it in the supplier review.",409);
@@ -235,7 +246,7 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
   if(!old){
    const existing=await tx.evidenceConnector.findUnique({where:{organizationId_repository_branch:{organizationId:ctx.organizationId,repository:data.repository,branch:data.branch}}});
    if(existing){
-    if(v.provider==='NANGO_SYNC'&&existing.provider===v.provider&&existing.controlId===data.controlId&&existing.intervalHours===data.intervalHours&&existing.enabled&&data.enabled&&!existing.failureCode)
+    if((v.provider==='NANGO_SYNC'||v.provider==='PIPEDREAM_READ')&&existing.provider===v.provider&&existing.controlId===data.controlId&&existing.intervalHours===data.intervalHours&&existing.enabled&&data.enabled&&!existing.failureCode)
      return {id:existing.id,version:existing.version};
     throw new IntelligenceError("This target already has a connector",409);
    }

@@ -1,0 +1,22 @@
+Set up hosted product monitoring
+
+Create a Pipedream workspace and a Connect project at https://pipedream.com/connect. Development projects are available for setup and testing. The project owner chooses the production subscription through Pipedream billing.
+
+Create a server-side OAuth client in that workspace and grant it access to the Connect project. Put these server-only settings in the RegPilot deployment's private environment, then redeploy that environment.
+
+REGPILOT_PIPEDREAM_PROJECT_ID
+REGPILOT_PIPEDREAM_CLIENT_ID
+REGPILOT_PIPEDREAM_CLIENT_SECRET
+REGPILOT_PIPEDREAM_ENVIRONMENT
+
+Use development for testing and production for the paid customer-facing project. RegPilot's workspace database, authorised sign-in, private connector encryption key, connector worker and REGPILOT_CONNECTORS_ENABLED must be configured. Never send the client secret through the product form.
+
+In Company integrations, open Hourly product monitoring. Choose the product read, authorise the customer's account, refresh the linked accounts and read a sample. Select the receiving control and approve the sample. The worker rechecks the account grant and compares the returned identifiers hourly. Raw records stay out of RegPilot's stored comparison. Missing permissions, changing pages, very large results or unsupported identifier shapes can limit an individual integration.
+
+An unusable grant pauses the monitor. In Accounts requiring renewal, reauthorise the original account, then verify the updated grant. The next successful scheduled run supplies the recovery evidence. Different products can expose different breadths of inventory through their published read.
+
+Counts of published actions, actually connected accounts and sustained hourly monitoring are available separately. Customer ownership, real cadence and observed recovery require customer records in the private workspace.
+
+Provider setup and billing
+https://pipedream.com/docs/connect/quickstart
+https://pipedream.com/pricing

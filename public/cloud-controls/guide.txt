@@ -1,0 +1,18 @@
+Hourly cloud controls
+
+Install Python 3.12 and the pinned engine on a private runner with the customer's read-only provider identity. Run the collector from a RegPilot checkout at the approved release. Provider credentials stay on the runner. PowerShell-dependent Microsoft 365 services also require the modules specified by Prowler for that provider.
+
+    python -m venv .cloud-env
+    . .cloud-env/bin/activate
+    python -m pip install -r public/cloud-controls/requirements.txt
+
+For an AWS account, set the actual account ID and the ID of the RegPilot control. The example checks bucket-level public access blocking and public access settings.
+
+    python public/cloud-controls/collect.py scan --provider aws --account "$AWS_ACCOUNT_ID" --region eu-west-2 --source uk-operations --control "$REGPILOT_CONTROL_ID" --check s3_bucket_level_public_access_block s3_bucket_public_access --output scan.json
+    python public/cloud-controls/collect.py deliver --report scan.json --workspace "$REGPILOT_WORKSPACE_ORIGIN"
+
+Create a private workspace credential with observations:write and grant it only the receiving control. Set REGPILOT_OBSERVATION_TOKEN on the delivery step. Protected staging also uses REGPILOT_PREVIEW_TOKEN scoped to the exact REGPILOT_PREVIEW_ORIGIN.
+
+For hourly execution, copy /cloud-controls/monitor.yml to .github/workflows in the customer's private operations repository. Label its runner regpilot-cloud and make the pinned Python environment the default python on that runner. Set the repository variables named in the template. REGPILOT_RELEASE_SHA must be the approved full commit. Choose applicable policy IDs from /cloud-controls/catalogue.json. An empty selection runs the provider's full list. Azure and Microsoft 365 can use their documented service-principal environment authentication with REGPILOT_CLOUD_AUTH_MODE set to sp-env-auth.
+
+Every scan uses a new output filename. Repeat delivery of the same file to resume an interrupted submission. A receipt expires one hour after collection starts. Each policy carries its observed resource counts, and policies with no applicable findings, manual findings or suppressed findings cannot earn a pass from them. The source account may hold resources outside the runner's permissions or selected region. Raw findings and resource names stay within the runner. GitHub schedules can start late. Review actual observation times in the workspace to establish cadence.

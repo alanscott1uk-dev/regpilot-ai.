@@ -1,4 +1,8 @@
 import {randomUUID} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {createQualityCase,investigateQualityCase} from '../lib/server/capa-service';
 import {readZipParts} from './helpers/zip-inspection.mjs';
 import {createHash} from 'node:crypto';
@@ -387,10 +391,19 @@ for(const scenario of ['UBIBOT','TANDD_WEBSTORAGE','UBIBOT_HISTORY'] as const)te
    dossier=await siteQualification(f.o,id);assert.equal(dossier.excursionChoices[0].id,retrieved.receiptId);
    await assert.rejects(recordSiteDecision(f.o,id,{...approve,excursionReceiptId:unconfirmed.receiptId},f.store),rejects(409));
    await recordSiteDecision(f.o,id,{...approve,excursionReceiptId:retrieved.receiptId},f.store);
-   const files=await readZipParts(await siteInspectionArchive(f.re,id,f.store)) as Map<string,Buffer>;
+   const siteZip=await siteInspectionArchive(f.re,id,f.store);
+   const files=await readZipParts(siteZip) as Map<string,Buffer>;
    const bundle=JSON.parse(files.get('site-inspection.json')!.toString());
    assert.equal(bundle.site.status,'APPROVED_FOR_SITE_USE');assert.equal(bundle.site.decisions[0].excursion.qualification.ownership.id,ownership.id);
    assert.equal(bundle.site.decisions[0].excursion.provider,loggerProvider);assert.equal(bundle.site.decisions[0].excursion.channel,base.scope);
+   const directory=mkdtempSync(join(tmpdir(),'regpilot-site-check-'));
+   try{
+    const zip=join(directory,'site.zip');writeFileSync(zip,siteZip);
+    const digest='sha-256=:'+createHash('sha256').update(siteZip).digest('base64')+':';
+    const cli=['public/site-validation/verify.py',zip,'--site',bundle.site.protocol.site,'--release',bundle.site.protocol.release,'--digest',digest,'--serial',base.record,'--stock'];
+    const checked=JSON.parse(execFileSync('python3',[...cli,'TEST-001'],{encoding:'utf8'}));assert.equal(checked.case,q.id);
+    assert.throws(()=>execFileSync('python3',[...cli,'DIFFERENT-LOT'],{stdio:'pipe'}));
+   }finally{rmSync(directory,{recursive:true,force:true});}
    assert.equal(bundle.site.decisions[0].excursion.serial,base.record);assert.deepEqual(bundle.site.decisions[0].excursion.stock,['TEST-001']);
    assert.equal(bundle.site.decisions[0].excursion.disposition,'QUARANTINE');assert.equal(bundle.site.decisions[0].excursion.assessorId,f.re.userId);
    assert.deepEqual(bundle.sources.flatMap((s:{roles:string[]})=>s.roles).filter((r:string)=>r.startsWith('excursion-')).sort(),['excursion-authority','excursion-calibration','excursion-disposition','excursion-stock']);

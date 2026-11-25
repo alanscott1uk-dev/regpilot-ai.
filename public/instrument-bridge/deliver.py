@@ -43,7 +43,7 @@ def deliver(origin, envelope, credential):
     reference = body["externalId"].split("/")
     database_source = (len(reference) == 3 and reference[0] == "dbsync" and reference[2] == key
                        and str(UUID(reference[1])) == reference[1])
-    scoped = (len(reference) == 3 and reference[0] in ("cadence", "iac", "mqtt") and
+    scoped = (len(reference) == 3 and reference[0] in ("cadence", "iac", "mqtt", "cloud") and
                re.fullmatch("[0-9a-f]{24}", reference[1]) and reference[2] == key)
     if body["externalId"] != "opcua/" + key and not database_source and not scoped:
         raise ValueError("The source reference differs from the saved delivery key")

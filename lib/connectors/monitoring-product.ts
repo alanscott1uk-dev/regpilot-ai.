@@ -21,6 +21,7 @@ const directNames:Record<string,string> = {PAGERDUTY_SERVICE:'PAGERDUTY',HEALTHC
 export const publicMonitoringProducts=new Set<string>([...publicRegisters,'OPENSSF_SCORECARD','COMPANIES_HOUSE','GLEIF']);
 const unassigned=new Set(['PRIVATE_AI_MODEL','WORKFORCE_LEAVER']);
 export function monitoringProduct(provider:string,managedSlug?:string){
+ if(provider==='PIPEDREAM_READ')return managedSlug?(registeredProducts.get(managedSlug.replaceAll('_','-'))??managedSlug.replaceAll('-','_').toUpperCase()):null;
  if(provider==='NANGO_SYNC')return managedSlug?registeredProducts.get(managedSlug)??null:null;
  if(unassigned.has(provider)||publicMonitoringProducts.has(provider))return null;
  return Object.hasOwn(directNames,provider)?directNames[provider]:provider;

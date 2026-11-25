@@ -264,16 +264,17 @@ def send_saved(report, workspace, send, credential):
     bundle = json.loads(report.read_bytes())
     scan_id = UUID(bundle["scanId"])
     scope = bundle["summary"]["scope"]
-    if (bundle.get("format") != "regpilot-infrastructure-policy-v1" or not re.fullmatch("[a-f0-9]{24}", scope)
+    prefix = {"regpilot-infrastructure-policy-v1":"iac", "regpilot-cloud-control-v1":"cloud"}.get(bundle.get("format"))
+    if (not prefix or not re.fullmatch("[a-f0-9]{24}", scope)
             or not 1 <= len(bundle["observations"]) <= 500):
         raise ValueError("This file is not a saved infrastructure scan.")
     origin = workspace.rstrip("/")
     destination = hashlib.sha256(origin.encode()).hexdigest()[:24]
-    receipts = report.parent / (".iac-receipts-" + str(scan_id)) / destination
+    receipts = report.parent / ("."+prefix+"-receipts-" + str(scan_id)) / destination
     receipts.mkdir(parents=True, exist_ok=True, mode=0o700)
     for i, envelope in enumerate(bundle["observations"]):
         key = str(uuid5(scan_id, str(i)))
-        if envelope["idempotencyKey"] != key or envelope["body"]["externalId"] != f"iac/{scope}/{key}":
+        if envelope["idempotencyKey"] != key or envelope["body"]["externalId"] != f"{prefix}/{scope}/{key}":
             raise ValueError("An observation differs from its saved scan identity.")
         digest = hashlib.sha256(json.dumps(envelope, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         receipt = receipts / (key + ".json")

@@ -91,6 +91,10 @@ export async function customerSourceProof(ctx:AuthorizedContext,id:string,includ
   const inference=binding?.action==='ai.provider-linked'?await tx.auditEvent.findFirst({where:{...audit,action:'ai.customer-inference',AND:[{details:{path:['version'],equals:row.version}},{details:{path:['bindingId'],equals:binding.id}}]},orderBy:[{createdAt:'desc'},{id:'desc'}],select:{id:true}}):null;
   const depth=await monitoringDepth(tx,ctx.organizationId,id,scopeHash,row.version,row.intervalHours,captures,rotations);
   let managedSlug:string|undefined;
+  if(row.provider==='PIPEDREAM_READ'&&latest){
+   const target=readRecordKeys('PIPEDREAM_READ',row.repository,row.branch);
+   managedSlug=(await import('../connectors/product-recipes')).recipeFor(target.scope,target.record)?.family;
+  }
   if(managed){
    const basis=readRecordKeys('NANGO_SYNC',row.repository,row.branch).reference?.split('/');
    if(basis?.length===2&&z.uuid().safeParse(basis[1]).success&&latest)managedSlug=basis[0];

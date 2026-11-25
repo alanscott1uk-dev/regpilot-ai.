@@ -37,6 +37,7 @@ export const recordTargets = {
   OPENAI_PROJECT_MODEL:openAiProjectTarget, PRIVATE_AI_MODEL:privateModelTarget,
   KEYCLOAK_REALM:keycloakTarget,
   GITHUB_WORKFLOW:workflowTarget,
+  PIPEDREAM_READ:z.object({scope:z.string().regex(/^[a-z0-9_]{1,78}$/),record:z.string().regex(/^[a-z0-9-]{1,118}$/),reference:z.uuid()}),
   NANGO_SYNC:z.object({scope:z.string().max(201).regex(/^(?:regpilot-|rpw-)[A-Za-z0-9._-]{1,92}\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/),record:z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,79}$/),reference:z.string().refine(v=>{const [provider,policy,...rest]=v.split('/');return !rest.length&&/^[a-z0-9][a-z0-9_-]{0,79}$/.test(provider)&&(policy===undefined||z.uuid().safeParse(policy).success);})}),
   TANDD_WEBSTORAGE:z.object({scope:z.string().regex(/^[1-9]\d?$/),record:z.string().regex(/^[0-9a-fA-F]{8}$/).toUpperCase(),reference:calibrationBasis}),
   UBIBOT:z.object({scope:number,record:z.string().regex(/^[A-Za-z0-9_-]{3,60}$/),reference:z.string().max(120).refine(v=>calibrationBasis.safeParse(v.replace(/\/history$/,"")).success)}),
@@ -101,7 +102,7 @@ export async function collectOperationalRecord(provider: RecordProvider, target:
     case "OPENAI_PROJECT_MODEL":case "PRIVATE_AI_MODEL":return collectModelAccess(provider,{scope,record},token,fetcher);
     case "KEYCLOAK_REALM":return collectKeycloak(keycloakTarget.parse(target),token,fetcher);
     case "GITHUB_WORKFLOW":return collectWorkflow(workflowTarget.parse(target),token,fetcher);
-    case "NANGO_SYNC":throw new CollectionError("WORKSPACE_REQUIRED");
+    case "PIPEDREAM_READ":case "NANGO_SYNC":throw new CollectionError("WORKSPACE_REQUIRED");
     case "UBIBOT": {
       const source="https://webapi.ubibot.com/channels/"+scope;
       const data=(await atStep('logger-channel',()=>providerReader(fetcher,{})(source+"?"+new URLSearchParams({api_key:token}))))!.body;

@@ -33,6 +33,7 @@ const providerGates=new Map<string,()=>boolean>(Object.entries({
  PRIVATE_AI_MODEL:()=>connectorsEnabled()&&!!process.env.REGPILOT_PRIVATE_MODEL_HOST,
  KEYCLOAK_REALM:()=>connectorsEnabled()&&!!process.env.REGPILOT_KEYCLOAK_HOST,
  GITHUB_WORKFLOW:()=>connectorsEnabled(),
+ PIPEDREAM_READ:()=>connectorsEnabled()&&!!process.env.REGPILOT_PIPEDREAM_PROJECT_ID&&!!process.env.REGPILOT_PIPEDREAM_CLIENT_ID&&!!process.env.REGPILOT_PIPEDREAM_CLIENT_SECRET,
  NANGO_SYNC:()=>connectorsEnabled()&&process.env.REGPILOT_MARKETPLACE_ENABLED==="true"&&!!process.env.REGPILOT_NANGO_API_KEY,
  TANDD_WEBSTORAGE:()=>connectorsEnabled()&&process.env.REGPILOT_TANDD_ENABLED!=="false",
  UBIBOT:()=>connectorsEnabled()&&process.env.REGPILOT_UBIBOT_ENABLED==="true",
