@@ -1,5 +1,7 @@
 import {CollectionError} from './collection-error';
 export const collectionSteps={
+ 'grafana-org':['Verify the Grafana organisation','Check the selected organisation ID and the service account’s access to that organisation.'],
+ dashboard:['Read the monitored dashboard','Check the dashboard UID and grant the service account viewer access to its folder.'],
  record:['Read the configured record','Confirm that the credential can read the selected record in the configured account.'],
  repository:['Identify the repository','Check the repository name and contents-read access.'],
  workflow:['Read the workflow definition','Check the workflow filename and Actions read permission.'],

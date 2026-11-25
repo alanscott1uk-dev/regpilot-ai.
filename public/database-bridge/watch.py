@@ -3,6 +3,8 @@ import argparse
 from datetime import datetime, timezone
 import fcntl
 import hashlib
+import heapq
+import http.client
 import json
 import os
 from pathlib import Path
@@ -10,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import urlsplit
 from uuid import UUID, uuid5, NAMESPACE_URL
 
 
@@ -119,6 +122,62 @@ def tick(args):
         return summary
 
 
+def flush(directory, workspace, credential, send, limit=12):
+    """Confirm each envelope in slot order. Source files remain available for inspection."""
+    url = urlsplit(workspace)
+    if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment or url.path not in ("", "/"):
+        raise ValueError("Choose the HTTPS origin of the RegPilot workspace.")
+    origin = "https://" + url.netloc.lower()
+    if not credential:
+        raise ValueError("Set REGPILOT_OBSERVATION_TOKEN for unattended delivery.")
+    with (directory / ".delivery-lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {"state": "DELIVERING"}
+        cursor = directory / "delivery.json"
+        state = json.loads(cursor.read_text()) if cursor.exists() else {"workspace": origin, "last": -1}
+        if state["workspace"] != origin:
+            raise ValueError("This spool is already bound to another workspace origin.")
+        write_json(cursor, state)
+        slots = heapq.nsmallest(limit + 1, (int(p.name[:12]) for p in directory.glob("[0-9]*-status.json")
+                               if len(p.name) == 24 and p.name[:12].isdecimal() and int(p.name[:12]) > state["last"]))
+        sent = expired = 0
+        for slot in slots[:limit]:
+            prefix = str(slot).zfill(12)
+            summary = json.loads((directory / (prefix + "-status.json")).read_text())
+            if summary["slot"] != slot or summary["state"] not in ("READ", "FAILED"):
+                raise ValueError("The scheduled status record does not match its slot.")
+            names = (["source"] if summary["state"] == "READ" else []) + ["availability"]
+            for kind in names:
+                filename = prefix + "-" + kind + ".json"
+                if summary[kind] != filename:
+                    raise ValueError("The envelope reference does not match its slot.")
+                path = directory / filename
+                if path.stat().st_size > 36000:
+                    raise ValueError("The observation exceeds the delivery limit.")
+                raw = path.read_bytes()
+                envelope = json.loads(raw)
+                digest = hashlib.sha256(raw).hexdigest()
+                ack = directory / (prefix + "-" + kind + "-delivery.json")
+                if ack.exists():
+                    old = json.loads(ack.read_text())
+                    if old["digest"] != digest or old["workspace"] != origin:
+                        raise ValueError("An envelope changed after delivery.")
+                    continue
+                valid_until = datetime.fromisoformat(envelope["body"]["validUntil"].replace("Z", "+00:00"))
+                if valid_until <= datetime.now(timezone.utc):
+                    result = {"state": "EXPIRED_WITHOUT_CONFIRMATION"}
+                    expired += 1
+                else:
+                    result = {"state": "ACKNOWLEDGED", "receipt": send(origin, envelope, credential)}
+                    sent += 1
+                write_json(ack, {**result, "workspace": origin, "digest": digest, "at": timestamp(time.time())})
+            state["last"] = slot
+            write_json(cursor, state)
+        return {"state": "MORE_PENDING" if len(slots) > limit else "DRAINED", "sent": sent, "expiredWithoutConfirmation": expired}
+
+
 if __name__ == "__main__":
     parser=argparse.ArgumentParser(description=__doc__)
     for flag in ("plan","config","test-definition","directory"):
@@ -127,12 +186,16 @@ if __name__ == "__main__":
     parser.add_argument("--network",required=True)
     parser.add_argument("--source")
     parser.add_argument("--interval-seconds",type=int,required=True)
+    parser.add_argument("--workspace", help="Forward due observations to this authorised RegPilot HTTPS origin")
     args=parser.parse_args()
     if not 10 <= args.interval_seconds <= 604800:
         parser.error("Choose an interval from 10 seconds to seven days.")
     try:
         outcome=tick(args)
+        if args.workspace:
+            from deliver import deliver
+            outcome["delivery"] = flush(args.directory, args.workspace, os.environ.get("REGPILOT_OBSERVATION_TOKEN"), deliver)
         print(json.dumps(outcome))
         sys.exit(1 if outcome["state"]=="FAILED" else 0)
-    except (OSError, ValueError, KeyError, RuntimeError) as error:
+    except (OSError, ValueError, KeyError, RuntimeError, ImportError, http.client.HTTPException) as error:
         sys.exit("Unable to run this schedule: "+str(error))

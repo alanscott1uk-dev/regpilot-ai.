@@ -1,6 +1,8 @@
 import {Prisma} from '@prisma/client';
 import {z} from 'zod';
 import {trialReview} from '../capability-trials';
+import {siteExcursion,siteExcursionSchema} from './excursion-pilot';
+import {releaseArchive} from './retained-validation';
 import {siteDecision} from '../site-qualification';
 import {hashValue} from '../regulatory/intelligence';
 import type {AuthorizedContext} from './authorization';
@@ -11,7 +13,7 @@ import {assertReviewedFiles,reviewedFiles,reviewedFilesSchema,verifyReviewedByte
 import type {EvidenceObjectStore} from './evidence-storage';
 
 const entityType='SiteQualification';
-const decisionRecord=z.object({input:siteDecision,basisHash:z.string(),files:reviewedFilesSchema,digest:z.string()});
+const decisionRecord=z.object({input:siteDecision,basisHash:z.string(),files:reviewedFilesSchema,excursion:siteExcursionSchema.optional(),supplier:z.object({receiptId:z.uuid(),digest:z.string().regex(/^sha256:[a-f0-9]{64}$/)}).optional(),digest:z.string()});
 const iso=(v:Date)=>v.toISOString();
 
 async function inspect(tx:Prisma.TransactionClient,ctx:AuthorizedContext,id:string){
@@ -31,6 +33,8 @@ async function inspect(tx:Prisma.TransactionClient,ctx:AuthorizedContext,id:stri
   results:trial.result?.input.results??[],testFiles:trial.result?.files??[],reviews
  };
  const basisHash=hashValue(basis),currentRelease=deployedTrialRelease(),blockers:string[]=[];
+ const supplier=(await releaseArchive(tx,ctx.organizationId,trial.plan.release)).saved?.meta??null;
+ if(!supplier)blockers.push('Retain the verified supplier validation ZIP for this protocol release.');
  if(trial.plan.environment!=='PROTECTED_PILOT')blockers.push('Use a protected customer pilot for the site decision.');
  if(currentRelease!==trial.plan.release)blockers.push('The deployed build differs from the release in the protocol or cannot be identified.');
  if(!trial.result)blockers.push('Finish the planned site tests.');
@@ -51,9 +55,20 @@ async function inspect(tx:Prisma.TransactionClient,ctx:AuthorizedContext,id:stri
   if(record.input.requestKey!==e.id || hashValue(contents)!==digest)throw new IntelligenceError('A saved site decision failed its integrity check.',409);
   return {id:e.id,at:iso(e.createdAt),...contents,digest};
  });
+ const coldChain=scope.criteria.some(r=>r.step==='cold-chain');
+ const excursionChoices=coldChain?await tx.auditEvent.findMany({where:{organizationId:ctx.organizationId,entityType:'QualityExcursion',action:'excursion.retrieve',createdAt:{gte:trial.start.createdAt},AND:[
+  {details:{path:['body','reading','data','site'],equals:scope.site}},
+  {details:{path:['body','qualification','release'],equals:trial.plan.release}},
+  {details:{path:['body','qualification','ownership','category'],equals:'CUSTOMER'}}]},orderBy:[{createdAt:'desc'},{id:'desc'}],take:50,select:{id:true,entityId:true,createdAt:true}}):[];
+ if(coldChain&&!excursionChoices.length)blockers.push('An independent assessor must retrieve a disposition from this site on the protocol release using a confirmed customer logger.');
  const issued=decisions.find(d=>d.input.decision!=='WITHDRAW');
  const withdrawn=decisions.find(d=>d.input.decision==='WITHDRAW');
  if(issued?.input.decision==='APPROVE'&&!withdrawn){
+  if(coldChain){
+   try{if(!issued.excursion||hashValue(await siteExcursion(tx,ctx,issued.excursion.receiptId,scope.site,trial.plan.release,trial.start.createdAt))!==hashValue(issued.excursion))blockers.push('Reassess the customer excursion supporting this approval.');}
+   catch(e){if(!(e instanceof IntelligenceError))throw e;blockers.push(e.message);}
+  }
+  if(!issued.supplier||issued.supplier.receiptId!==supplier?.receiptId||issued.supplier.digest!==supplier?.digest)blockers.push('This site approval has no matching retained supplier release receipt.');
   if(issued.basisHash!==basisHash)blockers.push('The trial record has changed since site sign-off.');
   try{
    await requireMember(tx,{...ctx,userId:issued.actor},ADMIN);
@@ -61,7 +76,7 @@ async function inspect(tx:Prisma.TransactionClient,ctx:AuthorizedContext,id:stri
   }catch(e){if(!(e instanceof IntelligenceError))throw e;blockers.push('The sign-off evidence or the recording administrator’s access has changed.');}
  }
  const status=withdrawn?'WITHDRAWN':issued?.input.decision==='WITHHOLD'?'WITHHELD':issued?blockers.length?'REASSESSMENT_REQUIRED':'APPROVED_FOR_SITE_USE':'AWAITING_DECISION';
- return {format:'regpilot-site-qualification-v1',...basis,basisHash,currentRelease,decisions,status,blockers};
+ return {format:'regpilot-site-qualification-v1',...basis,basisHash,currentRelease,supplier,excursionChoices:excursionChoices.map(x=>({id:x.id,caseId:x.entityId,at:iso(x.createdAt)})),decisions,status,blockers};
 }
 
 export async function siteQualification(ctx:AuthorizedContext,id:string){
@@ -76,7 +91,7 @@ export async function recordSiteDecision(ctx:AuthorizedContext,id:string,raw:unk
   const prior=packet.decisions.find(d=>d.id===input.requestKey);
   if(prior){
    if(prior.actor!==ctx.userId||hashValue(prior.input)!==hashValue(input))throw new IntelligenceError('This reference already identifies a different decision.',409);
-   return {prior:true,packet,files:prior.files};
+   return {prior:true,packet,files:prior.files,excursion:prior.excursion};
   }
   if(input.basisHash!==packet.basisHash)throw new IntelligenceError('The trial changed. Open the current site dossier before deciding.',409);
   if(await tx.auditEvent.findUnique({where:{id:input.requestKey},select:{id:true}}))throw new IntelligenceError('This request reference is already in use.',409);
@@ -92,18 +107,24 @@ export async function recordSiteDecision(ctx:AuthorizedContext,id:string,raw:unk
   if(files[0].sha256===files[1].sha256 || packet.testFiles.some(f=>f.sha256===decisionFile.sha256) ||
      packet.decisions.some(d=>d.files.some(f=>f.id===d.input.decisionFile&&f.sha256===decisionFile.sha256)))
    throw new IntelligenceError('Select a distinct signed record for this decision.',409);
-  return {prior:false,packet,files};
+  let excursion;
+  if(input.decision==='APPROVE'&&packet.protocol.criteria.some(r=>r.step==='cold-chain')){
+   if(!input.excursionReceiptId)throw new IntelligenceError('Select the independently retrieved customer excursion.',409);
+   excursion=await siteExcursion(tx,ctx,input.excursionReceiptId,packet.protocol.site,packet.protocol.release,new Date(packet.startedAt));
+  }else if(input.excursionReceiptId)throw new IntelligenceError('Attach a customer excursion only to a cold-chain approval.',400);
+  return {prior:false,packet,files,excursion};
  }
  const first=await transaction(ctx,prepare);
  if(first.prior)return {id:input.requestKey};
- const reliedOn=input.decision==='APPROVE'?[...first.packet.testFiles,...first.files]:first.files;
+ const reliedOn=input.decision==='APPROVE'?[...first.packet.testFiles,...first.files,...(first.excursion?.files??[])]:first.files;
  await verifyReviewedBytes(ctx,[...new Map(reliedOn.map(file=>[file.id,file])).values()],store);
  return transaction(ctx,async tx=>{
   const current=await prepare(tx);
   if(current.prior)return {id:input.requestKey};
-  if(current.packet.basisHash!==first.packet.basisHash||hashValue(first.files)!==hashValue(current.files))
+  if(current.packet.basisHash!==first.packet.basisHash||hashValue(first.files)!==hashValue(current.files)||hashValue(first.excursion??null)!==hashValue(current.excursion??null))
    throw new IntelligenceError('The trial or sign-off evidence changed during verification.',409);
-  const record={input,files:current.files,basisHash:current.packet.basisHash};
+  const retained=current.packet.supplier;
+  const record={input,files:current.files,...(current.excursion?{excursion:current.excursion}:{}),basisHash:current.packet.basisHash,...(retained?{supplier:{receiptId:retained.receiptId,digest:retained.digest}}:{})};
   const digest=hashValue({organizationId:ctx.organizationId,trialId:id,actor:ctx.userId,...record});
   await tx.auditEvent.create({data:{id:input.requestKey,organizationId:ctx.organizationId,actorId:ctx.userId,entityType,entityId:id,action:'site.decision',
    details:JSON.parse(JSON.stringify({...record,digest})) as Prisma.InputJsonValue}});

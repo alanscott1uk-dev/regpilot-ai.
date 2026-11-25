@@ -24,7 +24,7 @@ async function apply(ctx:AuthorizedContext,input:StarterPlan,token:string){const
 test('starter programme preview, concurrent adoption and replay keep one owned task set through real generic completion',async()=>{
  const f=await setup(),{owner,reviewer,editor,viewer,foreign}=f,input=plan(editor.userId);
  try{
-  const empty=await starterProgrammeWorkspace(owner);assert.deepEqual(empty.packs.map(p=>p.id),['business-foundations','people-access','supplier-continuity','nhs-digital-health-england','soc2-iso27001','uk-gdp-cold-chain','uk-gmp-site-validation','nist-csf-2','iso27001-annex-a','cyber-essentials','uk-gdpr-accountability','uk-gdp-self-inspection']);assert.equal(empty.programmes.length,0);assert.equal(empty.programmesLimited,false);assert.equal(empty.members.length,3);
+  const empty=await starterProgrammeWorkspace(owner);assert.deepEqual(empty.packs.map(p=>p.id),['business-foundations','people-access','supplier-continuity','nhs-digital-health-england','soc2-iso27001','uk-gdp-cold-chain','uk-gmp-site-validation','nist-csf-2','iso27001-annex-a','cyber-essentials','uk-gdpr-accountability','uk-gdp-self-inspection','soc2-security','nist-800-53b-low','nist-800-53b-moderate','nist-800-53b-high','nist-800-53b-privacy']);assert.equal(empty.programmes.length,0);assert.equal(empty.programmesLimited,false);assert.equal(empty.members.length,3);
   const proposed=await preview(owner,input);assert.equal(proposed.total,2);assert.equal(await db.obligation.count({where:{organizationId:owner.organizationId}}),0);assert.equal(await db.auditEvent.count({where:{organizationId:owner.organizationId}}),0,'preview records no tasks or audit events');
   await assert.rejects(()=>preview(editor,input),(error:any)=>error.status===403);await assert.rejects(()=>preview(viewer,input),(error:any)=>error.status===403);
   await assert.rejects(()=>preview(owner,{...input,items:[{...input.items[0],assigneeId:foreign.userId}]}),(error:any)=>error.status===409);
@@ -115,6 +115,17 @@ test('a mapped evidence task is shared by both audit references in the saved pro
   assert.match(crosswalkCsv(cross),new RegExp(evidence.id));
   await assert.rejects(programmeCrosswalk(f.viewer,isoSaved.id,saved.id),(err:any)=>err.status===403);
   await assert.rejects(programmeCrosswalk(f.foreign,isoSaved.id,saved.id),(err:any)=>err.status===404);
+  const high=plan(f.editor.userId,STARTER_PACKS.find(p=>p.id==='nist-800-53b-high')!);
+  const highSaved=await apply(f.owner,high,(await preview(f.owner,high)).token);
+  const highScope=await programmeReferenceStatement(f.owner,highSaved.id);
+  assert.equal(highScope.rows.length,370);assert.ok(highScope.rows.some(r=>r.area==='Automated System Account Management'&&r.taskId));
+  assert.ok(highScope.rows.some(r=>!r.taskId));assert.equal(referenceStatementCsv(highScope).split('\r\n').length,371);
+  const socPack=STARTER_PACKS.find(p=>p.id==='soc2-security')!,soc=plan(f.editor.userId,socPack);
+  soc.items=socPack.items.map(({key,title,why,description})=>({key,title,why,description,assigneeId,dueDate}));
+  const socId=(await apply(f.owner,soc,(await preview(f.owner,soc)).token)).id,security=await programmeReferenceStatement(f.owner,socId);
+  assert.equal(security.rows.filter(r=>r.reference.startsWith('SOC 2 Security')).length,33);
+  const fullCross=await programmeCrosswalk(f.reviewer,isoSaved.id,socId);
+  assert.ok(fullCross.rows.some(r=>r.code==='A.8.32'&&r.tasks.some(t=>t.criteria.includes('CC8.1'))));
   assert.match(referenceStatementCsv(final),/REVIEW_NEEDED/);assert.equal(referenceStatementCsv(final).split('\r\n').length,94);
  }finally{await f.clean();}
 });

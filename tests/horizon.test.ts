@@ -4,18 +4,31 @@ import {collectHorizon,boundedJson} from '../lib/horizon/collector';
 import {emptyHorizonView, matchingPhrase, matchesHorizonView, searchPhrases, watchlistFilters} from '../lib/horizon/watchlists';
 import {PUBLISHERS,describeFeedIssue,rankItem,reportState,validateReport} from '../lib/horizon/model';
 const now=new Date('2026-11-12T02:00:00Z');
-const isGov=(id:string)=>!['us-fda','uksi','ssi','wsi','nisr'].includes(id);
+const isGov=(id:string)=>!['eu-ema','us-fda','uksi','ssi','wsi','nisr'].includes(id);
 const ukCount=PUBLISHERS.filter(p=>isGov(p.id)).length;
-const runRequests=ukCount+1+31;
+const runRequests=ukCount+2+31;
 function daily(day:string,contents='',page=1){
  return '<feed xmlns="http://www.w3.org/2005/Atom" xmlns:leg="http://www.legislation.gov.uk/namespaces/legislation"><id>http://www.legislation.gov.uk/new/'+day+'</id><leg:page>'+page+'</leg:page>'+contents+'</feed>';
 }
-function fixture(change='',fail='',total=1){const calls:string[]=[];return {calls,fetch:(async(url:any,init:any)=>{const u=new URL(String(url)),slug=u.searchParams.get('filter_organisations')!,start=Number(u.searchParams.get('start'));calls.push(u.href);if(u.hostname==='www.legislation.gov.uk')return new Response(daily(u.pathname.split('/')[2]));if(u.origin==='https://api.fda.gov')return Response.json({meta:{results:{skip:0,total:0}},results:[]});assert.equal(u.origin,'https://www.gov.uk');assert.equal(u.pathname,'/api/search.json');assert.equal(init.redirect,'error');if(slug===fail)return new Response(null,{status:503});return Response.json({total,results:Array.from({length:Math.min(Number(u.searchParams.get('count')),Math.max(0,total-start))},(_,n)=>({title:'Fictional guidance '+change,description:'Fictional test metadata only.',link:'/guidance/'+slug+'-'+(start+n),public_timestamp:'2026-11-11T12:00:00Z',content_store_document_type:'detailed_guide',organisations:[{slug}] }))});}) as typeof fetch};}
+function fixture(change='',fail='',total=1){const calls:string[]=[];return {calls,fetch:(async(url:any,init:any)=>{const u=new URL(String(url)),slug=u.searchParams.get('filter_organisations')!,start=Number(u.searchParams.get('start'));calls.push(u.href);if(u.hostname==='www.ema.europa.eu')return Response.json({meta:{total_records:0},data:[]});if(u.hostname==='www.legislation.gov.uk')return new Response(daily(u.pathname.split('/')[2]));if(u.origin==='https://api.fda.gov')return Response.json({meta:{results:{skip:0,total:0}},results:[]});assert.equal(u.origin,'https://www.gov.uk');assert.equal(u.pathname,'/api/search.json');assert.equal(init.redirect,'error');if(slug===fail)return new Response(null,{status:503});return Response.json({total,results:Array.from({length:Math.min(Number(u.searchParams.get('count')),Math.max(0,total-start))},(_,n)=>({title:'Fictional guidance '+change,description:'Fictional test metadata only.',link:'/guidance/'+slug+'-'+(start+n),public_timestamp:'2026-11-11T12:00:00Z',content_store_document_type:'detailed_guide',organisations:[{slug}] }))});}) as typeof fetch};}
 test('horizon verifies publishers, bounds requests and compares persisted metadata without inventing legal changes',async()=>{
  const f=fixture(),first=await collectHorizon(null,f.fetch,now);assert.equal(first.items.length,ukCount);assert.ok(first.items.every(i=>i.discovery==='BASELINE'));assert.equal(reportState(first,now.getTime()),'current');
  const next=await collectHorizon(first,fixture().fetch,new Date(now.getTime()+60000));assert.ok(next.items.every(i=>i.discovery==='UNCHANGED'));
  const changed=await collectHorizon(first,fixture('revised').fetch,new Date(now.getTime()+60000));assert.ok(changed.items.every(i=>i.discovery==='METADATA_UPDATED'));
  assert.equal(f.calls.length,runRequests);assert.match(first.limitations.join(' '),/not legal effective dates/);
+});
+test('EMA shortage notices keep their EU source, status and revision and reject an incomplete or misdirected register',async()=>{
+ const row={category:'Human',medicine_affected:'Fictional medicine',supply_shortage_status:'Shortage ongoing',shortage_url:'https://www.ema.europa.eu/en/medicines/human/shortages/fictional',first_published_date:'08/11/2026',last_updated_date:''};
+ const read=(rows:unknown[],total=rows.length):typeof fetch=>(u,i)=>String(u).startsWith('https://www.ema.europa.eu/')?Promise.resolve(Response.json({meta:{total_records:total},data:rows})):fixture().fetch(u,i);
+ const first=await collectHorizon(null,read([row]),now);
+ const item=first.items.find(i=>i.publisherIds.includes('eu-ema'))!;assert.equal(item.url,row.shortage_url);assert.equal(item.kind,'Medicine shortage');
+ const updated=await collectHorizon(first,read([{...row,supply_shortage_status:'Shortage resolved',last_updated_date:'11/11/2026'}]),now);
+ assert.equal(updated.items.find(i=>i.id===item.id)?.discovery,'METADATA_UPDATED');
+ const oldManifest={...first,feeds:first.feeds.filter(f=>f.id!=='eu-ema'),items:first.items.filter(i=>i!==item)};
+ assert.doesNotThrow(()=>validateReport(oldManifest,+now));
+ for(const bad of [read([row],2),read([{...row,shortage_url:'https://wrong.example/record'}]),read([{...row,first_published_date:'31/02/2026'}])]){
+  const failed=await collectHorizon(null,bad,now);assert.equal(failed.feeds.find(f=>f.id==='eu-ema')?.state,'unavailable');
+ }
 });
 test('horizon retains known metadata through outages without refreshing its observation time',async()=>{
  const first=await collectHorizon(null,fixture().fetch,now),later=new Date(now.getTime()+13*3600000);
@@ -25,7 +38,7 @@ test('horizon retains known metadata through outages without refreshing its obse
  assert.equal(reportState(next,later.getTime()+13*3600000),'stale');
 });
 test('result caps remain visible and malicious publisher, path, date and duplicate data cannot enter the feed',async()=>{
- const f=fixture('','',2001),r=await collectHorizon(null,f.fetch,now);assert.equal(f.calls.length,ukCount*2+1+31);assert.ok(r.feeds.filter(f=>isGov(f.id)).every(x=>x.state==='limited'));assert.ok(r.items.length>1500&&r.items.length<=10000);assert.ok(Buffer.byteLength(JSON.stringify(r))<4_000_000);assert.equal(r.pipeline?.retentionLimited,true);
+ const f=fixture('','',2001),r=await collectHorizon(null,f.fetch,now);assert.equal(f.calls.length,ukCount*2+2+31);assert.ok(r.feeds.filter(f=>isGov(f.id)).every(x=>x.state==='limited'));assert.ok(r.items.length>1500&&r.items.length<=10000);assert.ok(Buffer.byteLength(JSON.stringify(r))<4_000_000);assert.equal(r.pipeline?.retentionLimited,true);
  for(const change of [{link:'https://evil.invalid/'},{organisations:[{slug:'other-authority'}]},{public_timestamp:'2099-01-01T00:00:00Z'}]){
   const base=fixture();const bad=(async(url:any,init:any)=>{if(new URL(String(url)).hostname==='www.legislation.gov.uk')return new Response('no index',{status:400});const body=await (await base.fetch(url,init)).json();Object.assign(body.results[0],change);return Response.json(body);}) as typeof fetch;
   const report=await collectHorizon(null,bad,now);assert.equal(report.items.length,0);assert.ok(report.feeds.every(x=>x.state==='unavailable'));

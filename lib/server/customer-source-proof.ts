@@ -1,3 +1,4 @@
+import type {Prisma} from '@prisma/client';
 import {missingMonitoringEvidence} from '../monitoring-criteria';
 import {monitoringDepth} from './monitoring-depth';
 import {maxWorkspaceConnectorTargets} from '../connectors/capacity';
@@ -39,6 +40,15 @@ export async function declareSource(ctx:AuthorizedContext,input:z.infer<typeof d
   return tx.auditEvent.create({data:{...query,actorId:ctx.userId,details:{scopeHash,category:input.category,version:row.version}},select:{id:true}});
  });
 }
+export async function sourceOwnership(tx:Prisma.TransactionClient,ctx:AuthorizedContext,row:{id:string;provider:string;controlId:string;repository:string;branch:string;version:number;configuredById:string}){
+ const mark=await tx.auditEvent.findFirst({where:{...where(ctx.organizationId,row.id),action:'connector.source-declared'},orderBy:[{createdAt:'desc'},{id:'desc'}],select:{id:true,actorId:true,details:true}});
+ const info=attribution.safeParse(mark?.details).data;
+ if(!mark?.actorId||info?.scopeHash!==connectorScopeHash(row)||info.version!==row.version)return null;
+ try{await requireMember(tx,{...ctx,userId:mark.actorId},ADMIN);}
+ catch(e){if(e instanceof IntelligenceError&&e.status===403)return null;throw e;}
+ if(info.category==='CUSTOMER'&&mark.actorId===row.configuredById)return null;
+ return {id:mark.id,actor:mark.actorId,category:info.category,scopeHash:info.scopeHash,version:info.version};
+}
 export async function customerSourceProof(ctx:AuthorizedContext,id:string){
  return transaction(ctx,async tx=>{
   await requireMember(tx,ctx,ADMIN);
@@ -69,13 +79,7 @@ export async function customerSourceProof(ctx:AuthorizedContext,id:string){
   }
   const repeat=current&&usable.some(old=>old.run.configVersion===row.version&&latest!.run.capturedAt.getTime()-old.run.capturedAt.getTime()>=row.intervalHours*3600000&&(row.provider!=='UBIBOT'||old.sample!==latest!.sample));
   const rotated=rotations.some(r=>r.after===row.version&&usable.some(a=>a.run.configVersion===r.before)&&usable.some(a=>a.run.configVersion===r.after));
-  const mark=await tx.auditEvent.findFirst({where:{...audit,action:'connector.source-declared'},orderBy:[{createdAt:'desc'},{id:'desc'}],select:{id:true,actorId:true,details:true}});
-  const info=attribution.safeParse(mark?.details).data;
-  let recorded: z.infer<typeof category>='UNCONFIRMED';
-  if(mark?.actorId&&info?.scopeHash===scopeHash&&info.version===row.version){
-   try{await requireMember(tx,{...ctx,userId:mark.actorId},ADMIN);if(info.category!=='CUSTOMER'||mark.actorId!==row.configuredById)recorded=info.category;}
-   catch(e){if(!(e instanceof IntelligenceError)||e.status!==403)throw e;}
-  }
+  const recorded=(await sourceOwnership(tx,ctx,row))?.category??'UNCONFIRMED';
   const isModel=isModelConnector(row.provider);
   const binding=isModel?await tx.auditEvent.findFirst({where:{organizationId:ctx.organizationId,entityType:'WorkspaceAiProvider',entityId:ctx.organizationId},orderBy:[{createdAt:'desc'},{id:'desc'}],select:{id:true,action:true}}):null;
   const inference=binding?.action==='ai.provider-linked'?await tx.auditEvent.findFirst({where:{...audit,action:'ai.customer-inference',AND:[{details:{path:['version'],equals:row.version}},{details:{path:['bindingId'],equals:binding.id}}]},orderBy:[{createdAt:'desc'},{id:'desc'}],select:{id:true}}):null;

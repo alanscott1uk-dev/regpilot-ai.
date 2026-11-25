@@ -9,6 +9,8 @@ import {calibrationStillCurrent} from './logger-calibration';
 import {readRecordKeys} from '../connectors/operational-records';
 import {reviewedFiles,reviewedFilesSchema,assertReviewedFiles,verifyReviewedBytes} from './reviewed-files';
 import {archiveFilename,makeAuditZip} from '../audit-archive';
+import {sourceOwnership} from './customer-source-proof';
+import {deployedTrialRelease} from './capability-trial-service';
 import {downloadEvidence} from './evidence-service';
 import type {ReviewedFile} from './reviewed-files';
 import type {EvidenceObjectStore} from './evidence-storage';
@@ -135,7 +137,16 @@ async function processExcursion(c:AuthorizedContext,id:string,raw:unknown,store?
   if(!chain.reading.data.calibrationApproverId)throw problem('The independent instrument reviewer is missing from this record.');
   if([row.createdById,row.ownerId,decided.actorId,chain.reading.actorId,chain.reading.data.calibrationApproverId,...chain.reading.data.files.flatMap(f=>[f.uploadedById,f.reviewerId]),...decided.data.files.flatMap(f=>[f.uploadedById,f.reviewerId])].includes(c.userId))throw new IntelligenceError('A separate assessor must retrieve the investigation.',403);
   await assertReviewedFiles(tx,c.organizationId,decided.data.files);
-  return {row,prior,body:{reading:chain.reading,disposition:decided,investigation:basis(row)},files:[...chain.reading.data.files,...decided.data.files]};
+  const core={reading:chain.reading,disposition:decided,investigation:basis(row)};
+  // Preserve the original build and source declaration for an exact replay.
+  const existing=prior?envelope.parse(prior.details):null;
+  const source=await tx.connectorRun.findFirst({where:{id:chain.reading.data.runId,organizationId:c.organizationId},include:{connector:true}});
+  const ownership=source&&source.configVersion===source.connector.version?await sourceOwnership(tx,c,source.connector):null;
+  const priorProof=existing?z.object({qualification:z.unknown().optional()}).parse(existing.body).qualification:undefined;
+  const qualification=existing?priorProof:{release:deployedTrialRelease(),ownership};
+  const body={...core,...(qualification===undefined?{}:{qualification})};
+  if(existing&&hashValue(body)!==existing.digest)throw problem('The independently retrieved case has changed.');
+  return {row,prior,body,files:[...chain.reading.data.files,...decided.data.files]};
  };
  const first=await transaction(c,prepare);
  if(collect)await collect(first.files);else await verifyReviewedBytes(c,first.files,store);
@@ -158,6 +169,20 @@ async function processExcursion(c:AuthorizedContext,id:string,raw:unknown,store?
  });
 }
 
+const qualifiedContext=z.object({release:z.string().regex(/^[a-f0-9]{40}$/),ownership:z.object({id:z.uuid(),actor:z.uuid(),category:z.literal('CUSTOMER'),scopeHash:z.string(),version:z.number().int().positive()})});
+export const siteExcursionSchema=z.object({receiptId:z.uuid(),caseId:z.uuid(),digest:z.string(),assessorId:z.uuid(),at:z.iso.datetime(),site:text,serial:z.string(),temperature:z.string(),sampleAt:z.iso.datetime(),stock:z.array(text),disposition:decide.shape.disposition,sourceRef:text,stockEvidenceId:z.uuid(),decisionEvidenceId:z.uuid(),authorityEvidenceId:z.uuid(),qualification:qualifiedContext,files:reviewedFilesSchema});
+export async function siteExcursion(tx:Tx,c:AuthorizedContext,receiptId:string,site:string,release:string,since:Date){
+ const event=await tx.auditEvent.findFirst({where:{id:receiptId,organizationId:c.organizationId,entityType,action:'excursion.retrieve',createdAt:{gte:since}}});
+ if(!event?.actorId)throw problem('Select an independent excursion retrieval for this site protocol.');
+ const p=envelope.parse(event.details),row=await caseRow(tx,c,event.entityId);
+ const {reading,disposition}=await records(tx,row);
+ const proof=qualifiedContext.safeParse(z.object({qualification:z.unknown().optional()}).parse(p.body).qualification);
+ if(!proof.success||proof.data.release!==release||!reading||!disposition||p.cycle!==row.cycle||reading.data.site!==site||
+    hashValue({reading,disposition,investigation:basis(row),qualification:proof.data})!==p.digest||hashValue(p.body)!==p.digest)
+  throw problem('The retrieval must match this site, release, independently confirmed customer logger and current investigation.');
+ await checkSource(tx,row,reading.data);await assertReviewedFiles(tx,c.organizationId,disposition.data.files);
+ return siteExcursionSchema.parse({receiptId,caseId:row.id,digest:p.digest,assessorId:event.actorId,at:event.createdAt.toISOString(),site,serial:reading.data.serial,temperature:reading.data.temperature,sampleAt:reading.data.sampleAt,stock:reading.data.stock,disposition:disposition.data.disposition,sourceRef:disposition.data.sourceRef,stockEvidenceId:reading.data.stockEvidenceId,decisionEvidenceId:disposition.data.decisionEvidenceId,authorityEvidenceId:disposition.data.authorityEvidenceId,qualification:proof.data,files:[...reading.data.files,...disposition.data.files]});
+}
 export function excursionCommand(c:AuthorizedContext,id:string,raw:unknown,store?:EvidenceObjectStore){
  return processExcursion(c,id,raw,store);
 }

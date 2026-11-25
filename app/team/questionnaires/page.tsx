@@ -43,6 +43,7 @@ function QuestionnaireDesk({workspace,onLocked}:{workspace:Workspace;onLocked:(l
  const {organizationId,userId,request,requestResponse,capture}=workspace;
  const [overview,setOverview]=useState<Overview|null>(null),[detail,setDetail]=useState<Detail|null>(null),[automation,setAutomation]=useState<Automation|null>(null),[selectedId,setSelectedId]=useState(''),[selectedQuestion,setSelectedQuestion]=useState('');
  const [loading,setLoading]=useState(true),[reading,setReading]=useState(false),[error,setError]=useState(''),[automationError,setAutomationError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(''),[unknown,setUnknown]=useState<WriteAction<unknown>|null>(null),[checking,setChecking]=useState(false);
+ useEffect(()=>{if(/^#portal-import=[a-f0-9-]{36}$/i.test(location.hash))setShowImport(true);},[]);
  const [showImport,setShowImport]=useState(false),[filter,setFilter]=useState<Filter>('unfinished'),[search,setSearch]=useState(''),[selectedQuestions,setSelectedQuestions]=useState<string[]>([]),[batch,setBatch]=useState<Automation|null>(null),[batchChoices,setBatchChoices]=useState<Record<string,string>>({}),[batchConfirmed,setBatchConfirmed]=useState(false),[previewing,setPreviewing]=useState(false);
  const [coverageProduct,setCoverageProduct]=useState<string|null>(null);
  const questionFilters=useRef<HTMLDivElement>(null);

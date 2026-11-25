@@ -34,6 +34,49 @@ jobs:
             live-public-evidence.json
             live-workflow-evidence.json
           retention-days: 14
+  monitored-applications:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: regpilot
+          POSTGRES_PASSWORD: regpilot-test-only
+          POSTGRES_DB: regpilot
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U regpilot -d regpilot" --health-interval 3s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://regpilot:regpilot-test-only@localhost:5432/regpilot?schema=public
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+      - run: bash scripts/init-ci-database.sh
+      - name: Monitor Gitea and Grafana through timed changes and credential renewal
+        env:
+          REGPILOT_SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export REGPILOT_TEST_APP_PASSWORD="$(openssl rand -hex 28)"
+          docker run -d --name rp-gitea -p 127.0.0.1:8193:3000 -e GITEA__security__INSTALL_LOCK=true -e GITEA__database__DB_TYPE=sqlite3 gitea/gitea:1.23.8
+          docker run -d --name rp-grafana -p 127.0.0.1:8194:3000 -e GF_SECURITY_ADMIN_PASSWORD="$REGPILOT_TEST_APP_PASSWORD" grafana/grafana:12.2.1
+          trap 'docker rm -f rp-gitea rp-grafana >/dev/null' EXIT
+          curl -fsS --retry 30 --retry-all-errors --retry-delay 2 http://127.0.0.1:8193/api/v1/version -o /dev/null
+          curl -fsS --retry 30 --retry-all-errors --retry-delay 2 http://127.0.0.1:8194/api/health -o /dev/null
+          docker exec --user git rp-gitea gitea admin user create --username quality-reader --password "$REGPILOT_TEST_APP_PASSWORD" --email quality@example.invalid --must-change-password=false
+          node --import tsx scripts/check-live-business-apps.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: business-application-recovery-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: business-application-recovery.json
+          retention-days: 30
   identity-server:
     runs-on: ubuntu-latest
     timeout-minutes: 10

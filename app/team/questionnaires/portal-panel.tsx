@@ -9,6 +9,13 @@ import css from './questionnaires.module.css';
 export default function PortalPanel({detail,organizationId,requestResponse,capture,locked}:{detail:Detail;organizationId:string;requestResponse:RawRequest;capture:()=>()=>boolean;locked:boolean}){
  const [page,setPage]=useState<PortalFields|null>(null),[chosen,select]=useState<string[]>([]),[confirmed,confirm]=useState(false),[error,tell]=useState(''),[busy,lock]=useState(false);
  const [nonce,pair]=useState(''),questionnaireId=detail.questionnaire.id;
+ useEffect(()=>{
+  let active=true;const valid=capture();
+  void portalBridge({action:'RESUME',organizationId,questionnaireId}).then(r=>{
+   if(active&&valid()&&r.nonce&&r.capture){setPage(portalFields.parse(r.capture));pair(r.nonce);tell('The original buyer tab is ready for the reviewed answers.');}
+  }).catch(()=>{});
+  return()=>{active=false;};
+ },[organizationId,questionnaireId,capture]);
  async function connect(){
   if(locked||busy)return;
   const valid=capture(),next=crypto.randomUUID();lock(true);tell('');

@@ -8,8 +8,9 @@ function official(url:string,publisher:string){
  if(!URL.canParse(url))return false;
  const parsed=new URL(url);
  if(parsed.protocol!=='https:'||parsed.username||parsed.password||parsed.hash)return false;
+ if(publisher==='eu-ema')return /^https:\/\/www\.ema\.europa\.eu\/en\/medicines\/human\/shortages\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(url);
  if(isInstrumentSeries(publisher))return !!instrumentReference(url,publisher);
- if(publisher!=='us-fda')return parsed.origin==='https://www.gov.uk'&&!parsed.search&&horizonPath.safeParse(parsed.pathname).success&&!parsed.pathname.startsWith('/us-fda/')&&!parsed.pathname.startsWith('/legislation/')&&url===parsed.origin+parsed.pathname;
+ if(publisher!=='us-fda')return parsed.origin==='https://www.gov.uk'&&!parsed.search&&horizonPath.safeParse(parsed.pathname).success&&!parsed.pathname.startsWith('/us-fda/')&&!parsed.pathname.startsWith('/legislation/')&&!parsed.pathname.startsWith('/eu-ema/')&&url===parsed.origin+parsed.pathname;
  if(parsed.origin!=='https://api.fda.gov'||parsed.pathname!=='/drug/enforcement.json'||parsed.searchParams.size!==1)return false;
  const query=parsed.searchParams.get('search')??'',number=/^recall_number:"(D-\d{1,6}-\d{4})"$/.exec(query)?.[1],event=/^event_id:([1-9]\d{0,11})$/.exec(query)?.[1];
  return !!(number||event);

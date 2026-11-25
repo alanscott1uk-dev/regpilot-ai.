@@ -1,3 +1,4 @@
+import {nistControlTitle} from '../nist-baseline-programmes.mjs';
 import {buildCrosswalk} from '../programme-crosswalk';
 import {z} from 'zod';
 import {Prisma} from '@prisma/client';
@@ -13,15 +14,15 @@ const input=z.object({reference:z.string().min(1).max(120),decision:z.enum(['APP
 const stored=input.extend({programmeId:z.uuid(),version:z.number().int().positive()});
 function references(plan:Awaited<ReturnType<typeof programmeReferenceContext>>){
  const index=new Map<string,{reference:string;area:string;taskId:string|null;owner:string;taskStatus:string;reviewedFiles:string[]}>();
- const add=(reference:string,area:string)=>{if(!index.has(reference))index.set(reference,{reference,area,taskId:null,owner:'',taskStatus:'No linked task',reviewedFiles:[]});};
- if(plan.packId==='iso27001-annex-a'&&plan.packVersion===1){
+ const add=(reference:string,area:string)=>{if(!index.has(reference))index.set(reference,{reference,area:nistControlTitle(reference)||area,taskId:null,owner:'',taskStatus:'No linked task',reviewedFiles:[]});};
+ if((['iso27001-annex-a','soc2-security'].includes(plan.packId)||plan.packId.startsWith('nist-800-53b-'))&&plan.packVersion===1){
   const pack=STARTER_PACKS.find(p=>p.id===plan.packId)!;
   for(const template of pack.items)for(const ref of template.mappings??[])add(ref,template.title);
  }
  for(const item of plan.items)for(const reference of item.mappings??[]){
   add(reference,item.title);
   const row=index.get(reference)!;
-  if(item.task)Object.assign(row,{area:item.title,taskId:item.task.id,owner:item.task.ownerName,taskStatus:item.task.status,reviewedFiles:item.reviewedFiles?.map(file=>file.id+' @ '+file.sha256)??[]});
+  if(item.task)Object.assign(row,{area:nistControlTitle(reference)||item.title,taskId:item.task.id,owner:item.task.ownerName,taskStatus:item.task.status,reviewedFiles:item.reviewedFiles?.map(file=>file.id+' @ '+file.sha256)??[]});
  }
  return index;
 }
@@ -52,7 +53,7 @@ export async function programmeCrosswalk(ctx:AuthorizedContext,annexId:string,co
  return transaction(ctx,async tx=>{
   await requireMember(tx,ctx,ADMIN);
   const annex=await programmeReferenceContext(tx,ctx,annexId),combined=await programmeReferenceContext(tx,ctx,combinedId);
-  if(annex.packId!=='iso27001-annex-a'||combined.packId!=='soc2-iso27001')throw new IntelligenceError('Select the Annex A and combined SOC 2 programmes.',409);
+  if(annex.packId!=='iso27001-annex-a'||!['soc2-iso27001','soc2-security'].includes(combined.packId))throw new IntelligenceError('Select the Annex A and combined SOC 2 programmes.',409);
   return buildCrosswalk(annex,combined,await readStatement(tx,ctx,annex));
  });
 }

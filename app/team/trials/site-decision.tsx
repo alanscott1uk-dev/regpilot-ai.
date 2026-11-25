@@ -42,6 +42,7 @@ export default function SiteDecision({w,id,files,participant}:{w:Workspace;id:st
  }
  function submit(form:FormData){
   if(!packet)return;
+  if(!form.get('excursionReceiptId')||form.get('decision')!=='APPROVE')form.delete('excursionReceiptId');
   const input={...Object.fromEntries(form),basisHash:packet.basisHash,confirmed:form.get('confirmed')==='on'};
   const identity=JSON.stringify(input),requestKey=keys.current.get(identity)??crypto.randomUUID();keys.current.set(identity,requestKey);
   void run(async()=>{
@@ -57,6 +58,11 @@ export default function SiteDecision({w,id,files,participant}:{w:Workspace;id:st
   {packet&&<>
    <p><strong>{labels[packet.status]}</strong> · {packet.protocol.operator} · {packet.protocol.site}</p>
    <p>Tested configuration {packet.protocol.configuration} · Licence reference {packet.protocol.licence}</p>
+   {packet.decisions.length>0&&packet.supplier&&<button type="button" disabled={busy} onClick={()=>{const valid=w.capture();void run(async()=>{
+    const res=await w.requestResponse(url+'&download=inspection'),blob=await res.blob();
+    if(valid()){const href=URL.createObjectURL(blob),a=document.createElement('a');a.href=href;a.download='regpilot-site-'+id+'.zip';a.click();setTimeout(()=>URL.revokeObjectURL(href),1000);}
+    return load();
+   });}}>Download inspection ZIP with release tests, signed site decision and originals</button>}
    <p>Protocol and results fingerprint <code>{packet.basisHash}</code></p>
    {packet.blockers.length>0&&<ul>{packet.blockers.map(reason=><li key={reason}>{reason}</li>)}</ul>}
    {packet.decisions.map(d=><div key={d.id}><p>{d.input.decision} · {d.input.signatory}, {d.input.role} · {d.at}</p><p>{d.input.rationale}</p></div>)}
@@ -77,6 +83,7 @@ export default function SiteDecision({w,id,files,participant}:{w:Workspace;id:st
      <label>Decision<select name="decision" defaultValue="" required><option value="">Choose a decision</option>
       {withdrawing?<option value="WITHDRAW">Withdraw the recorded site approval</option>:<>
        <option value="APPROVE" disabled={packet.blockers.length>0}>Approve this release for the recorded site use</option><option value="WITHHOLD">Withhold site approval</option></>}</select></label>
+     {packet.excursionChoices.length>0&&!withdrawing&&<label>Customer excursion supporting approval<select name="excursionReceiptId" defaultValue=""><option value="">Select the reviewed case</option>{packet.excursionChoices.map(r=><option key={r.id} value={r.id}>{r.at} · Case {r.caseId}</option>)}</select></label>}
      <label>Signatory named on the decision<input name="signatory" minLength={3} maxLength={240} required/></label>
      <label>Signatory role<input name="role" minLength={3} maxLength={240} required/></label>
      {([['decisionFile','Signed site decision'],['authorityFile','Signatory authority or delegation']] as const).map(([name,label])=><label key={name}>{label}

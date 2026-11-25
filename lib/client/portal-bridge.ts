@@ -1,5 +1,5 @@
 export const portalExtensionId='eelalmkjgehonmadfcpknkoebfgemlnd';
-type Reply={ok:boolean;message?:string;capture?:unknown};
+type Reply={ok:boolean;message?:string;nonce?:string;capture?:unknown};
 type Runtime={lastError?:{message?:string};sendMessage:(extension:string,message:unknown,respond:(reply?:Reply)=>void)=>void};
 export function portalBridge(message:Record<string,unknown>):Promise<Reply>{
  const runtime=(window as Window&{chrome?:{runtime?:Runtime}}).chrome?.runtime;

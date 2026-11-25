@@ -4,6 +4,7 @@ import getpass
 import http.client
 import json
 import os
+import re
 import ssl
 import sys
 from pathlib import Path
@@ -20,7 +21,9 @@ def deliver(origin, envelope, credential):
     reference = body["externalId"].split("/")
     database_source = (len(reference) == 3 and reference[0] == "dbsync" and reference[2] == key
                        and str(UUID(reference[1])) == reference[1])
-    if body["externalId"] != "opcua/" + key and not database_source:
+    cadence = (len(reference) == 3 and reference[0] == "cadence" and
+               re.fullmatch("[0-9a-f]{24}", reference[1]) and reference[2] == key)
+    if body["externalId"] != "opcua/" + key and not database_source and not cadence:
         raise ValueError("The source reference differs from the saved delivery key")
     if not credential or not credential.isascii() or any(ord(c) < 33 or ord(c) > 126 for c in credential):
         raise ValueError("A workspace observation credential is required")

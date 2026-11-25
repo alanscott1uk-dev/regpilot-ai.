@@ -21,7 +21,7 @@ export const siteProtocol=z.object({
 
 export const siteDecision=z.object({
  requestKey:z.uuid(),basisHash:z.string().regex(/^[a-f0-9]{64}$/), decision:z.enum(['APPROVE','WITHHOLD','WITHDRAW']), signatory:description,
- role:description, rationale:z.string().trim().min(20).max(800), decisionFile:z.uuid(), authorityFile:z.uuid(),
+ role:description, rationale:z.string().trim().min(20).max(800), decisionFile:z.uuid(), authorityFile:z.uuid(),excursionReceiptId:z.uuid().optional(),
  confirmed:z.literal(true)
 }).strict().refine(d=>d.decisionFile!==d.authorityFile,'Use separate decision and delegation records.');
 

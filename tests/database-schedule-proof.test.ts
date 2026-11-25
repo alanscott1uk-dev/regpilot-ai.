@@ -11,5 +11,9 @@ test('scheduled database proof requires the release, attempt, successful admissi
  job.steps[0].conclusion='skipped';assert.equal((await databaseScheduleProof(sha,read)).rows.length,0);job.steps[0].conclusion='success';
  job.run_attempt=1;assert.equal((await databaseScheduleProof(sha,read)).rows.length,0);
  artifact.name='scheduled-database-mssql-'+sha+'-1';assert.equal((await databaseScheduleProof(sha,read)).rows.length,1);
+ job.name='monitored-applications';job.steps[0].name='Monitor Gitea and Grafana through timed changes and credential renewal';
+ artifact.name='business-application-recovery-'+sha+'-1';
+ assert.match((await databaseScheduleProof(sha,read)).applications!.receiptUrl,/artifacts\/71$/);
+ artifact.expired=true;assert.equal((await databaseScheduleProof(sha,read)).applications,null);artifact.expired=false;
  artifact.workflow_run.head_sha='e'.repeat(40);assert.equal((await databaseScheduleProof(sha,read)).rows.length,0);
 });

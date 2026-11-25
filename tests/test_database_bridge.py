@@ -155,5 +155,51 @@ class DatabaseBridgeTests(unittest.TestCase):
             self.collect([])
 
 
+class ScheduledDeliveryTests(unittest.TestCase):
+    def test_resumes_after_lost_acknowledgement_and_retains_expired_observations(self):
+        import datetime
+        spec = importlib.util.spec_from_file_location("scheduler", "public/database-bridge/watch.py")
+        scheduler = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(scheduler)
+        received, attempted, fail = {}, [], True
+        def send(origin, envelope, credential):
+            nonlocal fail
+            key = envelope["idempotencyKey"]
+            attempted.append(key)
+            reused = key in received
+            received.setdefault(key, str(uuid4()))
+            if fail and len(received) == 2:
+                fail = False
+                raise OSError("Lost acknowledgement")
+            return {"id": received[key], "idempotencyKey": key, "reused": reused}
+
+        with tempfile.TemporaryDirectory() as spool:
+            folder = Path(spool)
+            now = datetime.datetime.now(datetime.timezone.utc)
+            keys = []
+            for slot, kinds in enumerate([["source", "availability"], ["availability"], ["source", "availability"]]):
+                prefix = str(slot).zfill(12)
+                summary = {"slot": slot, "state": "READ" if "source" in kinds else "FAILED"}
+                for kind in kinds:
+                    key = str(uuid4())
+                    keys.append(key)
+                    expires = now + datetime.timedelta(hours=-1 if slot == 1 else 1)
+                    name = prefix + "-" + kind + ".json"
+                    summary[kind] = name
+                    (folder / name).write_text(json.dumps({"idempotencyKey": key, "body": {"validUntil": expires.isoformat()}}))
+                (folder / (prefix + "-status.json")).write_text(json.dumps(summary))
+            with self.assertRaises(OSError):
+                scheduler.flush(folder, "https://regpilot.example", "local-token", send)
+            with self.assertRaises(ValueError):
+                scheduler.flush(folder, "https://different.example", "local-token", send)
+            summary = scheduler.flush(folder, "https://regpilot.example", "renewed-token", send)
+            self.assertEqual(summary, {"state": "DRAINED", "sent": 3, "expiredWithoutConfirmation": 1})
+            self.assertEqual(attempted, [keys[0], keys[1], keys[1], keys[3], keys[4]])
+            ack = json.loads((folder / "000000000000-availability-delivery.json").read_text())
+            self.assertTrue(ack["receipt"]["reused"])
+            self.assertEqual(scheduler.flush(folder, "https://regpilot.example", "renewed-token", send)["sent"], 0)
+            self.assertTrue((folder / "000000000001-availability.json").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

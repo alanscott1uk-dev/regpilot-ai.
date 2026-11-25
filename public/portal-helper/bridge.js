@@ -2,14 +2,41 @@ const uuid=value=>typeof value==='string'&&/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f
 const secureOrigin=value=>{try{const url=new URL(value);return url.protocol==='https:'&&url.origin===value;}catch{return false;}};
 const validFields=v=>v?.format==='regpilot-portal-fields-v1'&&secureOrigin(v.origin)&&/^[a-f0-9]{64}$/.test(v.pageHash)&&Array.isArray(v.fields)&&v.fields.length>0&&v.fields.length<=100&&v.fields.every(f=>typeof f==='string'&&f.length>=3&&f.length<=600);
 const problem=message=>{throw Error(message);};
-export async function exchange({message:m,sender,external,store,home,popup,focus,now}){
+export async function exchange({message:m,sender,external,store,home,popup,focus,openImport,now}){
  const url=new URL(sender.url),target=new URL(home);
  if(external){
   if(url.origin!==target.origin||url.pathname!==target.pathname||sender.frameId!==0||!Number.isInteger(sender.tab?.id))problem('Open the paired RegPilot questionnaire.');
-  if(![m.organizationId,m.questionnaireId,m.nonce].every(uuid))problem('Choose one questionnaire and workspace.');
+  if(!uuid(m.organizationId))problem('Choose a workspace.');
+  if(m.action!=='READ_IMPORT'&&!uuid(m.questionnaireId))problem('Choose one questionnaire.');
+  if(m.action!=='RESUME'&&!uuid(m.nonce))problem('Open the current questionnaire transfer.');
  }else if(sender.url!==popup)problem('Use the installed helper popup.');
  let state=(await store.get('pair')).pair;
  if(state&&state.until<=now){await store.remove('pair');state=null;}
+ if(!external&&m.action==='START_IMPORT'){
+  if(state||!uuid(m.nonce)||!Number.isInteger(m.tab)||!validFields(m.capture)||m.capture.origin===target.origin)problem('Finish the existing transfer or open a buyer questionnaire with supported fields.');
+  const {format,origin,pageHash,fields}=m.capture;
+  const id=await openImport(home+'#portal-import='+m.nonce);
+  if(!Number.isInteger(id))problem('The questionnaire tab could not be opened.');
+  await store.set({pair:{kind:'IMPORT',tab:id,buyerTab:m.tab,nonce:m.nonce,capture:{format,origin,pageHash,fields},until:now+30*60000}});
+  return {ok:true};
+ }
+ if(external&&m.action==='RESUME'){
+  if(!state||state.kind!=='BUYER'||state.tab!==sender.tab.id||state.organizationId!==m.organizationId||state.questionnaireId!==m.questionnaireId)return {ok:true};
+  return {ok:true,nonce:state.nonce,capture:state.capture};
+ }
+ if(state?.kind==='IMPORT'){
+  if(!external&&m.action==='INFO')return {ok:true,importPending:true};
+  if(!external||state.tab!==sender.tab.id||m.nonce!==state.nonce||(state.organizationId&&state.organizationId!==m.organizationId))problem('Use the workspace and tab selected for this import.');
+  if(m.action==='READ_IMPORT'){
+   await store.set({pair:{...state,organizationId:m.organizationId}});return {ok:true,capture:state.capture};
+  }
+  if(m.action==='IMPORT_SAVED'&&state.organizationId===m.organizationId){
+   await store.set({pair:{...state,kind:'BUYER',questionnaireId:m.questionnaireId,title:String(m.title??'').slice(0,160),until:now+30*60000}});
+   return {ok:true};
+  }
+  problem('Review the captured questions in the selected workspace first.');
+ }
+ if(external&&m.action==='IMPORT_SAVED'&&state?.kind==='BUYER'&&state.tab===sender.tab.id&&state.organizationId===m.organizationId&&state.questionnaireId===m.questionnaireId&&state.nonce===m.nonce)return {ok:true};
  if(external&&m.action==='PAIR'){
   await store.set({pair:{tab:sender.tab.id,organizationId:m.organizationId,questionnaireId:m.questionnaireId,nonce:m.nonce,title:String(m.title??'').slice(0,160),until:now+30*60000}});
   return {ok:true};

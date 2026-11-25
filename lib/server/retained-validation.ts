@@ -14,7 +14,10 @@ async function context(tx:Prisma.TransactionClient,ctx:AuthorizedContext,trialId
  await requireMember(tx,ctx,ADMIN);
  const trial=await loadTrial(tx,ctx,trialId);
  if(trial.plan.track!=='site_qualification'||!trial.plan.siteProtocol)throw new IntelligenceError('A site qualification protocol is required.',404);
- const revision=trial.plan.release,where={organizationId:ctx.organizationId,entityType:'SupplierValidationArchive',entityId:revision,action:'validation.archive_retained'};
+ return releaseArchive(tx,ctx.organizationId,trial.plan.release);
+}
+export async function releaseArchive(tx:Prisma.TransactionClient,organizationId:string,revision:string){
+ const where={organizationId,entityType:'SupplierValidationArchive',entityId:revision,action:'validation.archive_retained'};
  const prior=await tx.auditEvent.findFirst({where,select:{id:true,createdAt:true,details:true}});
  if(!prior)return {revision,where,saved:null};
  const item=record.parse(prior.details),bytes=Buffer.from(item.encoded,'base64');

@@ -2,7 +2,7 @@
 // Only the test company, customer requests and supporting content are fictional.
 import assert from 'node:assert/strict';
 import {readFile,writeFile} from 'node:fs/promises';
-import {createHash} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {fixtureWorkbook,inlineCell,sheetRow} from '../tests/helpers/questionnaire-workbook-fixture.mjs';
 import {fixtureFillablePdf,readPdfAnswerFields} from '../tests/helpers/pdf-fixture.mjs';
 import {fixtureDocx,paragraph} from '../tests/helpers/docx-fixture.mjs';
@@ -71,17 +71,31 @@ export async function runQuestionnaireFormatJourney({upload,review,app,org,edito
  assert.ok(!JSON.stringify(savedIntake.details).includes('invite=fixture'));
  assert.deepEqual(savedPaste.questions.map(q=>q.status),['SUGGESTED','EMPTY']);
  passed('A buyer questionnaire was created from two pasted portal labels. The current approved answer was suggested for one and the unmatched row remained empty. The returned table preserved blank rows for spreadsheet entry.');
- await upload.goto(app+'/team/questionnaires'+query);
- await upload.getByRole('button',{name:'Import questionnaire',exact:true}).click();
- await paste.getByText('Start from questions copied from a buyer portal or email',{exact:true}).click();
- await paste.getByLabel('Questions, one per line',{exact:true}).fill(question);
- await paste.getByLabel('Original buyer portal URL (optional)',{exact:true}).fill('https://buyer.example.invalid/private/original');
+ // Drive the signed-in intake with the browser bridge contract. The installed Chrome test exercises the real extension boundary.
+ const nonce=randomUUID(),captured={format:'regpilot-portal-fields-v1',origin:'https://buyer.example.invalid',pageHash:createHash('sha256').update('https://buyer.example.invalid/private/original').digest('hex'),fields:[question]};
+ await upload.addInitScript(({nonce,captured,orgId})=>{
+  if(location.hash!=='#portal-import='+nonce)return;
+  Object.defineProperty(window.chrome??(window.chrome={}),'runtime',{configurable:true,value:{sendMessage:(_extension,m,reply)=>{
+   if(m.nonce!==nonce||m.organizationId!==orgId)return reply({ok:false});
+   if(m.action==='READ_IMPORT')return reply({ok:true,capture:captured});
+   if(m.action==='IMPORT_SAVED'){sessionStorage.setItem('test-bound-questionnaire',m.questionnaireId);return reply({ok:true});}
+   reply({ok:false});
+  }}});
+ },{nonce,captured,orgId:org.id});
+ await upload.goto(app+'/team/questionnaires'+query+'#portal-import='+nonce);
+ await paste.getByRole('button',{name:'Use buyer questions in this workspace'}).click();
+ await paste.getByText('Captured 1 field labels from '+captured.origin+'.',{exact:false}).waitFor();
+ assert.equal(await paste.getByLabel('Questions, one per line',{exact:true}).inputValue(),question);
  await paste.getByLabel('Questionnaire title',{exact:true}).fill('Saved buyer portal');
  await paste.getByLabel('Buyer or recipient',{exact:true}).fill('Fictional buyer');
  await paste.getByLabel('Scope of the answers',{exact:true}).fill(scope);
  await paste.getByLabel('Question owner',{exact:true}).selectOption(editor.id);
  await paste.getByLabel('I checked the questions, recipient, product and scope.',{exact:true}).check();
  const single=await action(upload,'/api/workspace/questionnaires','POST',()=>paste.getByRole('button',{name:'Create questionnaire from 1 question',exact:true}).click(),201);
+ await upload.waitForFunction(id=>sessionStorage.getItem('test-bound-questionnaire')===id,single.id);
+ const source=await db.auditEvent.findFirstOrThrow({where:{entityId:single.id,action:'customer_assurance.questionnaire_imported'}});
+ assert.deepEqual(source.details.portalDestination,{origin:captured.origin,pageHash:captured.pageHash});
+ passed('A buyer-tab capture created a private questionnaire directly, retained its destination and returned the new questionnaire identity to the helper.');
  await approve(single.id,'Q1');
  await packages.getByText('Complete a buyer’s online questionnaire',{exact:true}).click();
  await packages.getByRole('button',{name:'Use original buyer portal and saved questions',exact:true}).click();

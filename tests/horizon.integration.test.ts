@@ -117,6 +117,24 @@ test('independent site applicability assessment keeps the shortlist blind until 
   assert.deepEqual(await changeApplicabilityAssessment(f.ad,{...body,labels:[...body.labels].reverse()}),saved);
   const reviewed=(await applicabilityAssessment(f.o,saved.id)).selected!;
   assert.deepEqual(reviewed.score,{correctAlert:0,falseAlert:10,missed:10,correctExclusion:0,uncertain:0,precision:0,recall:0});
+  const {assessOfficialIndexes}=await import('../lib/horizon/official-indexes');
+  const day=new Date(Date.now()-86400000).toISOString();
+  const missing='https://www.gov.uk/drug-safety-update/absent-from-collection';
+  const compare=(r:HorizonReport)=>assessOfficialIndexes(r,async u=>{
+   if(String(u)!=='https://www.gov.uk/drug-safety-update.atom')return new Response(null,{status:503});
+   const entries=[items[0].url,items[2].url,missing].map((url,i)=>'<entry><id>'+url+'</id><title>Publisher notice '+i+'</title><updated>'+day+'</updated><link href="'+url+'"/></entry>');
+   return new Response('<feed xmlns="http://www.w3.org/2005/Atom">'+entries.join('')+'</feed>');
+  });
+  const indexStart={...start,method:'INDEX',requestKey:randomUUID()};
+  const fromIndex=await changeApplicabilityAssessment(f.o,indexStart,async()=>report,compare);
+  const blind=(await applicabilityAssessment(f.ad,fromIndex.id)).selected!;
+  assert.notEqual(saved.id,fromIndex.id);assert.equal(blind.population,3);
+  assert.ok(blind.rows.some(r=>r.url===missing));assert.doesNotMatch(JSON.stringify(blind),/MISSING|FOUND|suggested|indexDigest/);
+  await changeApplicabilityAssessment(f.ad,{action:'REVIEW',assessmentId:blind.id,sampleHash:blind.sampleHash,labels:blind.rows.map(r=>({id:r.id,verdict:r.url===items[2].url?'OUTSIDE_SCOPE':'APPLIES',reason:'The site reviewer compared this official publication to the licence.'}))});
+  const classified=(await applicabilityAssessment(f.o,fromIndex.id)).selected!;
+  assert.equal(classified.coverage?.missedAtCollection,1);assert.equal(classified.score?.precision,0.5);assert.equal(classified.score?.recall,0.5);
+  assert.equal(classified.rows.find(r=>r.url===missing)?.assessment?.collection,'MISSING');
+  await assert.rejects(changeApplicabilityAssessment(f.o,{...indexStart,method:'QUEUE'},async()=>report),rejects(409));
   assert.equal(reviewed.reviewerId,f.ad.userId);await assert.rejects(changeApplicabilityAssessment(f.ad,{...body,labels:body.labels.map(r=>({...r,verdict:'UNCERTAIN'}))}),rejects(409));
  }finally{await f.cleanup();}
 });

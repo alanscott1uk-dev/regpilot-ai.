@@ -1,3 +1,4 @@
+import {emaShortages} from './ema';
 import {instrumentWindow} from './instruments';
 import {isInstrumentSeries} from './instrument-series';
 import {fdaSearchPage} from './fda';
@@ -8,6 +9,7 @@ import {PUBLISHERS,MAX_PUBLISHER_RESULTS,MAX_RETAINED_ITEMS,MAX_REPORT_BYTES,hor
 const digest=(s:string)=>createHash('sha256').update(s).digest('hex').slice(0,32);
 const plain=(v:unknown,max:number)=>typeof v==='string'?v.replace(/<[^>]*>/g,' ').replace(/[\x00-\x1f\x7f]/g,' ').replace(/\s+/g,' ').trim().slice(0,max):'';
 export function itemKind(path:string,type:string):HorizonItem['kind']{
+ if(type==='medicine_shortage_notice')return 'Medicine shortage';
  if(type==='drug_recall'||path.startsWith('/drug-device-alerts/')||type==='medical_safety_alert'||type==='product_safety_alert_report')return 'Safety alert';
  if(type.includes('consultation'))return 'Consultation';
  if(/regulation|decision|statutory|notice/.test(type))return 'Regulation or decision';
@@ -69,7 +71,7 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
   const priorFeed=old?.feeds.find(f=>f.id===publisher.id);
   if(priorFeed?.state==='unavailable'&&(priorFeed.reason==='RETRY_REQUIRES_REVIEW'||priorFeed.retryAt&&Date.parse(priorFeed.retryAt)>now.getTime())){feeds[index]={...priorFeed,retrieved:0};continue;}
   const feedMetrics={requests:0,retries:0};
-  const retryRead=resilientGet(fetcher,publisher.id==='us-fda'?'https://api.fda.gov':'https://www.gov.uk',{accept:'application/json'},{timeoutMs:90000,maxRequests:60,metrics:feedMetrics});
+  const retryRead=resilientGet(fetcher,publisher.id==='eu-ema'?'https://www.ema.europa.eu':publisher.id==='us-fda'?'https://api.fda.gov':'https://www.gov.uk',{accept:'application/json'},{timeoutMs:90000,maxRequests:60,metrics:feedMetrics});
   try{
    let instruments:Awaited<ReturnType<typeof instrumentWindow>>|undefined;
    if(isInstrumentSeries(publisher.id)){
@@ -77,10 +79,11 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
     instruments=await legislation;
     if(instruments.unavailable)throw new CollectionError('INVALID_LEGISLATION_INDEX');
    }
+   const shortages=publisher.id==='eu-ema'?await emaShortages(windowStart,generatedAt,retryRead):undefined;
    let pageSize = MAX_SEARCH_PAGE;
    while (retrieved < MAX_PUBLISHER_RESULTS) {
     const offset = retrieved;
-    const seriesRows=instruments?.rows.filter(r=>r.organisations[0].slug===publisher.id);
+    const seriesRows=shortages??instruments?.rows.filter(r=>r.organisations[0].slug===publisher.id);
     const page = seriesRows?{raw:{results:seriesRows.slice(0,MAX_PUBLISHER_RESULTS),total:seriesRows.length},count:MAX_PUBLISHER_RESULTS}:publisher.id==='us-fda'?await fdaSearchPage(windowStart,generatedAt,offset,retryRead):await readSearchPage(publisher.slug, windowStart, generatedAt, offset,
      Math.min(pageSize, MAX_PUBLISHER_RESULTS-offset), retryRead);
     const {raw} = page;
@@ -132,10 +135,10 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
  const previousHistory=old?[summarize(old),...(old.pipeline?.history||[])]:[];
  const history=[...new Map(previousHistory.filter(h=>h.generatedAt!==generatedAt).map(h=>[h.generatedAt,h])).values()].sort((a,b)=>b.generatedAt.localeCompare(a.generatedAt)).slice(0,48);
  return validateReport({pipeline:{cadenceMinutes:60,durationMs:Date.now()-started,...metrics,retentionLimited:collected.size>items.length,history},format:'regpilot-horizon-v1',generatedAt,windowStart,...provenance,previousAvailable:!!old,feeds,items,limitations:[
-  'Discovery metadata from selected GOV.UK publishers, four UK legislative instrument series and US FDA drug enforcement reports over the last 30 days. Review the jurisdiction of each source.',
+  'Discovery metadata from selected GOV.UK publishers, four UK legislative instrument series US FDA drug enforcement reports and EMA human medicine shortage notices over the last 30 days. Review the jurisdiction of each source.',
   'Each publisher is bounded to 2,000 results per run and the retained feed to 10,000 records or 4 MB, whichever is reached first. Limits and unavailable feeds are explicit; older items keep their original observation time.',
   'Publication timestamps and metadata changes are not legal effective dates or proof of changed obligations. Applicability and jurisdiction require review.',
   'Publisher/activity matching and category priority are transparent sorting aids, not legal assessments. Full text, linked attachments and independently reviewed requirements are handled separately.',
-  'GOV.UK records contain public sector information licensed under the Open Government Licence v3.0. UK instruments are indexed by publication date. Their series alone does not establish territorial extent. US drug recall data is supplied by openFDA.'
+  'GOV.UK records contain public sector information licensed under the Open Government Licence v3.0. UK instruments are indexed by publication date. Their series alone does not establish territorial extent. US drug recall data is supplied by openFDA. EMA publishes the EU shortage status. UK availability requires a separate assessment.'
  ]},now.getTime());
 }

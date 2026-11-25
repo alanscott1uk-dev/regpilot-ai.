@@ -42,5 +42,19 @@ export async function installedPortalPairing(zip){
   assert.equal((await internal({action:'INFO',tab:currentBuyerId+1000})).ticket,null);
   assert.equal((await send('READ',{nonce:randomUUID()})).ok,false);
   assert.equal(await buyer.getByRole('textbox').inputValue(),'');
+  await internal({action:'CLEAR',tab:currentBuyerId,handoffId:ticket.handoffId});
+  const nonce=randomUUID(),newPage=context.waitForEvent('page');
+  assert.equal((await internal({action:'START_IMPORT',nonce,tab:currentBuyerId,capture})).ok,true);
+  const importer=await newPage;await importer.waitForURL(home+'#portal-import='+nonce);
+  const incoming=(action,extra={})=>importer.evaluate(async({id,m})=>chrome.runtime.sendMessage(id,m),{id,m:{action,organizationId:common.organizationId,nonce,...extra}});
+  assert.deepEqual((await incoming('READ_IMPORT')).capture,capture);
+  assert.equal((await incoming('READ_IMPORT',{organizationId:randomUUID()})).ok,false);
+  assert.equal((await send('READ_IMPORT',{nonce})).ok,false);
+  const saved=randomUUID();
+  assert.equal((await incoming('IMPORT_SAVED',{questionnaireId:saved,title:'Buyer-initiated review'})).ok,true);
+  assert.deepEqual((await incoming('RESUME',{questionnaireId:saved})).capture,capture);
+  assert.equal((await incoming('RESUME',{questionnaireId:randomUUID()})).capture,undefined);
+  assert.equal((await incoming('DELIVER',{questionnaireId:saved,ticket})).ok,true);
+  assert.equal((await internal({action:'INFO',tab:currentBuyerId})).ticket.handoffId,ticket.handoffId);
  }finally{await context?.close();await rm(dir,{recursive:true,force:true});}
 }

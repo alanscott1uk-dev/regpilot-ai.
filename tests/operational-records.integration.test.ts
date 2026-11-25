@@ -242,6 +242,50 @@ test('repeated logger collection checks the physical serial, rotated key and cur
   for(const source of inspection.sources)assert.equal(createHash('sha256').update(archive.get(source.entry)!).digest('hex'),source.sha256);
   assert.match(JSON.stringify(independent),/TEST-001/);assert.match(JSON.stringify(independent),/TEST-QD-1/);
   assert.equal((await excursionWorkspace(f.re,q.id)).retrieved.length,1);
+  const previousBuild=process.env.VERCEL_GIT_COMMIT_SHA,release='c'.repeat(40);
+  try{
+   process.env.VERCEL_GIT_COMMIT_SHA=release;
+   const {recordTrial}=await import('../lib/server/capability-trial-service');
+   const {siteQualification,recordSiteDecision}=await import('../lib/server/site-qualification-service');
+   const {retainValidation}=await import('../lib/server/retained-validation');
+   const {siteInspectionArchive}=await import('../lib/server/site-inspection-archive');
+   const {makeAuditZip}=await import('../lib/audit-archive');
+   const {declareSource}=await import('../lib/server/customer-source-proof');
+   const {id}=await recordTrial(f.ed,{action:'START',requestKey:randomUUID(),track:'site_qualification',steps:['cold-chain'],release,
+    intendedUse:'Trace a customer site excursion to the independently reviewed stock disposition.',environment:'PROTECTED_PILOT',ukExternal:true,
+    siteProtocol:{site:attach.site,operator:'Fictional warehouse',licence:'Fixture-WDA-1',configuration:'Calibrated storage configuration A',
+     criteria:[{step:'cold-chain',expected:'Retrieve the calibrated reading, affected stock and independently reviewed disposition.'}]}});
+   const testProof=await f.file(),siteSigned=await f.file(),siteAuthority=await f.file();
+   await recordTrial(f.ed,{action:'FINISH',id,results:[{step:'cold-chain',notes:'The operator retrieved the source and recorded a site test result.',evidenceId:testProof.id,outcome:'PASS',unsupported:0,edits:0,assisted:false}]},f.store);
+   await recordTrial(f.ad,{action:'REVIEW',id,decision:'ACCEPT',notes:'Independently checked the trial result and signed test evidence.'},f.store);
+   const bytes=makeAuditZip([{name:'validation.json',bytes:Buffer.from('{"environment":"fixture"}')}]);
+   await retainValidation(f.o,id,bytes,async revision=>({state:'AVAILABLE',revision,runUrl:'https://github.com/example/run',downloadUrl:'https://github.com/example/archive',digest:'sha256:'+createHash('sha256').update(bytes).digest('hex'),expiresAt:new Date(Date.now()+86400000).toISOString()}));
+   const newRetrieval=()=>excursionCommand(f.re,q.id,{...fetchRecord,requestKey:randomUUID()},f.store);
+   const unconfirmed=await newRetrieval();
+   let dossier=await siteQualification(f.o,id);
+   const approve={requestKey:randomUUID(),basisHash:dossier.basisHash,decision:'APPROVE',signatory:'Fictional site quality lead',role:'Quality Director',rationale:'Restricted to the recorded configuration, intended use and signed trial result.',decisionFile:siteSigned.id,authorityFile:siteAuthority.id,confirmed:true};
+   assert.equal(dossier.excursionChoices.length,0);
+   await assert.rejects(recordSiteDecision(f.o,id,{...approve,excursionReceiptId:unconfirmed.receiptId},f.store),rejects(409));
+   const ownership=await declareSource(f.ad,{connectionId:saved.id,configVersion:updated.version,category:'CUSTOMER',confirm:true});
+   const retrieved=await newRetrieval();
+   dossier=await siteQualification(f.o,id);assert.equal(dossier.excursionChoices[0].id,retrieved.receiptId);
+   await assert.rejects(recordSiteDecision(f.o,id,{...approve,excursionReceiptId:unconfirmed.receiptId},f.store),rejects(409));
+   await recordSiteDecision(f.o,id,{...approve,excursionReceiptId:retrieved.receiptId},f.store);
+   const files=await readZipParts(await siteInspectionArchive(f.re,id,f.store)) as Map<string,Buffer>;
+   const bundle=JSON.parse(files.get('site-inspection.json')!.toString());
+   assert.equal(bundle.site.status,'APPROVED_FOR_SITE_USE');assert.equal(bundle.site.decisions[0].excursion.qualification.ownership.id,ownership.id);
+   assert.equal(bundle.site.decisions[0].excursion.serial,'WS1-fixture');assert.deepEqual(bundle.site.decisions[0].excursion.stock,['TEST-001']);
+   assert.equal(bundle.site.decisions[0].excursion.disposition,'QUARANTINE');assert.equal(bundle.site.decisions[0].excursion.assessorId,f.re.userId);
+   assert.deepEqual(bundle.sources.flatMap((s:{roles:string[]})=>s.roles).filter((r:string)=>r.startsWith('excursion-')).sort(),['excursion-authority','excursion-calibration','excursion-disposition','excursion-stock']);
+   for(const source of bundle.sources)assert.equal(createHash('sha256').update(files.get(source.entry)!).digest('hex'),source.sha256);
+   const originalCase=await db.qualityCase.findUniqueOrThrow({where:{id:q.id}});
+   await db.qualityCase.update({where:{id:q.id},data:{rootCause:'A changed investigation requires another decision.'}});
+   assert.equal((await siteQualification(f.o,id)).status,'REASSESSMENT_REQUIRED');
+   await db.qualityCase.update({where:{id:q.id},data:{rootCause:originalCase.rootCause}});
+   await db.evidence.update({where:{id:stock.id},data:{scanStatus:'QUARANTINED'}});
+   await assert.rejects(siteInspectionArchive(f.re,id,f.store),rejects(409));
+   await db.evidence.update({where:{id:stock.id},data:{scanStatus:'CLEAN'}});
+  }finally{if(previousBuild===undefined)delete process.env.VERCEL_GIT_COMMIT_SHA;else process.env.VERCEL_GIT_COMMIT_SHA=previousBuild;}
   temperature=4;
   await db.evidence.update({where:{id:file.id},data:{scanStatus:'QUARANTINED'}});
   await assert.rejects(excursionCommand(f.re,q.id,{...fetchRecord,requestKey:randomUUID()},f.store),rejects(409));

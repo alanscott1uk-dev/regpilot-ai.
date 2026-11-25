@@ -1,7 +1,7 @@
 [
   {
     "id": "PH-01",
-    "requirement": "Bind the reading to serial, calibration and affected stock, then independently retrieve the signed disposition and four verified originals",
+    "requirement": "Bind cold-chain site acceptance to the release, independently confirmed customer logger, serial, calibration, affected stock, independent retrieval and signed disposition. Recover the four originals from the site inspection ZIP.",
     "file": "tests/operational-records.integration.test.ts",
     "test": "repeated logger collection checks the physical serial, rotated key and current certificate review on each collection"
   },
@@ -25,7 +25,7 @@
   },
   {
     "id": "PH-05",
-    "requirement": "Bind the signed site decision to the release, configuration and test evidence",
+    "requirement": "Require the exact retained supplier release and independently reviewed site tests before sign-off, then retrieve the signed decision, signatory authority and original evidence together",
     "file": "tests/trial-support.integration.test.ts",
     "test": "a site decision binds the live build, the named configuration, reviewed tests and signatory authority"
   },
