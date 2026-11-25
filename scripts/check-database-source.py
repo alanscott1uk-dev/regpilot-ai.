@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from uuid import uuid4
 from contextlib import ExitStack
+from database_recovery_schedule import RecoverySchedule
 from database_fixtures import cockroachdb, mongodb, mssql, tidb
 
 
@@ -116,12 +117,14 @@ try:
             assert envelope["body"]["controlId"] == control and len(envelope["body"]["checks"]) >= 3
             assert first not in receipt.read_text() and second not in receipt.read_text()
             return json.loads(result.stdout)
+        schedule = RecoverySchedule(folder, plan, config, digest, network, test_file)
         old = read("before")
         assert old == {"rows": 3, "status": "FAIL", "counts": {"matched": 2, "different": 1, "missing": 0}}, old
         if kind == "postgres":
             band = command(*command_base, "--stream","release_gate",*qualifier,"--pointer","/id","--minimum","1","--maximum","2",
                            "--control",control,"--output",str(folder/"range.json"),capture_output=True)
             assert json.loads(band.stdout) == {"rows":3,"status":"FAIL","counts":{"matched":2,"different":1,"missing":0,"invalid":0}}
+        schedule.collect("READ")
         if kind in extra:
             rotate()
         elif pg:
@@ -132,9 +135,12 @@ try:
             query("ALTER TABLE evidence.release_gate UPDATE decision='accepted' WHERE id=3 SETTINGS mutations_sync=1; "
                   "ALTER USER source_reader IDENTIFIED WITH sha256_password BY '" + second + "';")
         read("retired")
+        schedule.collect("FAILED")
         config.write_text(json.dumps(config_for(second)))
         renewed = read("renewed")
         assert renewed == {"rows": 3, "status": "PASS", "counts": {"matched": 3, "different": 0, "missing": 0}}, renewed
+        schedule.collect("READ")
+        schedule.report(source,version,digest)
         envelopes = [json.loads((folder / name).read_text()) for name in ("before.json","renewed.json")]
         Path("database-acceptance-envelopes.json").write_text(json.dumps(envelopes))
         report = {"source": source, "version": version, "digest": digest, "before": old, "retiredCredentialRejected": True,

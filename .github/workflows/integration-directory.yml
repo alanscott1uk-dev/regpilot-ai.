@@ -156,6 +156,16 @@ jobs:
           REGPILOT_DATABASE_ACCEPTANCE_ENVELOPES: database-acceptance-envelopes.json
           REGPILOT_CADENCE_ENVELOPES: ${{ matrix.engine == 'postgres' && 'pilot-cadence-envelopes.json' || '' }}
         run: node --import tsx --test --test-name-pattern='database connector receipts' tests/customer-api.integration.test.ts
+      - name: Verify timed source failure and recovery through the workspace API
+        env:
+          REGPILOT_SCHEDULED_DATABASE: database-scheduled-recovery.json
+        run: node --import tsx --test --test-concurrency=1 --test-name-pattern='timed database recovery receipts|scheduled database proof' tests/customer-api.integration.test.ts tests/database-schedule-proof.test.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scheduled-database-${{ matrix.engine }}-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: database-scheduled-recovery.json
+          if-no-files-found: error
+          retention-days: 30
       - uses: actions/upload-artifact@v4
         with:
           name: database-source-${{ matrix.engine }}

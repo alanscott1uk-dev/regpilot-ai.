@@ -416,3 +416,30 @@ test('database connector receipts report due, missed and recovered stock, identi
    assert.equal((await db.obligation.findUniqueOrThrow({where:{id:incident}})).status,'OPEN');
   }finally{await x.cleanup();}
 });
+
+test('timed database recovery receipts preserve the failed step, reviewed control and restored source', {skip:!process.env.REGPILOT_SCHEDULED_DATABASE},async()=>{
+ type Envelope={idempotencyKey:string;body:{externalId:string;controlId:string;checks:{key:string;status:string;observed:string;detail:string}[]}};
+ type Attempt={summary:{slot:number;state:string;failureStage?:string;recoveredAfterSlot?:number};availability:Envelope;source:Envelope|null};
+ const report=JSON.parse(await readFile(process.env.REGPILOT_SCHEDULED_DATABASE!,'utf8')) as {format:string;attempts:Attempt[];intervalSeconds:number};
+ assert.equal(report.format,'regpilot-database-scheduled-recovery-v1');assert.equal(report.intervalSeconds,60);
+ const [before,failed,restored]=report.attempts;assert.equal(report.attempts.length,3);
+ assert.ok(before.summary.slot<failed.summary.slot&&failed.summary.slot<restored.summary.slot);
+ assert.equal(restored.summary.recoveredAfterSlot,failed.summary.slot);assert.equal(failed.source,null);
+ assert.equal(failed.availability.body.checks[0].observed,failed.summary.failureStage);
+ const x=await fixture(before.availability.body.controlId);
+ try{
+  const key=await x.create(['observations:read','observations:write']);
+  const ingest=async(envelope:Envelope)=>{
+   const send=()=>postObservation(new Request('https://example.invalid/api/v1/observations',{method:'POST',headers:{authorization:'Bearer '+key.secret,'Content-Type':'application/json','Idempotency-Key':envelope.idempotencyKey},body:JSON.stringify(envelope.body)}));
+   const response=await send(),receipt=await response.json();assert.equal(response.status,201);assert.equal(receipt.controlId,x.primary.id);assert.equal(receipt.status,'PENDING');
+   const replay=await (await send()).json();assert.equal(replay.id,receipt.id);assert.equal(replay.reused,true);
+   return receipt;
+  };
+  for(const event of report.attempts){
+   const availability=await ingest(event.availability);
+   if(event===failed){assert.equal(availability.reportedOutcome,'REPORTED_FAILURE');assert.ok(failed.availability.body.checks[0].detail.length>15);}
+   if(event.source){const source=await ingest(event.source);assert.equal(source.reportedOutcome,event===before?'REPORTED_FAILURE':'REPORTED_PASS');
+    if(event===restored){const history=await resourceFindingReport(x.ad,source.id);assert.equal(history.rows.filter(r=>r.passedAfterFailure).length,1);}}
+  }
+ }finally{await x.cleanup();}
+});
