@@ -7,12 +7,12 @@ import type {Observation} from '../connectors/observation';
 import {verifiedObservation} from './connector-observation';
 
 const dayMs=86400000,limit=1000;
-const receipt=z.object({runId:z.uuid(),resultHash:z.string(),configVersion:z.number().int().positive()});
+const receipt=z.object({runId:z.uuid(),resultHash:z.string(),configVersion:z.number().int().positive(),intervalHours:z.union([z.literal(1),z.literal(24),z.literal(168)]).optional()});
 type CountedReceipt={id:string;at:string;sha256:string;followUp:boolean};
 type Day={date:string;reads:CountedReceipt[];unverified:number};
 
-function sourceTime(provider:string,observation:Observation):number|null{
- if(provider==='NANGO_SYNC')return completedManagedSync(observation);
+function sourceTime(provider:string,observation:Observation,intervalHours?:number):number|null{
+ if(provider==='NANGO_SYNC')return completedManagedSync(observation,intervalHours);
  if(isTemperatureLogger(provider)){
   const checks=observation.checks;
   const reading=checks.find(check=>check.id==='logger-fresh'&&check.status==='PASS');
@@ -50,7 +50,7 @@ export async function monitoringCalendar(tx:Prisma.TransactionClient,org:string,
   const run=facts&&byId.get(facts.runId);
   const observation=run&&run.resultHash===facts.resultHash&&run.configVersion===facts.configVersion&&
    run.capturedAt.toISOString().slice(0,10)===day.date?verifiedObservation(run):null;
-  const stamp=observation&&sourceTime(provider,observation);
+  const stamp=observation&&sourceTime(provider,observation,facts?.intervalHours);
   if(!run||!observation||!observation.checks.length||observation.checks.some(c=>c.status==='UNKNOWN')||stamp===null||
       (provider==='NANGO_SYNC'||isTemperatureLogger(provider))&&stamp<=lastSourceTime){
    day.unverified++;continue;

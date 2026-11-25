@@ -16,6 +16,7 @@ import {collectGleif,gleifTarget} from "../connectors/gleif";
 import {PROVIDERS,requiresStoredSecret,maxWorkspaceConnectorTargets} from "../connectors/capacity";
 import {verifiedObservation} from './connector-observation';
 import {enqueueConnectorObservationDelivery,enqueueConnectorFailureDelivery} from './integration-delivery-events';
+import {supportsHourlyMonitoring} from '../connectors/hourly-schedule.mjs';
 import {connectorRecovery} from "../connectors/recovery";
 import {maxConnectorLanes,claimFairConnectors,claimFairConnector,claimManualConnectorLane,releaseDispatchLease} from "./fair-dispatch";
 import {acquireProviderPermit,settleProviderPermit} from "./provider-gate";
@@ -43,26 +44,26 @@ import {observationSchema,observationOutcome,observationCurrent,signalChanges,re
 import {hashValue} from "../regulatory/intelligence";
 const j=(v:unknown)=>v as Prisma.InputJsonValue;
 
-const schema=githubTarget.extend({provider:z.literal("GITHUB").default("GITHUB"),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().regex(/^github_pat_[A-Za-z0-9_]{20,240}$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)])});
+const collectionInterval=z.union([z.literal(1),z.literal(24),z.literal(168)]);
+const schema=githubTarget.extend({provider:z.literal("GITHUB").default("GITHUB"),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().regex(/^github_pat_[A-Za-z0-9_]{20,240}$/).optional(),enabled:z.boolean(),intervalHours:collectionInterval});
 
 
-const googleSchema=googleTarget.extend({provider:z.literal("GOOGLE_WORKSPACE"),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:googleCredentials.shape.clientSecret.optional(),refreshToken:googleCredentials.shape.refreshToken.optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)}).refine(v=>!!v.clientSecret===!!v.refreshToken,"Rotate both Google credentials together");
-const microsoftSchema=microsoftTarget.extend({provider:z.enum(["MICROSOFT365","INTUNE"]),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:z.string().min(16).max(512).regex(/^[^\r\n\0]+$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)});
-const extraFields={controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().refine(validCredential).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)};
-const resourceInterval=z.union([z.literal(1),z.literal(24),z.literal(168)]);
+const googleSchema=googleTarget.extend({provider:z.literal("GOOGLE_WORKSPACE"),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:googleCredentials.shape.clientSecret.optional(),refreshToken:googleCredentials.shape.refreshToken.optional(),enabled:z.boolean(),intervalHours:collectionInterval,consent:z.literal(true)}).refine(v=>!!v.clientSecret===!!v.refreshToken,"Rotate both Google credentials together");
+const microsoftSchema=microsoftTarget.extend({provider:z.enum(["MICROSOFT365","INTUNE"]),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:z.string().min(16).max(512).regex(/^[^\r\n\0]+$/).optional(),enabled:z.boolean(),intervalHours:collectionInterval,consent:z.literal(true)});
+const extraFields={controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().refine(validCredential).optional(),enabled:z.boolean(),intervalHours:collectionInterval,consent:z.literal(true)};
 const extraSchema=z.discriminatedUnion("provider",[
- recordTargets.PAGERDUTY_SERVICE.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("PAGERDUTY_SERVICE")}).strict(),
- recordTargets.HEALTHCHECKS_JOB.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("HEALTHCHECKS_JOB")}).strict(),
- recordTargets.PROMETHEUS_ALERT_RULE.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("PROMETHEUS_ALERT_RULE"),token:z.string().refine(validCredential).regex(/^[^:\s]+:.+$/).optional()}).strict(),
- recordTargets.GITEA_REPOSITORY.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("GITEA_REPOSITORY")}).strict(),
- recordTargets.GRAFANA_DASHBOARD.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("GRAFANA_DASHBOARD")}).strict(),
- recordTargets.SLACK_MEMBER.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("SLACK_MEMBER")}).strict(),
- recordTargets.BOX_USER.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("BOX_USER")}).strict(),
- recordTargets.ASANA_TASK.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("ASANA_TASK")}).strict(),
- recordTargets.GITHUB_SCIM.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("GITHUB_SCIM")}).strict(),
- recordTargets.ATLASSIAN_SCIM.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("ATLASSIAN_SCIM")}).strict(),
- recordTargets.STATUSPAGE_COMPONENT.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("STATUSPAGE_COMPONENT")}).strict(),
- recordTargets.ZENDESK_TICKET.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("ZENDESK_TICKET")}).strict(),
+ recordTargets.PAGERDUTY_SERVICE.extend({...extraFields,provider:z.literal("PAGERDUTY_SERVICE")}).strict(),
+ recordTargets.HEALTHCHECKS_JOB.extend({...extraFields,provider:z.literal("HEALTHCHECKS_JOB")}).strict(),
+ recordTargets.PROMETHEUS_ALERT_RULE.extend({...extraFields,provider:z.literal("PROMETHEUS_ALERT_RULE"),token:z.string().refine(validCredential).regex(/^[^:\s]+:.+$/).optional()}).strict(),
+ recordTargets.GITEA_REPOSITORY.extend({...extraFields,provider:z.literal("GITEA_REPOSITORY")}).strict(),
+ recordTargets.GRAFANA_DASHBOARD.extend({...extraFields,provider:z.literal("GRAFANA_DASHBOARD")}).strict(),
+ recordTargets.SLACK_MEMBER.extend({...extraFields,provider:z.literal("SLACK_MEMBER")}).strict(),
+ recordTargets.BOX_USER.extend({...extraFields,provider:z.literal("BOX_USER")}).strict(),
+ recordTargets.ASANA_TASK.extend({...extraFields,provider:z.literal("ASANA_TASK")}).strict(),
+ recordTargets.GITHUB_SCIM.extend({...extraFields,provider:z.literal("GITHUB_SCIM")}).strict(),
+ recordTargets.ATLASSIAN_SCIM.extend({...extraFields,provider:z.literal("ATLASSIAN_SCIM")}).strict(),
+ recordTargets.STATUSPAGE_COMPONENT.extend({...extraFields,provider:z.literal("STATUSPAGE_COMPONENT")}).strict(),
+ recordTargets.ZENDESK_TICKET.extend({...extraFields,provider:z.literal("ZENDESK_TICKET")}).strict(),
  recordTargets.NHSBSA_MAPPING.extend({...extraFields,provider:z.literal("NHSBSA_MAPPING")}).omit({token:true}).strict(),
  recordTargets.CLINICALTRIALS_GOV.extend({...extraFields,provider:z.literal("CLINICALTRIALS_GOV")}).omit({token:true}).strict(),
  recordTargets.OPENFDA_RECALL.extend({...extraFields,provider:z.literal("OPENFDA_RECALL")}).omit({token:true}).strict(),
@@ -72,16 +73,16 @@ const extraSchema=z.discriminatedUnion("provider",[
  recordTargets.OPENAI_PROJECT_MODEL.extend({...extraFields,provider:z.literal("OPENAI_PROJECT_MODEL")}).strict(),
  recordTargets.PRIVATE_AI_MODEL.extend({...extraFields,provider:z.literal("PRIVATE_AI_MODEL")}).strict(),
  recordTargets.KEYCLOAK_REALM.extend({...extraFields,provider:z.literal("KEYCLOAK_REALM")}).strict(),
- recordTargets.GITHUB_WORKFLOW.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("GITHUB_WORKFLOW")}).strict(),
+ recordTargets.GITHUB_WORKFLOW.extend({...extraFields,provider:z.literal("GITHUB_WORKFLOW")}).strict(),
  recordTargets.NANGO_SYNC.extend({...extraFields,provider:z.literal("NANGO_SYNC")}).omit({token:true}).strict(),
- recordTargets.UBIBOT.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("UBIBOT")}).strict(),
- recordTargets.TANDD_WEBSTORAGE.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("TANDD_WEBSTORAGE"),credentials:tanddCredentials.optional()}).omit({token:true}).strict(),
- recordTargets.BENCHLING.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("BENCHLING"),clientId:benchlingClient.optional()}).strict(),
- recordTargets.JIRA.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("JIRA")}).strict(),
- recordTargets.SERVICENOW.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("SERVICENOW")}).strict(),
- recordTargets.AZURE_DEVOPS.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("AZURE_DEVOPS")}).strict(),
- recordTargets.CONFLUENCE.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("CONFLUENCE")}).strict(),
- recordTargets.SAFETYCULTURE.extend({...extraFields,intervalHours:resourceInterval,provider:z.literal("SAFETYCULTURE")}).strict(),
+ recordTargets.UBIBOT.extend({...extraFields,provider:z.literal("UBIBOT")}).strict(),
+ recordTargets.TANDD_WEBSTORAGE.extend({...extraFields,provider:z.literal("TANDD_WEBSTORAGE"),credentials:tanddCredentials.optional()}).omit({token:true}).strict(),
+ recordTargets.BENCHLING.extend({...extraFields,provider:z.literal("BENCHLING"),clientId:benchlingClient.optional()}).strict(),
+ recordTargets.JIRA.extend({...extraFields,provider:z.literal("JIRA")}).strict(),
+ recordTargets.SERVICENOW.extend({...extraFields,provider:z.literal("SERVICENOW")}).strict(),
+ recordTargets.AZURE_DEVOPS.extend({...extraFields,provider:z.literal("AZURE_DEVOPS")}).strict(),
+ recordTargets.CONFLUENCE.extend({...extraFields,provider:z.literal("CONFLUENCE")}).strict(),
+ recordTargets.SAFETYCULTURE.extend({...extraFields,provider:z.literal("SAFETYCULTURE")}).strict(),
  workforceTarget.extend({...extraFields,provider:z.literal("WORKFORCE_LEAVER"),credentials:workforceCredentials.optional()}).omit({token:true}).strict(),
  awsOrganizationTarget.extend({...extraFields,provider:z.literal("AWS_ORGANIZATIONS")}).omit({token:true}).strict(),
  awsTarget.extend({...extraFields,provider:z.literal("AWS")}).omit({token:true}).strict(),
@@ -137,7 +138,7 @@ function storedTarget(settings:ConnectorSettings):{repository:string;branch:stri
   case "OPENSSF_SCORECARD":return {repository:"scorecard:"+settings.repository,branch:settings.deployedCommit??"published"};
  }
 }
-type Collector=(target:{provider?:string;organizationId?:string;repository:string;branch:string},secret:string)=>Promise<Observation>;
+type Collector=(target:{provider?:string;organizationId?:string;intervalHours?:number;repository:string;branch:string},secret:string)=>Promise<Observation>;
 export const collectConfiguredConnector:Collector=async(target,secret)=>{
  if(!connectorProviderEnabled(target.provider||"GITHUB"))throw new CollectionError("PROVIDER_DISABLED");
  if(isRecordProvider(target.provider)){
@@ -148,7 +149,7 @@ export const collectConfiguredConnector:Collector=async(target,secret)=>{
    const [provider,policyId]=configured.reference!.split('/');
    const [integration,connectionId]=configured.scope.split('/');
    const policy=policyId?await (await import('./managed-control-policy')).readManagedPolicy(target.organizationId,policyId,{integration,connectionId,provider,model:configured.record}):undefined;
-   return managedSyncObservation(target.organizationId,{...configured,reference:provider},fetch,policy);
+   return managedSyncObservation(target.organizationId,{...configured,reference:provider},fetch,policy,target.intervalHours===1?1:24);
   }
   return collectOperationalRecord(target.provider,configured,secret);
  }
@@ -203,7 +204,9 @@ export async function saveConnector(ctx:AuthorizedContext,input:unknown){
  if(microsoft&&!connectorProviderEnabled(provider!))throw new IntelligenceError("This Microsoft provider awaits activation",503);
  if(google&&!googleWorkspaceEnabled())throw new IntelligenceError("Google Workspace collection awaits activation",503);
  if(extra&&!connectorProviderEnabled(provider!))throw new IntelligenceError("This provider awaits activation",503);
- const raw=parsed.data;if(raw.provider==="COMPANIES_HOUSE"&&raw.token?.includes(":"))throw new IntelligenceError("Use a valid Companies House API key");
+ const raw=parsed.data;
+ if(raw.intervalHours===1&&!supportsHourlyMonitoring(raw.provider))throw new IntelligenceError("This source supports daily or weekly monitoring");
+ if(raw.provider==="COMPANIES_HOUSE"&&raw.token?.includes(":"))throw new IntelligenceError("Use a valid Companies House API key");
  if(raw.provider==='NANGO_SYNC'&&raw.reference.includes('/')){
   await transaction(ctx,tx=>requireMember(tx,ctx,ADMIN));
   const [integration,connectionId]=raw.scope.split('/'),[provider,policy]=raw.reference.split('/');
@@ -315,7 +318,8 @@ async function assertJob(tx:Prisma.TransactionClient,job:EvidenceConnector){
  const control=await tx.managedControl.findFirst({where:{id:job.controlId,organizationId:job.organizationId,enabled:true},include:{owner:{select:{email:true}}}});if(!control)throw new IntelligenceError("Control is paused",403);
  const owner=await tx.membership.findUnique({where:{organizationId_userId:{organizationId:job.organizationId,userId:control.ownerId}}});if(!owner||owner.role==="VIEWER")throw new IntelligenceError("Control ownership needs review",403);return control;
 }
-async function collectConnectorJob(job:EvidenceConnector,collector:Collector,manual:boolean){
+type WriteQueue=<T>(write:()=>Promise<T>)=>Promise<T>;
+async function collectConnectorJob(job:EvidenceConnector,collector:Collector,manual:boolean,queueWrite?:WriteQueue){
  const ctx:AuthorizedContext={organizationId:job.organizationId,userId:job.configuredById,role:"ADMIN"};
  let permit:ProviderPermit|undefined,providerOutcome='NEUTRAL';
  try{
@@ -328,8 +332,8 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector,man
   }
   permit=admission.permit;
   const secret=job.encryptedSecret?decryptConnectorSecret(job.encryptedSecret,job.organizationId,job.id):"";
-  const result=await collector({provider:job.provider,organizationId:job.organizationId,repository:job.repository,branch:job.branch},secret).then(result=>reconcileObservation(result,null)).then(result=>{providerOutcome='SUCCESS';return result;},error=>{providerOutcome=error instanceof CollectionError?error.code:'NEUTRAL';throw error;});
-  return await transaction(ctx,async tx=>{await assertJob(tx,job);
+  const result=await collector({provider:job.provider,organizationId:job.organizationId,intervalHours:job.intervalHours,repository:job.repository,branch:job.branch},secret).then(result=>reconcileObservation(result,null)).then(result=>{providerOutcome='SUCCESS';return result;},error=>{providerOutcome=error instanceof CollectionError?error.code:'NEUTRAL';throw error;});
+  const save=()=>transaction(ctx,async tx=>{await assertJob(tx,job);
    const due=job.nextRunAt.toISOString();
    const requested=manual?true:!!await tx.auditEvent.findFirst({where:{organizationId:job.organizationId,entityType:'EvidenceConnector',entityId:job.id,action:'connector.manual_due',details:{path:['due'],equals:due}},select:{id:true}});
    const collectionMode=requested?'MANUAL':job.eventRevision>job.collectedEventRevision?'EVENT':job.failureCode||job.attempts>1?'RETRY':
@@ -351,8 +355,9 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector,man
    await enqueueConnectorObservationDelivery(tx,job,run);
    const current=await tx.evidenceConnector.findUniqueOrThrow({where:{id:job.id},select:{eventRevision:true}});
    await tx.evidenceConnector.update({where:{id:job.id},data:{leaseToken:null,leaseUntil:null,attempts:0,lastSuccessAt:new Date(),failureCode:null,collectedEventRevision:job.eventRevision,nextRunAt:new Date(Date.now()+(current.eventRevision>job.eventRevision?60000:job.intervalHours*3600000))}});
-   await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:"connector.evidence_collected",entityType:"EvidenceConnector",entityId:job.id,details:{runId:run.id,collectionMode,scopeHash:connectorScopeHash(job),outcome,resultHash:run.resultHash,configVersion:job.version,changedChecks:changes.map(c=>c.id)}}});return outcome;
+   await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:"connector.evidence_collected",entityType:"EvidenceConnector",entityId:job.id,details:{runId:run.id,collectionMode,intervalHours:job.intervalHours,scopeHash:connectorScopeHash(job),outcome,resultHash:run.resultHash,configVersion:job.version,changedChecks:changes.map(c=>c.id)}}});return outcome;
   },8);
+  return await (queueWrite?queueWrite(save):save());
  }catch(error){
   if(error instanceof Superseded||!connectorProviderEnabled(job.provider))return "SUPERSEDED";
   if(error instanceof DatabaseContention){
@@ -371,8 +376,8 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector,man
 }
 /** Evidence is committed before automation. A failed reaction remains durable for
  * another worker and must never turn a completed provider read into a failed read. */
-export async function executeConnector(job:EvidenceConnector,collector:Collector=collectConfiguredConnector,options:{deferAutomation?:boolean;manual?:boolean}={}){
- const outcome=await collectConnectorJob(job,collector,options.manual===true);
+export async function executeConnector(job:EvidenceConnector,collector:Collector=collectConfiguredConnector,options:{deferAutomation?:boolean;manual?:boolean;queueWrite?:WriteQueue}={}){
+ const outcome=await collectConnectorJob(job,collector,options.manual===true,options.queueWrite);
  if(!options.deferAutomation)await processConnectorEvent(job).catch(()=>{});
  return outcome;
 }
@@ -385,10 +390,18 @@ export async function runConnectorBatch(limit=maxConnectorReadsPerTick,paralleli
  const active=new Set<Promise<void>>();
  let claimed=0,dispatches=0,peakInFlight=0,maxQueueLagMs=0;
  const failures:unknown[]=[];
+ // Keep the provider reads concurrent and commit each completed response in arrival order.
+ // The database lease and config version are checked again when the write reaches the front.
+ let lastWrite:Promise<void>=Promise.resolve();
+ const queueWrite:WriteQueue=write=>{
+  const result=lastWrite.then(write);
+  lastWrite=result.then(()=>{},()=>{});
+  return result;
+ };
  function start(job:EvidenceConnector){
   const index=claimed++;
   maxQueueLagMs=Math.max(maxQueueLagMs,Date.now()-job.nextRunAt.getTime());
-  const work=executeConnector(job)
+  const work=executeConnector(job,collectConfiguredConnector,{queueWrite,deferAutomation:true})
    .then(outcome=>{outcomes[index]=outcome;},error=>{failures.push(error);})
    .finally(()=>active.delete(work));
   active.add(work);peakInFlight=Math.max(peakInFlight,active.size);

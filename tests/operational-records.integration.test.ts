@@ -211,7 +211,8 @@ for(const slug of ['slack','bitbucket'])test(slug==='bitbucket'?'a newly indexed
   const control=await db.managedControl.create({data:{organizationId:f.a.id,importId:pack.id,proposalKey:'identity',title:'Identity check',description:'Check approved access',testProcedure:'Inspect mapped accounts',theme:'identity',ownerId:f.editor.id,scheduledById:f.owner.id,intervalDays:30,nextReviewAt:new Date()}});
   const bound=await marketplaceAction(f.o,{action:'BIND_POLICY',...scope,model,policy:{profile:'identity',mapping:{mfaEnabled:'mfa',orphaned:'orphan',accessReviewedAt:'reviewed'}}});
   assert.ok('policyId' in bound&&bound.controls.some(c=>c.id===control.id));
-  const input={provider:'NANGO_SYNC',scope:integration+'/'+connectionId,record:model,reference:slug+'/'+bound.policyId,controlId:control.id,intervalHours:24,version:0,enabled:true,consent:true};
+  const intervalHours=slug==='bitbucket'?1:24;
+  const input={provider:'NANGO_SYNC',scope:integration+'/'+connectionId,record:model,reference:slug+'/'+bound.policyId,controlId:control.id,intervalHours,version:0,enabled:true,consent:true};
   await assert.rejects(saveConnector(f.out,input),rejects(409));
   const [monitor,again]=await Promise.all([saveConnector(f.o,input),saveConnector(f.o,input)]);assert.deepEqual(monitor,again);
   const selected=await marketplaceAction(f.o,{action:'MONITOR',monitorId:monitor.id});assert.ok('grant' in selected&&selected.grant?.id===connectionId&&selected.model===model);
@@ -221,7 +222,18 @@ for(const slug of ['slack','bitbucket'])test(slug==='bitbucket'?'a newly indexed
    const job=await claimConnector();assert.equal(job?.id,monitor.id);
    return executeConnector(job!,undefined,{deferAutomation:true});
   }
+  upstream=new Date(Date.now()-7200000).toISOString();
+  assert.equal(await collect(),intervalHours===1?'FOLLOW_UP':'OBSERVED');
+  const older=await db.connectorRun.findFirstOrThrow({where:{connectorId:monitor.id},orderBy:{capturedAt:'desc'}});
+  const {observationSchema}=await import('../lib/connectors/observation');
+  const olderSource=observationSchema.parse(older.result).checks.find(c=>c.id==='source-sync');
+  assert.equal(olderSource?.status,intervalHours===1?'FAIL':'PASS');
+  assert.equal((await customerSourceProof(f.o,monitor.id)).current,intervalHours!==1);
+  upstream=new Date(Date.now()-5000).toISOString();
   assert.equal(await collect(),'OBSERVED');assert.equal((await customerSourceProof(f.o,monitor.id)).productKey,slug.toUpperCase());
+  const schedule=await db.evidenceConnector.findUniqueOrThrow({where:{id:monitor.id}});
+  assert.ok(schedule.lastSuccessAt);
+  assert.ok(Math.abs(schedule.nextRunAt.getTime()-schedule.lastSuccessAt.getTime()-intervalHours*3600000)<1000);
   fault=true;assert.equal(await collect(),'ATTENTION');
   const paused=await db.evidenceConnector.findUniqueOrThrow({where:{id:monitor.id}});assert.equal(paused.enabled,false);assert.equal(paused.failureCode,'CREDENTIAL_REJECTED');
   const portfolio=await customerBenchmarkPage(f.o);assert.ok(portfolio.connections.some(c=>c.id===monitor.id&&!c.qualified&&c.failures===1));
@@ -249,7 +261,7 @@ for(const slug of ['slack','bitbucket'])test(slug==='bitbucket'?'a newly indexed
   assert.equal(monitoringProduct('GITHUB_WORKFLOW'),monitoringProduct('NANGO_SYNC','github-app'));
   assert.equal(monitoringProduct('NANGO_SYNC','unknown-app'),null);assert.equal(monitoringProduct('EUROPE_PMC'),null);
   const latest=await db.connectorRun.findFirstOrThrow({where:{connectorId:monitor.id},orderBy:{capturedAt:'desc'}});
-  const {observationSchema}=await import('../lib/connectors/observation');const reading=observationSchema.parse(latest.result);
+  const reading=observationSchema.parse(latest.result);
   assert.ok(completedManagedSync(reading));assert.equal(completedManagedSync({...reading,engine:'managed-sync-metadata-v1'}),null);
  }finally{globalThis.fetch=original;await f.cleanup();}
 });

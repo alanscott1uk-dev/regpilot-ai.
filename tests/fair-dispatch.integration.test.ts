@@ -7,6 +7,7 @@ import {db} from '../lib/server/db';
 import {createServer} from 'node:http';
 import {writeFile} from 'node:fs/promises';
 import {runConnectorBatch,executeConnector,maxConnectorReadsPerTick} from '../lib/server/connector-service';
+import {runAutomationBatch} from '../lib/server/automation-queue';
 import {recordKeys} from '../lib/connectors/operational-records';
 import {encryptConnectorSecret} from '../lib/server/connector-secret';
 import {verifiedObservation} from '../lib/server/connector-observation';
@@ -121,7 +122,7 @@ test('connector dispatch respects providers, credentials and cooldowns; manual a
  }finally{await f.cleanup();}
 });
 
-async function benchmarkFleet(t:TestContext,tenantCount:number){
+async function benchmarkFleet(t:TestContext,tenantCount:number,workers=1){
  const f=await fixture(tenantCount),originalFetch=globalThis.fetch,previous={...process.env};
  Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:'true',REGPILOT_CONNECTORS_ENABLED:'true',
   REGPILOT_CONNECTOR_ENCRYPTION_KEY:'b2'.repeat(32),REGPILOT_AI_ALLOWED_EMAILS:f.user.email,
@@ -174,13 +175,17 @@ async function benchmarkFleet(t:TestContext,tenantCount:number){
   await db.dispatchLane.updateMany({where:{organizationId:{in:crashed.map(j=>j.organizationId)},kind:'CONNECTOR'},data:{leaseUntil:new Date(0)}});
   const started=performance.now();let processed=0,dispatches=0,peakInFlight=0,ticks=0;
   while(processed<500&&ticks<10){
-   const result=await runConnectorBatch();ticks++;processed+=result.processed;dispatches+=result.dispatches;
-   peakInFlight=Math.max(peakInFlight,result.peakInFlight);
-   if(result.outcomes.some(outcome=>outcome!=='OBSERVED')){
+   const batch=await Promise.all(Array.from({length:workers},()=>runConnectorBatch(maxConnectorReadsPerTick,4/workers)));
+   const outcomes=batch.flatMap(result=>result.outcomes);
+   ticks++;
+   processed+=outcomes.length;
+   dispatches+=batch.reduce((sum,r)=>sum+r.dispatches,0);
+   peakInFlight=Math.max(peakInFlight,...batch.map(r=>r.peakInFlight));
+   if(outcomes.some(outcome=>outcome!=='OBSERVED')){
     const failures=await db.evidenceConnector.groupBy({by:['failureCode'],where:orgWhere,_count:true});
-    assert.fail('Unexpected collection outcomes '+JSON.stringify({outcomes:[...new Set(result.outcomes)],failures,sourceRequests:requests.size,violations}));
+    assert.fail('Unexpected collection outcomes '+JSON.stringify({outcomes:[...new Set(outcomes)],failures,sourceRequests:requests.size,violations}));
    }
-   assert.ok(result.processed>0,'A due fleet must make progress');
+   assert.ok(outcomes.length>0,'A due fleet must make progress');
   }
   const elapsedMs=Math.round(performance.now()-started);
   assert.equal(processed,500);assert.equal(requests.size,500);assert.ok([...requests.values()].every(n=>n===1));assert.equal(violations,0);
@@ -192,8 +197,19 @@ async function benchmarkFleet(t:TestContext,tenantCount:number){
   const scheduled=await db.auditEvent.count({where:{...orgWhere,action:'connector.evidence_collected',details:{path:['collectionMode'],equals:'SCHEDULED'}}});
   const recovered=await db.auditEvent.count({where:{...orgWhere,action:'connector.evidence_collected',details:{path:['collectionMode'],equals:'RETRY'}}});
   assert.equal(scheduled,500-crashed.length);assert.equal(recovered,crashed.length);assert.equal(await db.evidenceConnector.count({where:{...orgWhere,nextRunAt:{lte:new Date()}}}),0);
+  assert.equal(await db.automationEvent.count({where:{...orgWhere,state:'PENDING'}}),500);
+  const drainStart=performance.now();
+  for(let i=0;i<10;i++){
+   const drain=await runAutomationBatch();
+   assert.equal(drain.outcomes.filter(outcome=>outcome!=='DONE').length,0,'Committed events must settle without a failed receipt');
+   if(!drain.limitReached)break;
+   assert.ok(drain.processed>0,'Pending events must make progress');
+  }
+  const eventsDrained=await db.automationEvent.count({where:{...orgWhere,state:'DONE'}});
+  assert.equal(eventsDrained,500);
+  const drainElapsedMs=Math.round(performance.now()-drainStart);
   latencies.sort((a,b)=>a-b);
-  const metrics={targets:500,tenants:tenantCount,checks:1000,scheduledReceipts:scheduled,retryReceipts:recovered,duplicateReads:0,expiredLeasesRecovered:crashed.length,
+  const metrics={targets:500,tenants:tenantCount,workers,eventsDrained,drainElapsedMs,checks:1000,scheduledReceipts:scheduled,retryReceipts:recovered,duplicateReads:0,expiredLeasesRecovered:crashed.length,
    ticks,elapsedMs,readsPerSecond:Math.round(500000/elapsedMs*10)/10,dispatchQueries:dispatches,peakInFlight,
    sourceLatencyP95Ms:Math.round(latencies[Math.floor(latencies.length*.95)]),admissionCeiling:maxConnectorReadsPerTick,
    scope:'PostgreSQL and an isolated HTTP fixture with the native Healthchecks parser'};
@@ -214,7 +230,7 @@ async function benchmarkFleet(t:TestContext,tenantCount:number){
 
 test('the scheduled connector engine drains 500 distinct HTTP targets in a single tenant and across 25 tenants, recovering crashed leases',async t=>{
  const scenarios=[];
- for(const tenants of [1,25])scenarios.push(await benchmarkFleet(t,tenants));
+ for(const [tenants,workers] of [[1,1],[25,1],[25,2]])scenarios.push(await benchmarkFleet(t,tenants,workers));
  if(process.env.REGPILOT_FLEET_BENCHMARK_OUTPUT)
   await writeFile(process.env.REGPILOT_FLEET_BENCHMARK_OUTPUT,JSON.stringify({format:'regpilot-connector-capacity-v1',scenarios},null,2)+'\n');
 });

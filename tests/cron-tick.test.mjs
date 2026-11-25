@@ -19,6 +19,18 @@ test("an isolated failing provider cannot suppress other bounded workflows",asyn
  assert.equal(result.modules.sources.processed,2);assert.equal(result.modules.controlReviews.processed,3);
  assert.doesNotMatch(JSON.stringify(result),/credential/);
 });
+test("each tick drains committed events once, including after a partial collector failure",async()=>{
+ for(const fail of [false,true]){
+  const order=[];
+  const result=await executeScheduledTick({
+   connectors:async()=>{await Promise.resolve();order.push("receipt");if(fail)throw Error("collector stopped");return {processed:1};},
+   automations:async()=>{order.push("drain");return {processed:1};}
+  });
+  assert.deepEqual(order,["receipt","drain"]);
+  assert.equal(result.modules.automations.processed,1);
+  assert.equal(result.ok,!fail);
+ }
+});
 test("disabled work is explicit rather than reported as successful live monitoring",async()=>{
  const result=await executeScheduledTick({});
  assert.equal(result.ok,true);assert.equal(result.modules.sources.state,"disabled");

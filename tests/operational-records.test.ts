@@ -83,6 +83,21 @@ test('Benchling links a result to its exact entry and independent named review s
  assert.equal(observationOutcome(await read({reviewRecord:{status:'IN_PROGRESS'}})),'FOLLOW_UP');
  await assert.rejects(read({},{entryId:'etr_other'}),{code:'TARGET_MISMATCH',step:'lab-result'});
 });
+test('hourly schedules cover customer connector types and expire at the one-hour evidence boundary',async()=>{
+ const {PROVIDERS}=await import('../lib/connectors/capacity');
+ const {supportsHourlyMonitoring}=await import('../lib/connectors/hourly-schedule.mjs');
+ const {publicMonitoringProducts}=await import('../lib/connectors/monitoring-product');
+ const {observationCurrent}=await import('../lib/connectors/observation');
+ const now=Date.now(),row={configVersion:1,capturedAt:new Date(now)};
+ for(const provider of PROVIDERS){
+  const allowed=!publicMonitoringProducts.has(provider);
+  const setting={provider,version:1,intervalHours:1,enabled:true,failureCode:null};
+  assert.equal(supportsHourlyMonitoring(provider),allowed,provider);
+  assert.equal(observationCurrent(row,setting,true,now+3599999),allowed,provider);
+  assert.equal(observationCurrent(row,setting,true,now+3600000),false,provider);
+ }
+ assert.equal(supportsHourlyMonitoring('unrecognised-provider'),false);
+});
 test('managed sync samples respect tenant, provider and connection boundaries, limits, removals and cursor progression',async()=>{
  const {readSync,parseDirectory,workspaceIntegrationId}=await import('../lib/connectors/marketplace');
  const {randomUUID}=await import('node:crypto');const org=randomUUID(),other=randomUUID();

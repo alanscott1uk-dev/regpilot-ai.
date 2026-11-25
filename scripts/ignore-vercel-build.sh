@@ -12,6 +12,7 @@ if [ "$VERCEL_GIT_COMMIT_REF" = "feature/traceability-benchmark-batch-20261106" 
       'Release calibrated T&D excursions and thirty-day monitoring evidence|3786752e772853a6b1159fdc8878bcf27ef8d457') exit 1 ;;
       'Release hourly customer monitors, historical excursions and buyer form filling|bc396a6375bd1aa6910a844c9d32374e3127cee5') exit 1 ;;
       'Connect native database monitoring to pharmaceutical quality investigations|04de1ea0322b4d08b885c815860e984e1f712060'|'Verify site database recovery inside pharmaceutical quality cases|640cabe3fac267370fe564867e59b445e86489e5'|'Scale connector dispatch and benchmark five hundred monitored targets|fc0d3802dfd0439e317600fe741d194a1d6e2e8b') exit 1 ;;
+      'Scale connector ingestion and verify hourly upstream freshness|f52b9c40d2966b328485453628e6ec4ef0261fb1') exit 1 ;;
     esac
   fi
   exit 0

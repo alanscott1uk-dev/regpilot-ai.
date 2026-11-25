@@ -74,13 +74,14 @@ export async function customerSourceProof(ctx:AuthorizedContext,id:string,includ
   const usable=captures.slice(0,100).flatMap(run=>{
    const obs=verifiedObservation(run);
    if(!versions.has(run.configVersion)||!obs||!completeLoggerWindow(obs)||(!required[row.provider]&&(!obs.checks.length||obs.checks.some(c=>c.status==='UNKNOWN')))||!(required[row.provider]??[]).every(id=>obs.checks.some(c=>c.id===id&&(c.status==='PASS'||id==='logger-temperature'&&c.status==='FAIL'))))return [];
-   const upstream=managed?completedManagedSync(obs):null;
+   const upstream=managed?completedManagedSync(obs,row.intervalHours):null;
    if(managed&&upstream===null)return [];
    const sample=obs.checks.find(c=>c.id==='logger-fresh')?.observed;
    return [{run,obs,sample,upstream}];
   });
   const latest=usable[0],now=Date.now();
   let current=!!latest&&row.control.enabled&&connectorProviderEnabled(row.provider)&&observationCurrent(latest.run,row,latest.run.id===captures[0]?.id,now);
+  if(current&&managed)current=latest!.upstream!==null&&now-latest!.upstream<(row.intervalHours===1?1:24)*3600000;
   if(current&&isTemperatureLogger(row.provider))current=await loggerReadingCurrent(tx,row,latest!.obs,now);
   const repeat=current&&usable.some(old=>old.run.configVersion===row.version&&latest!.run.capturedAt.getTime()-old.run.capturedAt.getTime()>=row.intervalHours*3600000&&(!isTemperatureLogger(row.provider)||Date.parse(old.sample??'')<Date.parse(latest!.sample??''))&&(!managed||advancesUpstream(old.upstream,latest!.upstream)));
   const rotated=rotations.some(r=>r.after===row.version&&usable.some(a=>a.run.configVersion===r.before)&&usable.some(a=>a.run.configVersion===r.after&&(!managed||advancesUpstream(r.at.getTime(),a.upstream))));

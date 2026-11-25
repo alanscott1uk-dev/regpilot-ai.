@@ -4,7 +4,7 @@ import {z} from 'zod';
 import {randomUUID} from 'node:crypto';
 import {db} from './db';
 import {hashValue} from '../regulatory/intelligence';
-import {transaction,IntelligenceError} from './intelligence-service';
+import {transaction,DatabaseContention,IntelligenceError} from './intelligence-service';
 import {applyConnectorReaction,ReactionInvalid,ReactionPaused} from './connector-reactions';
 import {connectorsEnabled,connectorProviderEnabled} from './connector-flags';
 import {releaseDispatchLease} from './fair-dispatch';
@@ -64,12 +64,14 @@ export async function executeAutomationEvent(event:AutomationEvent,handler:Handl
    if(!ack.count)throw new AutomationSuperseded();
    await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,entityType:'AutomationEvent',entityId:current.id,action:'automation.'+state.toLowerCase(),details:{kind:current.kind,attempt:current.attempts,connectorId:current.connectorId}}});
    return state;
-  });
+  },8);
  }catch(error){
   if(error instanceof AutomationSuperseded)return 'SUPERSEDED';
-  if(error instanceof ReactionPaused){
-   const paused=await db.automationEvent.updateMany({where:{id:event.id,organizationId:event.organizationId,state:'PROCESSING',leaseToken:event.leaseToken,leaseUntil:{gt:new Date()}},data:{state:'PENDING',attempts:Math.max(0,event.attempts-1),leaseToken:null,leaseUntil:null,availableAt:new Date(Date.now()+60000),lastErrorCode:'PROVIDER_PAUSED',version:{increment:1}}});
-   return paused.count?'RETRY_SCHEDULED':'SUPERSEDED';
+  if(error instanceof ReactionPaused||error instanceof DatabaseContention){
+   const busy=error instanceof DatabaseContention;
+   const paused=await db.automationEvent.updateMany({where:{id:event.id,organizationId:event.organizationId,state:'PROCESSING',leaseToken:event.leaseToken,leaseUntil:{gt:new Date()}},data:{state:'PENDING',attempts:Math.max(0,event.attempts-1),leaseToken:null,leaseUntil:null,availableAt:new Date(Date.now()+(busy?15000:60000)),lastErrorCode:busy?'DATABASE_BUSY':'PROVIDER_PAUSED',version:{increment:1}}});
+   if(!paused.count)return 'SUPERSEDED';
+   return busy?'DATABASE_BUSY':'RETRY_SCHEDULED';
   }
   const permanent=error instanceof ReactionInvalid,dead=permanent||event.attempts>=MAX_ATTEMPTS;
   const changed=await db.automationEvent.updateMany({where:{id:event.id,organizationId:event.organizationId,state:'PROCESSING',leaseToken:event.leaseToken,leaseUntil:{gt:new Date()}},data:{state:dead?'DEAD':'PENDING',leaseToken:null,leaseUntil:null,availableAt:new Date(Date.now()+Math.min(900000,30000*2**Math.min(5,event.attempts-1))+Math.floor(Math.random()*10000)),finishedAt:dead?new Date():null,lastErrorCode:permanent?error.code:'AUTOMATION_FAILED',version:{increment:1}}});
@@ -81,9 +83,10 @@ export async function processConnectorEvent(job:EvidenceConnector){
  if(!row||row.organizationId!==job.organizationId)return 'ABSENT';
  const claimed=await claimAutomationEvent(row);return claimed?executeAutomationEvent(claimed):'QUEUED';
 }
-export async function runAutomationBatch(limit=20,parallelism=2,deadline=Date.now()+20000){
+export const maxConnectorEventsPerTick=512;
+export async function runAutomationBatch(limit=maxConnectorEventsPerTick,parallelism=2,deadline=Date.now()+20000){
  if(!connectorsEnabled())return {processed:0,outcomes:[],disabled:true};
- if(!Number.isInteger(limit)||limit<1||limit>50||!Number.isInteger(parallelism)||parallelism<1||parallelism>4||!Number.isFinite(deadline))throw Error('Invalid automation worker bounds');
+ if(!Number.isInteger(limit)||limit<1||limit>maxConnectorEventsPerTick||!Number.isInteger(parallelism)||parallelism<1||parallelism>4||!Number.isFinite(deadline))throw Error('Invalid automation worker bounds');
  let reserved=0;const outcomes:string[]=[];
  async function worker(){while(connectorsEnabled()&&Date.now()<deadline&&reserved<limit){reserved++;const event=await claimAutomationEvent();if(!event)return;outcomes.push(await executeAutomationEvent(event));}}
  await Promise.all(Array.from({length:parallelism},worker));
@@ -91,8 +94,7 @@ export async function runAutomationBatch(limit=20,parallelism=2,deadline=Date.no
  return {processed:outcomes.length,outcomes,attention:dead,limitReached:pending>0,budgetExhausted:Date.now()>=deadline};
 }
 type Tick=Awaited<ReturnType<typeof executeScheduledTick>>;
-/** Collection may enqueue AFTER the parallel sweep finishes. Re-read at the end
- * of the tick so new dead letters or pending work cannot disappear from health. */
+/** Other workers may enqueue while this tick finishes. Include their pending or dead events in health. */
 export async function finalizeAutomationTick<T extends Tick>(result:T,read=async()=>{
  const [pending,dead]=await Promise.all([db.automationEvent.count({where:{state:{in:['PENDING','PROCESSING']}}}),db.automationEvent.count({where:{state:'DEAD'}})]);
  return {pending,dead};

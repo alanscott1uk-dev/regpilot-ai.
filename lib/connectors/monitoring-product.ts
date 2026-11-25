@@ -31,7 +31,7 @@ export function advancesUpstream(earlier:number|null|undefined,later:number|null
 }
 
 /** The exact policy model must have a completed upstream run and known, reconciled controls. */
-export function completedManagedSync(observation:Observation):number|null{
+export function completedManagedSync(observation:Observation,intervalHours=24):number|null{
  if(!observation.engine.startsWith('managed-control-')||
     !observation.checks.some(c=>c.id==='resource-population'&&c.status==='PASS')||
     !observation.checks.some(c=>c.id.startsWith('resource-')&&c.id!=='resource-population')||
@@ -40,5 +40,5 @@ export function completedManagedSync(observation:Observation):number|null{
  const prefix='FRESH · ';
  if(!sync?.observed.startsWith(prefix))return null;
  const timestamp=Date.parse(sync.observed.slice(prefix.length)),collected=Date.parse(observation.capturedAt);
- return Number.isFinite(timestamp)&&timestamp<=collected&&collected-timestamp<=86400000?timestamp:null;
+ return Number.isFinite(timestamp)&&timestamp<=collected&&collected-timestamp<(intervalHours===1?1:24)*3600000?timestamp:null;
 }
