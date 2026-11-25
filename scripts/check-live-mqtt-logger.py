@@ -47,16 +47,33 @@ def certificates(work):
 
 def verify(work, output, control, retained_site):
     binary = os.environ.get("REGPILOT_MOSQUITTO") or shutil.which("mosquitto")
-    if not binary:
+    image = os.environ.get("REGPILOT_MQTT_BROKER_IMAGE")
+    if not binary and not image:
         raise RuntimeError("Mosquitto is required for the real broker check.")
     certificates(work)
     with socket.socket() as port_picker:
         port_picker.bind(("127.0.0.1", 0))
         port = port_picker.getsockname()[1]
     topic = "facility/temperature/T7"
-    (work/"acl").write_text(f"user reader\ntopic read {topic}\nuser publisher\ntopic write {topic}\n")
-    (work/"mosquitto.conf").write_text(f"listener {port} 127.0.0.1\ncafile {work}/ca.crt\ncertfile {work}/server.crt\n"
-        f"keyfile {work}/server.key\nrequire_certificate true\nuse_identity_as_username true\nallow_anonymous false\nacl_file {work}/acl\n")
+    broker_dir = work/"broker"
+    broker_dir.mkdir(mode=0o700)
+    for name in ("ca.crt","server.crt","server.key"):
+        shutil.copyfile(work/name,broker_dir/name)
+    (broker_dir/"server.key").chmod(0o600)
+    (broker_dir/"acl").write_text(f"user reader\ntopic read {topic}\nuser publisher\ntopic write {topic}\n")
+    broker_path = Path("/mosquitto/config") if image else broker_dir
+    listen = "listener 18883 0.0.0.0" if image else f"listener {port} 127.0.0.1"
+    (broker_dir/"mosquitto.conf").write_text(f"{listen}\ncafile {broker_path}/ca.crt\ncertfile {broker_path}/server.crt\n"
+        f"keyfile {broker_path}/server.key\nrequire_certificate true\nuse_identity_as_username true\nallow_anonymous false\n"
+        f"persistence false\nacl_file {broker_path}/acl\nlog_dest stderr\n")
+    name = "regpilot-logger-" + uuid4().hex
+    if image:
+        command = ["docker","run","--rm","--name",name,"--user",f"{os.getuid()}:{os.getgid()}","--read-only",
+                   "--cap-drop=ALL","--security-opt=no-new-privileges","--publish",f"127.0.0.1:{port}:18883",
+                   "--mount",f"type=bind,source={broker_dir},target={broker_path},readonly",image,
+                   "/usr/sbin/mosquitto","-c","/mosquitto/config/mosquitto.conf"]
+    else:
+        command = [binary,"-c",str(broker_dir/"mosquitto.conf")]
     certificate = b"Synthetic QA calibration for T7 only."
     (work/"cal.txt").write_bytes(certificate)
     cfg = dict(host="127.0.0.1", port=port, topic=topic, siteRef="QA-site", expectedSerial="T7", decisionOwnerRef="quality",
@@ -66,7 +83,9 @@ def verify(work, output, control, retained_site):
     path, spool = work/"config.json", work/"spool.sqlite"
     path.write_text(json.dumps(cfg))
     endpoint = ["--config", str(path), "--spool", str(spool)]
-    broker = subprocess.Popen([binary, "-c", str(work/"mosquitto.conf")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    log_path = work/"broker.log"
+    with log_path.open("w") as log:
+        broker = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
     reader = None
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     ready = threading.Event()
@@ -103,14 +122,16 @@ def verify(work, output, control, retained_site):
                               capture_output=True, text=True, check=check)
 
     try:
-        for attempt in range(120):
+        for attempt in range(400):
             try:
                 client.connect("127.0.0.1", port)
                 break
-            except ConnectionRefusedError:
+            except (ConnectionRefusedError,ConnectionResetError,ssl.SSLEOFError):
                 if broker.poll() is not None:
-                    raise RuntimeError("The temporary TLS broker exited.")
-                time.sleep(.04)
+                    raise RuntimeError("The temporary TLS broker exited. " + log_path.read_text()[-1600:])
+                time.sleep(.05)
+        else:
+            raise RuntimeError("The temporary TLS listener did not start. " + log_path.read_text()[-1600:])
         client.loop_start()
         assert ready.wait(5)
         clean_start = now() - timedelta(milliseconds=5)
@@ -225,8 +246,11 @@ def verify(work, output, control, retained_site):
             reader.wait(timeout=5)
         client.disconnect()
         client.loop_stop()
-        broker.terminate()
-        broker.wait(timeout=5)
+        if image:
+            subprocess.run(["docker","rm","-f",name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+        elif broker.poll() is None:
+            broker.terminate()
+        broker.wait(timeout=10)
 
 
 if __name__ == "__main__":
