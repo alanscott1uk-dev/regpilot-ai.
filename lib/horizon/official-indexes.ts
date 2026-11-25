@@ -45,22 +45,28 @@ export function indexEntries(xml:string,index:Index){
  if(!offered)throw Error('The index returned no entries');
  return {offered,unrecognised,references,titles};
 }
+export async function readOfficialIndex(index:Index,fetcher:typeof fetch){
+ const response=await fetcher(index.url,{redirect:'error',cache:'no-store',signal:AbortSignal.timeout(18000)});
+ if(!response.ok||!response.body){await response.body?.cancel();throw Error('Index unavailable');}
+ const chunks:Uint8Array[]=[],reader=response.body.getReader();let size=0;
+ try{
+  while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>2_000_000)throw Error('Index size limit');chunks.push(value);}
+ }finally{await reader.cancel().catch(()=>{});}
+ const bytes=Buffer.concat(chunks);
+ return {...indexEntries(bytes.toString('utf8'),index),sha256:createHash('sha256').update(bytes).digest('hex')};
+}
 export async function assessOfficialIndexes(report:HorizonReport,fetcher:typeof fetch=fetch,now=Date.now()){
  const method='Select up to 30 distinct records on the first page of each publisher index from fully observed UTC days. Compare MHRA update dates and legislative publication dates with the same RegPilot snapshot.';
  const items=new Map(report.items.map(item=>[item.url,item]));
  const indexes=await Promise.all(officialIndexes(report).map(async index=>{
   try{
-   const response=await fetcher(index.url,{redirect:'error',cache:'no-store',signal:AbortSignal.timeout(18000)});
-   if(!response.ok||!response.body)throw Error('Index unavailable');
-   const chunks:Uint8Array[]=[],reader=response.body.getReader();let size=0;
-   try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>2_000_000)throw Error('Index size limit');chunks.push(value);}}finally{await reader.cancel().catch(()=>{});}
-   const bytes=Buffer.concat(chunks),{references,titles,offered,unrecognised}=indexEntries(bytes.toString('utf8'),index);
+   const {references,titles,offered,unrecognised,sha256}=await readOfficialIndex(index,fetcher);
    const eligible=[...references].filter(([,on])=>on>report.windowStart.slice(0,10)&&on<report.generatedAt.slice(0,10));
    const entries=eligible.slice(0,30).map(([url,on])=>({url,on}));
    const result=entries.length?measureCoverage(coverageSample.parse({publisher:index.publisher,title:index.name,method,entries}),report,now):null;
    const found=result?.rows.filter(r=>r.outcome==='FOUND')??[];
    const inScottishReview=found.filter(r=>scottishPharmaReason(items.get(r.url)!)).length;
-   return {index:index.url,name:index.name,publisher:index.publisher,state:'READ' as const,sha256:createHash('sha256').update(bytes).digest('hex'),offered,
+   return {index:index.url,name:index.name,publisher:index.publisher,state:'READ' as const,sha256,offered,
     unrecognised,eligible:eligible.length,selected:entries.length,inScottishReview,result:result?{...result,rows:result.rows.map(row=>({...row,title:titles.get(row.url)||row.url}))}:null};
   }catch{return {index:index.url,name:index.name,publisher:index.publisher,state:'UNAVAILABLE' as const};}
  }));

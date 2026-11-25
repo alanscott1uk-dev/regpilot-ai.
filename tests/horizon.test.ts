@@ -17,6 +17,28 @@ test('horizon verifies publishers, bounds requests and compares persisted metada
  const changed=await collectHorizon(first,fixture('revised').fetch,new Date(now.getTime()+60000));assert.ok(changed.items.every(i=>i.discovery==='METADATA_UPDATED'));
  assert.equal(f.calls.length,runRequests);assert.match(first.limitations.join(' '),/not legal effective dates/);
 });
+test('the medicines-only list keeps mixed and individual alerts, and its independent category check exposes misses, overlap and unavailable data',async()=>{
+ const {compareMedicineAlertRouting}=await import('../lib/horizon/medicine-alert-routing');
+ const {scottishPharmaReason,weeklyDeviceCircular}=await import('../lib/horizon/watchlists');
+ const report=await collectHorizon(null,fixture().fetch,now);
+ const whole=(slug:string,title:string,summary:string)=>({...report.items[0],id:slug,path:'/drug-device-alerts/'+slug,url:'https://www.gov.uk/drug-device-alerts/'+slug,
+  title,summary,documentType:'medical_safety_alert',kind:'Safety alert' as const,publisherIds:['mhra']});
+ const device=whole('field-safety-notices-2-to-6-november-2026','Field Safety Notices: 2 to 6 November 2026','List of Field Safety Notices from 2 to 6 November 2026.');
+ const medicine=whole('fictional-medicines-recall','Medicines recall','Review the relevant holdings.'),mixed=whole('mixed-roundup','Medicines and devices','Includes a medicine and a device.');
+ report.items=[device,medicine,mixed];
+ assert.equal(weeklyDeviceCircular(device),true);assert.equal(scottishPharmaReason(device,'scottish-medicines-only'),null);assert.ok(scottishPharmaReason(device));
+ for(const row of [mixed,{...device,summary:'List of Field Safety Notices for medicines and devices, November 2026.'},{...device,title:'Individual device correction'},{...device,path:'/drug-device-alerts/individual'}])assert.ok(scottishPharmaReason(row,'scottish-medicines-only'));
+ const entry=(url:string)=>'<entry><id>'+url+'</id><link rel="alternate" href="'+url+'"/><updated>2026-11-11T12:00:00Z</updated><title>Official index label</title></entry>';
+ const atom=(urls:string[])=>new Response('<feed xmlns="http://www.w3.org/2005/Atom">'+urls.map(entry).join('')+'</feed>');
+ const read=(medicines:string[],devices:string[],deviceOffline=false):typeof fetch=>async url=>new URL(String(url)).searchParams.get('alert_type[]')==='field-safety-notices'?(deviceOffline?new Response(null,{status:503}):atom(devices)):atom(medicines);
+ const missing='https://www.gov.uk/drug-device-alerts/missing';
+ const result=await compareMedicineAlertRouting(report,read([medicine.url,missing],[device.url]),+now);
+ assert.deepEqual(result.counts,{medicines:2,kept:1,devices:1,listedSeparately:1,devicesInBroadView:1,devicesInMedicinesView:0,missing:1});
+ assert.equal(result.indexes.every(x=>x.sha256?.length===64),true);
+ const overlap=await compareMedicineAlertRouting(report,read([medicine.url],[device.url,medicine.url]),+now);
+ assert.deepEqual(overlap.ambiguous,[medicine.url]);assert.equal(overlap.counts?.medicines,0);
+ assert.equal((await compareMedicineAlertRouting(report,read([medicine.url],[device.url],true),+now)).counts,null);
+});
 test('EMA shortage notices keep their EU source, status and revision and reject an incomplete or misdirected register',async()=>{
  const row={category:'Human',medicine_affected:'Fictional medicine',supply_shortage_status:'Shortage ongoing',shortage_url:'https://www.ema.europa.eu/en/medicines/human/shortages/fictional',first_published_date:'08/11/2026',last_updated_date:''};
  const read=(rows:unknown[],total=rows.length):typeof fetch=>(u,i)=>String(u).startsWith('https://www.ema.europa.eu/')?Promise.resolve(Response.json({meta:{total_records:total},data:rows})):fixture().fetch(u,i);

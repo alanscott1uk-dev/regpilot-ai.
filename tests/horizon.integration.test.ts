@@ -135,6 +135,12 @@ test('independent site applicability assessment keeps the shortlist blind until 
   assert.equal(classified.coverage?.missedAtCollection,1);assert.equal(classified.score?.precision,0.5);assert.equal(classified.score?.recall,0.5);
   assert.equal(classified.rows.find(r=>r.url===missing)?.assessment?.collection,'MISSING');
   await assert.rejects(changeApplicabilityAssessment(f.o,{...indexStart,method:'QUEUE'},async()=>report),rejects(409));
+  await assert.rejects(changeApplicabilityAssessment(f.o,{...indexStart,profile:'scottish-medicines-only'},async()=>report,compare),rejects(409));
+  const medicinesStart={...indexStart,requestKey:randomUUID(),profile:'scottish-medicines-only'};
+  const medicinesStudy=await changeApplicabilityAssessment(f.o,medicinesStart,async()=>report,compare);
+  assert.notEqual(medicinesStudy.id,fromIndex.id);
+  assert.equal((await applicabilityAssessment(f.ad,medicinesStudy.id)).selected?.profile,'scottish-medicines-only');
+  assert.equal((await changeApplicabilityAssessment(f.o,{...medicinesStart,requestKey:randomUUID()},async()=>report,compare)).id,medicinesStudy.id);
   assert.equal(reviewed.reviewerId,f.ad.userId);await assert.rejects(changeApplicabilityAssessment(f.ad,{...body,labels:body.labels.map(r=>({...r,verdict:'UNCERTAIN'}))}),rejects(409));
  }finally{await f.cleanup();}
 });

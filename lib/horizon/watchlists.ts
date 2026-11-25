@@ -12,8 +12,10 @@ export function searchPhrases(search: string) {
   return [...new Set(search.split(',').map(words).filter(Boolean))];
 }
 
+export const wholesaleView=z.enum(['scottish-pharma-wholesale','scottish-medicines-only']);
+export type WholesaleView=z.infer<typeof wholesaleView>;
 export const watchlistFilters = z.object({
-  siteView:z.literal('scottish-pharma-wholesale').optional(),
+  siteView:wholesaleView.optional(),
   publisher: z.string().refine(id => id === '' || publishers.has(id)),
   kind: z.union([z.literal(''), itemSchema.shape.kind]),
   topic: z.string().refine(id => id === '' || topics.has(id)),
@@ -54,7 +56,14 @@ export function otherNationMedicine(item:HorizonItem){
  const nation=applicationNation(item.asMadeApplication.wording);
  return nation&&nation!=='Scotland'?nation:null;
 }
-export function scottishPharmaReason(item:HorizonItem){
+const weeklyDeviceTitle=/^field safety notices:\s*\d{1,2} (?:[a-z]+ )?to \d{1,2} (?:january|february|march|april|may|june|july|august|september|october|november|december) \d{4}$/i;
+export function weeklyDeviceCircular(item:HorizonItem){
+ return item.publisherIds.includes('mhra')&&item.documentType==='medical_safety_alert'&&
+  item.path.startsWith('/drug-device-alerts/field-safety-notices-')&&weeklyDeviceTitle.test(item.title)&&
+  /^list of field safety notices (?:from|for) [\d a-z]{5,72}\d{4}\.?$/i.test(item.summary)&&!medicinesPublicationTerm(item.title,item.summary);
+}
+export function scottishPharmaReason(item:HorizonItem,view:WholesaleView='scottish-pharma-wholesale'){
+ if(view==='scottish-medicines-only'&&weeklyDeviceCircular(item))return null;
  if(otherNationMedicine(item))return null;
  if(item.publisherIds.includes('mhra')&&item.path.startsWith('/drug-safety-update/'))return 'MHRA Drug Safety Update';
  if(item.publisherIds.includes('mhra')&&item.kind==='Safety alert')return 'MHRA safety alert';
@@ -63,7 +72,7 @@ export function scottishPharmaReason(item:HorizonItem){
  return phrase?'Matched “'+phrase+'” in a selected official source':null;
 }
 export function matchesHorizonView(item: HorizonItem, filters: HorizonFilters, generatedAt: string, hasDecision: boolean) {
-  if(filters.siteView&&!scottishPharmaReason(item))return false;
+  if(filters.siteView&&!scottishPharmaReason(item,filters.siteView))return false;
   if (filters.publisher && !item.publisherIds.includes(filters.publisher)) return false;
   if (filters.kind && item.kind !== filters.kind) return false;
   if (filters.topic && !rankItem(item, [filters.topic]).suggested) return false;
