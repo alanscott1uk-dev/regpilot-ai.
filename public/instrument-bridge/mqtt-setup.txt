@@ -1,0 +1,24 @@
+RegPilot site MQTT temperature logger
+
+On a site-managed host, install Python 3.12 and the tested Paho client. Download mqtt_logger.py, mqtt-example.json and deliver.py from /instrument-bridge/ on your RegPilot workspace.
+
+  python3.12 -m venv env
+  env/bin/python -m pip install paho-mqtt==2.1.0
+  cp mqtt-example.json site.json
+
+Configure the site broker, its trusted CA and a client certificate whose account can subscribe to the exact logger topic. Allow only the authorised device publisher to write there. Configure the control UUID, site, serial, decision owner, Celsius limits and approved calibration certificate. Verify that it covers this instrument. Set its file digest, reference and validity dates. Keep the private key and spool in a private site directory. Give each monitored instrument and approved set of limits its own spool.
+
+The device or site gateway must publish MQTT 3.1.1 messages at QoS 1 using this JSON layout. Use an ISO timestamp from the instrument with a timezone and up to three fractional digits.
+
+  {"serial":"LOGGER-7","unit":"Cel","at":"2026-11-25T09:45:01.123Z","value":4.7}
+
+Run the reader under the site's process supervisor and configure restart on failure. Configure the broker to retain persistent sessions and their offline QoS 1 queue. The reader acknowledges each accepted delivery after writing it to the local SQLite spool. Renew the reader certificate on the same spool with the same broker permissions. A broker replay of an identical reading contributes one sample. Retained subscription snapshots do not contribute. Late, malformed and conflicting source data create exceptions. A late out-of-range message flags a failure in its arrival window and retains its original source time. It contributes zero fresh samples. Timing limits should reflect the instrument clock and site network.
+
+  env/bin/python mqtt_logger.py listen --config site.json --spool readings.sqlite
+
+Export a completed interval after its configured maximum delivery delay. Set START and END to UTC timestamps and WINDOW to a new directory name for this interval. A sample exactly at END belongs to this interval. A sample exactly at START belongs to the preceding interval. Select up to 288 readings per window. A site scheduler can run the following two commands for successive intervals while the reader stays connected.
+
+  env/bin/python mqtt_logger.py export --config site.json --spool readings.sqlite --start "$START" --end "$END" --out "$WINDOW"
+  env/bin/python deliver.py "$WINDOW/receipt.json" --workspace "$REGPILOT_ORIGIN"
+
+Use a RegPilot observations:write credential granted to that control. Set REGPILOT_OBSERVATION_TOKEN through the site secret store or enter it when prompted. Submit within two hours of END. Retry using the saved receipt. Keep source.jsonl and its matching receipt under the site's evidence retention policy. The recorded digest verifies its exact bytes. The archive includes original accepted payloads in Base64, original late or conflicting readings, and digests for source exceptions. Raw payloads stay on the site host. RegPilot receives the scoped sample times and values, limits, calibration dates and fingerprints. RegPilot assesses sample gaps, excursions and calibration coverage in the private workspace.

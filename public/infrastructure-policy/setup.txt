@@ -15,11 +15,15 @@ For another CI system or a local scan, set REGPILOT_ORIGIN to the HTTPS origin o
   python3.12 -m venv .venv
   .venv/bin/python -m pip install -r requirements.txt
 
-Set CONTROL_ID to the workspace control UUID and REPO to the local Git checkout. Give the repository a stable source identifier. Each run creates a new evidence file. The collector preserves existing files so a delivery can be retried from its original scan.
+To inspect a repository locally, select the formats present and give the checkout a stable source identifier. This command saves the actual revision, distinct executed policies, individual decisions and coverage in a local file. It requires no workspace credential.
+
+  .venv/bin/python collect.py inspect --repo "$REPO" --source platform-infrastructure --framework github_actions --output inspection.json
+
+For delivery to RegPilot, set CONTROL_ID to the workspace control UUID and REPO to the local Git checkout. Give the repository a stable source identifier. Each run creates a new evidence file. The collector preserves existing files so a delivery can be retried from its original scan.
 
   .venv/bin/python collect.py scan --repo "$REPO" --source platform-infrastructure --control "$CONTROL_ID" --framework terraform kubernetes cloudformation --output "$RUN_ID.json"
 
-Use an existing CI schedule to run the command hourly. Set RUN_ID to a unique run identifier. Select the formats present in the repository. The collector reads regular Git blobs from HEAD into a temporary directory, disables external Terraform module downloads, and runs the selected engine formats. It reports skipped checks, incomplete coverage and parse errors. Only checks with an executed pass or fail count towards the executed-policy total. Findings include the revision, version, counts and policy IDs. Paths, source text, resource names and suppression comments stay on the runner.
+Use an existing CI schedule to run the command hourly. Set RUN_ID to a unique run identifier. Select the formats present in the repository. The collector reads regular Git blobs from HEAD into a temporary directory, disables external Terraform module downloads, and runs the selected engine formats. It reports skipped checks, formats with no executed policies and parse errors. When the engine omits a resource total, the collector counts distinct file and resource pairs in its detailed decisions. Only checks with an executed pass or fail count towards the executed-policy total. Findings include the revision, version, counts and policy IDs. Paths, source text, resource names and suppression comments stay on the runner.
 
 Create an expiring RegPilot credential with observations:write for the same control. Provide it through the runner's REGPILOT_OBSERVATION_TOKEN secret or enter it at the prompt. Send the saved result within one hour of collection.
 

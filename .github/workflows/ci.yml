@@ -34,6 +34,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -63,16 +64,44 @@ jobs:
           python -m venv "$RUNNER_TEMP/iac-env"
           "$RUNNER_TEMP/iac-env/bin/python" -m pip install -r public/infrastructure-policy/requirements.txt
           "$RUNNER_TEMP/iac-env/bin/python" scripts/verify-infrastructure-policies.py --output "$RUNNER_TEMP/iac-evidence"
-      - run: npm run test:integration
-        env:
-          REGPILOT_FLEET_BENCHMARK_OUTPUT: connector-fleet-benchmark.json
-          REGPILOT_INSTRUMENT_PYTHON: ${{ runner.temp }}/opcua-env/bin/python
-          REGPILOT_POLICY_SCAN_RECEIPTS: ${{ runner.temp }}/iac-evidence/observations.json
+      - name: Inspect the checked-out release infrastructure
+        id: release_policy
+        run: |
+          "$RUNNER_TEMP/iac-env/bin/python" public/infrastructure-policy/collect.py inspect --repo . --source regpilot-repository --framework github_actions --output "$RUNNER_TEMP/iac-evidence/repository.json"
+          python - "$RUNNER_TEMP/iac-evidence/repository.json" <<'PYTHON'
+          import json, subprocess, sys
+          report = json.load(open(sys.argv[1]))
+          revision = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          assert report["summary"]["revision"] == revision and report["summary"]["executedPolicies"] > 0
+          assert report["status"] == "PASS", report["summary"]
+          PYTHON
       - name: Save executed infrastructure policy benchmark
+        if: ${{ !cancelled() && steps.release_policy.outcome != 'skipped' }}
         uses: actions/upload-artifact@v4
         with:
           name: infrastructure-policies-${{ github.event.pull_request.head.sha || github.sha }}
-          path: ${{ runner.temp }}/iac-evidence/benchmark.json
+          path: |
+            ${{ runner.temp }}/iac-evidence/benchmark.json
+            ${{ runner.temp }}/iac-evidence/repository.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Install the MQTT broker and site collector dependency
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends mosquitto
+          "$RUNNER_TEMP/opcua-env/bin/python" -m pip install paho-mqtt==2.1.0
+      - run: npm run test:integration
+        env:
+          REGPILOT_FLEET_BENCHMARK_OUTPUT: connector-fleet-benchmark.json
+          REGPILOT_MQTT_PYTHON: ${{ runner.temp }}/opcua-env/bin/python
+          REGPILOT_MQTT_REPORT: ${{ runner.temp }}/mqtt-evidence.json
+          REGPILOT_INSTRUMENT_PYTHON: ${{ runner.temp }}/opcua-env/bin/python
+          REGPILOT_POLICY_SCAN_RECEIPTS: ${{ runner.temp }}/iac-evidence/observations.json
+      - name: Save authenticated MQTT logger benchmark
+        uses: actions/upload-artifact@v4
+        with:
+          name: mqtt-logger-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/mqtt-evidence.json
           if-no-files-found: error
           retention-days: 30
       - name: Save executed connector capacity benchmark

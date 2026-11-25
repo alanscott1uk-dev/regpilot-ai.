@@ -138,6 +138,14 @@ def verify(output):
              "results": {"passed_checks": [], "failed_checks": [], "skipped_checks": [], "parsing_errors": ["fixture"]}}
     incomplete = bridge.make_bundle(str(uuid4()), "fixture", "a"*40, {"terraform"}, 1, 0, empty, catalogue)
     assert incomplete["observations"][0]["body"]["checks"][0]["status"] == "UNKNOWN"
+    actual_style = {"check_type": "github_actions", "summary": {"checkov_version": bridge.ENGINE, "passed": 2, "failed": 0,
+                    "skipped": 0, "resource_count": 0, "parsing_errors": 0}, "results": {"failed_checks": [], "skipped_checks": [],
+                    "parsing_errors": [], "passed_checks": [{"file_path": "/.github/workflows/check.yml", "resource": "jobs(test)",
+                    "check_result": {"result": "PASSED"}, "check_id": policy} for policy in ("CKV_GHA_1", "CKV_GHA_2")]}}
+    qualified = bridge.make_bundle(str(uuid4()), "fixture", "a"*40, {"github_actions"}, 1, 0, actual_style, catalogue)
+    assert qualified["observations"][0]["body"]["checks"][0]["status"] == "PASS" and qualified["summary"]["resourceCount"] == 1
+    partial = bridge.make_bundle(str(uuid4()), "fixture", "a"*40, {"github_actions","terraform"}, 1, 0, actual_style, catalogue)
+    assert partial["observations"][0]["body"]["checks"][0]["status"] == "UNKNOWN" and partial["summary"]["unassessedFrameworks"] == ["terraform"]
     empty["summary"]["passed"] = 1
     try:
         bridge.aggregate(empty, {"terraform"}, catalogue)

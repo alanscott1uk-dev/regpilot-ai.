@@ -313,15 +313,23 @@ test('private AI client negotiates MCP, sees granted tools only, reads scoped da
  }finally{await f.cleanup();}
 });
 
-test('site reader delivers a real encrypted OPC UA excursion through authenticated HTTPS intake and recovers the identical receipt', {skip:!process.env.REGPILOT_INSTRUMENT_PYTHON}, async()=>{
+for(const instrument of [
+ {kind:'opcua',python:process.env.REGPILOT_INSTRUMENT_PYTHON,title:'site reader delivers a real encrypted OPC UA excursion through authenticated HTTPS intake and recovers the identical receipt'},
+ {kind:'mqtt',python:process.env.REGPILOT_MQTT_PYTHON,title:'MQTT site logger recovers buffered instrument evidence and delivers complete, missing and excursion windows through authenticated HTTPS'}
+] as const)test(instrument.title,{skip:!instrument.python},async()=>{
  const {createServer}=await import('node:https'),{mkdtemp,readFile,writeFile,rm}=await import('node:fs/promises');
  const {tmpdir}=await import('node:os'),{join}=await import('node:path'),{execFile}=await import('node:child_process'),{promisify}=await import('node:util');
  const exec=promisify(execFile),folder=await mkdtemp(join(tmpdir(),'regpilot-intake-')),x=await fixture();
  const pem=join(folder,'server.pem'),key=join(folder,'server.key'),report=join(folder,'capture.json'),envelope=join(folder,'excursion.json');
  let server:ReturnType<typeof createServer>|undefined;
  try{
-  await exec(process.env.REGPILOT_INSTRUMENT_PYTHON!,['scripts/check-live-instrument.py'],{env:{...process.env,REGPILOT_TEST_CONTROL_ID:x.primary.id,REGPILOT_INSTRUMENT_REPORT:report}});
-  const sample=JSON.parse(await readFile(report,'utf8')).excursion;await writeFile(envelope,JSON.stringify(sample));
+  if(instrument.kind==='mqtt'){
+   await exec(instrument.python!,['scripts/check-live-mqtt-logger.py','--control',x.primary.id,'--output',report]);
+  }else{
+   await exec(instrument.python!,['scripts/check-live-instrument.py'],{env:{...process.env,REGPILOT_TEST_CONTROL_ID:x.primary.id,REGPILOT_INSTRUMENT_REPORT:report}});
+  }
+  const results=JSON.parse(await readFile(report,'utf8')),sample=results.excursion;
+  await writeFile(envelope,JSON.stringify(sample));
   await exec('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj','/CN=localhost','-addext','subjectAltName=IP:127.0.0.1','-keyout',key,'-out',pem]);
   server=createServer({cert:await readFile(pem),key:await readFile(key)},async(req,res)=>{
    try{
@@ -334,15 +342,38 @@ test('site reader delivers a real encrypted OPC UA excursion through authenticat
   });
   await new Promise<void>(resolve=>server!.listen(0,'127.0.0.1',resolve));
   const addr=server.address();assert.ok(addr&&typeof addr==='object');
-  const send=(token:string)=>exec(process.env.REGPILOT_INSTRUMENT_PYTHON!,['public/instrument-bridge/deliver.py',envelope,'--workspace','https://127.0.0.1:'+addr.port],{env:{...process.env,SSL_CERT_FILE:pem,REGPILOT_OBSERVATION_TOKEN:token}});
+  const send=(token:string)=>exec(instrument.python!,['public/instrument-bridge/deliver.py',envelope,'--workspace','https://127.0.0.1:'+addr.port],{env:{...process.env,SSL_CERT_FILE:pem,REGPILOT_OBSERVATION_TOKEN:token}});
   const unauthorised=await x.create(['observations:write'],[x.ungranted.id]);
   await assert.rejects(send(unauthorised.secret!),/HTTP 404/);
-  const writer=await x.create(['observations:write'],[x.primary.id]);
+  const writer=await x.create(['observations:write','observations:read'],[x.primary.id]);
   const first=JSON.parse((await send(writer.secret!)).stdout),second=JSON.parse((await send(writer.secret!)).stdout);
   assert.equal(first.reused,false);assert.equal(second.id,first.id);assert.equal(second.reused,true);
   const stored=await db.customerApiObservation.findUniqueOrThrow({where:{id:first.id}});
   assert.equal(stored.organizationId,x.a.id);assert.equal(stored.controlId,x.primary.id);
-  assert.equal((stored.payload as typeof sample.body).checks.find((c:{key:string})=>c.key==='temperature-limits').status,'FAIL');
+  const readOutcome=async(requestKey:string,id:string)=>{
+   const result=await getObservations(new Request('https://regpilot.test/api/v1/observations?requestKey='+requestKey,{headers:{authorization:'Bearer '+writer.secret!}}));
+   assert.equal(result.status,200);
+   const body=await result.json();assert.equal(body.data.length,1);assert.equal(body.data[0].id,id);
+   return body.data[0].reportedOutcome as string;
+  };
+  const outcome=await readOutcome(sample.idempotencyKey,first.id);
+  assert.equal(outcome,'REPORTED_FAILURE');
+  if(instrument.kind==='mqtt'){
+   const record=(stored.payload as typeof sample.body).partnerRecord.record;
+   assert.equal(record.kind,'LOGGER_WINDOW');assert.deepEqual(record,sample.body.partnerRecord.record);
+   const receipts:{window:string;outcome:string;receiptId:string}[]=[{window:'excursion',outcome,receiptId:first.id}];
+   for(const [window,expected] of [['baseline','REPORTED_PASS'],['missing','REPORTED_UNKNOWN'],['late','REPORTED_FAILURE']] as const){
+    await writeFile(envelope,JSON.stringify(results[window]));
+    const ack=JSON.parse((await send(writer.secret!)).stdout);
+    const row=await db.customerApiObservation.findUniqueOrThrow({where:{id:ack.id}});
+    assert.equal(row.controlId,x.primary.id);
+    const reported=await readOutcome(results[window].idempotencyKey,ack.id);assert.equal(reported,expected);
+    receipts.push({window,outcome:reported,receiptId:row.id});
+   }
+   if(process.env.REGPILOT_MQTT_REPORT)await writeFile(process.env.REGPILOT_MQTT_REPORT,JSON.stringify({...results,receipts,duplicateReceiptRecovered:true,ungrantedControlRejected:true},null,2));
+  }else{
+   assert.equal((stored.payload as typeof sample.body).checks.find((c:{key:string})=>c.key==='temperature-limits').status,'FAIL');
+  }
  }finally{server?.closeAllConnections();if(server?.listening)await new Promise<void>(resolve=>server!.close(()=>resolve()));await x.cleanup();await rm(folder,{recursive:true,force:true});}
 });
 

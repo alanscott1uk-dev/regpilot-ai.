@@ -140,7 +140,7 @@ def snapshot(repo, frameworks, destination):
 
 def aggregate(reports, selected, catalogue):
     rules, resources, errors = {}, 0, 0
-    observed_frameworks = set()
+    observed_frameworks, executed_frameworks = set(), set()
     registry = {framework: set(catalogue["frameworks"][framework]) for framework in selected}
     for report in reports if isinstance(reports, list) else [reports]:
         framework = report["check_type"]
@@ -153,7 +153,7 @@ def aggregate(reports, selected, catalogue):
         for field in ("passed", "failed", "skipped", "resource_count", "parsing_errors"):
             if type(summary[field]) is not int or summary[field] < 0:
                 raise ValueError("Invalid policy count in source report.")
-        resources += summary["resource_count"]
+        decision_subjects = set()
         if not isinstance(results["parsing_errors"], list) or len(results["parsing_errors"]) != summary["parsing_errors"]:
             raise ValueError("Engine parse failures disagree with the reported total.")
         errors += summary["parsing_errors"]
@@ -167,7 +167,15 @@ def aggregate(reports, selected, catalogue):
                         row["check_result"]["result"] != expected):
                     raise ValueError("Unexpected policy or inconsistent decision in engine output.")
                 rules.setdefault(policy, Counter())[group] += 1
-    return rules, resources, errors, sorted(observed_frameworks)
+                if group != "skipped":
+                    executed_frameworks.add(framework)
+                if not summary["resource_count"]:
+                    path, resource = row.get("file_path"), row.get("resource")
+                    if isinstance(path, str) and path and isinstance(resource, str) and resource:
+                        decision_subjects.add((path, resource))
+        # Some runners omit their resource count even when they identify every checked subject.
+        resources += summary["resource_count"] or len(decision_subjects)
+    return rules, resources, errors, sorted(observed_frameworks), sorted(selected - executed_frameworks)
 
 
 def status(counts, incomplete=False):
@@ -178,19 +186,27 @@ def status(counts, incomplete=False):
     return "PASS"
 
 
+def assessment(source, revision, selected, files, excluded, reports, catalogue):
+    rules, resources, errors, reported, unassessed = aggregate(reports, selected, catalogue)
+    scope = hashlib.sha256(json.dumps([source, sorted(selected)], separators=(",", ":")).encode()).hexdigest()[:24]
+    totals = sum(rules.values(), Counter())
+    incomplete = bool(errors or excluded or not resources or unassessed)
+    available = len(set.union(*(set(catalogue["frameworks"][item]) for item in selected)))
+    summary = {"frameworks": sorted(selected), "reportedFrameworks": reported, "revision": revision, "scope": scope,
+               "unassessedFrameworks": unassessed, "availablePolicies": available, "executedPolicies": sum(bool(c["passed"] or c["failed"]) for c in rules.values()),
+               "policiesWithResults": len(rules), "files": files, "resourceCount": resources, "parseErrors": errors,
+               "excludedLinks": excluded, "decisions": {k: totals[k] for k in ("passed", "failed", "skipped")}}
+    return summary, rules, incomplete
+
+
 def make_bundle(control, source, revision, selected, files, excluded, reports, catalogue, at=None):
-    rules, resources, errors, reported = aggregate(reports, selected, catalogue)
+    summary, rules, incomplete = assessment(source, revision, selected, files, excluded, reports, catalogue)
+    scope, available = summary["scope"], summary["availablePolicies"]
+    resources, errors = summary["resourceCount"], summary["parseErrors"]
+    totals = Counter(summary["decisions"])
     at = at or datetime.now(timezone.utc)
     stamp = lambda value: value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
     scan_id = uuid4()
-    scope = hashlib.sha256(json.dumps([source, sorted(selected)], separators=(",", ":")).encode()).hexdigest()[:24]
-    totals = sum(rules.values(), Counter())
-    incomplete = bool(errors or excluded or not resources or not rules or set(reported) != selected)
-    available = len(set.union(*(set(catalogue["frameworks"][item]) for item in selected)))
-    summary = {"frameworks": sorted(selected), "reportedFrameworks": reported, "revision": revision, "scope": scope,
-               "availablePolicies": available, "executedPolicies": sum(bool(c["passed"] or c["failed"]) for c in rules.values()),
-               "policiesWithResults": len(rules), "files": files, "resourceCount": resources, "parseErrors": errors,
-               "excludedLinks": excluded, "decisions": {k: totals[k] for k in ("passed", "failed", "skipped")}}
     observations = []
     policy_rows = sorted(rules.items())
     shards = max(1, (len(policy_rows) + 18) // 19)
@@ -216,7 +232,6 @@ def make_bundle(control, source, revision, selected, files, excluded, reports, c
 
 def scan(args):
     selected = set(args.framework)
-    control = str(UUID(args.control))
     catalogue = json.loads(CATALOGUE.read_text())
     if catalogue["engineVersion"] != ENGINE or not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", args.source):
         raise ValueError("Use the pinned registry and a stable source identifier.")
@@ -228,12 +243,19 @@ def scan(args):
         output = root / "report.json"
         code = run_engine(["--directory", str(directory), "--framework", *sorted(selected),
                            "--download-external-modules", "false", "--output", "json"], root, output)
-        bundle = make_bundle(control, args.source, revision, selected, files, excluded,
-                             json.loads(output.read_bytes()), catalogue)
-        if code and not (bundle["summary"]["decisions"]["failed"] or bundle["summary"]["parseErrors"]):
+        inputs = (args.source, revision, selected, files, excluded, json.loads(output.read_bytes()), catalogue)
+        if args.mode == "inspect":
+            summary, rules, incomplete = assessment(*inputs)
+            report = {"format": "regpilot-infrastructure-inspection-v1", "engineVersion": ENGINE,
+                      "summary": summary, "status": status(Counter(summary["decisions"]), incomplete),
+                      "policies": {policy: dict(counts) for policy, counts in sorted(rules.items())}}
+        else:
+            report = make_bundle(str(UUID(args.control)), *inputs)
+            summary = report["summary"]
+        if code and not (summary["decisions"]["failed"] or summary["parseErrors"]):
             raise ValueError("The engine exited unsuccessfully without reporting its cause.")
-        write_new(args.output, bundle)
-        print(json.dumps(bundle["summary"], sort_keys=True))
+        write_new(args.output, report)
+        print(json.dumps(summary, sort_keys=True))
 
 
 def send_saved(report, workspace, send, credential):
@@ -273,10 +295,14 @@ def main():
     modes = parser.add_subparsers(dest="mode", required=True)
     registry = modes.add_parser("catalogue", help="Enumerate installed policies without running a scan")
     registry.add_argument("--output", required=True, type=Path)
-    check = modes.add_parser("scan", help="Evaluate the committed local source and save scoped observations")
-    for field in ("control", "source", "repo", "output"):
-        check.add_argument("--" + field, required=True)
-    check.add_argument("--framework", nargs="+", required=True, choices=FRAMEWORKS)
+    for name, help_text in (("inspect", "Save local policy evidence for a committed repository"),
+                            ("scan", "Save control-scoped observations for workspace delivery")):
+        check = modes.add_parser(name, help=help_text)
+        for field in ("source", "repo", "output"):
+            check.add_argument("--" + field, required=True)
+        if name == "scan":
+            check.add_argument("--control", required=True)
+        check.add_argument("--framework", nargs="+", required=True, choices=FRAMEWORKS)
     delivery = modes.add_parser("deliver", help="Send or resume a saved scan with a scoped workspace credential")
     delivery.add_argument("--report", required=True, type=Path)
     delivery.add_argument("--workspace", required=True)
