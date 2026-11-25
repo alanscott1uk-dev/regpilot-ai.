@@ -1,6 +1,6 @@
 import {bindPartnerModel,partnerFollowUp} from '../lib/server/partner-follow-up';
 import {inventoryAction,inventoryWorkspace} from '../lib/server/ai-inventory-service';
-import {createQualityCase,addQualityAction} from '../lib/server/capa-service';
+import {createQualityCase,addQualityAction,exportQualityCase} from '../lib/server/capa-service';
 import {workTask} from '../lib/server/work-hub-service';
 import {createAuditRoom,changeAuditRoom,guestAuditAction,openAuditRoom} from '../lib/server/auditor-service';
 import {attachBuyerAnnex,buyerAnnexOptions} from '../lib/server/buyer-annex';
@@ -355,6 +355,7 @@ test('database connector receipts reach the control review queue and recover ide
   try {
     const key=await x.create(['observations:read','observations:write']);
     const headers={authorization:'Bearer '+key.secret!,'Content-Type':'application/json'};
+    let qualityId='';
     for(const [index,envelope] of envelopes.entries()){
       const send=()=>postObservation(new Request('https://example.invalid/api/v1/observations',{method:'POST',
         headers:{...headers,'Idempotency-Key':envelope.idempotencyKey},body:JSON.stringify(envelope.body)}));
@@ -380,6 +381,21 @@ test('database connector receipts reach the control review queue and recover ide
       assert.equal(recovered.length,index===0?0:1);
       if(index===1)assert.deepEqual(recovered[0].history.map(event=>event.status),['FAIL','PASS']);
       await assert.rejects(()=>resourceFindingReport(x.out,receipt.id),rejects(404));
+      if(index===0){
+       const reviewed=await reviewCustomerApiObservation(x.ad,receipt.id,{decision:'FOLLOW_UP',version:1,ownerId:x.ed.userId,dueDate:future(7),notes,requestKey:randomUUID(),confirm:true});
+       assert.ok('followUpTaskId' in reviewed&&reviewed.followUpTaskId);
+       const quality=await createQualityCase(x.ed,{requestKey:randomUUID(),title:'Held release decision',kind:'DEVIATION',classification:'MAJOR',description:notes,impact:notes,containment:notes,occurredAt:future(0),ownerId:x.ed.userId});
+       qualityId=quality.caseId;
+       await addQualityAction(x.ed,qualityId,{requestKey:randomUUID(),version:quality.version,taskId:reviewed.followUpTaskId,kind:'CORRECTIVE',purpose:notes});
+      }else{
+       const pending=(await exportQualityCase(x.ed,qualityId)).databaseMonitoring!;
+       assert.equal(pending[0].recovered,false,'A new SQL receipt needs a human review');
+       await reviewCustomerApiObservation(x.ad,receipt.id,{decision:'ACKNOWLEDGE',version:1,notes,requestKey:randomUUID(),confirm:true});
+      }
+      const trace=(await exportQualityCase(x.ed,qualityId)).databaseMonitoring!;
+      assert.equal(trace.length,1);assert.equal(trace[0].recovered,index===1);
+      assert.equal(index===0?trace[0].receiptHash:trace[0].latest?.receiptHash,receipt.receiptHash);
+
     }
   } finally {await x.cleanup();}
 });
@@ -441,5 +457,34 @@ test('timed database recovery receipts preserve the failed step, reviewed contro
    if(event.source){const source=await ingest(event.source);assert.equal(source.reportedOutcome,event===before?'REPORTED_FAILURE':'REPORTED_PASS');
     if(event===restored){const history=await resourceFindingReport(x.ad,source.id);assert.equal(history.rows.filter(r=>r.passedAfterFailure).length,1);}}
   }
+ }finally{await x.cleanup();}
+});
+
+test('a SQL corrective action accepts reviewed recovery only for its original rule, records and exact current receipt',async()=>{
+ const x=await fixture();
+ try{
+  const key=await x.create(['observations:write']),session=await x.session(key.secret!,'observations:write');
+  const definition=randomUUID(),scope='a'.repeat(32),affected='item-'+'1'.repeat(64),base=Date.now()-60000;
+  async function send(index:number,source:string,value:'PASS'|'FAIL',includeItem=true){
+   return submitCustomerApiObservation(session,randomUUID(),{controlId:x.primary.id,externalId:'dbsync/'+definition+'/'+source+'/'+randomUUID(),
+    summary:'Warehouse release control evaluated the approved site records.',observedAt:new Date(base+index*1000).toISOString(),
+    validUntil:new Date(base+86400000).toISOString(),checks:[{key:'row-rule',label:'Release control',status:value,observed:value,detail:'Source row rule'},
+    ...(includeItem?[{key:affected,label:'Stock record 3',status:value,observed:value,detail:'Monitored stock identity'}]:[])]});
+  }
+  const acknowledge=(id:string)=>reviewCustomerApiObservation(x.ad,id,{decision:'ACKNOWLEDGE',version:1,notes,requestKey:randomUUID(),confirm:true});
+  const failed=await send(0,scope,'FAIL');
+  const reviewed=await reviewCustomerApiObservation(x.ad,failed.id,{decision:'FOLLOW_UP',version:1,ownerId:x.ed.userId,dueDate:future(7),notes,requestKey:randomUUID(),confirm:true});
+  assert.ok('followUpTaskId' in reviewed&&reviewed.followUpTaskId);
+  const quality=await createQualityCase(x.ed,{requestKey:randomUUID(),title:'Warehouse control investigation',kind:'DEVIATION',classification:'MAJOR',description:notes,impact:notes,containment:notes,occurredAt:future(0),ownerId:x.ed.userId});
+  await addQualityAction(x.ed,quality.id,{requestKey:randomUUID(),version:quality.version,taskId:reviewed.followUpTaskId,kind:'CORRECTIVE',purpose:notes});
+  const trace=async()=>(await exportQualityCase(x.ed,quality.id)).databaseMonitoring![0];
+  assert.equal((await trace()).recovered,false);assert.deepEqual((await exportQualityCase(x.st,quality.id)).databaseMonitoring,[]);
+  await acknowledge((await send(1,'b'.repeat(32),'PASS')).id);assert.equal((await trace()).latest,null);
+  await acknowledge((await send(2,scope,'PASS',false)).id);assert.equal((await trace()).recovered,false);
+  const pass=await send(3,scope,'PASS');assert.equal((await trace()).recovered,false);
+  await acknowledge(pass.id);assert.equal((await trace()).recovered,true);assert.equal((await trace()).latest?.receiptHash,pass.receiptHash);
+  const duplicate=await send(3,scope,'PASS');await acknowledge(duplicate.id);assert.equal((await trace()).recovered,false);
+  const subsequent=await send(4,scope,'FAIL');assert.equal((await trace()).latest?.receiptId,subsequent.id);assert.equal((await trace()).recovered,false);
+  await assert.rejects(()=>exportQualityCase(x.out,quality.id),rejects(404));
  }finally{await x.cleanup();}
 });

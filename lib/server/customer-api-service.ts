@@ -47,6 +47,35 @@ async function observationsView(tx:Tx,c:{organizationId:string},rows:Observation
  });
 }
 
+/** Compare site SQL receipts only within the same source instance, rule, control grant and control revision. */
+export async function reviewedDatabaseRecovery(tx:Tx, organizationId:string, taskIds:string[]) {
+ if(!taskIds.length)return [];
+ const sources=await tx.customerApiObservation.findMany({where:{organizationId,followUpTaskId:{in:taskIds},
+  status:'FOLLOW_UP',externalId:{startsWith:'dbsync/'}},include:rowInclude,orderBy:{id:'asc'}});
+ const results=[];
+ for(const source of sources){
+  const series=resourceSeries(source.externalId);
+  if(!series)continue;
+  const [original]=await observationsView(tx,{organizationId},[source]);
+  const failed=original.payload?.checks.filter(check=>check.status==='FAIL').map(check=>check.key)??[];
+  const scope={organizationId,controlId:source.controlId,credentialId:source.credentialId,
+   contextHash:source.contextHash,externalId:{startsWith:series}};
+  const rows=await tx.customerApiObservation.findMany({where:{...scope,observedAt:{gt:source.observedAt}},
+   include:rowInclude,orderBy:[{observedAt:'desc'},{id:'asc'}],take:2});
+  const [latest]=rows.length?await observationsView(tx,{organizationId},[rows[0]]):[];
+  const distinct=!rows[1]||rows[1].observedAt.getTime()!==rows[0].observedAt.getTime();
+  const sourceUnique=await tx.customerApiObservation.count({where:{...scope,observedAt:source.observedAt}})===1;
+  const recovered=!!(failed.length&&sourceUnique&&latest?.current&&latest.status==='ACKNOWLEDGED'&&distinct&&
+   original.reportedOutcome==='REPORTED_FAILURE'&&latest.reportedOutcome==='REPORTED_PASS'&&
+   failed.every(key=>latest.payload?.checks.some(check=>check.key===key&&check.status==='PASS')));
+  results.push({taskId:source.followUpTaskId!,controlId:source.controlId,controlTitle:source.control.title,
+   sourceName:source.credential.name,receiptId:source.id,receiptHash:source.payloadHash,observedAt:source.observedAt.toISOString(),
+   failedChecks:failed,latest:latest?{receiptId:latest.id,receiptHash:latest.receiptHash,observedAt:latest.observedAt,
+    review:latest.status,reviewerId:latest.reviewerId,reportedOutcome:latest.reportedOutcome}:null,recovered});
+ }
+ return results;
+}
+
 export async function resourceFindingReport(ctx: AuthorizedContext, id: string) {
  return transaction(ctx, async tx => {
   await requireMember(tx, ctx, ADMIN);

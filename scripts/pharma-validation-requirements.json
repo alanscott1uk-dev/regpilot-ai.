@@ -64,5 +64,11 @@
     "requirement": "Link a monitored control failure to one deviation and its owned corrective work. Independently authorise closure only after verified recovery of the same check, including after credential rotation.",
     "file": "tests/capa.integration.test.ts",
     "test": "a failed monitored control opens one deviation and requires a fresh same-target recovery and independent effectiveness decision"
+  },
+  {
+    "id": "PH-12",
+    "requirement": "Bind affected database records and the specific SQL control test to corrective work. Require a reviewed later observation covering every failed check from the same source before accepting recovery.",
+    "file": "tests/customer-api.integration.test.ts",
+    "test": "a SQL corrective action accepts reviewed recovery only for its original rule, records and exact current receipt"
   }
 ]

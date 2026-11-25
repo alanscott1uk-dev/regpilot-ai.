@@ -29,6 +29,11 @@ export function qualityInspectionText(record: CaseExport) {
    `Task ${action.task.id} · Owner: ${action.task.ownerName}`, action.purpose);
  }
  if (!record.previousActions?.length && !record.actions?.length) lines.push('No recorded actions.');
+ for(const item of record.databaseMonitoring??[]){
+  lines.push('', 'Database control evidence',item.sourceName+' · '+item.controlTitle,'Original receipt '+item.receiptId+' · SHA-256 '+item.receiptHash,
+   item.recovered?'Same-source recovery reviewed':'Same-source recovery pending');
+  if(item.latest)lines.push('Latest receipt '+item.latest.receiptId+' · SHA-256 '+item.latest.receiptHash+' · '+item.latest.review);
+ }
  if(record.monitoring){
   const {source,latest}=record.monitoring;
   lines.push('', 'Monitored control',source.controlTitle+' · '+source.label,'Original failure · '+source.observed,

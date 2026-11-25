@@ -1,3 +1,4 @@
+import {reviewedDatabaseRecovery} from './customer-api-service';
 import {failedMonitor,caseForMonitor,caseMonitoring,monitoringKey} from './quality-monitoring';
 import {emailSourceSchema,emailAttachmentSchema,emailSnapshotSchema,type CaseEmailRecord} from '../quality-email';
 import {stockCountSchema,stockReviewSchema,reconcileStock,stockBlocker,type StockRecord} from '../stock-reconciliation';
@@ -393,14 +394,17 @@ export async function decideQualityEffectiveness(ctx:AuthorizedContext,id:string
   const monitoring=await caseMonitoring(tx,ctx.organizationId,row.id);
   if(data.decision==='PASSED'&&monitoring && (monitoring.latest?.status!=='PASS'||!monitoring.latest.fresh))
    throw new IntelligenceError('A fresh passing observation of the original monitored check is required for a successful effectiveness decision.',409);
-  return {row,review,hash,prior:null,current,monitoring};
+  const databaseMonitoring=await reviewedDatabaseRecovery(tx,ctx.organizationId,current.actions.map(action=>action.task.id));
+  if(data.decision==='PASSED'&&databaseMonitoring.some(item=>!item.recovered))
+   throw new IntelligenceError('A reviewed passing SQL receipt from the same source and rule must confirm every failed check before closure.',409);
+  return {row,review,hash,prior:null,current,monitoring,databaseMonitoring};
  }
  const before=await transaction(ctx,inspect);if(before.prior)return before.prior;await verifyReviewedBytes(ctx,before.current!.verification,deps.storage);
- return transaction(ctx,async tx=>{const fresh=await inspect(tx);if(fresh.prior)return fresh.prior;if(fresh.current!.hash!==before.current!.hash||fresh.monitoring?.latest?.runId!==before.monitoring?.latest?.runId)throw new IntelligenceError('Case evidence changed during the decision. Refresh before deciding.',409);
+ return transaction(ctx,async tx=>{const fresh=await inspect(tx);if(fresh.prior)return fresh.prior;if(fresh.current!.hash!==before.current!.hash||fresh.monitoring?.latest?.runId!==before.monitoring?.latest?.runId||hashValue(fresh.databaseMonitoring)!==hashValue(before.databaseMonitoring))throw new IntelligenceError('Case evidence changed during the decision. Refresh before deciding.',409);
   let review=await tx.qualityEffectiveness.update({where:{id,organizationId:ctx.organizationId},data:{status:data.decision,reviewerId:ctx.userId,reviewedAt:new Date(),reviewNotes:data.notes,version:{increment:1}}});
   review=await tx.qualityEffectiveness.update({where:{id,organizationId:ctx.organizationId},data:{decisionHash:decisionHash(review)}});
   const failed=data.decision==='FAILED',saved=await tx.qualityCase.update({where:{id:fresh.row.id,organizationId:ctx.organizationId},data:{status:failed?'REOPENED':'CLOSED',...(failed?{cycle:{increment:1},investigationNotes:'',rootCause:'',effectivenessCriteria:'',effectivenessDueAt:null}:{}),version:{increment:1}}});
-  await event(tx,ctx,'effectiveness_decided',saved.id,{reviewId:id,cycle:review.cycle,nextCycle:saved.cycle,decision:data.decision,notes:data.notes,reviewerId:ctx.userId,...(fresh.monitoring?{monitoringAtDecision:fresh.monitoring}:{}),previous:caseBasis(fresh.row),version:saved.version});
+  await event(tx,ctx,'effectiveness_decided',saved.id,{reviewId:id,cycle:review.cycle,nextCycle:saved.cycle,decision:data.decision,notes:data.notes,reviewerId:ctx.userId,...(fresh.monitoring?{monitoringAtDecision:fresh.monitoring}:{}),...(fresh.databaseMonitoring?.length?{sqlReceiptsAtDecision:fresh.databaseMonitoring}:{}),previous:caseBasis(fresh.row),version:saved.version});
   return remember(tx,ctx,data.requestKey,'DECIDE_EFFECTIVENESS',fresh.hash,{...result(saved),id,version:review.version,status:review.status});
  });
 }
@@ -447,7 +451,14 @@ export async function qualityWorkspace(ctx:AuthorizedContext,input:Partial<Quali
    const previousActions=await tx.qualityAction.findMany({where:{...base,caseId:row.id,cycle:{lt:row.cycle}},orderBy:[{cycle:'desc'},{createdAt:'asc'}],take:400,select:{id:true,cycle:true,kind:true,purpose:true,obligation:{select:{id:true,title:true,status:true,ownerName:true}}}});
    const history=await tx.auditEvent.findMany({where:{...base,entityType:'QualityCase',entityId:row.id},orderBy:[{createdAt:'asc'},{id:'asc'}],take:1001,select:{id:true,action:true,actorId:true,createdAt:true,details:true}});
    const monitoring=await caseMonitoring(tx,ctx.organizationId,row.id);
-   selected={monitoring,emailRecords:canEdit||ADMIN.includes(actor.role)?await qualityEmailRecords(tx,ctx,row.id):null,stockRecords:canEdit||ADMIN.includes(actor.role)?current.stockRecords:null,trainingRecords:ADMIN.includes(actor.role)?await qualityTrainingRecords(tx,ctx,row.id):null,canAcceptHandover:row.handoverRecipientId===ctx.userId&&WRITER.includes(actor.role),case:{...row,ownerName:(await tx.user.findUnique({where:{id:row.ownerId},select:{email:true}}))?.email||'Owner unavailable',href:href('/team/quality',ctx.organizationId,{caseId:row.id}),due:qualityDue(row.effectivenessDueAt?.toISOString()||null,row.status)},actions:current.actions.map(({proof,...action})=>action),previousActions:previousActions.map(({obligation,...action})=>({...action,task:{...obligation,href:href('/team/work',ctx.organizationId,{taskId:obligation.id})}})),reviews:reviewViews,latestReview:latest||null,canEdit:canEdit&&row.status!=='CLOSED',canReview,canReopen:ADMIN.includes(actor.role),closureCurrent:row.status==='CLOSED'&&latest?.status==='PASSED'&&latest.current&&(!monitoring||monitoring.latest?.status==='PASS'&&monitoring.latest.fresh),blockers:current.blockers,history:history.slice(0,1000),historyLimited:history.length>1000,reviewsLimited:reviews.length>40};
+   const databaseMonitoring=await reviewedDatabaseRecovery(tx,ctx.organizationId,current.actions.map(action=>action.task.id));
+   const canReadTrace=canEdit||ADMIN.includes(actor.role);
+   const visibleHistory=history.slice(0,1000).map(item=>{
+    if(canReadTrace||!item.details||typeof item.details!=='object'||Array.isArray(item.details)||!('sqlReceiptsAtDecision' in item.details))return item;
+    const {sqlReceiptsAtDecision,...details}=item.details;
+    return {...item,details};
+   });
+   selected={monitoring,databaseMonitoring:canReadTrace?databaseMonitoring:[],emailRecords:canEdit||ADMIN.includes(actor.role)?await qualityEmailRecords(tx,ctx,row.id):null,stockRecords:canEdit||ADMIN.includes(actor.role)?current.stockRecords:null,trainingRecords:ADMIN.includes(actor.role)?await qualityTrainingRecords(tx,ctx,row.id):null,canAcceptHandover:row.handoverRecipientId===ctx.userId&&WRITER.includes(actor.role),case:{...row,ownerName:(await tx.user.findUnique({where:{id:row.ownerId},select:{email:true}}))?.email||'Owner unavailable',href:href('/team/quality',ctx.organizationId,{caseId:row.id}),due:qualityDue(row.effectivenessDueAt?.toISOString()||null,row.status)},actions:current.actions.map(({proof,...action})=>action),previousActions:previousActions.map(({obligation,...action})=>({...action,task:{...obligation,href:href('/team/work',ctx.organizationId,{taskId:obligation.id})}})),reviews:reviewViews,latestReview:latest||null,canEdit:canEdit&&row.status!=='CLOSED',canReview,canReopen:ADMIN.includes(actor.role),closureCurrent:row.status==='CLOSED'&&latest?.status==='PASSED'&&latest.current&&databaseMonitoring.every(item=>item.recovered)&&(!monitoring||monitoring.latest?.status==='PASS'&&monitoring.latest.fresh),blockers:current.blockers,history:visibleHistory,historyLimited:history.length>1000,reviewsLimited:reviews.length>40};
   }
   const taskWhere:Prisma.ObligationWhereInput={...base,completionException:false,changeAction:null,auditRequest:null,accessItem:null};if(query.taskQ)taskWhere.OR=[{title:{contains:literal(query.taskQ),mode:'insensitive'}},{ownerName:{contains:literal(query.taskQ),mode:'insensitive'}}];
   if(selectedId&&selected)taskWhere.qualityActions={none:{caseId:selectedId,cycle:selected.case.cycle,organizationId:ctx.organizationId}};
