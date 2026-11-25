@@ -29,9 +29,11 @@ export async function collectCustomerControl(provider:Provider,target:{scope:str
  if(String(row?.id)!==record||(provider==='STATUSPAGE_COMPONENT'&&row.page_id!==scope))throw new CollectionError('TARGET_MISMATCH');
  const checks=[];let value:string|undefined;
  if(provider==='GITHUB_SCIM'||provider==='ATLASSIAN_SCIM'){
+  if(row.meta?.location!==undefined&&row.meta.location!==sourceUrl)throw new CollectionError('TARGET_MISMATCH');
   if(!Array.isArray(row.schemas)||!row.schemas.includes('urn:ietf:params:scim:schemas:core:2.0:User'))throw new CollectionError('INVALID_RESPONSE');
   value=typeof row.active==='boolean'?(row.active?'active':'inactive'):undefined;
  }else if(provider==='ZENDESK_TICKET'){
+  if(row.url!==undefined&&row.url!==sourceUrl)throw new CollectionError('TARGET_MISMATCH');
   value=ticketStates.some(v=>v===row.status)?row.status:undefined;
   checks.push(booleanCheck('ticket-assigned','Ticket has an assigned owner',row.assignee_id===null?false:Number.isSafeInteger(row.assignee_id)&&row.assignee_id>0?true:undefined,true,'Review the ticket assignment in this Zendesk account.'));
  }else{value=componentStates.some(v=>v===row.status)?row.status:undefined;}

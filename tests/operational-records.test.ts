@@ -20,6 +20,7 @@ for (const row of records) {
     const pass = await collectOperationalRecord(provider,target,token,fetchRecord(row.good));
     assert.equal(observationOutcome(observationSchema.parse(pass)), "OBSERVED");
     assert.doesNotMatch(JSON.stringify(pass), /never-retain|private-owner|fictional-connector-token/);
+    if(provider==='GITHUB_SCIM'||provider==='ATLASSIAN_SCIM')await assert.rejects(collectOperationalRecord(provider,target,token,fetchRecord({...row.good,meta:{location:'https://other.example.invalid/directory'}})),{code:'TARGET_MISMATCH'});
     const changed = await collectOperationalRecord(provider,target,token,fetchRecord(row.changed));
     assert.equal(observationOutcome(changed), "FOLLOW_UP");
     assert.ok(signalChanges(changed,pass).some(c => c.id === row.changedCheck && c.after === "FAIL"));

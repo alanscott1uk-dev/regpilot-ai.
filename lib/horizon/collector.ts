@@ -91,7 +91,7 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
     const url=horizonSourceUrl(path,[publisher.id]),title=plain(row.title,240),summary=plain(row.description,360),documentType=plain(row.content_store_document_type,100);
     if(!title||!documentType)throw new CollectionError('INVALID_PUBLICATION_METADATA');
     const id=digest(url),revision=digest(JSON.stringify({title,summary,documentType,updatedAt})),before=prior.get(id);
-    const item:HorizonItem={id,revision,path,url,title,summary,documentType,kind:itemKind(path,documentType),publisherIds:[publisher.id],updatedAt,firstSeenAt:before?.firstSeenAt||generatedAt,observedAt:generatedAt,discovery:!old?'BASELINE':!before?'FIRST_SEEN':before.revision!==revision?'METADATA_UPDATED':'UNCHANGED'};
+    const item:HorizonItem={id,revision,path,url,title,summary,documentType,kind:itemKind(path,documentType),publisherIds:[publisher.id],updatedAt,firstSeenAt:before?.firstSeenAt||generatedAt,observedAt:generatedAt,discovery:!old||(!priorFeed&&!before)?'BASELINE':!before?'FIRST_SEEN':before.revision!==revision?'METADATA_UPDATED':'UNCHANGED'};
     if(event){const group=openEvents.get(path)??{item,revisions:[]};group.revisions.push(revision);if(item.updatedAt>group.item.updatedAt)group.item=item;openEvents.set(path,group);}else staged.push(item);
    }
    if(retrieved>=raw.total)break;
@@ -100,7 +100,7 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
    const before=prior.get(item.id);item.revision=digest(revisions.sort().join('/'));item.title='FDA drug recall event '+item.path.split('/').pop();
    item.summary=revisions.length+' unnumbered drug recall '+(revisions.length===1?'record. ':'records. ')+(revisions.length===1?item.summary:'Open the FDA event for the individual products and reasons.');
    item.summary=item.summary.slice(0,360);
-   item.discovery=!old?'BASELINE':!before?'FIRST_SEEN':before.revision===item.revision?'UNCHANGED':'METADATA_UPDATED';staged.push(item);
+   item.discovery=!old||(!priorFeed&&!before)?'BASELINE':!before?'FIRST_SEEN':before.revision===item.revision?'UNCHANGED':'METADATA_UPDATED';staged.push(item);
   }
   for(const item of staged)if(collected.has(item.id)&&collected.get(item.id)!.revision!==item.revision)throw new CollectionError('INCONSISTENT_PUBLICATION');
   for(const item of staged){const existing=collected.get(item.id);if(existing){existing.publisherIds=[...new Set([...existing.publisherIds,publisher.id])];}else collected.set(item.id,item);}

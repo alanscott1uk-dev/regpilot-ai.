@@ -1,13 +1,28 @@
+import {unstable_cache} from 'next/cache';
+import {gzipSync,gunzipSync} from 'node:zlib';
 import {viewWatchlist} from './horizon-watchlists';
 import {MAX_WATCHLISTS, matchesHorizonView, matchingPhrase} from '../horizon/watchlists';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {PUBLIC_HORIZON_URL,MAX_REPORT_BYTES,validateReport,reportState,type HorizonReport} from '../horizon/model';
-import {boundedJson} from '../horizon/collector';
+import {boundedJson,collectHorizon} from '../horizon/collector';
 import {transaction,IntelligenceError} from './intelligence-service';
 import {requireMember,WRITER} from './workspace-member';
 import type {AuthorizedContext} from './authorization';
+// Keep a candidate's expanded discovery feeds isolated from the shared published snapshot.
+const readPreview=unstable_cache(async(commit:string)=>{
+ let previous:unknown=null;
+ try{previous=await boundedJson(PUBLIC_HORIZON_URL,fetch,MAX_REPORT_BYTES);}catch{/* The collector can establish a fresh baseline. */}
+ const report=await collectHorizon(previous,fetch,new Date(),{codeCommit:commit,runId:null});
+ report.collectionMode='ON_DEMAND_PREVIEW';
+ return gzipSync(JSON.stringify(report)).toString('base64');
+},['regpilot-horizon-release-preview-v1'],{revalidate:3600});
 export async function readPublicHorizon():Promise<HorizonReport>{
+ const commit=process.env.VERCEL_GIT_COMMIT_SHA;
+ if(process.env.VERCEL_ENV==='preview'&&commit&&/^[a-f0-9]{40}$/.test(commit)){
+  const data=await readPreview(commit);
+  return validateReport(JSON.parse(gunzipSync(Buffer.from(data,'base64'),{maxOutputLength:MAX_REPORT_BYTES}).toString('utf8')));
+ }
  // The data branch is the durable snapshot. Read it afresh so platform cache
  // revalidation cannot hide a successfully published collection from the UI.
  const raw=await boundedJson(PUBLIC_HORIZON_URL,fetch,MAX_REPORT_BYTES,'no-store');

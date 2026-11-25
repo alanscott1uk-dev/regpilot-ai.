@@ -1,11 +1,11 @@
 #!/bin/sh
 # Git automatic deployment remains disabled for the development branch.
-# Build the requested staging preview for custom source tests and resource findings.
+# Permit only the recorded staging release commits on the development branch.
 if [ "$VERCEL_GIT_COMMIT_REF" = "feature/traceability-benchmark-batch-20261106" ]; then
-  if [ "$VERCEL_ENV" = "preview" ] &&
-     [ "$(git log -1 --format=%s)" = "Release custom monitoring tests and resource findings to staging" ] &&
-     [ "$(git rev-parse HEAD^)" = "21f0f9f96a2c09358a0a271b17689de660aaae1d" ]; then
-    exit 1
+  if [ "$VERCEL_ENV" = "preview" ]; then
+    case "$(git log -1 --format='%s|%P')" in
+      'Release custom monitoring tests and resource findings to staging|21f0f9f96a2c09358a0a271b17689de660aaae1d'|'Release competitive gap improvements to RegPilot staging|eea0b63108246ccf2b68bcef68b99cb4d1fa00b0') exit 1 ;;
+    esac
   fi
   exit 0
 fi
