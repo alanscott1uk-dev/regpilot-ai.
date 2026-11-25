@@ -21,9 +21,9 @@ def deliver(origin, envelope, credential):
     reference = body["externalId"].split("/")
     database_source = (len(reference) == 3 and reference[0] == "dbsync" and reference[2] == key
                        and str(UUID(reference[1])) == reference[1])
-    cadence = (len(reference) == 3 and reference[0] == "cadence" and
+    scoped = (len(reference) == 3 and reference[0] in ("cadence", "iac") and
                re.fullmatch("[0-9a-f]{24}", reference[1]) and reference[2] == key)
-    if body["externalId"] != "opcua/" + key and not database_source and not cadence:
+    if body["externalId"] != "opcua/" + key and not database_source and not scoped:
         raise ValueError("The source reference differs from the saved delivery key")
     if not credential or not credential.isascii() or any(ord(c) < 33 or ord(c) > 126 for c in credential):
         raise ValueError("A workspace observation credential is required")

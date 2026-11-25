@@ -1,0 +1,28 @@
+RegPilot infrastructure policy collector
+
+Run the collector on a company-controlled Linux CI runner with Python 3.12 and Git. It checks a committed revision of an authorised repository. The selected Checkov policies evaluate declarative infrastructure. The underlying cloud account can differ from the committed definitions.
+
+For hourly monitoring on GitHub, copy /infrastructure-policy/monitor.yml from this RegPilot release to .github/workflows/regpilot-infrastructure.yml in the authorised repository. Set the Actions variables REGPILOT_WORKSPACE_ORIGIN and REGPILOT_CONTROL_ID and the Actions secret REGPILOT_OBSERVATION_TOKEN. Set REGPILOT_POLICY_FORMATS to the applicable space-separated format names, such as terraform kubernetes. Run the job manually to verify the first collection. The template pins the collector files by SHA-256 and then runs on the default branch each hour.
+
+For another CI system or a local scan, set REGPILOT_ORIGIN to the HTTPS origin of your RegPilot workspace. From an empty working directory, download the collector and install its pinned engine.
+
+  curl -fsS "$REGPILOT_ORIGIN/infrastructure-policy/collect.py" -o collect.py
+  curl -fsS "$REGPILOT_ORIGIN/infrastructure-policy/catalogue.json" -o catalogue.json
+  curl -fsS "$REGPILOT_ORIGIN/infrastructure-policy/requirements.txt" -o requirements.txt
+  curl -fsS "$REGPILOT_ORIGIN/instrument-bridge/deliver.py" -o deliver.py
+  python3.12 -m venv .venv
+  .venv/bin/python -m pip install -r requirements.txt
+
+Set CONTROL_ID to the workspace control UUID and REPO to the local Git checkout. Give the repository a stable source identifier. Each run creates a new evidence file. The collector preserves existing files so a delivery can be retried from its original scan.
+
+  .venv/bin/python collect.py scan --repo "$REPO" --source platform-infrastructure --control "$CONTROL_ID" --framework terraform kubernetes cloudformation --output "$RUN_ID.json"
+
+Use an existing CI schedule to run the command hourly. Set RUN_ID to a unique run identifier. Select the formats present in the repository. The collector reads regular Git blobs from HEAD into a temporary directory, disables external Terraform module downloads, and runs the selected engine formats. It reports skipped checks, incomplete coverage and parse errors. Only checks with an executed pass or fail count towards the executed-policy total. Findings include the revision, version, counts and policy IDs. Paths, source text, resource names and suppression comments stay on the runner.
+
+Create an expiring RegPilot credential with observations:write for the same control. Provide it through the runner's REGPILOT_OBSERVATION_TOKEN secret or enter it at the prompt. Send the saved result within one hour of collection.
+
+  .venv/bin/python collect.py deliver --report "$RUN_ID.json" --workspace "$REGPILOT_ORIGIN"
+
+Retry the delivery command using the same report and working directory after an interruption. RegPilot binds every part to the workspace credential and control and deduplicates by its saved key. The runner retains an acknowledgement for each part beside the report. Upon HTTP 429, retry after the rate window or once the workspace's reported allowance is available. After expiry, collect a new observation.
+
+The policy catalogue lists distinct IDs by monitoring format. A rule can apply to more than one format. A repository run returns only applicable decisions. Suppressed policies stay visible as unknown unless another resource fails the same policy.

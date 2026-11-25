@@ -488,3 +488,29 @@ test('a SQL corrective action accepts reviewed recovery only for its original ru
   await assert.rejects(()=>exportQualityCase(x.out,quality.id),rejects(404));
  }finally{await x.cleanup();}
 });
+
+test('executed infrastructure policies enter only their granted control and replay without duplicate receipts',
+ {skip:!process.env.REGPILOT_POLICY_SCAN_RECEIPTS},async()=>{
+ const {observations,summary}=JSON.parse(await readFile(process.env.REGPILOT_POLICY_SCAN_RECEIPTS!,'utf8')) as {
+  observations:{idempotencyKey:string;body:{controlId:string;externalId:string;checks:{key:string;status:string}[]}}[];
+  summary:{policiesWithResults:number;executedPolicies:number}};
+ assert.ok(summary.executedPolicies>0&&observations.length>1);
+ const x=await fixture(observations[0].body.controlId);
+ try{
+  const allowed=await x.create(['observations:write']),other=await x.create(['observations:write'],[x.ungranted.id]);
+  const submit=(credential:string,envelope:typeof observations[number])=>postObservation(new Request('https://example.invalid/api/v1/observations',{
+   method:'POST',headers:{authorization:'Bearer '+credential,'content-type':'application/json','idempotency-key':envelope.idempotencyKey},
+   body:JSON.stringify(envelope.body)}));
+  assert.equal((await submit(other.secret!,observations[0])).status,404);
+  const ids=new Set<string>(),policies=new Set<string>();
+  for(const envelope of observations){
+   const first=await submit(allowed.secret!,envelope),replay=await submit(allowed.secret!,envelope);
+   assert.equal(first.status,201);assert.equal(replay.status,201);
+   const fresh=await first.json(),again=await replay.json();assert.equal(fresh.id,again.id);assert.equal(again.reused,true);
+   assert.equal(fresh.controlId,x.primary.id);assert.equal(fresh.externalId,envelope.body.externalId);ids.add(fresh.id);
+   for(const check of envelope.body.checks.slice(1))policies.add(check.key);
+  }
+  assert.equal(ids.size,observations.length);assert.equal(policies.size,summary.policiesWithResults);
+  assert.equal(await db.customerApiObservation.count({where:{organizationId:x.a.id,controlId:x.primary.id}}),observations.length);
+ }finally{await x.cleanup();}
+});

@@ -1,0 +1,67 @@
+name: RegPilot infrastructure controls
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '13 * * * *'
+permissions:
+  contents: read
+concurrency:
+  group: regpilot-infrastructure-controls
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    env:
+      ORIGIN: ${{ vars.REGPILOT_WORKSPACE_ORIGIN }}
+      CONTROL: ${{ vars.REGPILOT_CONTROL_ID }}
+      FORMATS: ${{ vars.REGPILOT_POLICY_FORMATS || 'terraform' }}
+      SOURCE: ${{ github.repository_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the pinned RegPilot collector
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          [[ "$ORIGIN" =~ ^https://[a-zA-Z0-9.-]+(:[0-9]+)?$ ]]
+          mkdir -p regpilot-policy
+          cd regpilot-policy
+          for f in collect.py catalogue.json requirements.txt; do
+            curl --proto '=https' --fail --silent --show-error "$ORIGIN/infrastructure-policy/$f" -o "$f"
+          done
+          curl --proto '=https' --fail --silent --show-error "$ORIGIN/instrument-bridge/deliver.py" -o deliver.py
+          sha256sum --check <<'CHECKSUMS'
+          ef4bb456f4c09e22f21500eb59b8032970aff9457dbf2bc2bcfd10a261476f66  collect.py
+          ba27c912ec3b044b0948e2e69da2480e3615c1f343519b786043a3521fc720e8  catalogue.json
+          a84786833f8d4160eb1d4f07a007213c3aeae5afc6a64f3a654656cb5ca0b115  requirements.txt
+          97c2eddcc302a3faac3c138ed9c4e2cd6705e12c04fbcaa7866571fb1955a07d  deliver.py
+          CHECKSUMS
+          python -m venv env
+          env/bin/python -m pip install -r requirements.txt
+      - name: Evaluate the checked-out revision
+        working-directory: ${{ runner.temp }}/regpilot-policy
+        run: |
+          set -euo pipefail
+          read -r -a selected <<< "$FORMATS"
+          env/bin/python collect.py scan --repo "$GITHUB_WORKSPACE" --source "$SOURCE" --control "$CONTROL" --framework "${selected[@]}" --output scan.json
+      - name: Deliver scoped policy results
+        working-directory: ${{ runner.temp }}/regpilot-policy
+        env:
+          REGPILOT_OBSERVATION_TOKEN: ${{ secrets.REGPILOT_OBSERVATION_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$REGPILOT_OBSERVATION_TOKEN"
+          env/bin/python collect.py deliver --report scan.json --workspace "$ORIGIN"
+      - name: Retain the scan for retry
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regpilot-policy-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/regpilot-policy/scan.json
+          if-no-files-found: ignore
+          retention-days: 1

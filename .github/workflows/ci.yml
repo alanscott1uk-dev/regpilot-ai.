@@ -58,9 +58,23 @@ jobs:
           python-version: '3.12'
       - name: Install instrument acceptance dependency
         run: python -m venv "$RUNNER_TEMP/opcua-env" && "$RUNNER_TEMP/opcua-env/bin/python" -m pip install asyncua==1.1.8
+      - name: Execute pinned infrastructure policies on committed definitions
+        run: |
+          python -m venv "$RUNNER_TEMP/iac-env"
+          "$RUNNER_TEMP/iac-env/bin/python" -m pip install -r public/infrastructure-policy/requirements.txt
+          "$RUNNER_TEMP/iac-env/bin/python" scripts/verify-infrastructure-policies.py --output "$RUNNER_TEMP/iac-evidence"
       - run: npm run test:integration
         env:
           REGPILOT_FLEET_BENCHMARK_OUTPUT: connector-fleet-benchmark.json
+          REGPILOT_INSTRUMENT_PYTHON: ${{ runner.temp }}/opcua-env/bin/python
+          REGPILOT_POLICY_SCAN_RECEIPTS: ${{ runner.temp }}/iac-evidence/observations.json
+      - name: Save executed infrastructure policy benchmark
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrastructure-policies-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/iac-evidence/benchmark.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Save executed connector capacity benchmark
         uses: actions/upload-artifact@v4
         with:
@@ -68,8 +82,6 @@ jobs:
           path: connector-fleet-benchmark.json
           if-no-files-found: error
           retention-days: 30
-        env:
-          REGPILOT_INSTRUMENT_PYTHON: ${{ runner.temp }}/opcua-env/bin/python
       - name: Trace three live publication changes into a private workspace
         env:
           REGPILOT_PUBLIC_REGISTER_ACCEPTANCE: 'true'
