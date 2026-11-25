@@ -69,6 +69,13 @@ for category, pattern in [("registry throttling", r"toomanyrequests|rate limit|4
     if re.search(pattern, log): print("Supabase startup:", category)
 PYCODE
     if [[ $attempt == 2 ]]; then exit 1; fi
+    # Hosted runners can exhaust one public registry. Retry the same pinned images from Supabase's other registry.
+    if [[ ${GITHUB_ACTIONS:-} == true ]] && grep -Eqi 'toomanyrequests|rate limit|429|failed to pull' "$work/supabase-start.log"; then
+      case ${SUPABASE_INTERNAL_IMAGE_REGISTRY:-} in
+        public.ecr.aws) export SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io ;;
+        ghcr.io) export SUPABASE_INTERNAL_IMAGE_REGISTRY=public.ecr.aws ;;
+      esac
+    fi
     sleep 3
   done
   supabase status -o json > "$work/keys.json"

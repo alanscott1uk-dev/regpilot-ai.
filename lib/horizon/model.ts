@@ -57,7 +57,8 @@ export function validateReport(raw:unknown,now=Date.now()):HorizonReport{
  const validSize=r.feeds.length===PUBLISHERS.length||[originalPublishers,expandedPublishers,ukAndFdaPublishers].some(set=>r.feeds.length===set.size&&r.feeds.every(f=>set.has(f.id)));
  if(!validSize||manifest.size!==r.feeds.length||r.feeds.some(f=>!ids.has(f.id as any)||Date.parse(f.checkedAt)>Date.parse(r.generatedAt)))throw Error('Invalid publisher manifest');
  if(r.pipeline){const seenRuns=new Set<string>();for(const h of r.pipeline.history){if(Date.parse(h.generatedAt)>Date.parse(r.generatedAt)||seenRuns.has(h.generatedAt)||![originalPublishers.size,expandedPublishers.size,ukAndFdaPublishers.size,PUBLISHERS.length].includes(h.available+h.limited+h.unavailable))throw Error('Invalid run history');seenRuns.add(h.generatedAt);}}
- for(const i of r.items){if(i.asMadeApplication&&(!/^\/legislation\/uksi\/\d{4}\/[1-9]\d{0,5}$/.test(i.path)||i.documentType!=='statutory_instrument'))throw Error('Unexpected territorial application evidence');
+ for(const i of r.items){if(i.publisherIds.includes('eu-ema')&&(i.kind!=='Medicine shortage'||i.documentType!=='medicine_shortage_notice'))throw Error('Invalid EMA shortage classification');
+ if(i.asMadeApplication&&(!/^\/legislation\/uksi\/\d{4}\/[1-9]\d{0,5}$/.test(i.path)||i.documentType!=='statutory_instrument'))throw Error('Unexpected territorial application evidence');
  if(seen.has(i.id)||i.url!==horizonSourceUrl(i.path,i.publisherIds)||i.publisherIds.some(id=>!manifest.has(id))||new Set(i.publisherIds).size!==i.publisherIds.length||Date.parse(i.updatedAt)>now+300000||Date.parse(i.observedAt)>Date.parse(r.generatedAt)||Date.parse(i.firstSeenAt)>Date.parse(i.observedAt))throw Error('Invalid publication identity');seen.add(i.id);}
  return r;
 }

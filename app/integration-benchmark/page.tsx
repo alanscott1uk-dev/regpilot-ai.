@@ -11,7 +11,7 @@ const download=(provider:string,batch:string)=>'/api/integration-benchmark/recei
 export default async function BenchmarkPage(){
  const [history,databases,schedules]=await Promise.all([registerStagingEnabled()?publicRegisterHistory().catch(()=>null):null,databaseTestRecords().catch(()=>null),deployedDatabaseProof().catch(()=>null)]);
  const report=history?await registerBenchmark(history):null;
- return <main className={css.main}><nav className={css.nav}><a href="/">RegPilot AI</a><a href="/integration-directory">Integration directory</a><a href="/database-integrations">Database and source integrations</a><a href="/team/developers#source-verification">Customer source verification</a></nav>
+ return <main className={css.main}><nav className={css.nav}><a href="/">RegPilot AI</a><a href="/integration-directory">Integration directory</a><a href="/audit-programmes">Audit programmes</a><a href="/database-integrations">Database and source integrations</a><a href="/team/developers#source-verification">Customer source verification</a></nav>
  <header className={css.header}><h1>Integration benchmark</h1><p>RegPilot’s target is 500 distinct products with verified monitoring. This register tracks the public pharmaceutical sources observed by staging.</p></header>
  <section className={css.panel}><div className={css.intro}><h2>Verified public integrations</h2><a href="/integration-benchmark">Refresh evidence</a></div>
  {report?<><p><strong>{report.qualified} of {report.target}</strong> evidenced by this register. Each product counts once after two complete reads 24 to 24½ hours apart. A current reading can identify a control that needs follow-up.</p><p>Staging collects daily. Evidence becomes stale after 24 hours and a 30-minute collection allowance.</p>

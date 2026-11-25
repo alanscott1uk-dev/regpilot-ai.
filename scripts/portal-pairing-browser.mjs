@@ -46,6 +46,9 @@ export async function installedPortalPairing(zip){
   const nonce=randomUUID(),newPage=context.waitForEvent('page');
   assert.equal((await internal({action:'START_IMPORT',nonce,tab:currentBuyerId,capture})).ok,true);
   const importer=await newPage;await importer.waitForURL(home+'#portal-import='+nonce);
+  assert.equal((await internal({action:'INFO',tab:currentBuyerId})).canReturn,true);
+  assert.equal((await internal({action:'FOCUS_REVIEW',tab:currentBuyerId+1000})).ok,false);
+  assert.equal((await internal({action:'FOCUS_REVIEW',tab:currentBuyerId})).ok,true);
   const incoming=(action,extra={})=>importer.evaluate(async({id,m})=>chrome.runtime.sendMessage(id,m),{id,m:{action,organizationId:common.organizationId,nonce,...extra}});
   assert.deepEqual((await incoming('READ_IMPORT')).capture,capture);
   assert.equal((await incoming('READ_IMPORT',{organizationId:randomUUID()})).ok,false);

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "RegPilot questionnaire hand-off",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Start a questionnaire on the buyer page and return reviewed answers to the same tab.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmVVzcDuedbKLtQ96blMwtIw8BzK71+5nfFdCgQ4xT5XDVf4ey0XIxlPeoroel/i81ZGEQdCs0lxOlxVb+CTgQVmo5TvihX6l7rNjoSC9c3hLdGr4pAOqJ1mBJ6nwNBDHskVP+/E4eapOOi2WJV1c2hH3urRAFYPfGo/npUnz+Xn8ovcKxbQnmYpIeY0wB0MQipv3pHnQKh3Lo5+xbkVD8e12UuDekM+YmuNNN5m3dR4+5CHrP/PxrQxKiQ0elyf/GYROA0X6zK/nzt6POzSFNrXS1Lx+hD509ICE8URGU2CsLyssadrcqeI2QlNykGFvBPPFPbpvp5dsBptaMC2TjQIDAQAB",
   "permissions": [

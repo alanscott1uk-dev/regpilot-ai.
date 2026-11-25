@@ -5,12 +5,14 @@ async function send(message){const result=await chrome.runtime.sendMessage(messa
 function preview(v){ticket=v;ui('preview').textContent='RegPilot '+v.regpilotOrigin+' · Buyer '+v.origin+' · Reviewed fields: '+v.labels.join(' · ');ui('apply').disabled=false;}
 async function refresh(){
  const id=await tab(),info=await send({action:'INFO',tab:id});
+ ui('review').hidden=!info.canReturn;
  if(info.importPending){ui('start').disabled=true;ui('paired').textContent='Complete the import in the RegPilot tab.';return;}
  if(!info.paired)return;
  ui('start').disabled=true;
  pairedNonce=info.nonce;ui('send').disabled=info.captured;ui('paired').textContent='Paired questionnaire: '+info.title;
  if(info.ticket){direct=true;preview(info.ticket);}
 }
+ui('review').onclick=async()=>{try{await send({action:'FOCUS_REVIEW',tab:await tab()});}catch(e){status(e.message);}};
 ui('send').onclick=async()=>{try{ui('send').disabled=true;const id=await tab(),capture=await run(id,[null,null]);await send({action:'CAPTURE',nonce:pairedNonce,tab:id,capture});status('Field labels sent for review.');}catch(e){status(e.message);ui('send').disabled=false;}};
 ui('start').onclick=async()=>{try{
  ui('start').disabled=true;const id=await tab(),capture=await run(id,[null,null]);

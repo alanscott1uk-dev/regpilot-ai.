@@ -24,8 +24,9 @@ export async function exchange({message:m,sender,external,store,home,popup,focus
   if(!state||state.kind!=='BUYER'||state.tab!==sender.tab.id||state.organizationId!==m.organizationId||state.questionnaireId!==m.questionnaireId)return {ok:true};
   return {ok:true,nonce:state.nonce,capture:state.capture};
  }
+ if(!external&&m.action==='FOCUS_REVIEW'&&Number.isInteger(m.tab)&&m.tab===state?.buyerTab){await focus(state.tab);return {ok:true};}
  if(state?.kind==='IMPORT'){
-  if(!external&&m.action==='INFO')return {ok:true,importPending:true};
+  if(!external&&m.action==='INFO')return {ok:true,importPending:true,canReturn:m.tab===state.buyerTab};
   if(!external||state.tab!==sender.tab.id||m.nonce!==state.nonce||(state.organizationId&&state.organizationId!==m.organizationId))problem('Use the workspace and tab selected for this import.');
   if(m.action==='READ_IMPORT'){
    await store.set({pair:{...state,organizationId:m.organizationId}});return {ok:true,capture:state.capture};
@@ -46,7 +47,7 @@ export async function exchange({message:m,sender,external,store,home,popup,focus
  if(external&&m.action==='READ')return {ok:true,capture:state.capture??null};
  if(!external&&m.action==='INFO'){
   const ticket=state.buyerTab===m.tab&&Date.parse(state.ticket?.expiresAt)>now?state.ticket:null;
-  return {ok:true,title:state.title,paired:true,nonce:state.nonce,captured:!!state.capture,ticket};
+  return {ok:true,title:state.title,paired:true,nonce:state.nonce,captured:!!state.capture,canReturn:m.tab===state.buyerTab,ticket};
  }
  if(!external&&m.action==='CAPTURE'){
   if(m.nonce!==state.nonce||!Number.isInteger(m.tab)||m.tab===state.tab||!validFields(m.capture)||m.capture.origin===target.origin||state.capture)problem('Pair again before replacing the captured buyer page.');

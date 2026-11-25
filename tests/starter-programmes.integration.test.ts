@@ -24,7 +24,7 @@ async function apply(ctx:AuthorizedContext,input:StarterPlan,token:string){const
 test('starter programme preview, concurrent adoption and replay keep one owned task set through real generic completion',async()=>{
  const f=await setup(),{owner,reviewer,editor,viewer,foreign}=f,input=plan(editor.userId);
  try{
-  const empty=await starterProgrammeWorkspace(owner);assert.deepEqual(empty.packs.map(p=>p.id),['business-foundations','people-access','supplier-continuity','nhs-digital-health-england','soc2-iso27001','uk-gdp-cold-chain','uk-gmp-site-validation','nist-csf-2','iso27001-annex-a','cyber-essentials','uk-gdpr-accountability','uk-gdp-self-inspection','soc2-security','nist-800-53b-low','nist-800-53b-moderate','nist-800-53b-high','nist-800-53b-privacy']);assert.equal(empty.programmes.length,0);assert.equal(empty.programmesLimited,false);assert.equal(empty.members.length,3);
+  const empty=await starterProgrammeWorkspace(owner);assert.deepEqual(empty.packs.map(p=>p.id),['business-foundations','people-access','supplier-continuity','nhs-digital-health-england','soc2-iso27001','uk-gdp-cold-chain','uk-gmp-site-validation','nist-csf-2','iso27001-annex-a','cyber-essentials','uk-gdpr-accountability','uk-gdp-self-inspection','soc2-security','nist-800-53b-low','nist-800-53b-moderate','nist-800-53b-high','nist-800-53b-privacy','soc2-iso27001-joint']);assert.equal(empty.programmes.length,0);assert.equal(empty.programmesLimited,false);assert.equal(empty.members.length,3);
   const proposed=await preview(owner,input);assert.equal(proposed.total,2);assert.equal(await db.obligation.count({where:{organizationId:owner.organizationId}}),0);assert.equal(await db.auditEvent.count({where:{organizationId:owner.organizationId}}),0,'preview records no tasks or audit events');
   await assert.rejects(()=>preview(editor,input),(error:any)=>error.status===403);await assert.rejects(()=>preview(viewer,input),(error:any)=>error.status===403);
   await assert.rejects(()=>preview(owner,{...input,items:[{...input.items[0],assigneeId:foreign.userId}]}),(error:any)=>error.status===409);
@@ -126,6 +126,26 @@ test('a mapped evidence task is shared by both audit references in the saved pro
   assert.equal(security.rows.filter(r=>r.reference.startsWith('SOC 2 Security')).length,33);
   const fullCross=await programmeCrosswalk(f.reviewer,isoSaved.id,socId);
   assert.ok(fullCross.rows.some(r=>r.code==='A.8.32'&&r.tasks.some(t=>t.criteria.includes('CC8.1'))));
+  const jointPack=STARTER_PACKS.find(p=>p.id==='soc2-iso27001-joint')!,joint=plan(f.editor.userId,jointPack);
+  joint.items=jointPack.items.map(({key,title,why,description})=>({key,title,why,description,assigneeId,dueDate}));
+  const confirmation=(await preview(f.owner,joint)).token,jointResult=await apply(f.owner,joint,confirmation);
+  assert.equal(new Set(jointResult.taskIds).size,24);
+  assert.deepEqual((await apply(f.owner,joint,confirmation)).taskIds,jointResult.taskIds);
+  const statement=await programmeReferenceStatement(f.owner,jointResult.id);
+  assert.equal(statement.rows.filter(r=>r.reference.includes(' · CC')).length,33);
+  assert.equal(statement.rows.filter(r=>r.reference.includes(' · A.')).length,93);
+  assert.equal(statement.rows.filter(r=>r.reference.includes(' · Clause ')).length,30);
+  const shared=statement.rows.find(r=>r.reference.endsWith(' · CC6.2'))!;
+  assert.equal(statement.rows.find(r=>r.reference.endsWith(' · A.5.16'))!.taskId,shared.taskId);
+  assert.ok(shared.taskId);
+  const sample=await createEvidence(f.editor,shared.taskId,'joint-access.pdf',fixturePdf([['Joint access sample']]),{storage,scan:async()=>({status:'CLEAN',engine:'fictional-test'})});
+  await reviewEvidence(f.reviewer,sample.id,{decision:'APPROVED',version:1,notes:'The independent reviewer traced the access sample to the shared task and its source.'},storage);
+  const reviewed=await programmeReferenceStatement(f.reviewer,jointResult.id);
+  assert.deepEqual(reviewed.rows.find(r=>r.reference.endsWith(' · CC6.2'))!.reviewedFiles,reviewed.rows.find(r=>r.reference.endsWith(' · A.5.16'))!.reviewedFiles);
+  assert.ok(reviewed.rows.find(r=>r.reference===shared.reference)!.reviewedFiles.some(value=>value.startsWith(sample.id+' @ ')));
+  await decideProgrammeReference(f.reviewer,jointResult.id,{...choice,recordHash:statement.recordHash,reference:shared.reference});
+  const exportRows=referenceStatementCsv(await programmeReferenceStatement(f.reviewer,jointResult.id)).split('\r\n');
+  assert.equal(exportRows.length,157);assert.match(exportRows.find(row=>row.includes(' · CC6.2'))!,/APPLIES/);assert.match(exportRows.find(row=>row.includes(' · A.5.16'))!,/UNASSESSED/);
   assert.match(referenceStatementCsv(final),/REVIEW_NEEDED/);assert.equal(referenceStatementCsv(final).split('\r\n').length,94);
  }finally{await f.clean();}
 });

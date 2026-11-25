@@ -89,6 +89,18 @@ export default function StarterProgrammes(){
   invalidatePreview();setPackId(value.id);setName(value.title);setScopeRationale('');setOwner('');
   setItems(value.items.map(item=>({...item,included:true,assigneeId:'',dueDate:suggestedDate(item.suggestedDays)})));
  }
+ useEffect(()=>{
+  if(!data||blocked||link.id||!canCreate)return;
+  const url=new URL(window.location.href),values=url.searchParams.getAll('starter');
+  if(values.length!==1)return;
+  const selected=data.packs.find(p=>p.id===values[0]);
+  if(!selected)return;
+  url.searchParams.delete('starter');
+  window.history.replaceState(window.history.state,'',url.pathname+url.search);
+  choosePack(selected);
+  // Consume the public catalogue selection once, after workspace access and existing plans are loaded.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+ },[data,blocked,link.id,canCreate]);
  function input():PlanInput{
   if(!pack)throw new Error('Choose a starting programme first.');
   return {packId:pack.id,packVersion:pack.version,name:name.trim(),scopeRationale:scopeRationale.trim(),items:selectedItems.map(({key,title,description,why,assigneeId,dueDate})=>({key,title:title.trim(),description:description.trim(),why:why.trim(),assigneeId,dueDate}))};
@@ -149,7 +161,7 @@ export default function StarterProgrammes(){
   {(workspace.error||link.error||error)&&<div className={css.alert} role="alert"><p>{workspace.error||link.error||error}</p>{(link.error||link.id)&&organizationId&&!uncertain&&<button type="button" onClick={()=>openProgramme('')}>Open programme list</button>}</div>}
   {notice&&<p className={css.notice} role="status">{notice}</p>}
   {uncertain&&<section className={css.notice} aria-label="Unconfirmed programme creation"><strong>Check the saved result before continuing</strong><p>The creation request may have been saved. Further changes are paused while you check the existing programme. This check reads saved records without repeating the request.</p><button type="button" disabled={busy} onClick={()=>void reconcile()}>{busy?'Checking saved programmes…':'Check saved programmes'}</button></section>}
-  {!workspace.loading&&!workspace.signedIn&&<section className={css.panel}><h2>Sign in to your programmes</h2><EmailSignIn destination="/team/programmes"/></section>}
+  {!workspace.loading&&!workspace.signedIn&&<section className={css.panel}><h2>Sign in to your programmes</h2><p><a href="/audit-programmes">Browse the programmes and evidence requests</a></p><EmailSignIn destination="/team/programmes"/></section>}
   {!workspace.loading&&workspace.signedIn&&!organisations.length&&<section className={css.panel}><h2>Start with your organisation</h2><p>Create a workspace before choosing its programme and responsible people.</p><a className={css.primary} href="/team/setup">Create your organisation →</a></section>}
   {!!organisations.length&&<div className={css.toolbar}><label>Organisation<select aria-label="Organisation" disabled={busy||!!uncertain} value={organizationId} onChange={event=>{setStored(null);setLink({id:'',error:''});chooseOrganization(event.target.value);}}>{!organizationId&&<option value="" disabled>Choose an organisation</option>}{organisations.map(org=><option key={org.id} value={org.id}>{org.name}</option>)}</select></label><button type="button" disabled={!organizationId||blocked} onClick={()=>{setStored(null);setRefresh(value=>value+1);}}>Refresh programmes</button>{organizationId&&<span>Task completion records work done; it does not certify the business.</span>}</div>}
   {(workspace.loading||loading)&&<p className={css.notice} role="status">Loading starting points and saved programmes…</p>}

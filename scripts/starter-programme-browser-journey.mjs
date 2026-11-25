@@ -62,6 +62,17 @@ export async function starterProgrammeJourney(browser,base,viewport,name){
  }
  async function replaceAccount(next){auth=next;await page.evaluate(({key,value})=>{localStorage.setItem(key,JSON.stringify(value));const channel=new BroadcastChannel(key);channel.postMessage({event:'SIGNED_IN',session:value});channel.close();},{key:storageKey,value:auth});}
  try{
+  await page.goto(base+'/audit-programmes');
+  await page.getByRole('searchbox',{name:'Find a programme or control'}).fill('CC6.2');
+  await page.getByRole('button',{name:'Search',exact:true}).click();
+  await page.getByRole('link',{name:'Joint SOC 2 Security and ISO/IEC 27001 audit',exact:true}).click();
+  await page.getByRole('heading',{name:'24 editable tasks',exact:true}).waitFor();
+  assert.equal(await page.locator('details').count(),24);
+  assert.equal(await page.getByRole('link',{name:'Use this programme in your workspace'}).getAttribute('href'),'/team/programmes?starter=soc2-iso27001-joint');
+  await page.goto(base+href('/team/programmes',{starter:'business-foundations'}));
+  await page.getByLabel('Programme name',{exact:true}).waitFor();
+  assert.equal(await page.getByLabel('Programme name',{exact:true}).inputValue(),'Business foundations');
+  assert.equal(previewPosts+applyPosts,0);
   await page.goto(base+href('/team/programmes'));await page.getByRole('heading',{name:'Starter programmes',exact:true}).waitFor();
   await page.getByRole('button',{name:'Choose Business foundations',exact:true}).waitFor();
   assert.equal(await page.getByLabel('Organisation',{exact:true}).inputValue(),org);

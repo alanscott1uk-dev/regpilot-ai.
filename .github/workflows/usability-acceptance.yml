@@ -28,6 +28,9 @@ jobs:
           retention-days: 14
 
   private-evidence-journey:
+    permissions:
+      contents: read
+      packages: read
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -40,6 +43,10 @@ jobs:
       - uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb
         with:
           version: 2.83.0
+      - name: Authenticate read-only pulls of the Supabase test images
+        env:
+          REGISTRY_READ_TOKEN: ${{ github.token }}
+        run: echo "$REGISTRY_READ_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
       - name: Run local authenticated browser suite with disposable services
         env:
           REGPILOT_BROWSER_INSTALL_DEPS: "1"
@@ -50,3 +57,6 @@ jobs:
           name: regpilot-private-evidence-journey
           path: artifacts/usability/private-evidence/
           retention-days: 14
+      - name: Clear test registry login
+        if: always()
+        run: docker logout ghcr.io

@@ -24,6 +24,7 @@ test('EMA shortage notices keep their EU source, status and revision and reject 
  const item=first.items.find(i=>i.publisherIds.includes('eu-ema'))!;assert.equal(item.url,row.shortage_url);assert.equal(item.kind,'Medicine shortage');
  const updated=await collectHorizon(first,read([{...row,supply_shortage_status:'Shortage resolved',last_updated_date:'11/11/2026'}]),now);
  assert.equal(updated.items.find(i=>i.id===item.id)?.discovery,'METADATA_UPDATED');
+ assert.throws(()=>validateReport({...first,items:[{...item,kind:'Safety alert'}]},+now));
  const oldManifest={...first,feeds:first.feeds.filter(f=>f.id!=='eu-ema'),items:first.items.filter(i=>i!==item)};
  assert.doesNotThrow(()=>validateReport(oldManifest,+now));
  for(const bad of [read([row],2),read([{...row,shortage_url:'https://wrong.example/record'}]),read([{...row,first_published_date:'31/02/2026'}])]){

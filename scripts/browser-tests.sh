@@ -52,4 +52,7 @@ settings=("HOME=$HOME" "PATH=$PATH" "NEXT_TELEMETRY_DISABLED=1")
 for key in TMPDIR CI HTTPS_PROXY HTTP_PROXY ALL_PROXY NO_PROXY https_proxy http_proxy no_proxy NODE_EXTRA_CA_CERTS SSL_CERT_FILE PLAYWRIGHT_BROWSERS_PATH PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH REGPILOT_BROWSER_INSTALL_DEPS DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG; do
   if [[ -n ${!key:-} ]]; then settings+=("$key=${!key}"); fi
 done
+if [[ ${GITHUB_ACTIONS:-} == true ]]; then
+  settings+=("GITHUB_ACTIONS=true" "SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io")
+fi
 env -i "${settings[@]}" bash scripts/browser-test-stack.sh "$mode" "$work"

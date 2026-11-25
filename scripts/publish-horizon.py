@@ -5,7 +5,9 @@ BRANCH='regpilot-public-feed'
 PUBLISHERS={'mhra','home-office','hmrc','companies-house','business-trade','cma','environment-agency','defra','dwp','product-safety','dsit','dhsc'}
 PREVIOUS_PUBLISHERS=PUBLISHERS|{'ukhsa','vmd','hse','us-fda'}
 INSTRUMENTS={'uksi','ssi','wsi','nisr'}
-ALL_PUBLISHERS=PREVIOUS_PUBLISHERS|INSTRUMENTS
+UK_AND_FDA_PUBLISHERS=PREVIOUS_PUBLISHERS|INSTRUMENTS
+ALL_PUBLISHERS=UK_AND_FDA_PUBLISHERS|{'eu-ema'}
+PUBLISHER_GENERATIONS=(PUBLISHERS,PREVIOUS_PUBLISHERS,UK_AND_FDA_PUBLISHERS,ALL_PUBLISHERS)
 def validate(data, expected_commit=None, max_age_hours=2):
     assert set(data)-{'pipeline'}=={'format','generatedAt','windowStart','codeCommit','runId','previousAvailable','feeds','items','limitations'}
     assert data['format']=='regpilot-horizon-v1'
@@ -22,7 +24,7 @@ def validate(data, expected_commit=None, max_age_hours=2):
     if expected_commit: assert data['codeCommit']==expected_commit
     assert data['runId'] is None or re.fullmatch('[0-9]{1,30}',data['runId'])
     assert isinstance(data['limitations'],list) and len(data['limitations'])<=8 and all(isinstance(v,str) and len(v)<=400 for v in data['limitations'])
-    feeds=data['feeds'];manifest={f['id'] for f in feeds};assert len(feeds)==len(manifest) and manifest in (PUBLISHERS,PREVIOUS_PUBLISHERS,ALL_PUBLISHERS)
+    feeds=data['feeds'];manifest={f['id'] for f in feeds};assert len(feeds)==len(manifest) and manifest in PUBLISHER_GENERATIONS
     for f in feeds:
         assert set(f)-{'retryAt','failureCount'}=={'id','state','checkedAt','total','retrieved','reason'}
         if 'failureCount' in f:assert type(f['failureCount']) is int and 0<=f['failureCount']<=100
@@ -45,6 +47,11 @@ def validate(data, expected_commit=None, max_age_hours=2):
             assert item['publisherIds']==['us-fda'] and (number or event)
             expected='recall_number:%22'+number[1].upper()+'%22' if number else 'event_id:'+event[1]
             assert item['url']=='https://api.fda.gov/drug/enforcement.json?search='+expected
+        elif 'eu-ema' in item['publisherIds']:
+            match=re.fullmatch(r'/eu-ema/shortages/([a-z0-9]+(?:-[a-z0-9]+)*)',path)
+            assert item['publisherIds']==['eu-ema'] and match
+            assert item['url']=='https://www.ema.europa.eu/en/medicines/human/shortages/'+match[1]
+            assert item['kind']=='Medicine shortage' and item['documentType']=='medicine_shortage_notice'
         elif INSTRUMENTS.intersection(item['publisherIds']):
             parts=re.fullmatch(r'/legislation/(uksi|ssi|wsi|nisr)/(\d{4})/([1-9]\d{0,5})(?:/corrections/(en|we|cy|mi)/(\d{3}))?',path)
             assert parts and item['publisherIds']==[parts[1]]
@@ -52,7 +59,7 @@ def validate(data, expected_commit=None, max_age_hours=2):
             base=f'https://www.legislation.gov.uk/{code}/{year}/{number}'
             expected=f'{base}/pdfs/{code}cs_{year}{number.zfill(4)}_{language}_{seq}.pdf' if seq else base+'/made'
             assert item['url']==expected
-        else:assert not path.startswith(('/us-fda/','/legislation/')) and item['url']=='https://www.gov.uk'+path
+        else:assert not path.startswith(('/us-fda/','/eu-ema/','/legislation/')) and item['url']=='https://www.gov.uk'+path
         if 'asMadeApplication' in item:
             clause=item['asMadeApplication']
             assert item['publisherIds']==['uksi'] and re.fullmatch(r'/legislation/uksi/\d{4}/[1-9]\d{0,5}',path) and item['documentType']=='statutory_instrument'
@@ -61,7 +68,7 @@ def validate(data, expected_commit=None, max_age_hours=2):
             extent=r'(?:England and Wales|Scotland|Northern Ireland|England, Wales and Scotland|the United Kingdom)'
             assert re.fullmatch(r'(?:These (?:Regulations|Rules) (?:extend to '+extent+r' and )?apply|This Order (?:extends to '+extent+r' and )?applies) (?:in relation to |in |to )(?:England|Wales|Scotland|Northern Ireland) only\.',clause['wording'])
         for key,limit in [('title',240),('summary',360),('documentType',100)]:assert isinstance(item[key],str) and len(item[key])<=limit
-        assert item['title'] and item['kind'] in ('Safety alert','Consultation','Regulation or decision','Guidance','Policy','News','Other publication')
+        assert item['title'] and item['kind'] in ('Safety alert','Medicine shortage','Consultation','Regulation or decision','Guidance','Policy','News','Other publication')
         assert isinstance(item['publisherIds'],list) and 1<=len(item['publisherIds'])<=len(manifest) and set(item['publisherIds'])<=manifest
         assert date(item['firstSeenAt'])<=date(item['observedAt'])<=generated;date(item['updatedAt'])
         assert item['discovery'] in ('BASELINE','FIRST_SEEN','METADATA_UPDATED','UNCHANGED')
@@ -77,7 +84,7 @@ def validate(data, expected_commit=None, max_age_hours=2):
             assert h['runId'] is None or re.fullmatch('[0-9]{1,30}',h['runId'])
             assert type(h['publications']) is int and 0<=h['publications']<=10000
             for k in ['available','limited','unavailable']:assert type(h[k]) is int and 0<=h[k]<=len(ALL_PUBLISHERS)
-            assert h['available']+h['limited']+h['unavailable'] in (len(PUBLISHERS),len(PREVIOUS_PUBLISHERS),len(ALL_PUBLISHERS))
+            assert h['available']+h['limited']+h['unavailable'] in tuple(map(len,PUBLISHER_GENERATIONS))
     return data
 
 def main():
