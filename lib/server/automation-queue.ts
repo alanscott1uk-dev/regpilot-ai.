@@ -64,7 +64,7 @@ export async function executeAutomationEvent(event:AutomationEvent,handler:Handl
    if(!ack.count)throw new AutomationSuperseded();
    await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,entityType:'AutomationEvent',entityId:current.id,action:'automation.'+state.toLowerCase(),details:{kind:current.kind,attempt:current.attempts,connectorId:current.connectorId}}});
    return state;
-  },8);
+  },8,'leased-connector');
  }catch(error){
   if(error instanceof AutomationSuperseded)return 'SUPERSEDED';
   if(error instanceof ReactionPaused||error instanceof DatabaseContention){

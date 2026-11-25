@@ -315,15 +315,19 @@ async function assertJob(tx:Prisma.TransactionClient,job:EvidenceConnector){
  const rows=await tx.$queryRaw<Array<{id:string}>>`SELECT id FROM "EvidenceConnector" WHERE id=${job.id}::uuid AND "organizationId"=${job.organizationId}::uuid AND enabled=true AND version=${job.version} AND "leaseToken"=${job.leaseToken}::uuid AND "leaseUntil">NOW() FOR UPDATE`;
  if(!rows.length)throw new Superseded();
  await requireMember(tx,{organizationId:job.organizationId,userId:job.configuredById,role:"ADMIN"},ADMIN);
- const control=await tx.managedControl.findFirst({where:{id:job.controlId,organizationId:job.organizationId,enabled:true},include:{owner:{select:{email:true}}}});if(!control)throw new IntelligenceError("Control is paused",403);
- const owner=await tx.membership.findUnique({where:{organizationId_userId:{organizationId:job.organizationId,userId:control.ownerId}}});if(!owner||owner.role==="VIEWER")throw new IntelligenceError("Control ownership needs review",403);return control;
+ const [control]=await tx.$queryRaw<{ownerId:string}[]>`SELECT "ownerId" FROM "ManagedControl"
+  WHERE id=${job.controlId}::uuid AND "organizationId"=${job.organizationId}::uuid AND enabled=true FOR SHARE`;
+ if(!control)throw new IntelligenceError("Control is paused",403);
+ const [owner]=await tx.$queryRaw<{role:string}[]>`SELECT role::text AS role FROM "Membership"
+  WHERE "organizationId"=${job.organizationId}::uuid AND "userId"=${control.ownerId}::uuid FOR SHARE`;
+ if(!owner||owner.role==="VIEWER")throw new IntelligenceError("Control ownership needs review",403);
 }
 type WriteQueue=<T>(write:()=>Promise<T>)=>Promise<T>;
 async function collectConnectorJob(job:EvidenceConnector,collector:Collector,manual:boolean,queueWrite?:WriteQueue){
  const ctx:AuthorizedContext={organizationId:job.organizationId,userId:job.configuredById,role:"ADMIN"};
  let permit:ProviderPermit|undefined,providerOutcome='NEUTRAL';
  try{
-  await transaction(ctx,tx=>assertJob(tx,job),8);if(job.attempts>3)throw new CollectionError("INTERRUPTED_REPEATEDLY");
+  await transaction(ctx,tx=>assertJob(tx,job),8,'leased-connector');if(job.attempts>3)throw new CollectionError("INTERRUPTED_REPEATEDLY");
   if(requiresStoredSecret(job.provider)&&!job.encryptedSecret)throw new CollectionError("CREDENTIAL_UNAVAILABLE");
   const admission=await acquireProviderPermit(job.provider,job.organizationId);
   if(!admission.allowed){
@@ -356,7 +360,7 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector,man
    const current=await tx.evidenceConnector.findUniqueOrThrow({where:{id:job.id},select:{eventRevision:true}});
    await tx.evidenceConnector.update({where:{id:job.id},data:{leaseToken:null,leaseUntil:null,attempts:0,lastSuccessAt:new Date(),failureCode:null,collectedEventRevision:job.eventRevision,nextRunAt:new Date(Date.now()+(current.eventRevision>job.eventRevision?60000:job.intervalHours*3600000))}});
    await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:"connector.evidence_collected",entityType:"EvidenceConnector",entityId:job.id,details:{runId:run.id,collectionMode,intervalHours:job.intervalHours,scopeHash:connectorScopeHash(job),outcome,resultHash:run.resultHash,configVersion:job.version,changedChecks:changes.map(c=>c.id)}}});return outcome;
-  },8);
+  },8,'leased-connector');
   return await (queueWrite?queueWrite(save):save());
  }catch(error){
   if(error instanceof Superseded||!connectorProviderEnabled(job.provider))return "SUPERSEDED";

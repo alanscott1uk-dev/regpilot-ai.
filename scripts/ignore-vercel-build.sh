@@ -15,6 +15,7 @@ if [ "$VERCEL_GIT_COMMIT_REF" = "feature/traceability-benchmark-batch-20261106" 
       'Scale connector ingestion and verify hourly upstream freshness|f52b9c40d2966b328485453628e6ec4ef0261fb1') exit 1 ;;
       'Run pinned infrastructure policies against exact customer source revisions|5cacdc2adfbb1672d8930088e46581a5a0748330') exit 1 ;;
       'Authenticate infrastructure monitors to the approved staging origin|da466c9de0e391955a322f832aa59ef52dea5bfc') exit 1 ;;
+      'Fence receipt writes by workspace across independent collector workers|9eb2ed7c37fbee310dbf46935344febe9ab37eaf') exit 1 ;;
     esac
   fi
   exit 0

@@ -201,7 +201,8 @@ async function benchmarkFleet(t:TestContext,tenantCount:number,workers=1){
   const drainStart=performance.now();
   for(let i=0;i<10;i++){
    const drain=await runAutomationBatch();
-   assert.equal(drain.outcomes.filter(outcome=>outcome!=='DONE').length,0,'Committed events must settle without a failed receipt');
+   const unsettled=drain.outcomes.filter(outcome=>outcome!=='DONE');
+   assert.deepEqual(unsettled,[],'Unexpected event outcomes: '+JSON.stringify(unsettled));
    if(!drain.limitReached)break;
    assert.ok(drain.processed>0,'Pending events must make progress');
   }
@@ -230,7 +231,7 @@ async function benchmarkFleet(t:TestContext,tenantCount:number,workers=1){
 
 test('the scheduled connector engine drains 500 distinct HTTP targets in a single tenant and across 25 tenants, recovering crashed leases',async t=>{
  const scenarios=[];
- for(const [tenants,workers] of [[1,1],[25,1],[25,2]])scenarios.push(await benchmarkFleet(t,tenants,workers));
+ for(const [tenants,workers] of [[1,1],[25,1],[25,2],[25,4]])scenarios.push(await benchmarkFleet(t,tenants,workers));
  if(process.env.REGPILOT_FLEET_BENCHMARK_OUTPUT)
   await writeFile(process.env.REGPILOT_FLEET_BENCHMARK_OUTPUT,JSON.stringify({format:'regpilot-connector-capacity-v1',scenarios},null,2)+'\n');
 });

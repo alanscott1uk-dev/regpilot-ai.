@@ -21,6 +21,34 @@ async function fixture(){
  async function claim(){const row=await event();await db.automationEvent.update({where:{id:row.id},data:{availableAt:new Date(0)}});const job=await claimAutomationEvent({id:row.id,organizationId:x.a.id});assert.ok(job);return job;}
  return {...x,config,saved,observation,collect,event,claim,loads:()=>loads};
 }
+test('a collected response waiting for its workspace lock sees the committed control pause',async()=>{
+ const f=await fixture();
+ let finishEdit=()=>{},returnRead=()=>{},edit:Promise<unknown>|undefined,reading:Promise<string>|undefined;
+ try{
+  const job=await claimConnector();assert.ok(job);
+  let announceRead=()=>{},announceWrite=()=>{},announceEdit=()=>{};
+  const enteredRead=new Promise<void>(resolve=>{announceRead=resolve;});
+  const allowResponse=new Promise<void>(resolve=>{returnRead=resolve;});
+  const enteredWrite=new Promise<void>(resolve=>{announceWrite=resolve;});
+  const locked=new Promise<void>(resolve=>{announceEdit=resolve;});
+  const allowCommit=new Promise<void>(resolve=>{finishEdit=resolve;});
+  reading=executeConnector(job,async()=>{announceRead();await allowResponse;return f.observation;},
+   {deferAutomation:true,queueWrite:save=>{announceWrite();return save();}});
+  await enteredRead;
+  edit=db.$transaction(async tx=>{
+   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${f.a.id},0))`;
+   await tx.managedControl.update({where:{id:job.controlId},data:{enabled:false}});
+   announceEdit();await allowCommit;
+  });
+  await locked;returnRead();await enteredWrite;
+  // The observation transaction has started while the control change remains uncommitted.
+  await new Promise(resolve=>setTimeout(resolve,60));
+  finishEdit();await edit;
+  assert.equal(await reading,'ATTENTION');
+  assert.equal(await db.connectorRun.count({where:{connectorId:f.saved.id}}),0);
+  assert.equal((await db.evidenceConnector.findUniqueOrThrow({where:{id:f.saved.id}})).failureCode,'PERMISSION_REVOKED');
+ }finally{finishEdit();returnRead();await Promise.allSettled([edit,reading]);await f.cleanup();}
+});
 test('evidence survives downstream failure; task effects and acknowledgement roll back together, then recover once',async()=>{
  const f=await fixture();
  try{

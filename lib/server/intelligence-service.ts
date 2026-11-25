@@ -19,14 +19,30 @@ function uuid(value:string) {
 export class DatabaseContention extends IntelligenceError {
  constructor(){super("Another transaction changed these records. Try again.",409);}
 }
-// A retry re-enters only the database callback. External reads must stay outside it.
-export async function transaction<T>(ctx:AuthorizedContext,fn:(tx:Prisma.TransactionClient)=>Promise<T>,serializationAttempts=3):Promise<T> {
+class WorkspaceLockBusy extends Error{}
+type IsolationMode='workspace'|'leased-connector';
+// The connector row and its owner/control are locked explicitly. Each connector transaction
+// reads one consistent tenant snapshot without serializable predicate conflicts on other tenants' inserts.
+// Never take its snapshot while waiting on a previous writer for the same organisation.
+export async function transaction<T>(ctx:AuthorizedContext,fn:(tx:Prisma.TransactionClient)=>Promise<T>,serializationAttempts=3,mode:IsolationMode='workspace'):Promise<T> {
+  const lockDeadline=Date.now()+12000;
   for(let attempt=0;attempt<serializationAttempts;attempt++) {
     try {return await db.$transaction(async tx => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${ctx.organizationId}, 0))`;
+      if(mode==='leased-connector'){
+        const [slot]=await tx.$queryRaw<{locked:boolean}[]>`SELECT pg_try_advisory_xact_lock(hashtextextended(${ctx.organizationId}, 0)) AS locked`;
+        if(!slot?.locked)throw new WorkspaceLockBusy();
+      }else{
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${ctx.organizationId}, 0))`;
+      }
       return fn(tx);
-    },{isolationLevel:"Serializable",maxWait:5000,timeout:12000});}
+    },{isolationLevel:mode==='leased-connector'?"RepeatableRead":"Serializable",maxWait:5000,timeout:12000});}
     catch(e) {
+      if(e instanceof WorkspaceLockBusy){
+        if(Date.now()>=lockDeadline)throw new DatabaseContention();
+        await new Promise(resolve=>setTimeout(resolve,12+Math.random()*24));
+        attempt--; // No callback ran. Retry admission with a new snapshot.
+        continue;
+      }
       if(!(e instanceof Prisma.PrismaClientKnownRequestError))throw e;
       if(e.code==='P2002'){
         if(attempt<2)continue;

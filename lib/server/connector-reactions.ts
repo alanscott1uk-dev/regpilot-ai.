@@ -13,12 +13,16 @@ export class ReactionInvalid extends Error {constructor(public code:'INPUT_INTEG
 export class ReactionPaused extends Error{}
 export async function followUpConnectorControls(tx:Prisma.TransactionClient,job:EvidenceConnector,reason:string,onlyControlIds?:string[],trigger?:{run:ConnectorRun;changed:boolean}){
  const ids=onlyControlIds||await connectorControlIds(tx,job.organizationId,job.id,job.controlId);
- const controls=await tx.managedControl.findMany({where:{id:{in:ids},organizationId:job.organizationId,enabled:true},include:{owner:{select:{email:true}}},orderBy:{id:'asc'}});
+ if(!ids.length)return 0;
+ const controls=await tx.$queryRaw<{id:string;ownerId:string;title:string;email:string}[]>`
+  SELECT c.id,c."ownerId",c.title,u.email FROM "ManagedControl" c JOIN "User" u ON u.id=c."ownerId"
+  WHERE c."organizationId"=${job.organizationId}::uuid AND c.id=ANY(${ids}::uuid[]) AND c.enabled=true
+  ORDER BY c.id FOR SHARE OF c,u`;
  let created=0;
  for(const control of controls){
   try{await requireMember(tx,{organizationId:job.organizationId,userId:control.ownerId,role:'EDITOR'},WRITER);}catch(e){if(e instanceof IntelligenceError&&e.status===403)continue;throw e;}
   const existing=await tx.obligation.findFirst({where:{organizationId:job.organizationId,connectorId:job.id,controlId:control.id,status:{not:'COMPLETE'}},orderBy:[{createdAt:'asc'},{id:'asc'}],select:{id:true,category:true}});
-  const task=existing??await tx.obligation.create({data:{organizationId:job.organizationId,title:('Review connected evidence: '+control.title).slice(0,160),ownerName:control.owner.email,assigneeId:control.ownerId,controlId:control.id,connectorId:job.id,category:'Automated evidence follow-up',dueDate:new Date(),notes:reason+' Review the collection and record your decision.'},select:{id:true,category:true}});
+  const task=existing??await tx.obligation.create({data:{organizationId:job.organizationId,title:('Review connected evidence: '+control.title).slice(0,160),ownerName:control.email,assigneeId:control.ownerId,controlId:control.id,connectorId:job.id,category:'Automated evidence follow-up',dueDate:new Date(),notes:reason+' Review the collection and record your decision.'},select:{id:true,category:true}});
   if(!existing)created++;
   if(trigger&&task.category==='Automated evidence follow-up'){
    await recordTaskObservation(tx,job.configuredById,{id:task.id,organizationId:job.organizationId,connectorId:job.id,controlId:control.id},trigger.run,trigger.changed);
@@ -29,12 +33,14 @@ export async function followUpConnectorControls(tx:Prisma.TransactionClient,job:
 
 /** Database effects only. The queue commits effects and acknowledgement together. */
 export async function applyConnectorReaction(tx:Prisma.TransactionClient,event:AutomationEvent):Promise<'DONE'|'CANCELLED'>{
- const job=await tx.evidenceConnector.findFirst({where:{id:event.connectorId,organizationId:event.organizationId}});
+ const [job]=await tx.$queryRaw<EvidenceConnector[]>`SELECT * FROM "EvidenceConnector"
+  WHERE id=${event.connectorId}::uuid AND "organizationId"=${event.organizationId}::uuid FOR SHARE`;
  if(!job||(!job.enabled&&event.kind!=='CONNECTOR_FAILED')||job.version!==event.configVersion)return 'CANCELLED';
  if(!connectorProviderEnabled(job.provider))throw new ReactionPaused();
  const ctx={organizationId:job.organizationId,userId:job.configuredById,role:'ADMIN' as const};
  try{await requireMember(tx,ctx,ADMIN);}catch(error){if(error instanceof IntelligenceError&&error.status===403)return 'CANCELLED';throw error;}
- const control=await tx.managedControl.findFirst({where:{id:job.controlId,organizationId:job.organizationId,enabled:true}});
+ const [control]=await tx.$queryRaw<{id:string}[]>`SELECT id FROM "ManagedControl"
+  WHERE id=${job.controlId}::uuid AND "organizationId"=${job.organizationId}::uuid AND enabled=true FOR SHARE`;
  if(!control)return 'CANCELLED';
  if(event.kind==='CONNECTOR_OBSERVED'){
   const run=event.runId?await tx.connectorRun.findFirst({where:{id:event.runId,organizationId:job.organizationId,connectorId:job.id,configVersion:event.configVersion}}):null;
