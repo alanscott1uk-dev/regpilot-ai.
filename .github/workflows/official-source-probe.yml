@@ -34,6 +34,9 @@ jobs:
       - name: Discover newly published and updated official material
         if: ${{ !cancelled() }}
         run: node --import tsx scripts/collect-horizon.mjs
+      - name: Verify the collected snapshot against the publication contract
+        if: ${{ !cancelled() && hashFiles('artifacts/horizon.json') != '' }}
+        run: python scripts/publish-horizon.py --validate-only
       - name: Measure discovery against the two official MHRA publication indexes
         if: ${{ !cancelled() && hashFiles('artifacts/horizon.json') != '' }}
         run: node --import tsx scripts/assess-mhra-indexes.mjs

@@ -2,6 +2,7 @@ import {execFileSync,spawnSync} from 'node:child_process';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {resolve} from 'node:path';
+import {validationReviewPdf} from './validation-review-pdf.mjs';
 
 const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
 const sha=git('rev-parse','HEAD'),parent=git('rev-parse','HEAD^1');
@@ -27,7 +28,7 @@ const pack={format:'regpilot-pharma-validation-v1',revision:sha,parent,startedAt
  changes:git('diff','--name-status',parent,sha).split('\n').filter(Boolean),
  commitSubject:git('show','-s','--format=%s',sha),command:[process.execPath,...args]};
 const dir='artifacts/pharma-validation';mkdirSync(dir,{recursive:true});
-const files={'validation.json':JSON.stringify(pack,null,2)+'\n','execution.ndjson':result.stdout,
+const files={'release-review.pdf':await validationReviewPdf(pack),'validation.json':JSON.stringify(pack,null,2)+'\n','execution.ndjson':result.stdout,
  'review.md':['# Pharmaceutical release validation','',sha,'',pack.environment,'',pack.scope,'',...rows.map(r=>'- '+r.id+' · '+r.result+' · '+r.requirement+' ('+r.file+':'+r.line+')'),'','## Changes since '+parent,'',...pack.changes.map(path=>'- '+path),''].join('\n')};
 const checksums=[];for(const [name,value] of Object.entries(files)){writeFileSync(dir+'/'+name,value);checksums.push(createHash('sha256').update(value).digest('hex')+'  '+name);}
 writeFileSync(dir+'/SHA256SUMS',checksums.join('\n')+'\n');console.log(rows.length+' executed requirements for '+sha);

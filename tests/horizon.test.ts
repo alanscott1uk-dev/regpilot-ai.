@@ -198,6 +198,8 @@ test('dated legislation indexes preserve instrument identity, bilingual titles a
  const {coverageSample,measureCoverage}=await import('../lib/horizon/coverage-sample');
  const d='2026-11-11',entry=(id:string,title:string)=>'<entry><id>'+id+'</id><title>'+title+'</title><published>'+d+'T14:45:00Z</published></entry>';
  const issued='http://www.legislation.gov.uk/id/ssi/2026/336',correction='http://www.legislation.gov.uk/ssi/2026/115/pdfs/ssics_20260115_en_002.pdf',welsh='http://www.legislation.gov.uk/id/wsi/2026/111';
+ const bilingualSlip='https://www.legislation.gov.uk/wsi/2026/85/pdfs/wsics_20260085_mi_001.pdf';
+ assert.equal(instrumentReference(bilingualSlip,'wsi'),bilingualSlip);
  const contents=entry(issued,'Fictional Scottish instrument')+entry(correction,'Correction slip')+entry(welsh,'<div xmlns="http://www.w3.org/1999/xhtml"><span>Welsh</span> / <span>Cymraeg</span></div>');
  assert.equal(parseInstrumentPage(daily(d,contents),d,1).rows[2].title,'Welsh / Cymraeg');
  assert.throws(()=>parseInstrumentPage(daily(d,contents),d,2));

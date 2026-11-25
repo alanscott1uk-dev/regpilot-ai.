@@ -1,6 +1,13 @@
 import {scheduledEvidence,missingMonitoringEvidence,sameKnownChecks} from '../lib/monitoring-criteria';
 import test from "node:test";
 import assert from "node:assert/strict";
+import {portalTable} from '../lib/portal-table';
+
+test('copying a portal grid keeps empty rows and encodes formula-like answers as text',()=>{
+ const result=portalTable(['Question one','Question two','Question three'],[{label:'Question three',answer:' =fictional()'},{label:'Question one',answer:'First line\nsecond line'}]);
+ assert.equal(result,"Question one\tFirst line second line\r\nQuestion two\t\r\nQuestion three\t'=fictional()");
+});
+
 import {collectWorkforce} from "../lib/connectors/workforce";
 import {collectAwsOrganization,inspectAwsOrganization} from "../lib/connectors/aws-organization";
 import {CollectionError} from "../lib/connectors/collection-error";

@@ -94,12 +94,20 @@ export async function starterProgrammeCustomerJourney({review,upload,db,app,org,
  await review.getByRole('checkbox',{name:'I have reviewed these tasks, owners and dates.',exact:true}).check();
  await review.getByRole('button',{name:'Create 2 tasks',exact:true}).click();
  const statement=review.getByRole('region',{name:'Saved programme',exact:true});
- await statement.getByText('Statement of applicability by framework reference',{exact:true}).click();
+ const [referenceResponse]=await Promise.all([
+  review.waitForResponse(response=>new URL(response.url()).pathname.endsWith('/references')&&response.request().method()==='GET'),
+  statement.getByText('Statement of applicability by framework reference',{exact:true}).click()
+ ]);
+ const scope=await bounded(referenceResponse.json(),'Annex A reference statement');
+ assert.equal(referenceResponse.status(),200,scope.error);
+ assert.equal(scope.rows.length,93);
  await statement.getByLabel('Framework reference',{exact:true}).selectOption({index:0});
  await statement.getByLabel('Applicability',{exact:true}).selectOption('APPLIES');
  await statement.getByLabel('Reason for this decision',{exact:true}).fill('The fictional site assigns responsibility for information security through its approved local policy.');
  await statement.getByRole('button',{name:'Save scope decision',exact:true}).click();
- await statement.getByText('1 of 93 references have a scope decision.',{exact:true}).waitFor();
+ await statement.getByText('Decisions recorded for 1 of 93 references.',{exact:true}).waitFor();
+ await statement.getByRole('button',{name:'Review next unassessed reference',exact:true}).click();
+ assert.equal(await statement.getByLabel('Framework reference',{exact:true}).inputValue(),scope.rows[1].reference);
  const downloadReady=review.waitForEvent('download');
  await statement.getByRole('button',{name:'Download statement of applicability',exact:true}).click();
  const csv=await readFile(await (await downloadReady).path(),'utf8');

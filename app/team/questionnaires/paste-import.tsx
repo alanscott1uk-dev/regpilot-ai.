@@ -29,8 +29,8 @@ export function PasteImport({organizationId,members,products,request,write,locke
  <p aria-live="polite">{rows.length} questions · Existing approved answers will be suggested for review.</p>
  <div className={css.formGrid}><label>Questionnaire title<input name="title" minLength={3} maxLength={160} required/></label>
  <label>Buyer or recipient<input name="recipient" minLength={2} maxLength={160} required/></label><label>Scope of the answers<input name="scope" minLength={2} maxLength={120} required/></label>
- <label>Question owner<select name="owner" required defaultValue=""><option value="">Choose a colleague</option>{members.map(m=><option key={m.user.id} value={m.user.id}>{m.user.email}</option>)}</select></label>
- <label>Product covered<select name="product"><option value="">General questionnaire</option>{products.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label></div>
+ <label>Question owner<select aria-label="Question owner" name="owner" required defaultValue=""><option value="">Choose a colleague</option>{members.map(m=><option key={m.user.id} value={m.user.id}>{m.user.email}</option>)}</select></label>
+ <label>Product covered<select aria-label="Product covered" name="product"><option value="">General questionnaire</option>{products.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label></div>
  <label><input type="checkbox" required/>I checked the questions, recipient, product and scope.</label>
  {error&&<p role="alert">{error}</p>}<button disabled={rows.length<1||rows.length>100}>Create questionnaire from {rows.length} questions</button>
  </fieldset></form></details>;
