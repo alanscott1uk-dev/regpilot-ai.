@@ -86,6 +86,33 @@ test('GitHub repository policies distinguish missing fields, actual failures and
  setup();const sample=pdSample([source],'794e38e1-b6aa-40ab-9b5f-925f87138d6a',recipe);
  assert.deepEqual(sample.policyChecks?.map(c=>c.status),githubInventoryChecks([source]).map(c=>c.status));
 });
+test('the GitHub monitor verifies bounded single-repository settings using the same authorised account',async()=>{
+ setup();
+ const org='794e38e1-b6aa-40ab-9b5f-925f87138d6a',account='apn_detail';
+ const recipe=productReads.find(r=>r.app==='github'&&r.action==='list-repositories')!;
+ const repos=Array.from({length:5},(_,i)=>({id:i+1,full_name:'owner/repo-'+i,disabled:false}));
+ let substitute=false,detailReads=0;
+ const fetcher:typeof fetch=async(input,options)=>{
+  const url=new URL(String(input));
+  if(url.pathname.endsWith('/oauth/token'))return Response.json({access_token:'test-details',expires_in:3600});
+  if(url.pathname.endsWith('/accounts')){
+   assert.equal(url.searchParams.get('external_user_id'),'regpilot-'+org);
+   return Response.json({data:[{id:account,healthy:false,app:{name_slug:'github'}}],page_info:{total_count:1}});
+  }
+  const body=JSON.parse(String(options?.body));
+  assert.equal(body.external_user_id,'regpilot-'+org);assert.equal(body.configured_props.github.authProvisionId,account);
+  if(body.id==='github-list-repositories')return Response.json({ret:repos});
+  assert.equal(body.id,'github-get-repository');assert.equal(body.version,'0.1.3');detailReads++;
+  const row=repos.find(r=>r.full_name===body.configured_props.repoFullname)!;assert.ok(row);
+  if(row.id===2)return Response.json({error:'permission denied'},{status:403});
+  return Response.json({ret:{...row,id:substitute?10:row.id,delete_branch_on_merge:row.id!==1}});
+ };
+ const observed=await readProduct(org,account,recipe,fetcher);
+ assert.equal(detailReads,4);assert.equal(observed.count,5);
+ const policy=observed.policyChecks!.find(p=>p.id==='repository_branch_delete_on_merge_enabled')!;
+ assert.equal(policy.status,'FAIL');assert.equal(policy.observed,'2 passed, 1 failed, 2 unknown across 5 repositories.');
+ substitute=true;await assert.rejects(readProduct(org,account,recipe,fetcher),(e:{code:string})=>e.code==='TARGET_MISMATCH');
+});
 test('the staging probe validates its precise grant on both sides of a read and records no source identifiers',async()=>{
  setup();
  const org='794e38e1-b6aa-40ab-9b5f-925f87138d6a',account='apn_probe';

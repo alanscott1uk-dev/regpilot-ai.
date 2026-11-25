@@ -4,6 +4,7 @@ import {accountLinkScopes,pdFailure,pdRequest} from './pipedream-client';
 export {pdConfig} from './pipedream-client';
 import {CollectionError} from './collection-error';
 import {githubInventoryChecks} from './github-inventory-checks';
+import {githubTarget} from './github';
 import {atStep} from './collection-step';
 import {productActionUrl,type ProductRead} from './product-recipes';
 import type {Observation} from './observation';
@@ -76,7 +77,7 @@ export function pdSample(ret:unknown,org:string,recipe:ProductRead):Sample{
  const checks=recipe.app==='github'&&recipe.action==='list-repositories'?{policyChecks:githubInventoryChecks(rows)}:{};
  return {keys,digest:sampleHash(keys),count:keys.length,...checks};
 }
-async function actionSample(org:string,account:string,recipe:ProductRead,fetcher:typeof fetch,assertGrant:()=>Promise<void>){
+async function actionResult(org:string,account:string,recipe:ProductRead,fetcher:typeof fetch,assertGrant:()=>Promise<void>){
  const raw=await atStep('records',async()=>{
   try{return await pdRequest('connect:actions:*','/actions/run',fetcher,{id:recipe.app+'-'+recipe.action,version:recipe.version,
    external_user_id:user(org),configured_props:{...recipe.fixedProps,[recipe.prop]:{authProvisionId:account}}});}
@@ -91,7 +92,33 @@ async function actionSample(org:string,account:string,recipe:ProductRead,fetcher
   const code=pdFailure(error,'INVALID_RESPONSE');
   throw new CollectionError(code,undefined,code==='CREDENTIAL_REJECTED'?'grant':'records');
  }
- return atStep('records',async()=>pdSample(raw.ret,org,recipe));
+ return raw.ret as unknown;
+}
+
+const repositoryIdentity=z.object({id:z.union([z.number().int().positive(),z.string().min(1)]),full_name:githubTarget.shape.repository});
+const optionalDetailErrors=new Set(['ACCESS_DENIED','INSUFFICIENT_SCOPE','TARGET_MISMATCH','ACTION_UNAVAILABLE','PLAN_REQUIRED']);
+async function actionSample(org:string,account:string,recipe:ProductRead,fetcher:typeof fetch,assertGrant:()=>Promise<void>){
+ const raw=await actionResult(org,account,recipe,fetcher,assertGrant);
+ return atStep('records',async()=>{
+  if(recipe.app!=='github'||recipe.action!=='list-repositories')return pdSample(raw,org,recipe);
+  const rows=inventory(raw);
+  if(rows.length>1000)throw new CollectionError('SCOPE_LIMIT');
+  // GitHub leaves settings out of list responses. Read details for up to four listed repositories.
+  // Additional repositories retain the observations available from the list.
+  const details=await Promise.all(rows.slice(0,4).map(async row=>{
+   const original=repositoryIdentity.safeParse(row);
+   if(!original.success)return row;
+   const {id,full_name}=original.data;
+   const source={...recipe,action:'get-repository',version:'0.1.3',fixedProps:{repoFullname:full_name}};
+   let expanded:unknown;
+   try{expanded=await actionResult(org,account,source,fetcher,assertGrant);}
+   catch(error){if(error instanceof CollectionError&&optionalDetailErrors.has(error.code))return row;throw error;}
+   const identity=repositoryIdentity.safeParse(expanded);
+   if(!identity.success||String(identity.data.id)!==String(id)||identity.data.full_name.toLowerCase()!==full_name.toLowerCase())throw new CollectionError('TARGET_MISMATCH');
+   return {...row as Record<string,unknown>,...expanded as Record<string,unknown>};
+  }));
+  return pdSample([...details,...rows.slice(4)],org,recipe);
+ });
 }
 
 /** Pipedream can report false immediately after a valid authorisation. Check ownership and explicit

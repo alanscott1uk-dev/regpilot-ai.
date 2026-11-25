@@ -27,7 +27,7 @@ const policies:Policy[]=[
   evaluate:r=>securitySetting(r,'secret_scanning_push_protection')}
 ];
 
-export const githubInventoryRevision=1;
+export const githubInventoryRevision=2;
 export const githubInventoryLabels=new Map(policies.map(p=>[p.id,p.label]));
 export function githubInventoryChecks(rows:unknown[],now=Date.now()):ConnectorCheck[]{
  return policies.map(({id,label,nextStep,evaluate})=>{

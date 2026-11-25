@@ -29,7 +29,9 @@ export function pdFailure(value:unknown,fallback:string){
  if(/billing|plan (?:does not|doesn't|upgrade)|upgrade (?:your|the) plan|subscription required/.test(message))return 'PLAN_REQUIRED';
  if(/insufficient.scope|missing (?:permission|scope)|requires? the.+scope/.test(message))return 'INSUFFICIENT_SCOPE';
  if(/revoked|bad credentials|invalid.grant/.test(message))return 'CREDENTIAL_REJECTED';
+ if(/resource not accessible by|permission denied|forbidden/.test(message))return 'ACCESS_DENIED';
  if(/version.{0,80}(?:not found|not published)|component.{0,50}not found/.test(message))return 'ACTION_UNAVAILABLE';
+ if(/not found/.test(message))return 'TARGET_MISMATCH';
  return fallback;
 }
 
