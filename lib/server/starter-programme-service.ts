@@ -7,13 +7,13 @@ import {requireMember,ADMIN,WRITER} from './workspace-member';
 import {transaction,IntelligenceError} from './intelligence-service';
 import {allowedEmail} from '../ai/security.mjs';
 import {hashValue} from '../regulatory/intelligence';
-import {STARTER_PACKS,STARTER_PROGRAMME_SCOPE,STARTER_PROGRAMME_LIMIT,parseStarterProgramme,type StarterPlan} from '../starter-programmes.mjs';
+import {STARTER_PACKS,STARTER_PROGRAMME_SCOPE,STARTER_PROGRAMME_LIMIT,STARTER_TASK_LIMIT,parseStarterProgramme,type StarterPlan} from '../starter-programmes.mjs';
 
 type Tx=Prisma.TransactionClient;
 const ACTION='starter_programme.created',ENTITY='StarterProgramme';
 const id=z.uuid(),sha=z.string().regex(/^[a-f0-9]{64}$/),date=z.iso.date();
 const itemSchema=z.object({key:z.string(),title:z.string().min(8).max(160),description:z.string().min(20).max(1000),why:z.string().min(20).max(600),evidenceHint:z.string(),sourceUrl:z.url({protocol:/^https$/}).optional(),mappings:z.array(z.string().min(1).max(120)).min(1).max(64).optional(),assigneeId:id,ownerName:z.string(),dueDate:date,taskId:id,automationKey:sha});
-const recordSchema=z.object({format:z.literal('regpilot-starter-programme'),version:z.literal(1),organizationId:id,packId:z.string(),packVersion:z.number().int().positive(),packHash:sha,previewToken:sha,name:z.string().min(8).max(160),scopeRationale:z.string().min(20).max(1200),createdById:id,createdAt:z.iso.datetime(),items:z.array(itemSchema).min(1).max(24),scope:z.string()});
+const recordSchema=z.object({format:z.literal('regpilot-starter-programme'),version:z.literal(1),organizationId:id,packId:z.string(),packVersion:z.number().int().positive(),packHash:sha,previewToken:sha,name:z.string().min(8).max(160),scopeRationale:z.string().min(20).max(1200),createdById:id,createdAt:z.iso.datetime(),items:z.array(itemSchema).min(1).max(STARTER_TASK_LIMIT),scope:z.string()});
 type ProgrammeRecord=z.infer<typeof recordSchema>;
 type EventRow={id:string;entityId:string;actorId:string;createdAt:Date;details:Prisma.JsonValue};
 const eventSelect={id:true,entityId:true,actorId:true,createdAt:true,details:true} as const;

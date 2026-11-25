@@ -5,14 +5,16 @@ type Task={id:string;title:string;status:string;ownerName:string;href:string};
 type Plan={id:string;name:string;recordHash:string;evidenceLimited?:boolean;items:{mappings?:string[];task:Task|null;reviewedFiles?:ProgrammeFileReference[]}[]};
 type Scope={rows:{reference:string;area:string;decision:string;reason:string;reviewerId:string|null;reviewedAt:string|null}[]};
 type LinkedTask={programme:string;task:Task;criteria:string[];files:ProgrammeFileReference[]};
-const annexPrefix='ISO/IEC 27001:2022 · ',socPrefix='SOC 2 Security · ';
+export const socCrosswalkPacks=['soc2-iso27001','soc2-security','soc2-iso27001-joint','soc2-iso27001-scoped'];
+const annexPrefix='ISO/IEC 27001:2022 · ';
+const socPrefixes=['Security','Availability','Confidentiality','Processing Integrity','Privacy'].map(category=>'SOC 2 '+category+' · ');
 function codes(refs:string[],prefix:string){return refs.filter(ref=>ref.startsWith(prefix)).flatMap(ref=>ref.slice(prefix.length).split(',').map(s=>s.trim()));}
 
 export function buildCrosswalk(annex:Plan,combined:Plan,scope:Scope){
  const linked=new Map<string,LinkedTask[]>();
  for(const plan of [annex,combined])for(const item of plan.items){
   if(!item.task)continue;
-  const mappings=item.mappings??[],criteria=plan===combined?codes(mappings,socPrefix):[];
+  const mappings=item.mappings??[],criteria=plan===combined?socPrefixes.flatMap(prefix=>codes(mappings,prefix)):[];
   const link={programme:plan.name,task:item.task,criteria,files:item.reviewedFiles??[]};
   for(const code of new Set(codes(mappings,annexPrefix).filter(s=>/^A\.[5-8]\.\d+$/.test(s)))){
    const entries=linked.get(code)??[];entries.push(link);linked.set(code,entries);

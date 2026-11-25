@@ -1,5 +1,6 @@
 "use client";
 import {CrosswalkPanel} from './crosswalk';
+import {socCrosswalkPacks} from '../../../lib/programme-crosswalk';
 import {ReferenceStatementPanel} from './reference-statement';
 import {useCallback,useEffect,useRef,useState} from 'react';
 import {programmeMappingCsv,type ProgrammeFileReference} from '../../../lib/programme-mapping';
@@ -10,7 +11,7 @@ import {workUuid} from '../../../lib/work-hub.mjs';
 import shell from '../../workbench/workbench.module.css';
 import css from './programmes.module.css';
 
-type PackItem={key:string;title:string;description:string;why:string;evidenceHint:string;sourceUrl?:string;mappings?:string[];suggestedDays:number};
+type PackItem={key:string;title:string;description:string;why:string;evidenceHint:string;scopeCategory?:string;sourceUrl?:string;mappings?:string[];suggestedDays:number};
 type Pack={id:string;version:number;title:string;description:string;items:PackItem[]};
 type DraftItem=PackItem&{included:boolean;assigneeId:string;dueDate:string};
 type PlanSummary={id:string;packId:string;packVersion:number;name:string;createdAt:string;total:number;completed:number;needsAttention:number;href:string};
@@ -46,6 +47,7 @@ export default function StarterProgrammes(){
  const visiblePacks=data?.packs.filter(p=>{const words=[p.title,p.description,...p.items.flatMap(i=>[i.title,...i.mappings??[]])].join(' ').toLowerCase();return terms.every(term=>words.includes(term));})??[];
  const pack=data?.packs.find(value=>value.id===packId);
  const selectedItems=items.filter(item=>item.included);
+ const scopeCategories=[...new Set(items.flatMap(item=>item.scopeCategory?[item.scopeCategory]:[]))];
  const currentPreview=preview?.revision===workspace.revision&&preview.draft===draftVersion.current?preview.data:null;
  const blocked=busy||loading||!!uncertain;
  const canCreate=!!data?.canCreate;
@@ -87,7 +89,7 @@ export default function StarterProgrammes(){
   if(blocked)return;
   const existing=data?.programmes.find(plan=>plan.packId===value.id);if(existing){openProgramme(existing.id);return;}
   invalidatePreview();setPackId(value.id);setName(value.title);setScopeRationale('');setOwner('');
-  setItems(value.items.map(item=>({...item,included:true,assigneeId:'',dueDate:suggestedDate(item.suggestedDays)})));
+  setItems(value.items.map(item=>({...item,included:!item.scopeCategory,assigneeId:'',dueDate:suggestedDate(item.suggestedDays)})));
  }
  useEffect(()=>{
   if(!data||blocked||link.id||!canCreate)return;
@@ -174,6 +176,16 @@ export default function StarterProgrammes(){
    </section>
    {pack&&<section className={css.panel} aria-label="Tailor your programme"><ol className={css.steps} aria-label="Programme planning steps"><li><b>1</b>Choose a plan</li><li data-active={!currentPreview}><b>2</b>Tailor the work</li><li data-active={!!currentPreview}><b>3</b>Review and create</li></ol><span className={css.eyebrow}>02 / MAKE IT YOURS</span><h2>{pack.title}</h2><p>Keep the tasks you need, adapt the wording and assign responsibility. Suggested dates are planning choices, not legal deadlines.</p>
     <form onSubmit={event=>void prepare(event)}><fieldset disabled={blocked||!canCreate}><div className={css.fields}><label className={css.full}>Programme name<input aria-label="Programme name" required minLength={8} maxLength={160} value={name} onChange={event=>{invalidatePreview();setName(event.target.value);}}/></label><label className={css.full}>Why this programme fits<textarea aria-label="Why this programme fits" required minLength={20} maxLength={1200} rows={3} value={scopeRationale} onChange={event=>{invalidatePreview();setScopeRationale(event.target.value);}} placeholder="Describe the business scope, what you included and any limits or exclusions."/></label></div>
+    {scopeCategories.length>0&&<fieldset className={css.categories}><legend>Additional SOC 2 categories</legend>
+     <p>Select the categories in the buyer’s audit scope. You can then tailor individual tasks.</p>
+     {scopeCategories.map(category=>{
+      const group=items.filter(item=>item.scopeCategory===category),count=group.filter(item=>item.included).length;
+      return <label key={category} className={css.check}><input type="checkbox" checked={count===group.length}
+       ref={node=>{if(node)node.indeterminate=count>0&&count<group.length;}} aria-label={'Include '+category+' tasks'}
+       onChange={e=>{const included=e.target.checked;invalidatePreview();setItems(current=>current.map(item=>item.scopeCategory===category?{...item,included}:item));}}/>
+       {category} ({count} of {group.length} tasks)</label>;
+     })}
+    </fieldset>}
     <div className={css.assignment}><label>Assign selected tasks to<select aria-label="Assign selected tasks to" value={owner} onChange={event=>setOwner(event.target.value)}><option value="">Choose a responsible person</option>{data.members.map(member=><option key={member.id} value={member.id}>{member.email}</option>)}</select></label><button type="button" disabled={!owner||!selectedItems.length} onClick={()=>{invalidatePreview();setItems(old=>old.map(item=>item.included?{...item,assigneeId:owner}:item));}}>Apply owner to selected tasks</button></div>
     {data.membersLimited&&<p className={css.hint}>The eligible member list reached its display limit. Check Team & access if a responsible person is not shown.</p>}
     <div className={css.taskEditors}>{items.map((item,index)=><article className={css.taskEditor} key={item.key} data-selected={item.included}><div className={css.taskHeader}><label className={css.check}><input type="checkbox" aria-label={'Include '+item.title} checked={item.included} onChange={event=>updateItem(item.key,{included:event.target.checked})}/><span>{item.title}</span></label><span>TASK {String(index+1).padStart(2,'0')}</span></div>
@@ -184,7 +196,7 @@ export default function StarterProgrammes(){
     {currentPreview.existingProgrammeId?<><p>A programme already exists for this starting point. Open its recorded tasks to continue without creating another set.</p><button type="button" disabled={blocked} onClick={()=>openProgramme(currentPreview.existingProgrammeId!)}>Open saved programme</button></>:<><label className={css.check}><input type="checkbox" checked={confirmed} disabled={blocked||!canCreate} onChange={event=>setConfirmed(event.target.checked)}/>I have reviewed these tasks, owners and dates.</label><button type="button" className={css.primary} disabled={blocked||!confirmed||!canCreate} onClick={()=>void apply()}>{busy?'Creating programme…':'Create '+currentPreview.total+' tasks'}</button></>}
    </section>}
    {data.selected&&<section className={css.panel} aria-label="Saved programme"><div className={css.sectionHeader}><div><span className={css.eyebrow}>YOUR SAVED WORK PLAN</span><h2>{data.selected.name}</h2><p>{data.selected.scopeRationale}</p></div><a href={href('/team/work')}>All team tasks →</a></div><div className={css.savedTop}><p>Created {date(data.selected.createdAt)} · {data.selected.needsAttention} tasks need attention</p><span>{data.selected.completed} / {data.selected.total} recorded complete</span></div><p className={css.hint}>{data.selected.scope}</p><button type="button" onClick={()=>{if(!data.selected)return;const a=document.createElement("a"),url=URL.createObjectURL(new Blob([programmeMappingCsv(data.selected)],{type:"text/csv;charset=utf-8"}));a.href=url;a.download="programme-control-mapping.csv";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}}>Download control mapping CSV</button>{canCreate&&data.selected.items.some(i=>i.mappings?.length)&&<ReferenceStatementPanel key={workspace.revision+'/'+data.selected.id} w={workspace} id={data.selected.id}/>} {data.selected.evidenceLimited&&<p>Export includes the first 1,000 reviewed files. Open each task for its full history.</p>}<div className={css.savedTasks}>{data.selected.items.map(item=><article key={item.key}><div><h4>{item.task?.title||item.title}</h4><p>{item.task?`${taskState(item.task.status)} · ${item.task.ownerName} · Target ${date(item.task.dueDate)}`:'The original task is unavailable. Check the programme record before relying on its progress.'}</p>{item.attention.map(reason=><p className={css.unavailable} key={reason}>{reason}</p>)}<details><summary>Original plan and evidence prompt</summary><p>{item.description}</p><p>Why: {item.why}</p><p>Evidence: {item.evidenceHint}</p>{item.sourceUrl&&<a href={item.sourceUrl} target="_blank" rel="noreferrer">Read the publisher guidance</a>}{item.mappings?.map(ref=><p key={ref}>{ref}</p>)}{item.reviewedFiles&&<p>{item.reviewedFiles.length} independently reviewed files in the current mapping.</p>}</details></div>{item.task&&<a href={item.task.href}>Open task →</a>}</article>)}</div></section>}
-   {canCreate&&data.programmes.some(p=>p.packId==='iso27001-annex-a')&&data.programmes.some(p=>['soc2-iso27001','soc2-security'].includes(p.packId))&&<CrosswalkPanel key={workspace.revision} workspace={workspace} annexId={data.programmes.find(p=>p.packId==='iso27001-annex-a')!.id} socProgrammes={data.programmes.filter(p=>['soc2-iso27001','soc2-security'].includes(p.packId))}/>}
+   {canCreate&&data.programmes.some(p=>p.packId==='iso27001-annex-a')&&data.programmes.some(p=>socCrosswalkPacks.includes(p.packId))&&<CrosswalkPanel key={workspace.revision} workspace={workspace} annexId={data.programmes.find(p=>p.packId==='iso27001-annex-a')!.id} socProgrammes={data.programmes.filter(p=>socCrosswalkPacks.includes(p.packId))}/>}
    <section className={css.panel} id="saved-programmes" aria-label="Saved programmes"><span className={css.eyebrow}>CONTINUE WHAT YOU STARTED</span><h2>Your programmes</h2>{data.programmes.length?<div className={css.savedGrid}>{data.programmes.map(plan=><article className={css.savedPlan} key={plan.id}><div className={css.savedTop}><div><h3>{plan.name}</h3><p>Created {date(plan.createdAt)} · {plan.needsAttention} tasks need attention</p></div><span>{plan.completed} / {plan.total} complete</span></div><button type="button" disabled={blocked} onClick={()=>openProgramme(plan.id)}>Open {plan.name}</button></article>)}</div>:<p className={css.empty}>No starter programme has been saved. Choose a starting point above and review the tasks before creating it.</p>}</section>
    <footer className={css.footer}>Starter programmes organise operational work. They do not import proprietary standards, establish regulatory completeness or approve compliance. Each created task uses the existing evidence and completion workflow.</footer>
   </>}

@@ -8,6 +8,7 @@ if [ "$VERCEL_GIT_COMMIT_REF" = "feature/traceability-benchmark-batch-20261106" 
       'Add authenticated alert monitoring, excursion histories and audit evidence filters|9606e78720c9aa317295899af93195e2ed834816') exit 1 ;;
       'Publish scoped hosted recovery evidence and reject superseded renewals|e47246fec69fccc8a7f809937bcab0dec4a1261a') exit 1 ;;
       'Recover slow live publication reads and verify the resulting workspace follow-up|6611019b6b97a3fcefb0324172c17359a072a4a8') exit 1 ;;
+      'Add buyer-scoped SOC 2 categories to the combined ISO audit programme|af7c0a4d374afa7ffa9c40cfc6f0e3eaaacd48e6') exit 1 ;;
     esac
   fi
   exit 0

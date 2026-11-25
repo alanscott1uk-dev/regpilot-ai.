@@ -1,6 +1,7 @@
 // Fictional HTTP/identity fixtures exercise the production programme UI.
 // The private-services journey separately verifies task creation and persistence.
 import assert from 'node:assert/strict';
+import {scopedSecurityProgramme} from '../lib/scoped-security-programme.mjs';
 import {mkdir,writeFile} from 'node:fs/promises';
 
 const org='d23e4567-e89b-42d3-a456-426614174000',first='d23e4567-e89b-42d3-a456-426614174001';
@@ -13,6 +14,8 @@ const packs=['Business foundations','People and access','Suppliers and continuit
  id:['business-foundations','people-access','supplier-continuity'][index],version:1,title,description:'A fictional plan for reviewing a bounded set of operational responsibilities.',
  items:Array.from({length:3},(_,item)=>({key:'fictional-item-'+item,title:'Review fictional '+['business scope','access records','recovery arrangements'][item],description:'Record the actual working arrangements, named responsible person and any unresolved decisions for this fictional exercise.',why:'This work makes the responsibilities and current working arrangements explicit for the selected fictional activity.',evidenceHint:'A dated reviewed record of the observed arrangements and remaining questions.',suggestedDays:7+item*7}))
 }));
+
+packs.push(scopedSecurityProgramme);
 
 export async function starterProgrammeJourney(browser,base,viewport,name){
  const context=await browser.newContext({viewport,locale:'en-GB'}),page=await context.newPage(),errors=[],reads=[];
@@ -69,6 +72,21 @@ export async function starterProgrammeJourney(browser,base,viewport,name){
   await page.getByRole('heading',{name:'24 editable tasks',exact:true}).waitFor();
   assert.equal(await page.locator('details').count(),24);
   assert.equal(await page.getByRole('link',{name:'Use this programme in your workspace'}).getAttribute('href'),'/team/programmes?starter=soc2-iso27001-joint');
+  await page.goto(base+href('/team/programmes',{starter:'soc2-iso27001-scoped'}));
+  const tailoring=page.getByRole('region',{name:'Tailor your programme'});
+  await tailoring.getByText('24 selected tasks.',{exact:false}).waitFor();
+  const availability=tailoring.getByRole('checkbox',{name:'Include Availability tasks',exact:true});
+  await availability.check();
+  await tailoring.getByText('26 selected tasks.',{exact:false}).waitFor();
+  const optional=tailoring.getByRole('checkbox',{name:'Include Test service recovery against agreed objectives',exact:true});
+  await optional.uncheck();
+  assert.ok(await availability.evaluate(input=>input.indeterminate));
+  await availability.check();
+  await tailoring.getByRole('checkbox',{name:'Include Privacy tasks',exact:true}).check();
+  await tailoring.getByText('34 selected tasks.',{exact:false}).waitFor();
+  await tailoring.getByRole('checkbox',{name:'Include Privacy tasks',exact:true}).uncheck();
+  await tailoring.getByText('26 selected tasks.',{exact:false}).waitFor();
+  assert.equal(previewPosts+applyPosts,0);
   await page.goto(base+href('/team/programmes',{starter:'business-foundations'}));
   await page.getByLabel('Programme name',{exact:true}).waitFor();
   assert.equal(await page.getByLabel('Programme name',{exact:true}).inputValue(),'Business foundations');
@@ -128,7 +146,7 @@ export async function starterProgrammeJourney(browser,base,viewport,name){
   assert.equal(await page.getByRole('button',{name:'Preview programme',exact:true}).isDisabled(),true,'a late administrator read cannot restore mutation rights');
   assert.equal(await page.getByLabel('Programme name',{exact:true}).isDisabled(),true);assert.equal(applyPosts,2);assert.equal(taskWrites,4);
   assert.ok(reads.some(read=>read.actor===viewer));assert.deepEqual(errors,[]);
-  return {scenario:'starter-programme-'+name,passed:true,overflowPx:overflow,previewPosts,applyPosts,programmeWrites,taskWrites,checks:['second-company scope','editable selected tasks and owner assignment','preview has no task writes','draft changes invalidate preview','rapid explicit creation saves once','saved task handoff and reload','missing exact programme never substitutes','lost response reconciles with GET only','failed reconciliation keeps creation paused','unavailable company isolation','late previous-account result cannot restore administrator controls']};
+  return {scenario:'starter-programme-'+name,passed:true,overflowPx:overflow,previewPosts,applyPosts,programmeWrites,taskWrites,checks:['additional SOC 2 categories and partial selection','second-company scope','editable selected tasks and owner assignment','preview has no task writes','draft changes invalidate preview','rapid explicit creation saves once','saved task handoff and reload','missing exact programme never substitutes','lost response reconciles with GET only','failed reconciliation keeps creation paused','unavailable company isolation','late previous-account result cannot restore administrator controls']};
  }catch(error){await mkdir('artifacts/usability',{recursive:true});await page.screenshot({path:'artifacts/usability/starter-programme-'+name+'-failure.png',fullPage:true,timeout:5000}).catch(()=>{});await writeFile('artifacts/usability/starter-programme-'+name+'-failure.json',JSON.stringify({error:error.message,reads,previewPosts,applyPosts,programmeWrites,taskWrites,pageErrors:errors},null,2)+'\n');throw error;}
  finally{releaseRead?.();await context.close();}
 }

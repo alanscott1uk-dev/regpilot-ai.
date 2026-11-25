@@ -24,7 +24,7 @@ async function apply(ctx:AuthorizedContext,input:StarterPlan,token:string){const
 test('starter programme preview, concurrent adoption and replay keep one owned task set through real generic completion',async()=>{
  const f=await setup(),{owner,reviewer,editor,viewer,foreign}=f,input=plan(editor.userId);
  try{
-  const empty=await starterProgrammeWorkspace(owner);assert.deepEqual(empty.packs.map(p=>p.id),['business-foundations','people-access','supplier-continuity','nhs-digital-health-england','soc2-iso27001','uk-gdp-cold-chain','uk-gmp-site-validation','nist-csf-2','iso27001-annex-a','cyber-essentials','uk-gdpr-accountability','uk-gdp-self-inspection','soc2-security','nist-800-53b-low','nist-800-53b-moderate','nist-800-53b-high','nist-800-53b-privacy','soc2-iso27001-joint']);assert.equal(empty.programmes.length,0);assert.equal(empty.programmesLimited,false);assert.equal(empty.members.length,3);
+  const empty=await starterProgrammeWorkspace(owner);assert.deepEqual(empty.packs.map(p=>p.id),['business-foundations','people-access','supplier-continuity','nhs-digital-health-england','soc2-iso27001','uk-gdp-cold-chain','uk-gmp-site-validation','nist-csf-2','iso27001-annex-a','cyber-essentials','uk-gdpr-accountability','uk-gdp-self-inspection','soc2-security','nist-800-53b-low','nist-800-53b-moderate','nist-800-53b-high','nist-800-53b-privacy','soc2-iso27001-joint','soc2-iso27001-scoped']);assert.equal(empty.programmes.length,0);assert.equal(empty.programmesLimited,false);assert.equal(empty.members.length,3);
   const proposed=await preview(owner,input);assert.equal(proposed.total,2);assert.equal(await db.obligation.count({where:{organizationId:owner.organizationId}}),0);assert.equal(await db.auditEvent.count({where:{organizationId:owner.organizationId}}),0,'preview records no tasks or audit events');
   await assert.rejects(()=>preview(editor,input),(error:any)=>error.status===403);await assert.rejects(()=>preview(viewer,input),(error:any)=>error.status===403);
   await assert.rejects(()=>preview(owner,{...input,items:[{...input.items[0],assigneeId:foreign.userId}]}),(error:any)=>error.status===409);
@@ -153,6 +153,33 @@ test('a mapped evidence task is shared by both audit references in the saved pro
   assert.match(referenceEvidenceCsv(scoped,[applied]),new RegExp(sample.id));
   const exportRows=referenceStatementCsv(await programmeReferenceStatement(f.reviewer,jointResult.id)).split('\r\n');
   assert.equal(exportRows.length,157);assert.match(exportRows.find(row=>row.includes(' · CC6.2'))!,/APPLIES/);assert.match(exportRows.find(row=>row.includes(' · A.5.16'))!,/UNASSESSED/);
+  const buyerPack=STARTER_PACKS.find(p=>p.id==='soc2-iso27001-scoped')!,buyer=plan(f.editor.userId,buyerPack);
+  buyer.items=buyerPack.items.map(({key,title,why,description})=>({key,title,why,description,assigneeId,dueDate}));
+  const buyerPreview=await preview(f.owner,buyer),buyerSaved=await apply(f.owner,buyer,buyerPreview.token);
+  assert.equal(new Set(buyerSaved.taskIds).size,38);
+  assert.deepEqual((await apply(f.owner,buyer,buyerPreview.token)).taskIds,buyerSaved.taskIds);
+  const buyerScope=await programmeReferenceStatement(f.reviewer,buyerSaved.id);
+  assert.equal(buyerScope.rows.length,184);assert.ok(buyerScope.rows.every(r=>r.taskId&&r.decision==='UNASSESSED'));
+  const privacyRef='SOC 2 Privacy · P6.4',vendor=buyerScope.rows.find(r=>r.reference===privacyRef)!;
+  const vendorSample=await createEvidence(f.editor,vendor.taskId!,'supplier-review.pdf',fixturePdf([['Reviewed supplier terms']]),{storage,scan:async()=>({status:'CLEAN',engine:'fixture'})});
+  await reviewEvidence(f.reviewer,vendorSample.id,{decision:'APPROVED',version:1,notes:'Verified this fictional supplier review against the selected service and contract.'},storage);
+  await decideProgrammeReference(f.reviewer,buyerSaved.id,{...choice,recordHash:buyerScope.recordHash,reference:privacyRef});
+  const checked=await programmeReferenceStatement(f.owner,buyerSaved.id);
+  assert.equal(checked.rows.find(r=>r.reference===privacyRef)!.decision,'APPLIES');
+  const isoSupplier=checked.rows.find(r=>r.reference==='ISO/IEC 27001:2022 · A.5.20')!;
+  assert.equal(isoSupplier.decision,'UNASSESSED');assert.ok(isoSupplier.reviewedFiles.some(file=>file.startsWith(vendorSample.id+' @ ')));
+  const buyerCross=await programmeCrosswalk(f.reviewer,isoSaved.id,buyerSaved.id);
+  assert.ok(buyerCross.rows.find(r=>r.code==='A.5.20')!.tasks.some(t=>t.criteria.includes('P6.4')&&t.files.some(file=>file.id===vendorSample.id)));
+  assert.match(crosswalkCsv(buyerCross),/P6.4/);assert.equal(referenceStatementCsv(checked).split('\r\n').length,185);
+  const selectedActivities=buyerPack.items.filter(i=>!i.scopeCategory||i.scopeCategory==='Availability');
+  const small=plan(f.foreign.userId,buyerPack);
+  small.items=selectedActivities.map(({key,title,why,description})=>({key,title,why,description,assigneeId:f.foreign.userId,dueDate}));
+  const smallSaved=await apply(f.foreign,small,(await preview(f.foreign,small)).token);
+  const smallScope=await programmeReferenceStatement(f.foreign,smallSaved.id);
+  assert.equal(smallSaved.taskIds.length,26);assert.equal(smallScope.rows.length,184);
+  assert.ok(smallScope.rows.find(r=>r.reference==='SOC 2 Availability · A1.3')!.taskId);
+  const unselected=smallScope.rows.find(r=>r.reference===privacyRef)!;
+  assert.equal(unselected.taskId,null);assert.equal(unselected.decision,'UNASSESSED');
   assert.match(referenceStatementCsv(final),/REVIEW_NEEDED/);assert.equal(referenceStatementCsv(final).split('\r\n').length,94);
  }finally{await f.clean();}
 });
