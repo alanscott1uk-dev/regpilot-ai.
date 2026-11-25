@@ -30,19 +30,22 @@ for (const row of records) {
   });
 }
 test("unreadable and incomplete records cannot pass their checks", async () => {
-  const incomplete = [
-    {key:"QA-13",fields:{project:{key:"QA"},assignee:{},resolution:{}}},
-    {result:{sys_id:records[1].target.record,closed_at:"unparseable"}},
-    {id:93,project:{id:cloud},status:"inProgress",result:"succeeded"},
-    {id:"842",version:{number:-1}},
-    {audit_id:"audit_cde",template_id:"template_abc",audit_data:{date_completed:"2099-01-01T00:00:00Z"}},
-    {"id":"identity-19","schemas":["urn:ietf:params:scim:schemas:core:2.0:User"]},
-    {"id":"identity-19","schemas":["urn:ietf:params:scim:schemas:core:2.0:User"]},
-    {"id":"comp0001","page_id":"page0001"},
-    {"ticket":{"id":721}}
-  ];
-  for (const [i,row] of records.entries()) {
-    const result = await collectOperationalRecord(row.provider,row.target,token,async()=>Response.json(incomplete[i]));
+  const incomplete:Record<string,object>={
+    JIRA:{key:"QA-13",fields:{project:{key:"QA"},assignee:{},resolution:{}}},
+    SERVICENOW:{result:{sys_id:records[1].target.record,closed_at:"unparseable"}},
+    AZURE_DEVOPS:{id:93,project:{id:cloud},status:"inProgress",result:"succeeded"},
+    CONFLUENCE:{id:"842",version:{number:-1}},
+    SAFETYCULTURE:{audit_id:"audit_cde",template_id:"template_abc",audit_data:{date_completed:"2099-01-01T00:00:00Z"}},
+    GITHUB_SCIM:{"id":"identity-19","schemas":["urn:ietf:params:scim:schemas:core:2.0:User"]},
+    ATLASSIAN_SCIM:{"id":"identity-19","schemas":["urn:ietf:params:scim:schemas:core:2.0:User"]},
+    STATUSPAGE_COMPONENT:{"id":"comp0001","page_id":"page0001"},
+    ZENDESK_TICKET:{"ticket":{"id":721}},
+    SLACK_MEMBER:{ok:true,user:{id:'U012A3CDE',team_id:'T012AB3C4'}},
+    BOX_USER:{type:'user',id:'80123',enterprise:{id:'12345'}},
+    ASANA_TASK:{data:{gid:'60123',workspace:{gid:'12345'}}}
+  };
+  for (const row of records) {
+    const result = await collectOperationalRecord(row.provider,row.target,token,async()=>Response.json(incomplete[row.provider]));
     assert.ok(result.checks.every(c=>c.status==="UNKNOWN"),row.provider);
   }
 });
@@ -97,6 +100,19 @@ test('managed sync samples respect tenant, provider and connection boundaries, l
  await assert.rejects(readSync(org,source,connection,'Private',token,simulate()),{code:'INVALID_TARGET'});
  assert.equal((await readSync(org,source,connection,'Contact',token,simulate(false,false,true))).syncState,'STALE');
  await assert.rejects(readSync(org,source,connection,'Contact',token,simulate(false,false,false,true)),{code:'TARGET_MISMATCH'});
+ async function widePopulation(count:number){
+  const read:typeof fetch=async(input,init)=>{
+   const url=new URL(String(input));
+   if(url.pathname==='/connections')return simulate()(input,init);
+   if(url.pathname==='/sync/status')return Response.json({syncs:[{connection_id:connection,status:'SUCCESS',finishedAt:at,recordCount:{Contact:count}}]});
+   const start=Number(url.searchParams.get('cursor')??0),limit=Number(url.searchParams.get('limit'));assert.equal(limit,100);
+   const rows=Array.from({length:Math.min(limit,count-start)},(_,i)=>({id:String(start+i),approved:start+i!==4999,author:'a',reviewer:'b',approval:at,deployed:at,_nango_metadata:{last_modified_at:at,last_action:'UPDATED'}}));
+   return Response.json({records:rows,next_cursor:start+limit<count?String(start+limit):null});
+  };
+  return readSync(org,source,connection,'Contact',token,read,{profile:'changeApproval',mapping:{approved:'approved',approverId:'reviewer',authorId:'author',approvedAt:'approval',deployedAt:'deployed'}});
+ }
+ const complete=await widePopulation(5000);assert.equal(complete.activeResources,5000);assert.equal(complete.populationComplete,true);assert.equal(complete.rules[0].status,'FAIL');assert.equal(complete.findings.length,1);
+ const limited=await widePopulation(5001);assert.equal(limited.count,5000);assert.equal(limited.limited,true);assert.equal(limited.populationComplete,false);assert.equal(limited.rules[1].status,'UNKNOWN');assert.equal(limited.rules[0].status,'FAIL');
  const id=workspaceIntegrationId(org,'example');assert.notEqual(workspaceIntegrationId(other,'example'),id);
  const target={scope:id+'/a-long-connected-tenant',record:'Contact',reference:'example'},stored=recordKeys('NANGO_SYNC',target);
  assert.deepEqual(readRecordKeys('NANGO_SYNC',stored.repository,stored.branch),target);
@@ -133,7 +149,7 @@ test('private ChatGPT Action exposes the three scoped lookup operations and reso
 
 test('resource controls require distinct mapped fields, typed values and independent current decisions',async()=>{
  const {evaluateResource,resourcePolicy,profileFields,profiles}=await import('../lib/connectors/resource-control');
- assert.equal(Object.values(profiles).reduce((total,profile)=>total+profile.rules.length,0),20);
+ assert.equal(Object.values(profiles).reduce((total,profile)=>total+profile.rules.length,0),29);
  const mapping=Object.fromEntries(profileFields('laboratory').map(k=>[k,'decision.'+k]));
  const policy=resourcePolicy.parse({profile:'laboratory',mapping});
  assert.equal(resourcePolicy.safeParse({profile:'laboratory',mapping:{...mapping,reviewerId:mapping.authorId}}).success,false);

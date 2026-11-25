@@ -1,4 +1,5 @@
 'use client';
+import {ValidationArchive} from './validation-archive';
 import {useRef,useState} from 'react';
 import type {useWorkspaceContext} from '../../../lib/client/workspace-context';
 import type {siteQualification} from '../../../lib/server/site-qualification-service';
@@ -69,6 +70,7 @@ export default function SiteDecision({w,id,files,participant}:{w:Workspace;id:st
     return bundle.dossier;
    });}}><fieldset disabled={busy}><legend>Review the upgrade from a previous release</legend><label>Previously assessed version (40-character Git revision)<input name="baseline" pattern="[a-f0-9]{40}" required maxLength={40}/></label><button>Compare releases and download review dossier</button></fieldset></form>
    {delta&&<p>{delta.state==='COMPARED'?delta.files.length+' changed files':delta.state==='DIVERGED'?'The revisions have different histories. Review both branches.':delta.state==='FILE_LIMIT'?'The file list reached GitHub’s 300-file limit.':'Review the full comparison on GitHub.'}{'requirementIds' in delta&&delta.requirementIds?.length?' · Suggested supplier tests '+delta.requirementIds.join(', '):''} · <a href={delta.compareUrl} target="_blank" rel="noreferrer">Inspect the changes</a></p>}
+   <ValidationArchive key={w.revision+'/'+id+'/'+packet.protocol.release} w={w} id={id} release={packet.protocol.release}/>
    <button type="button" disabled={busy} onClick={download}>Download site dossier</button>
    {!participant&&packet.finishedAt&&(withdrawing||packet.status==='AWAITING_DECISION')&&
     <form onSubmit={e=>{e.preventDefault();submit(new FormData(e.currentTarget));}}><fieldset disabled={busy}><legend>Record the signed site decision</legend>

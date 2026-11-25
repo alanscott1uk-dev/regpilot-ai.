@@ -24,7 +24,7 @@ async function apply(ctx:AuthorizedContext,input:StarterPlan,token:string){const
 test('starter programme preview, concurrent adoption and replay keep one owned task set through real generic completion',async()=>{
  const f=await setup(),{owner,reviewer,editor,viewer,foreign}=f,input=plan(editor.userId);
  try{
-  const empty=await starterProgrammeWorkspace(owner);assert.deepEqual(empty.packs.map(p=>p.id),['business-foundations','people-access','supplier-continuity','nhs-digital-health-england','soc2-iso27001','uk-gdp-cold-chain','uk-gmp-site-validation','nist-csf-2']);assert.equal(empty.programmes.length,0);assert.equal(empty.programmesLimited,false);assert.equal(empty.members.length,3);
+  const empty=await starterProgrammeWorkspace(owner);assert.deepEqual(empty.packs.map(p=>p.id),['business-foundations','people-access','supplier-continuity','nhs-digital-health-england','soc2-iso27001','uk-gdp-cold-chain','uk-gmp-site-validation','nist-csf-2','iso27001-annex-a']);assert.equal(empty.programmes.length,0);assert.equal(empty.programmesLimited,false);assert.equal(empty.members.length,3);
   const proposed=await preview(owner,input);assert.equal(proposed.total,2);assert.equal(await db.obligation.count({where:{organizationId:owner.organizationId}}),0);assert.equal(await db.auditEvent.count({where:{organizationId:owner.organizationId}}),0,'preview records no tasks or audit events');
   await assert.rejects(()=>preview(editor,input),(error:any)=>error.status===403);await assert.rejects(()=>preview(viewer,input),(error:any)=>error.status===403);
   await assert.rejects(()=>preview(owner,{...input,items:[{...input.items[0],assigneeId:foreign.userId}]}),(error:any)=>error.status===409);
@@ -89,5 +89,20 @@ test('a mapped evidence task is shared by both audit references in the saved pro
   assert.equal(new Set(adopted.taskIds).size,22);
   assert.equal(new Set(selected.items.flatMap(item=>item.mappings??[])).size,106);
   assert.equal(programmeMappingCsv(selected).split('\r\n').length,107);
+  const iso=STARTER_PACKS.find(p=>p.id==='iso27001-annex-a')!,isoPlan=plan(f.editor.userId,iso);
+  const ip=await preview(f.owner,isoPlan),isoSaved=await apply(f.owner,isoPlan,ip.token);
+  const {programmeReferenceStatement,decideProgrammeReference}=await import('../lib/server/programme-reference-review');
+  const {referenceStatementCsv}=await import('../lib/programme-reference-csv');
+  const all=await programmeReferenceStatement(f.owner,isoSaved.id);
+  assert.equal(all.rows.length,93);assert.ok(all.rows.some(r=>!r.taskId));assert.ok(all.rows.every(r=>r.decision==='UNASSESSED'));
+  const reference=all.rows[0].reference,choice={recordHash:all.recordHash,reference,version:0,decision:'APPLIES',reason:'This reference applies to permissions exercised by the site security team.'};
+  await Promise.all([decideProgrammeReference(f.owner,isoSaved.id,choice),decideProgrammeReference(f.owner,isoSaved.id,choice)]);
+  await assert.rejects(()=>decideProgrammeReference(f.reviewer,isoSaved.id,{...choice,decision:'EXCLUDED'}),(e:any)=>e.status===409);
+  await assert.rejects(()=>programmeReferenceStatement(f.foreign,isoSaved.id),(e:any)=>e.status===404);
+  await assert.rejects(()=>programmeReferenceStatement(f.viewer,isoSaved.id),(e:any)=>e.status===403);
+  await decideProgrammeReference(f.reviewer,isoSaved.id,{...choice,version:1,decision:'REVIEW_NEEDED',reason:'Ownership has changed and the original decision now requires another review.'});
+  const final=await programmeReferenceStatement(f.reviewer,isoSaved.id);
+  assert.equal(final.rows[0].version,2);assert.equal(final.rows[0].reviewerId,f.reviewer.userId);
+  assert.match(referenceStatementCsv(final),/REVIEW_NEEDED/);assert.equal(referenceStatementCsv(final).split('\r\n').length,94);
  }finally{await f.clean();}
 });

@@ -1,0 +1,30 @@
+'use client';
+import {useState} from 'react';
+import type {useWorkspaceContext} from '../../../lib/client/workspace-context';
+import {referenceStatementCsv,type ReferenceStatement} from '../../../lib/programme-reference-csv';
+
+export function ReferenceStatementPanel({w,id}:{w:ReturnType<typeof useWorkspaceContext>;id:string}){
+ const [data,setData]=useState<ReferenceStatement|null>(null),[selection,choose]=useState(''),[busy,lock]=useState(false),[message,tell]=useState('');
+ const url='/api/workspace/programmes/'+id+'/references?'+new URLSearchParams({organizationId:w.organizationId});
+ async function load(){
+  const current=w.capture();
+  const result=await w.request(url) as ReferenceStatement;
+  if(result.programmeId!==id)throw Error('The saved programme changed.');
+  if(current())setData(result);
+ }
+ async function run(fn:()=>Promise<void>){const current=w.capture();lock(true);tell('');try{await fn();}catch(e){if(current())tell(e instanceof Error?e.message:'The scope decision could not be loaded.');}finally{if(current())lock(false);}}
+ const row=data?.rows.find(r=>r.reference===selection)??data?.rows.find(r=>r.decision==='UNASSESSED')??data?.rows[0];
+ return <details onToggle={e=>{if(e.currentTarget.open&&!data&&!busy)void run(load);}}><summary>Statement of applicability by framework reference</summary>
+ {message&&<p role="alert">{message}</p>}{!data?<button disabled={busy} onClick={()=>void run(load)}>Load decisions</button>:<>
+ <p>{data.rows.filter(r=>r.decision==='APPLIES'||r.decision==='EXCLUDED').length} of {data.rows.length} references have a scope decision.</p>
+ <button type="button" disabled={busy} onClick={()=>void run(load)}>Refresh decisions</button>{' '}
+ <button type="button" onClick={()=>{const link=document.createElement('a'),url=URL.createObjectURL(new Blob([referenceStatementCsv(data)],{type:'text/csv;charset=utf-8'}));link.href=url;link.download='statement-of-applicability.csv';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}}>Download statement of applicability</button>
+ {row&&<><label>Framework reference<select value={row.reference} disabled={busy} onChange={e=>choose(e.target.value)}>{data.rows.map(r=><option key={r.reference} value={r.reference}>{r.reference} · {r.decision.replaceAll('_',' ').toLowerCase()}</option>)}</select></label>
+ <p>{row.area} · {row.owner||'No task owner'} · {row.taskStatus} · {row.reviewedFiles.length} reviewed files.</p>
+ <form key={row.reference+'-'+row.version} onSubmit={e=>{e.preventDefault();const form=new FormData(e.currentTarget),current=w.capture();void run(async()=>{
+  await w.request(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reference:row.reference,version:row.version,recordHash:data.recordHash,decision:form.get('decision'),reason:form.get('reason')})});
+  if(current()){choose(row.reference);await load();if(current())tell('Scope decision recorded.');}
+ });}}><fieldset disabled={busy}><legend>Record the scope decision</legend><label>Applicability<select required name="decision" defaultValue={row.version?row.decision:''}><option value="">Choose a decision</option><option value="APPLIES">Applicable</option><option value="EXCLUDED">Excluded</option><option value="REVIEW_NEEDED">Reopen for review</option></select></label>
+ <label>Reason for this decision<textarea name="reason" required minLength={20} maxLength={800} defaultValue={row.reason}/></label><button>Save scope decision</button></fieldset></form></>}</>}
+ </details>;
+}

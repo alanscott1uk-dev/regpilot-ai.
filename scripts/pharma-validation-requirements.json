@@ -31,14 +31,20 @@
   },
   {
     "id": "PH-06",
-    "requirement": "Retain the operator’s excursion actions and an independently retrievable record",
+    "requirement": "Retain the operator\u2019s excursion actions and an independently retrievable record",
     "file": "tests/trial-support.integration.test.ts",
-    "test": "an internal first-time excursion trial requires the participant’s own case action and accounts for corrections and help"
+    "test": "an internal first-time excursion trial requires the participant\u2019s own case action and accounts for corrections and help"
   },
   {
     "id": "PH-07",
     "requirement": "Enforce independent, current and tenant-scoped document authorisation",
     "file": "tests/policy-effectivity.integration.test.ts",
     "test": "exact authenticated authorisation is tenant-scoped, independent, fresh, immutable and recoverable after a lost response"
+  },
+  {
+    "id": "PH-08",
+    "requirement": "Retain and reverify the exact supplier validation archive within the site workspace after the upstream download expires",
+    "file": "tests/trial-support.integration.test.ts",
+    "test": "the workspace retains only the exact supplier release archive and retrieves its bytes after the upstream download expires"
   }
 ]

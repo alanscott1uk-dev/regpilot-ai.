@@ -198,3 +198,31 @@ test('an internal first-time excursion trial requires the participant’s own ca
   assert.equal((await db.auditEvent.findUniqueOrThrow({where:{id:trial.caseReceipts[0].id}})).actorId,f.ed.userId);
  }finally{await f.cleanup();}
 });
+
+test('the workspace retains only the exact supplier release archive and retrieves its bytes after the upstream download expires',async()=>{
+ const f=await assuranceFixture(),previous=process.env.VERCEL_GIT_COMMIT_SHA,release='8'.repeat(40);
+ process.env.VERCEL_GIT_COMMIT_SHA=release;
+ try{
+  const {id}=await recordTrial(f.ed,{action:'START',requestKey:randomUUID(),track:'site_qualification',steps:['stock-count'],release,
+   intendedUse:'Validate the release for site stock reconciliation and retain the supplier archive.',environment:'PROTECTED_PILOT',ukExternal:true,
+   siteProtocol:{operator:'Fictional site operator',site:'Fixture archive warehouse',licence:'TEST-WDA-002',configuration:'Stock procedure revision 4',
+    criteria:[{step:'stock-count',expected:'The source record and recount can be retrieved at the named site.'}]}});
+  const {retainedValidation,retainValidation}=await import('../lib/server/retained-validation');
+  const {createHash}=await import('node:crypto');
+  const archive=Buffer.from('Synthetic supplier validation archive bytes'),checksum='sha256:'+createHash('sha256').update(archive).digest('hex');
+  const verify=async(revision:string)=>({state:'AVAILABLE' as const,revision,runUrl:'https://github.com/example/run',downloadUrl:'https://github.com/example/artifact',digest:checksum,expiresAt:new Date(Date.now()+10000).toISOString()});
+  await assert.rejects(()=>retainValidation(f.o,id,Buffer.from('different'),verify),rejects(409));
+  await assert.rejects(()=>retainValidation(f.ed,id,archive,verify),rejects(403));
+  const [retained,replayed]=await Promise.all([retainValidation(f.o,id,archive,verify),retainValidation(f.o,id,archive,verify)]);
+  assert.equal(retained.receiptId,replayed.receiptId);assert.equal(retained.digest,checksum);
+  assert.deepEqual((await retainedValidation(f.ad,id)).saved?.bytes,archive);
+  await retainValidation(f.ad,id,archive,async()=>{throw Error('The GitHub download has expired');});
+  await assert.rejects(()=>retainedValidation(f.out,id),rejects(404));
+  const receipt=await db.auditEvent.findUniqueOrThrow({where:{id:retained.receiptId}});
+  await db.auditEvent.update({where:{id:receipt.id},data:{details:{...(receipt.details as object),encoded:Buffer.from('tampered').toString('base64')}}});
+  await assert.rejects(()=>retainedValidation(f.o,id),rejects(409));
+ }finally{
+  if(previous===undefined)delete process.env.VERCEL_GIT_COMMIT_SHA;else process.env.VERCEL_GIT_COMMIT_SHA=previous;
+  await f.cleanup();
+ }
+});

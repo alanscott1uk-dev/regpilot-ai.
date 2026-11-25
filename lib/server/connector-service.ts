@@ -49,6 +49,9 @@ const googleSchema=googleTarget.extend({provider:z.literal("GOOGLE_WORKSPACE"),c
 const microsoftSchema=microsoftTarget.extend({provider:z.enum(["MICROSOFT365","INTUNE"]),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:z.string().min(16).max(512).regex(/^[^\r\n\0]+$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)});
 const extraFields={controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().refine(validCredential).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)};
 const extraSchema=z.discriminatedUnion("provider",[
+ recordTargets.SLACK_MEMBER.extend({...extraFields,provider:z.literal("SLACK_MEMBER")}).strict(),
+ recordTargets.BOX_USER.extend({...extraFields,provider:z.literal("BOX_USER")}).strict(),
+ recordTargets.ASANA_TASK.extend({...extraFields,provider:z.literal("ASANA_TASK")}).strict(),
  recordTargets.GITHUB_SCIM.extend({...extraFields,provider:z.literal("GITHUB_SCIM")}).strict(),
  recordTargets.ATLASSIAN_SCIM.extend({...extraFields,provider:z.literal("ATLASSIAN_SCIM")}).strict(),
  recordTargets.STATUSPAGE_COMPONENT.extend({...extraFields,provider:z.literal("STATUSPAGE_COMPONENT")}).strict(),
@@ -93,6 +96,7 @@ function storedTarget(settings:ConnectorSettings):{repository:string;branch:stri
   case "NHSBSA_MAPPING":case "CLINICALTRIALS_GOV":case "OPENFDA_RECALL":case "DAILYMED_LABEL":case "EUROPE_PMC":case "MHRA_GUIDANCE":
   case "NANGO_SYNC":return recordKeys(settings.provider,settings);
   case "OPENAI_PROJECT_MODEL":case "PRIVATE_AI_MODEL":
+  case "SLACK_MEMBER":case "BOX_USER":case "ASANA_TASK":
   case "GITHUB_SCIM":case "ATLASSIAN_SCIM":case "STATUSPAGE_COMPONENT":case "ZENDESK_TICKET":
   case "KEYCLOAK_REALM":
   case "GITHUB_WORKFLOW":

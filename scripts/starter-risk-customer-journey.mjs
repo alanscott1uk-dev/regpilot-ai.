@@ -82,6 +82,30 @@ export async function starterProgrammeCustomerJourney({review,upload,db,app,org,
  await mobile.screenshot({path:artifactDir+'/mobile-starter-programme-saved.png'});
  assert.equal(await db.obligation.count({where:{organizationId:org.id}}),before.tasks+2,'refresh and other members read the same canonical task set');
  passed('The owner adapted a starter programme, selected two tasks, assigned an existing colleague and previewed without writes. One explicit confirmation created two open, owned tasks and a frozen programme record; reload and a mobile colleague retained the exact task handoff into the ordinary evidence workflow.');
+ await checkpoint('review one Annex A applicability decision and export the complete statement');
+ await review.goto(app+'/team/programmes?'+new URLSearchParams({organizationId:org.id}));
+ const iso=list.packs.find(p=>p.id==='iso27001-annex-a');
+ await review.getByRole('button',{name:'Choose '+iso.title,exact:true}).click();
+ await review.getByLabel('Why this programme fits',{exact:true}).fill('The fictional site needs to assess information security control scope against its own activities.');
+ for(const item of iso.items.slice(2))await review.getByRole('checkbox',{name:'Include '+item.title,exact:true}).uncheck();
+ await review.getByLabel('Assign selected tasks to',{exact:true}).selectOption(editor.id);
+ await review.getByRole('button',{name:'Apply owner to selected tasks',exact:true}).click();
+ await review.getByRole('button',{name:'Preview programme',exact:true}).click();
+ await review.getByRole('checkbox',{name:'I have reviewed these tasks, owners and dates.',exact:true}).check();
+ await review.getByRole('button',{name:'Create 2 tasks',exact:true}).click();
+ const statement=review.getByRole('region',{name:'Saved programme',exact:true});
+ await statement.getByText('Statement of applicability by framework reference',{exact:true}).click();
+ await statement.getByLabel('Framework reference',{exact:true}).selectOption({index:0});
+ await statement.getByLabel('Applicability',{exact:true}).selectOption('APPLIES');
+ await statement.getByLabel('Reason for this decision',{exact:true}).fill('The fictional site assigns responsibility for information security through its approved local policy.');
+ await statement.getByRole('button',{name:'Save scope decision',exact:true}).click();
+ await statement.getByText('1 of 93 references have a scope decision.',{exact:true}).waitFor();
+ const downloadReady=review.waitForEvent('download');
+ await statement.getByRole('button',{name:'Download statement of applicability',exact:true}).click();
+ const csv=await readFile(await (await downloadReady).path(),'utf8');
+ assert.equal(csv.split('\r\n').length,94);assert.match(csv,/APPLIES/);assert.match(csv,/UNASSESSED/);
+ await writeFile(artifactDir+'/statement-of-applicability.csv',csv);
+ passed('A reviewer decided one ISO Annex A reference and downloaded all 93 references, including unassessed controls without linked tasks.');
  return {programmeId:applied.id,packId:pack.id,taskIds:applied.taskIds,createdTasks:2,previewReadOnly:true,preservedExistingEvidence:true};
 }
 

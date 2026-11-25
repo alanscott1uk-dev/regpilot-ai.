@@ -1,3 +1,5 @@
+import {instrumentWindow} from './instruments';
+import {isInstrumentSeries} from './instrument-series';
 import {fdaSearchPage} from './fda';
 import {CollectionError} from '../connectors/collection-error';
 import {resilientGet} from '../connectors/resilient-http';
@@ -60,6 +62,8 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
  try{old=validateReport(previous,now.getTime());}catch{}
  const prior=new Map((old?.items||[]).filter(i=>Date.parse(i.updatedAt)>=Date.parse(windowStart)).map(i=>[i.id,i]));
  const collected=new Map<string,HorizonItem>(),feeds:HorizonReport['feeds']=new Array(PUBLISHERS.length);let cursor=0;
+ const legislationMetrics={requests:0,retries:0};
+ let legislation:ReturnType<typeof instrumentWindow>|undefined;
  async function worker(){while(cursor<PUBLISHERS.length){const index=cursor++,publisher=PUBLISHERS[index];let total:number|null=null,retrieved=0,indexChanged=false;const staged:HorizonItem[]=[];const seen=new Set<string>();
   const openEvents=new Map<string,{item:HorizonItem;revisions:string[]}>();
   const priorFeed=old?.feeds.find(f=>f.id===publisher.id);
@@ -67,10 +71,17 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
   const feedMetrics={requests:0,retries:0};
   const retryRead=resilientGet(fetcher,publisher.id==='us-fda'?'https://api.fda.gov':'https://www.gov.uk',{accept:'application/json'},{timeoutMs:90000,maxRequests:60,metrics:feedMetrics});
   try{
+   let instruments:Awaited<ReturnType<typeof instrumentWindow>>|undefined;
+   if(isInstrumentSeries(publisher.id)){
+    legislation??=instrumentWindow(windowStart,generatedAt,fetcher,legislationMetrics);
+    instruments=await legislation;
+    if(instruments.unavailable)throw new CollectionError('INVALID_LEGISLATION_INDEX');
+   }
    let pageSize = MAX_SEARCH_PAGE;
    while (retrieved < MAX_PUBLISHER_RESULTS) {
     const offset = retrieved;
-    const page = publisher.id==='us-fda'?await fdaSearchPage(windowStart,generatedAt,offset,retryRead):await readSearchPage(publisher.slug, windowStart, generatedAt, offset,
+    const seriesRows=instruments?.rows.filter(r=>r.organisations[0].slug===publisher.id);
+    const page = seriesRows?{raw:{results:seriesRows.slice(0,MAX_PUBLISHER_RESULTS),total:seriesRows.length},count:MAX_PUBLISHER_RESULTS}:publisher.id==='us-fda'?await fdaSearchPage(windowStart,generatedAt,offset,retryRead):await readSearchPage(publisher.slug, windowStart, generatedAt, offset,
      Math.min(pageSize, MAX_PUBLISHER_RESULTS-offset), retryRead);
     const {raw} = page;
     pageSize = page.count;
@@ -104,11 +115,12 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
   }
   for(const item of staged)if(collected.has(item.id)&&collected.get(item.id)!.revision!==item.revision)throw new CollectionError('INCONSISTENT_PUBLICATION');
   for(const item of staged){const existing=collected.get(item.id);if(existing){existing.publisherIds=[...new Set([...existing.publisherIds,publisher.id])];}else collected.set(item.id,item);}
-  feeds[index]={id:publisher.id,state:total!>retrieved||indexChanged?'limited':'available',checkedAt:generatedAt,total,retrieved,reason:indexChanged?'INDEX_CHANGED':total!>retrieved?'RESULT_LIMIT':null,retryAt:null,failureCount:0};
+  feeds[index]={id:publisher.id,state:instruments?.limited||total!>retrieved||indexChanged?'limited':'available',checkedAt:generatedAt,total,retrieved,reason:instruments?.limited?'LEGISLATION_INDEX_PARTIAL':indexChanged?'INDEX_CHANGED':total!>retrieved?'RESULT_LIMIT':null,retryAt:null,failureCount:0};
   }catch(error){const failureCount=Math.min(100,(priorFeed?.failureCount||0)+1),delay=error instanceof CollectionError&&error.code==='RATE_LIMITED'?error.retryAfterSeconds||60:Math.min(21600,900*2**Math.min(5,failureCount-1));
    feeds[index]={id:publisher.id,state:'unavailable',checkedAt:generatedAt,total,retrieved:0,reason:error instanceof CollectionError?error.code:'FETCH_OR_IDENTITY_FAILED',retryAt:error instanceof CollectionError&&error.code==='RETRY_REQUIRES_REVIEW'?null:new Date(now.getTime()+delay*1000).toISOString(),failureCount};}finally{metrics.requests+=feedMetrics.requests;metrics.retries+=feedMetrics.retries;}
  }}
  await Promise.all(Array.from({length:3},()=>worker()));
+ metrics.requests+=legislationMetrics.requests;metrics.retries+=legislationMetrics.retries;
  // Earlier metadata is retained through outages, with its old observation time.
  for(const [id,item] of prior)if(!collected.has(id))collected.set(id,item);
  const sorted=[...collected.values()].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)||a.id.localeCompare(b.id));
@@ -119,10 +131,10 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
  const previousHistory=old?[summarize(old),...(old.pipeline?.history||[])]:[];
  const history=[...new Map(previousHistory.filter(h=>h.generatedAt!==generatedAt).map(h=>[h.generatedAt,h])).values()].sort((a,b)=>b.generatedAt.localeCompare(a.generatedAt)).slice(0,48);
  return validateReport({pipeline:{cadenceMinutes:60,durationMs:Date.now()-started,...metrics,retentionLimited:collected.size>items.length,history},format:'regpilot-horizon-v1',generatedAt,windowStart,...provenance,previousAvailable:!!old,feeds,items,limitations:[
-  'Discovery metadata from selected GOV.UK publishers and US FDA drug recall enforcement reports over the last 30 days. Review the jurisdiction of each source.',
+  'Discovery metadata from selected GOV.UK publishers, four UK legislative instrument series and US FDA drug enforcement reports over the last 30 days. Review the jurisdiction of each source.',
   'Each publisher is bounded to 2,000 results per run and the retained feed to 10,000 records or 4 MB, whichever is reached first. Limits and unavailable feeds are explicit; older items keep their original observation time.',
   'Publication timestamps and metadata changes are not legal effective dates or proof of changed obligations. Applicability and jurisdiction require review.',
   'Publisher/activity matching and category priority are transparent sorting aids, not legal assessments. Full text, linked attachments and independently reviewed requirements are handled separately.',
-  'GOV.UK records contain public sector information licensed under the Open Government Licence v3.0. US drug recall data is supplied by openFDA.'
+  'GOV.UK records contain public sector information licensed under the Open Government Licence v3.0. UK instruments are indexed by publication date. Their series alone does not establish territorial extent. US drug recall data is supplied by openFDA.'
  ]},now.getTime());
 }

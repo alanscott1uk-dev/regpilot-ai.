@@ -12,6 +12,7 @@ export function searchPhrases(search: string) {
 }
 
 export const watchlistFilters = z.object({
+  siteView:z.literal('scottish-pharma-wholesale').optional(),
   publisher: z.string().refine(id => id === '' || publishers.has(id)),
   kind: z.union([z.literal(''), itemSchema.shape.kind]),
   topic: z.string().refine(id => id === '' || topics.has(id)),
@@ -26,7 +27,7 @@ export type HorizonFilters = z.infer<typeof watchlistFilters>;
 export type HorizonWatch = {id: string; name: string; version: number; filters: HorizonFilters; archived: boolean};
 
 export function sameHorizonFilters(a: HorizonFilters, b: HorizonFilters) {
-  return a.publisher === b.publisher && a.kind === b.kind && a.topic === b.topic &&
+  return a.siteView === b.siteView && a.publisher === b.publisher && a.kind === b.kind && a.topic === b.topic &&
     a.updatedWithin === b.updatedWithin && a.changedOnly === b.changedOnly && a.onlyOpen === b.onlyOpen &&
     a.phrases.length === b.phrases.length && a.phrases.every((phrase,index)=>phrase===b.phrases[index]);
 }
@@ -45,7 +46,15 @@ export function matchingPhrase(item: HorizonItem, phrases: string[]) {
   return phrases.find(phrase => title.includes(' '+phrase+' ') || summary.includes(' '+phrase+' '));
 }
 
+const medicinesTerms=['medicine','medicines','pharmaceutical','pharmaceuticals','controlled drug','controlled drugs','misuse of drugs','good distribution practice','wholesale dealer','wholesale dealers','cold chain','pharmacy','pharmacies'];
+export function scottishPharmaReason(item:HorizonItem){
+ if(item.publisherIds.includes('mhra')&&item.kind==='Safety alert')return 'MHRA safety alert';
+ if(!item.publisherIds.some(id=>['mhra','home-office','dhsc','ukhsa','hse','uksi','ssi'].includes(id)))return null;
+ const phrase=matchingPhrase(item,medicinesTerms);
+ return phrase?'Matched “'+phrase+'” in a selected official source':null;
+}
 export function matchesHorizonView(item: HorizonItem, filters: HorizonFilters, generatedAt: string, hasDecision: boolean) {
+  if(filters.siteView&&!scottishPharmaReason(item))return false;
   if (filters.publisher && !item.publisherIds.includes(filters.publisher)) return false;
   if (filters.kind && item.kind !== filters.kind) return false;
   if (filters.topic && !rankItem(item, [filters.topic]).suggested) return false;

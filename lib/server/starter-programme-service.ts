@@ -92,6 +92,11 @@ async function programmeView(tx:Tx,ctx:AuthorizedContext,saved:ReturnType<typeof
  });
  return {evidenceLimited:files.length>1000,id:saved.id,packId:record.packId,packVersion:record.packVersion,name:record.name,createdAt:record.createdAt,total:items.length,completed:items.filter(item=>item.task?.status==='COMPLETE').length,needsAttention:items.filter(item=>item.attention.length).length,href:link('/team/programmes',ctx.organizationId,{programmeId:saved.id}),scopeRationale:record.scopeRationale,recordHash:saved.recordHash,items,scope:record.scope};
 }
+export async function programmeReferenceContext(tx:Tx,ctx:AuthorizedContext,programmeId:string){
+ const event=await tx.auditEvent.findFirst({where:{id:programmeId,organizationId:ctx.organizationId,entityType:ENTITY,action:ACTION},select:eventSelect});
+ if(!event)throw new IntelligenceError('Starter programme unavailable.',404);
+ return programmeView(tx,ctx,readRecord(ctx,event),true);
+}
 export async function starterProgrammeWorkspace(ctx:AuthorizedContext,programmeId?:string){
  if(programmeId&&!id.safeParse(programmeId).success)throw new IntelligenceError('Invalid starter programme identifier');
  const result=await db.$transaction(async tx=>{

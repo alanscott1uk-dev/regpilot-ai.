@@ -12,7 +12,7 @@ import {saveConnector,verifyConnectorNow,exportConnectorRun,claimConnector,execu
 import {assuranceFixture,rejects} from "./helpers/assurance-fixture";
 import {records,token} from "./helpers/operational-record-fixtures";
 
-test("nine operational sources can be configured, collected and exported within one workspace", async () => {
+test("operational connectors can be configured, collected, renewed and exported within their workspace", async () => {
   const f = await assuranceFixture(), original = globalThis.fetch;
   Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:"true",REGPILOT_CONNECTORS_ENABLED:"true",REGPILOT_CONNECTOR_ENCRYPTION_KEY:"dc".repeat(32),SUPABASE_URL:"https://auth.invalid",SUPABASE_PUBLISHABLE_KEY:"fictional"});
   try {

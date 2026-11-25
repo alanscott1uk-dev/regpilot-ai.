@@ -103,12 +103,14 @@ export async function readSync(org:string,source:Integration,id:string,model:str
  });
  const pipeline=deployed.find(entry=>entry.name===model);
  if(!pipeline&&!source.models.includes(model))throw new CollectionError('INVALID_TARGET',undefined,'model');
- const q=new URLSearchParams({model,limit:'50'}),seen=new Set<string>(),items=[] as {id:string;changed:string;action:string}[];
+ const pageSize=100,maximumPages=50,stopAt=Date.now()+35_000;
+ const q=new URLSearchParams({model,limit:String(pageSize)}),seen=new Set<string>(),items=[] as {id:string;changed:string;action:string}[];
  const evaluated:{resource:string;states:RuleState[]}[]=[],now=Date.now();
  let more=false;
- for(let page=0;page<4;page++){
+ for(let page=0;page<maximumPages;page++){
+  if(page>0&&Date.now()>=stopAt)break;
   const result=await atStep('records',()=>get('/records?'+q,key,fetcher,{'Connection-Id':id,'Provider-Config-Key':source.integration}));
-  const records=z.array(z.object({id:z.union([z.string().min(1).max(512),z.number().safe()]),_nango_metadata:z.object({last_modified_at:z.iso.datetime({offset:true}),last_action:z.enum(['ADDED','UPDATED','DELETED'])})})).max(50).parse(result.records);
+  const records=z.array(z.object({id:z.union([z.string().min(1).max(512),z.number().safe()]),_nango_metadata:z.object({last_modified_at:z.iso.datetime({offset:true}),last_action:z.enum(['ADDED','UPDATED','DELETED'])})})).max(pageSize).parse(result.records);
   for(const [index,row] of records.entries()){
    items.push({id:String(row.id),changed:row._nango_metadata.last_modified_at,action:row._nango_metadata.last_action});
    if(policy&&row._nango_metadata.last_action!=='DELETED'){
@@ -144,10 +146,10 @@ export async function managedSyncObservation(org:string,target:{scope:string;rec
  const source=(await atStep('integration',()=>enabledIntegrations(key,fetcher,org))).find(s=>s.integration===integration&&s.provider===target.reference);
  if(!source)throw new CollectionError('TARGET_MISMATCH',undefined,'integration');
  const sample=await readSync(org,source,connectionId,target.record,key,fetcher,policy);
- await checkGrant(org,source,connectionId,key,fetcher);
+ await atStep('grant',()=>checkGrant(org,source,connectionId,key,fetcher));
  return {engine:policy?'managed-control-'+policy.profile+'-v1':'managed-sync-metadata-v1',capturedAt:new Date().toISOString(),sourceUrl:'https://nango.dev/docs/api-integrations/'+source.provider,
   checks:[...sample.rules,...(policy?[{id:'affected-resources',label:'Affected resource references',status:sample.rules.some(r=>r.status==='FAIL')?'FAIL' as const:sample.rules.every(r=>r.status==='PASS')?'PASS' as const:'UNKNOWN' as const,observed:sample.findings.map(r=>r.resource+' '+r.states.join('/')).join(' · ')||'No affected resources returned',nextStep:'Up to 12 pseudonymous references are retained for comparison.'}]:[]),{id:'source-sync',label:'Source sync completed in the past 24 hours',status:sample.syncState==='FRESH'?'PASS':sample.syncState==='STALE'||sample.syncState==='NEEDS_ATTENTION'?'FAIL':'UNKNOWN',observed:sample.syncState+' · '+(sample.syncCompletedAt??'completion unconfirmed'),nextStep:'Check the deployed upstream sync schedule, errors and last completion.'},
-   {id:'sync-coverage',label:'Synced record metadata available',status:sample.count&&!sample.limited?'PASS':'UNKNOWN',observed:sample.count+' records · '+(sample.limited?'truncated':'end of returned pages'),nextStep:'Compare the model and its sync scope with the source system.'},
+   {id:'sync-coverage',label:'Synced record metadata available',status:sample.count&&!sample.limited?'PASS':'UNKNOWN',observed:sample.count+' records · '+(sample.limited?'truncated':'end of returned pages'),nextStep:'Compare the population with the source system. Each collection reads up to 5,000 records within its time budget.'},
    {id:'sync-sample',label:'Version of the sampled record identities and modification times',status:sample.count?'PASS':'UNKNOWN',observed:sample.digest+' · last change '+(sample.lastChanged??'unknown')+' · '+sample.deleted+' deleted',nextStep:'Inspect changed records in the provider before relying on the control.'}],
   limitations:['The broker cache is read on this collection. The upstream job status and completion time come from the broker. Verify the underlying control and model scope in the source system.']};
 }

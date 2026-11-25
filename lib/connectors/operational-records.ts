@@ -1,3 +1,4 @@
+import {workspaceRecordTargets,collectWorkspaceRecord} from './workspace-records';
 import {customerTargets,collectCustomerControl} from './customer-controls';
 import {collectPublicRegister,registerTargets} from './pharma-registers';
 import {collectModelAccess,openAiProjectTarget,privateModelTarget} from './direct-model';
@@ -25,7 +26,7 @@ export const calibrationBasis=z.string().max(120).refine(value=>{
 });
 export const recordTargets = {
   ...registerTargets,
-  ...customerTargets,
+  ...customerTargets,...workspaceRecordTargets,
   OPENAI_PROJECT_MODEL:openAiProjectTarget, PRIVATE_AI_MODEL:privateModelTarget,
   KEYCLOAK_REALM:keycloakTarget,
   GITHUB_WORKFLOW:workflowTarget,
@@ -83,6 +84,7 @@ export async function collectOperationalRecord(provider: RecordProvider, target:
   const get = providerReader(fetcher, {Authorization: auth});
 
   switch (provider) {
+    case "SLACK_MEMBER":case "BOX_USER":case "ASANA_TASK":return collectWorkspaceRecord(provider,{scope,record,reference:reference!},token,fetcher);
     case "GITHUB_SCIM":case "ATLASSIAN_SCIM":case "STATUSPAGE_COMPONENT":case "ZENDESK_TICKET":return collectCustomerControl(provider,{scope,record,reference:reference!},token,fetcher);
     case "OPENAI_PROJECT_MODEL":case "PRIVATE_AI_MODEL":return collectModelAccess(provider,{scope,record},token,fetcher);
     case "KEYCLOAK_REALM":return collectKeycloak(keycloakTarget.parse(target),token,fetcher);

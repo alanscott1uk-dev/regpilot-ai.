@@ -1,4 +1,5 @@
 import {z} from 'zod';
+import {instrumentSeries,isInstrumentSeries,instrumentUrl} from './instrument-series';
 export const PUBLISHERS=[
  {id:'mhra',slug:'medicines-and-healthcare-products-regulatory-agency',name:'MHRA',topics:['medicines']},
  {id:'home-office',slug:'home-office',name:'Home Office',topics:['controlled-drugs','employing-staff']},
@@ -16,9 +17,15 @@ export const PUBLISHERS=[
  ,{id:'vmd',slug:'veterinary-medicines-directorate',name:'Veterinary Medicines Directorate',topics:['medicines']}
  ,{id:'hse',slug:'health-and-safety-executive',name:'Health and Safety Executive',topics:['premises','employing-staff']}
  ,{id:'us-fda',slug:'us-fda',name:'US FDA drug enforcement',topics:['medicines','healthcare']}
+,...instrumentSeries
 ] as const;
+const expandedPublishers=new Set<string>(PUBLISHERS.slice(0,16).map(p=>p.id));
 const originalPublishers=new Set<string>(PUBLISHERS.slice(0,12).map(p=>p.id));
 export function horizonSourceUrl(path:string,publishers:string[]){
+ if(publishers.some(isInstrumentSeries)){
+  if(publishers.length!==1)throw Error('Invalid legislation publisher');
+  return instrumentUrl(path,publishers[0]);
+ }
  if(publishers.includes('us-fda')){
   const number=/^\/us-fda\/drug-recalls\/(d-\d{1,6}-\d{4})$/.exec(path)?.[1];
   const event=/^\/us-fda\/drug-events\/([1-9]\d{0,11})$/.exec(path)?.[1];
@@ -26,7 +33,7 @@ export function horizonSourceUrl(path:string,publishers:string[]){
   if(event)return 'https://api.fda.gov/drug/enforcement.json?search=event_id:'+event;
   return 'https://api.fda.gov/drug/enforcement.json?search=recall_number:%22'+number!.toUpperCase()+'%22';
  }
- if(path.startsWith('/us-fda/'))throw Error('Invalid GOV.UK publication identity');
+ if(path.startsWith('/us-fda/')||path.startsWith('/legislation/'))throw Error('Invalid GOV.UK publication identity');
  return 'https://www.gov.uk'+path;
 }
 export const MAX_PUBLISHER_RESULTS=2000,MAX_RETAINED_ITEMS=10000,MAX_REPORT_BYTES=4_000_000;
@@ -44,9 +51,9 @@ export function validateReport(raw:unknown,now=Date.now()):HorizonReport{
  const r=reportSchema.parse(raw),ids=new Set(PUBLISHERS.map(p=>p.id)),seen=new Set<string>();
  if(Date.parse(r.generatedAt)>now+300000||Date.parse(r.windowStart)>Date.parse(r.generatedAt))throw Error('Invalid report time');
  const manifest=new Set(r.feeds.map(f=>f.id));
- const validSize=r.feeds.length===PUBLISHERS.length||r.feeds.length===originalPublishers.size&&r.feeds.every(f=>originalPublishers.has(f.id));
+ const validSize=r.feeds.length===PUBLISHERS.length||[originalPublishers,expandedPublishers].some(set=>r.feeds.length===set.size&&r.feeds.every(f=>set.has(f.id)));
  if(!validSize||manifest.size!==r.feeds.length||r.feeds.some(f=>!ids.has(f.id as any)||Date.parse(f.checkedAt)>Date.parse(r.generatedAt)))throw Error('Invalid publisher manifest');
- if(r.pipeline){const seenRuns=new Set<string>();for(const h of r.pipeline.history){if(Date.parse(h.generatedAt)>Date.parse(r.generatedAt)||seenRuns.has(h.generatedAt)||![originalPublishers.size,PUBLISHERS.length].includes(h.available+h.limited+h.unavailable))throw Error('Invalid run history');seenRuns.add(h.generatedAt);}}
+ if(r.pipeline){const seenRuns=new Set<string>();for(const h of r.pipeline.history){if(Date.parse(h.generatedAt)>Date.parse(r.generatedAt)||seenRuns.has(h.generatedAt)||![originalPublishers.size,expandedPublishers.size,PUBLISHERS.length].includes(h.available+h.limited+h.unavailable))throw Error('Invalid run history');seenRuns.add(h.generatedAt);}}
  for(const i of r.items){if(seen.has(i.id)||i.url!==horizonSourceUrl(i.path,i.publisherIds)||i.publisherIds.some(id=>!manifest.has(id))||new Set(i.publisherIds).size!==i.publisherIds.length||Date.parse(i.updatedAt)>now+300000||Date.parse(i.observedAt)>Date.parse(r.generatedAt)||Date.parse(i.firstSeenAt)>Date.parse(i.observedAt))throw Error('Invalid publication identity');seen.add(i.id);}
  return r;
 }
@@ -58,6 +65,8 @@ export function rankItem(item:HorizonItem,topics:string[]=[]){
 }
 
 const feedIssues: Record<string,string> = {
+ LEGISLATION_INDEX_PARTIAL: 'Some daily legislation indexes could not be fully verified.',
+ INVALID_LEGISLATION_INDEX: 'The daily legislation indexes could not be verified.',
  DUPLICATE_PAGE: 'The publisher returned a duplicate publication.',
  INCOMPLETE_PAGE: 'The publisher returned fewer results than advertised.',
  PAGE_OFFSET_MISMATCH: 'The publisher returned a different page than requested.',

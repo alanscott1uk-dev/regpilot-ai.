@@ -1,4 +1,5 @@
 import {z} from 'zod';
+import {isInstrumentSeries,instrumentReference} from './instrument-series';
 import {horizonPath,horizonSourceUrl,PUBLISHERS,reportState,type HorizonReport} from './model';
 
 const publisher=z.string().refine(s=>PUBLISHERS.some(p=>p.id===s));
@@ -7,7 +8,8 @@ function official(url:string,publisher:string){
  if(!URL.canParse(url))return false;
  const parsed=new URL(url);
  if(parsed.protocol!=='https:'||parsed.username||parsed.password||parsed.hash)return false;
- if(publisher!=='us-fda')return parsed.origin==='https://www.gov.uk'&&!parsed.search&&horizonPath.safeParse(parsed.pathname).success&&!parsed.pathname.startsWith('/us-fda/')&&url===parsed.origin+parsed.pathname;
+ if(isInstrumentSeries(publisher))return !!instrumentReference(url,publisher);
+ if(publisher!=='us-fda')return parsed.origin==='https://www.gov.uk'&&!parsed.search&&horizonPath.safeParse(parsed.pathname).success&&!parsed.pathname.startsWith('/us-fda/')&&!parsed.pathname.startsWith('/legislation/')&&url===parsed.origin+parsed.pathname;
  if(parsed.origin!=='https://api.fda.gov'||parsed.pathname!=='/drug/enforcement.json'||parsed.searchParams.size!==1)return false;
  const query=parsed.searchParams.get('search')??'',number=/^recall_number:"(D-\d{1,6}-\d{4})"$/.exec(query)?.[1],event=/^event_id:([1-9]\d{0,11})$/.exec(query)?.[1];
  return !!(number||event);
@@ -22,6 +24,7 @@ export const coverageSample=z.object({publisher,title:z.string().trim().min(5).m
 });
 export type CoverageSample=z.infer<typeof coverageSample>;
 function canonical(url:string,publisher:string){
+ if(isInstrumentSeries(publisher))return instrumentReference(url,publisher)!;
  if(publisher!=='us-fda')return url;
  const query=new URL(url).searchParams.get('search')!;
  return query.startsWith('event_id:')?horizonSourceUrl('/us-fda/drug-events/'+query.slice(9),[publisher]):horizonSourceUrl('/us-fda/drug-recalls/'+query.slice('recall_number:"'.length,-1).toLowerCase(),[publisher]);

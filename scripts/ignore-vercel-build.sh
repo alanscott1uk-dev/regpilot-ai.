@@ -4,7 +4,7 @@
 if [ "$VERCEL_GIT_COMMIT_REF" = "feature/traceability-benchmark-batch-20261106" ]; then
   if [ "$VERCEL_ENV" = "preview" ]; then
     case "$(git log -1 --format='%s|%P')" in
-      'Release custom monitoring tests and resource findings to staging|21f0f9f96a2c09358a0a271b17689de660aaae1d'|'Release competitive gap improvements to RegPilot staging|eea0b63108246ccf2b68bcef68b99cb4d1fa00b0'|'Release the verified questionnaire handoff to RegPilot staging|27c50df9a9591763b29bf072ada23c17f420ab2f'|'Release monitored sync diagnostics, audit and pharma assessment tools to staging|260f232918364794076111952f66d719516c776e') exit 1 ;;
+      'Release custom monitoring tests and resource findings to staging|21f0f9f96a2c09358a0a271b17689de660aaae1d'|'Release competitive gap improvements to RegPilot staging|eea0b63108246ccf2b68bcef68b99cb4d1fa00b0'|'Release the verified questionnaire handoff to RegPilot staging|27c50df9a9591763b29bf072ada23c17f420ab2f'|'Release monitored sync diagnostics, audit and pharma assessment tools to staging|260f232918364794076111952f66d719516c776e'|'Release expanded monitoring, site evidence and UK legislation coverage to staging|687732167b7b28e985a655e5908e19b4bf261184') exit 1 ;;
     esac
   fi
   exit 0
