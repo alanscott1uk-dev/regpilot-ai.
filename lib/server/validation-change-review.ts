@@ -6,7 +6,7 @@ const sha=z.string().regex(/^[a-f0-9]{40}$/);
 const repo='alanscott1uk-dev/regpilot-ai.';
 const paths=z.array(z.object({filename:z.string().min(1).max(800),previous_filename:z.string().min(1).max(800).optional(),status:z.string().max(30)})).max(300);
 const coverage:[RegExp,string[]][]=[
- [/logger|calibrat|operational-record|instrument|ubibot|excursion/,['PH-01','PH-03','PH-06']],
+ [/logger|calibrat|operational-record|instrument|ubibot|tandd|excursion/,['PH-01','PH-03','PH-06','PH-09']],
  [/retained-validation|validation-archive|release-validation|execute-pharma-validation/,['PH-08']],
  [/stock|reconcil|inventory/,['PH-02']], [/capa|quality|handover/,['PH-02','PH-03','PH-04']],
  [/qualification|trial|validation/,['PH-05','PH-06']], [/effectivity|signature|authoris|authoriz|membership|evidence|prisma\//,['PH-04','PH-05','PH-07']]

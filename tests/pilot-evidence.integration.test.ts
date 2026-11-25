@@ -144,3 +144,42 @@ test("an independent quality reviewer can accept the exact UK premises against b
     assert.ok(after.reviews.some(r=>r.id===draft.id&&!r.contextCurrent));await assert.rejects(exportVendorReview(f.ad,v.id,f.store),rejects(409));
   }finally{globalThis.fetch=original;await f.cleanup();}
 });
+
+test('thirty-day customer monitoring calendar verifies scoped scheduled receipts and exposes empty UTC days',async()=>{
+ const f=await assuranceFixture();enable();
+ const {hashValue}=await import('../lib/regulatory/intelligence');
+ const {connectorScopeHash}=await import('../lib/server/connector-verification');
+ const {customerSourceProof}=await import('../lib/server/customer-source-proof');
+ const {observationOutcome}=await import('../lib/connectors/observation');
+ try{
+  const control=await newControl(f,'Temperature calendar');
+  const row=await db.evidenceConnector.create({data:{organizationId:f.a.id,controlId:control.id,configuredById:f.o.userId,provider:'TANDD_WEBSTORAGE',
+   repository:'tandd_webstorage:2:52A011FE',branch:'fixture',enabled:false,version:2}});
+  const end=new Date();end.setUTCHours(0,0,0,0);
+  const stamp=(days:number)=>new Date(end.getTime()-days*86400000+3600000);
+  const scope=connectorScopeHash(row);
+  async function reading(days:number,options:{mode?:string;scope?:string;bad?:boolean;dup?:boolean;sample?:number;state?:'PASS'|'FAIL'|'UNKNOWN';version?:number}={}){
+   const at=stamp(days),state=options.state??'PASS',version=options.version??2;
+   const checks=[{id:'logger-fresh',label:'Age',status:'PASS' as const,observed:stamp(options.sample??days).toISOString(),nextStep:'Check sensor'},
+    {id:'logger-temperature',label:'Temperature',status:state,observed:'Point reading',nextStep:'Review temperature'},
+    {id:'logger-calibration',label:'Certificate',status:'PASS' as const,observed:'fixture certificate',nextStep:'Check certificate'}];
+   const result={engine:'fixture-temperature-1',sourceUrl:'https://example.invalid/reading',capturedAt:at.toISOString(),checks,limitations:[]};
+   const run=await db.connectorRun.create({data:{organizationId:f.a.id,connectorId:row.id,leaseToken:crypto.randomUUID(),configVersion:version,
+    capturedAt:at,result,resultHash:hashValue(result),signalHash:options.bad?'0'.repeat(64):hashValue({engine:result.engine,checks}),outcome:observationOutcome(result)}});
+   const data={organizationId:f.a.id,actorId:f.o.userId,entityType:'EvidenceConnector',entityId:row.id,action:'connector.evidence_collected',createdAt:at,
+    details:{runId:run.id,scopeHash:options.scope??scope,collectionMode:options.mode??'SCHEDULED',resultHash:run.resultHash,configVersion:version}};
+   await db.auditEvent.create({data});if(options.dup)await db.auditEvent.create({data});
+   return run;
+  }
+  await reading(31);await reading(30,{version:1});await reading(6,{state:'FAIL',dup:true});
+  await reading(5,{sample:6});await reading(4,{bad:true});await reading(3,{state:'UNKNOWN'});
+  await reading(2,{mode:'RETRY'});await reading(1,{mode:'MANUAL'});await reading(1,{scope:'different'});await reading(0);
+  const calendar=(await customerSourceProof(f.o,row.id)).calendar!;
+  assert.equal(calendar.days.length,30);assert.equal(calendar.observedDays7,1);assert.equal(calendar.observedDays30,2);
+  assert.equal(calendar.days[24].date,stamp(6).toISOString().slice(0,10));
+  assert.equal(calendar.days[24].reads.length,1);assert.equal(calendar.days[24].reads[0].followUp,true);
+  assert.equal(calendar.days[0].reads.length,1);assert.equal(calendar.days[29].reads.length,0);
+  assert.equal(calendar.days.reduce((n,d)=>n+d.unverified,0),3);
+  await assert.rejects(customerSourceProof(f.out,row.id),rejects(404));
+ }finally{await f.cleanup();}
+});

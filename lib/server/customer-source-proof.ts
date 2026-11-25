@@ -1,6 +1,8 @@
 import type {Prisma} from '@prisma/client';
+import {isTemperatureLogger} from '../connectors/record-catalogue';
 import {monitoringProduct,completedManagedSync,publicMonitoringProducts,advancesUpstream} from '../connectors/monitoring-product';
 import {missingMonitoringEvidence} from '../monitoring-criteria';
+import {monitoringCalendar} from './monitoring-calendar';
 import {monitoringDepth} from './monitoring-depth';
 import {maxWorkspaceConnectorTargets} from '../connectors/capacity';
 import {z} from 'zod';
@@ -9,13 +11,14 @@ import {IntelligenceError,transaction} from './intelligence-service';
 import type {AuthorizedContext} from './authorization';
 import {verifiedObservation} from './connector-observation';
 import {connectorScopeHash} from './connector-verification';
-import {calibrationStillCurrent} from './logger-calibration';
+import {loggerReadingCurrent} from './logger-calibration';
 import {connectorProviderEnabled} from './connector-flags';
 import {observationCurrent} from '../connectors/observation';
 import {readRecordKeys} from '../connectors/operational-records';
 import {isModelConnector} from '../connectors/direct-model';
 
-const required:Record<string,string[]>={UBIBOT:['logger-fresh','logger-temperature','logger-calibration'],BENCHLING:['lab-result','lab-entry','lab-decision','lab-authority'],OPENAI_PROJECT_MODEL:['model-access'],PRIVATE_AI_MODEL:['model-access']};
+const loggerChecks=['logger-fresh','logger-temperature','logger-calibration'];
+const required:Record<string,string[]>={UBIBOT:loggerChecks,TANDD_WEBSTORAGE:loggerChecks,BENCHLING:['lab-result','lab-entry','lab-decision','lab-authority'],OPENAI_PROJECT_MODEL:['model-access'],PRIVATE_AI_MODEL:['model-access']};
 
 const category=z.enum(['CUSTOMER','STAGING','UNCONFIRMED']);
 export const declaration=z.object({connectionId:z.uuid(),configVersion:z.number().int().positive(),category,confirm:z.literal(true)}).strict();
@@ -51,7 +54,7 @@ export async function sourceOwnership(tx:Prisma.TransactionClient,ctx:Authorized
  if(info.category==='CUSTOMER'&&(mark.actorId===row.configuredById||publicMonitoringProducts.has(row.provider)))return null;
  return {id:mark.id,actor:mark.actorId,category:info.category,scopeHash:info.scopeHash,version:info.version};
 }
-export async function customerSourceProof(ctx:AuthorizedContext,id:string){
+export async function customerSourceProof(ctx:AuthorizedContext,id:string,includeCalendar=true){
  return transaction(ctx,async tx=>{
   await requireMember(tx,ctx,ADMIN);
   const row=await tx.evidenceConnector.findFirst({where:{organizationId:ctx.organizationId,id},include:{control:{select:{enabled:true}}}});
@@ -77,12 +80,8 @@ export async function customerSourceProof(ctx:AuthorizedContext,id:string){
   });
   const latest=usable[0],now=Date.now();
   let current=!!latest&&row.control.enabled&&connectorProviderEnabled(row.provider)&&observationCurrent(latest.run,row,latest.run.id===captures[0]?.id,now);
-  if(current&&row.provider==='UBIBOT'){
-   const {reference}=readRecordKeys('UBIBOT',row.repository,row.branch),parts=reference!.split('/'),stamp=Date.parse(latest!.sample??'');
-   const age=now-stamp,day=new Date(now).toISOString().slice(0,10);
-   current=age>=0&&age<=Number(parts[6])*60000&&day>=parts[2]&&day<parts[3]&&await calibrationStillCurrent(tx,row,latest!.obs);
-  }
-  const repeat=current&&usable.some(old=>old.run.configVersion===row.version&&latest!.run.capturedAt.getTime()-old.run.capturedAt.getTime()>=row.intervalHours*3600000&&(row.provider!=='UBIBOT'||old.sample!==latest!.sample)&&(!managed||advancesUpstream(old.upstream,latest!.upstream)));
+  if(current&&isTemperatureLogger(row.provider))current=await loggerReadingCurrent(tx,row,latest!.obs,now);
+  const repeat=current&&usable.some(old=>old.run.configVersion===row.version&&latest!.run.capturedAt.getTime()-old.run.capturedAt.getTime()>=row.intervalHours*3600000&&(!isTemperatureLogger(row.provider)||Date.parse(old.sample??'')<Date.parse(latest!.sample??''))&&(!managed||advancesUpstream(old.upstream,latest!.upstream)));
   const rotated=rotations.some(r=>r.after===row.version&&usable.some(a=>a.run.configVersion===r.before)&&usable.some(a=>a.run.configVersion===r.after&&(!managed||advancesUpstream(r.at.getTime(),a.upstream))));
   const recorded=(await sourceOwnership(tx,ctx,row))?.category??'UNCONFIRMED';
   const isModel=isModelConnector(row.provider);
@@ -102,7 +101,8 @@ export async function customerSourceProof(ctx:AuthorizedContext,id:string){
   const productKey=monitoringProduct(row.provider,managedSlug);
   const gaps=missingMonitoringEvidence({productKey,category:recorded,current,repeat,rotated,cadence:depth.cadence,recovered:depth.recoveries.length>0,inference:isModel?!!inference:null});
   const qualifies=gaps.length===0;
-  return {depth,productKey,gaps,qualifies,connectorId:id,provider:row.provider,version:row.version,category:recorded,current,repeat,rotated,inference:isModel?!!inference:null,customerVerified:(!managed||!!productKey)&&recorded==='CUSTOMER'&&current&&repeat&&rotated&&(!isModel||!!inference),sourceReceiptId:current?latest!.run.id:null,inferenceReceiptId:inference?.id??null,intervalHours:row.intervalHours,historyTruncated:captures.length>100||changes.length>50,checkedAt:new Date(now).toISOString()};
+  const calendar=includeCalendar?await monitoringCalendar(tx,ctx.organizationId,id,row.provider,scopeHash,now):null;
+  return {depth,calendar,productKey,gaps,qualifies,connectorId:id,provider:row.provider,version:row.version,category:recorded,current,repeat,rotated,inference:isModel?!!inference:null,customerVerified:(!managed||!!productKey)&&recorded==='CUSTOMER'&&current&&repeat&&rotated&&(!isModel||!!inference),sourceReceiptId:current?latest!.run.id:null,inferenceReceiptId:inference?.id??null,intervalHours:row.intervalHours,historyTruncated:captures.length>100||changes.length>50,checkedAt:new Date(now).toISOString()};
  });
 }
 
@@ -114,7 +114,7 @@ export async function customerBenchmarkPage(ctx:AuthorizedContext,after?:string)
  });
  const connections=[];
  for(const {id,repository,provider,enabled,failureCode} of page.slice(0,8)){
-  const p=await customerSourceProof(ctx,id);
+  const p=await customerSourceProof(ctx,id,false);
   connections.push({id,target:repository,paused:!enabled,renewHostedAccount:provider==='NANGO_SYNC'&&failureCode==='CREDENTIAL_REJECTED',product:p.productKey??p.provider,qualified:p.qualifies,gaps:p.gaps,category:p.category,latestScheduledAt:p.depth.latestScheduledAt,cadenceReceipts:p.depth.cadenceReceipts,scheduledReads:p.depth.scheduledReads,
    failures:p.depth.failures.length,verifiedRecoveries:p.depth.recoveries.length,checkedAt:p.checkedAt});
  }

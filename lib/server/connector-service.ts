@@ -1,8 +1,9 @@
 import {taskIncludesRun} from './connector-task-observations';
 import {benchlingClient,benchlingCredential} from '../connectors/benchling-auth';
 import {connectorScopeHash,credentialChanged} from './connector-verification';
-import {applyLoggerCalibration,calibrationStillCurrent} from './logger-calibration';
-import {isRecordProvider} from "../connectors/record-catalogue";
+import {applyLoggerCalibration,loggerReadingCurrent} from './logger-calibration';
+import {tanddCredentials} from '../connectors/tandd';
+import {isTemperatureLogger,isRecordProvider} from "../connectors/record-catalogue";
 import {collectOperationalRecord,readRecordKeys,recordKeys,recordTargets} from "../connectors/operational-records";
 import {workforceTarget,workforceCredentials,workforceKeys,readWorkforceKeys} from "../connectors/workforce-target";
 import {collectWorkforce} from "../connectors/workforce";
@@ -48,6 +49,7 @@ const schema=githubTarget.extend({provider:z.literal("GITHUB").default("GITHUB")
 const googleSchema=googleTarget.extend({provider:z.literal("GOOGLE_WORKSPACE"),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:googleCredentials.shape.clientSecret.optional(),refreshToken:googleCredentials.shape.refreshToken.optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)}).refine(v=>!!v.clientSecret===!!v.refreshToken,"Rotate both Google credentials together");
 const microsoftSchema=microsoftTarget.extend({provider:z.enum(["MICROSOFT365","INTUNE"]),controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),clientSecret:z.string().min(16).max(512).regex(/^[^\r\n\0]+$/).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)});
 const extraFields={controlId:z.uuid(),id:z.uuid().optional(),version:z.number().int().min(0),token:z.string().refine(validCredential).optional(),enabled:z.boolean(),intervalHours:z.union([z.literal(24),z.literal(168)]),consent:z.literal(true)};
+const loggerInterval=z.union([z.literal(1),z.literal(24),z.literal(168)]);
 const extraSchema=z.discriminatedUnion("provider",[
  recordTargets.PROMETHEUS_ALERT_RULE.extend({...extraFields,provider:z.literal("PROMETHEUS_ALERT_RULE"),token:z.string().refine(validCredential).regex(/^[^:\s]+:.+$/).optional()}).strict(),
  recordTargets.GITEA_REPOSITORY.extend({...extraFields,provider:z.literal("GITEA_REPOSITORY")}).strict(),
@@ -70,7 +72,8 @@ const extraSchema=z.discriminatedUnion("provider",[
  recordTargets.KEYCLOAK_REALM.extend({...extraFields,provider:z.literal("KEYCLOAK_REALM")}).strict(),
  recordTargets.GITHUB_WORKFLOW.extend({...extraFields,provider:z.literal("GITHUB_WORKFLOW")}).strict(),
  recordTargets.NANGO_SYNC.extend({...extraFields,provider:z.literal("NANGO_SYNC")}).omit({token:true}).strict(),
- recordTargets.UBIBOT.extend({...extraFields,provider:z.literal("UBIBOT")}).strict(),
+ recordTargets.UBIBOT.extend({...extraFields,intervalHours:loggerInterval,provider:z.literal("UBIBOT")}).strict(),
+ recordTargets.TANDD_WEBSTORAGE.extend({...extraFields,intervalHours:loggerInterval,provider:z.literal("TANDD_WEBSTORAGE"),credentials:tanddCredentials.optional()}).omit({token:true}).strict(),
  recordTargets.BENCHLING.extend({...extraFields,provider:z.literal("BENCHLING"),clientId:benchlingClient.optional()}).strict(),
  recordTargets.JIRA.extend({...extraFields,provider:z.literal("JIRA")}).strict(),
  recordTargets.SERVICENOW.extend({...extraFields,provider:z.literal("SERVICENOW")}).strict(),
@@ -92,6 +95,7 @@ const extraSchema=z.discriminatedUnion("provider",[
 type ConnectorSettings=z.infer<typeof schema>|z.infer<typeof googleSchema>|z.infer<typeof microsoftSchema>|z.infer<typeof extraSchema>;
 function storedTarget(settings:ConnectorSettings):{repository:string;branch:string;token?:string}{
  switch(settings.provider){
+  case "TANDD_WEBSTORAGE":return {...recordKeys(settings.provider,settings),token:settings.credentials?JSON.stringify(settings.credentials):undefined};
   case "BENCHLING":{
    if(settings.clientId&&!settings.token)throw new IntelligenceError("Enter the app secret with its client ID");
    return {...recordKeys(settings.provider,settings),token:settings.clientId&&settings.token?benchlingCredential(settings.clientId,settings.token):settings.token};
@@ -329,7 +333,7 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector,man
     job.lastSuccessAt&&job.nextRunAt.getTime()>=job.lastSuccessAt.getTime()+job.intervalHours*3600000-1000?'SCHEDULED':'INITIAL';
    const previous=await tx.connectorRun.findFirst({where:{organizationId:job.organizationId,connectorId:job.id},orderBy:[{capturedAt:"desc"},{id:"desc"}]});
    const trustedPrevious=previous?.configVersion===job.version?verifiedObservation(previous):null;
-   const checked=job.provider==="UBIBOT"?await applyLoggerCalibration(tx,job,result):
+   const checked=isTemperatureLogger(job.provider)?await applyLoggerCalibration(tx,job,result):
     job.provider==='NANGO_SYNC'?await (await import('./managed-renewal')).checkSyncAfterRenewal(tx,job,result):result;
    const reconciled=reconcileObservation(checked,trustedPrevious);
    const outcome=observationOutcome(reconciled),signalHash=hashValue({engine:reconciled.engine,checks:reconciled.checks});
@@ -395,8 +399,8 @@ export async function exportConnectorRun(ctx:AuthorizedContext,id:string,taskId?
   if(!observation||hashValue(row.result)!==row.resultHash||hashValue(observation)!==row.resultHash||(taskId&&!trusted))
    throw new IntelligenceError("Observation integrity check failed",409);
   let current=!!trusted&&connectorProviderEnabled(row.connector.provider)&&observationCurrent(row,row.connector,latest?.id===row.id);
-  if(current&&row.connector.provider==="UBIBOT"){
-   current=await calibrationStillCurrent(tx,row.connector,observation);
+  if(current&&isTemperatureLogger(row.connector.provider)){
+   current=await loggerReadingCurrent(tx,row.connector,observation);
   }
   if(taskId)await tx.auditEvent.create({data:{organizationId:ctx.organizationId,actorId:ctx.userId,entityType:'Obligation',entityId:taskId,
    action:'connector.reading_exported',details:{runId:row.id,resultHash:row.resultHash}}});

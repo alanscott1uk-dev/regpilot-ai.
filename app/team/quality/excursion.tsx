@@ -1,4 +1,5 @@
 'use client';
+import {recordCatalogue} from '../../../lib/connectors/record-catalogue';
 import {temperatureSummary} from '../../../lib/excursion-history';
 import {useState,useRef} from 'react';
 import type {useWorkspaceContext} from '../../../lib/client/workspace-context';
@@ -36,7 +37,7 @@ export default function Excursion({organizationId,caseId,version,files,request,r
  const history=data?.disposition?.data.history,summary=history&&temperatureSummary(history);
  return <details onToggle={e=>{if(e.currentTarget.open&&!data)void load();}}><summary>Temperature excursion and stock disposition</summary>
  {message&&<p role="alert">{message}</p>}{data&&<><p>{data.issue??(data.disposition?'Disposition recorded':data.reading?'Reading linked. Complete the investigation before recording the signed disposition.':'Link the calibrated out-of-range reading to the stock present at the site.')}</p>
- {data.reading&&<p>{data.reading.data.sampleAt} · {data.reading.data.serial} · {data.reading.data.temperature} · {data.reading.data.site} · {data.reading.data.stock.join(', ')}</p>}
+ {data.reading&&<p>{data.reading.data.sampleAt} · {data.reading.data.provider&&recordCatalogue[data.reading.data.provider].name+' · '}{data.reading.data.serial} · Channel {data.reading.data.channel} · {data.reading.data.temperature} · {data.reading.data.site} · {data.reading.data.stock.join(', ')}</p>}
  {history&&summary&&<details><summary>Calibrated readings supporting this disposition</summary>
  <p>{summary.samples} distinct instrument timestamps · {summary.minimum} to {summary.maximum} °C. {summary.largestGapMinutes===null?'Only one instrument time was observed.':'Longest interval between observations: '+Number(summary.largestGapMinutes.toFixed(1))+' minutes.'}</p>
  <p>Requested window {history.from} to {history.through}. Time outside limits between readings is unknown.</p>
@@ -44,7 +45,7 @@ export default function Excursion({organizationId,caseId,version,files,request,r
  {summary.conflicts>0&&<p role="alert">Different readings share {summary.conflicts} instrument timestamps. Review the original instrument record.</p>}
  <table><thead><tr><th>Sample UTC</th><th>Temperature</th><th>Within limits</th></tr></thead><tbody>{history.points.map(p=><tr key={p.runId}><td>{p.at}</td><td>{p.celsius} °C</td><td>{p.status==='PASS'?'Yes':'No'}</td></tr>)}</tbody></table></details>}
  {!data.reading&&canEdit&&<form onSubmit={e=>{e.preventDefault();void submit('LINK',new FormData(e.currentTarget));}}><fieldset disabled={busy}><legend>Affected stock</legend>
- <label>Calibrated readings on the case date<select name={manual?undefined:'runId'} disabled={manual} required={!manual}><option value="">Choose a reading</option>{data.candidates.readings.map(r=><option key={r.runId} value={r.runId}>{r.serial} · Channel {r.channel} · {new Date(r.sampleAt).toLocaleString('en-GB',{timeZone:'Europe/London',timeZoneName:'short'})} · {r.temperature}</option>)}</select></label>
+ <label>Calibrated readings on the case date<select name={manual?undefined:'runId'} disabled={manual} required={!manual}><option value="">Choose a reading</option>{data.candidates.readings.map(r=><option key={r.runId} value={r.runId}>{recordCatalogue[r.provider].name} · {r.serial} · Channel {r.channel} · {new Date(r.sampleAt).toLocaleString('en-GB',{timeZone:'Europe/London',timeZoneName:'short'})} · {r.temperature}</option>)}</select></label>
  {!data.candidates.readings.length&&<p>No matching collection was found for the case date.</p>}{data.candidates.limited&&<p>Showing eligible readings from the 40 most recent collections around this date.</p>}
  <label><input type="checkbox" checked={manual} onChange={e=>setManual(e.target.checked)}/>Enter a collection ID from a logger receipt</label>{manual&&<label>Logger collection ID<input name="runId" required/></label>}<label>Site and storage location<input name="site" required/></label><label>Stock or lot references, one per line<textarea name="stock" required/></label>
  {file('stockEvidenceId','Stock record for this location and time')}<button>Link reading and stock</button></fieldset></form>}

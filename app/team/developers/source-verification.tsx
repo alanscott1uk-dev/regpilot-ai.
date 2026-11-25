@@ -8,7 +8,7 @@ import type {customerBenchmarkPage,customerSourceProof,proofTargets} from '../..
 
 type Proof=Awaited<ReturnType<typeof customerSourceProof>>;
 type Targets=Awaited<ReturnType<typeof proofTargets>>;
-const names:Record<string,string>={UBIBOT:'Calibrated UbiBot logger',BENCHLING:'Benchling decision',OPENAI_PROJECT_MODEL:'OpenAI project',PRIVATE_AI_MODEL:'Private AI model'};
+const names:Record<string,string>={UBIBOT:'Calibrated UbiBot logger',TANDD_WEBSTORAGE:'Calibrated T&D logger',BENCHLING:'Benchling decision',OPENAI_PROJECT_MODEL:'OpenAI project',PRIVATE_AI_MODEL:'Private AI model'};
 
 export default function SourceVerification({workspace,locked}:{workspace:ReturnType<typeof useWorkspaceContext>;locked:boolean}){
  const [targets,setTargets]=useState<Targets|null>(null),[selected,select]=useState(''),[proof,show]=useState<Proof|null>(null);
@@ -53,6 +53,16 @@ export default function SourceVerification({workspace,locked}:{workspace:ReturnT
    if(valid()){if(value.connectorId!==id)throw new Error('The receipt belongs to a different connection.');show(value);classify(value.category);}
   }catch(e){if(valid())tell(e instanceof Error?e.message:'Unable to read verification records.');}finally{if(valid())lock(false);}
  }
+ async function downloadReading(id:string){
+  const valid=workspace.capture();
+  try{
+   const receipt=await workspace.request('/api/workspace/connectors/runs/'+id+'?'+new URLSearchParams({organizationId:org}));
+   if(!valid())return;
+   const href=URL.createObjectURL(new Blob([JSON.stringify(receipt,null,2)],{type:'application/json'}));
+   const link=document.createElement('a');link.href=href;link.download='regpilot-reading-'+id+'.json';link.click();
+   setTimeout(()=>URL.revokeObjectURL(href),1000);
+  }catch(e){if(valid())tell(e instanceof Error?e.message:'Unable to download the reading.');}
+ }
  const visible=score?.filter(row=>filter==='all'||(filter==='qualified'?row.qualified:row.gaps.includes(filter)))??[];
  return <><h2>Customer source verification</h2>
  <p>Inspect checks, scheduled reads and credential recovery for a connected product. Ownership is recorded separately for each workspace connection.</p>
@@ -77,6 +87,13 @@ export default function SourceVerification({workspace,locked}:{workspace:ReturnT
  <h4>Evidence for the 500-product target</h4>
  {proof.depth.latestScheduledAt&&<p>Latest scheduled reading {new Date(proof.depth.latestScheduledAt).toLocaleString('en-GB')}. {proof.depth.cadence?'Current scheduled cadence verified.':'Current scheduled cadence still needs evidence.'}</p>}
  <p>{proof.qualifies?'This customer connection meets the monitoring criteria.':'Awaiting qualifying customer monitoring evidence.'} {proof.depth.scheduledReads} scheduled reads · {proof.depth.failures.length} recorded collection failures · {proof.depth.recoveries.length} evidenced credential recoveries.</p>
+ {proof.calendar&&<section><h4>Scheduled evidence over 30 days</h4>
+ <p>Verified readings on {proof.calendar.observedDays7} of the last 7 complete UTC days and {proof.calendar.observedDays30} of the last 30. This connection is set to collect every {proof.intervalHours} hours.</p>
+ <details><summary>Inspect daily coverage and download source receipts</summary>
+ <p>{proof.calendar.from} to {proof.calendar.through} UTC. Only scheduled collections with complete checks count. A failed control still provides evidence. Days between weekly collections can be empty.</p>
+ {proof.calendar.limited&&<p role="status">The most recent 1,000 scheduled events are shown. Earlier dates may have additional readings.</p>}
+ <table><thead><tr><th scope="col">UTC date</th><th scope="col">Verified readings</th><th scope="col">Follow-up</th><th scope="col">Unverified</th></tr></thead>
+ <tbody>{[...proof.calendar.days].reverse().map(day=><tr key={day.date}><th scope="row">{day.date}</th><td>{day.reads.length?<details><summary>{day.reads.length} verified</summary>{day.reads.map(read=><button type="button" key={read.id} onClick={()=>void downloadReading(read.id)}>Download {read.at.slice(11,19)} UTC receipt</button>)}</details>:'No verified read'}</td><td>{day.reads.filter(read=>read.followUp).length}</td><td>{day.unverified}</td></tr>)}</tbody></table></details></section>}
  <details><summary>Read history and checks</summary>{proof.depth.reads.map(r=><p key={r.id}>{r.at} · {r.mode.toLowerCase()} · {r.checks.map(c=>c.label+' ('+c.status+')').join(', ')}</p>)}{proof.depth.failures.map(f=><p key={f.id}>{f.at} · {f.code}{f.stage&&<> · <strong>{f.stage.label}</strong><br/>{f.stage.guidance}</>}</p>)}
  <button type="button" onClick={()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(proof,null,2)],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download='regpilot-monitoring-'+proof.connectorId+'.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}}>Download monitoring evidence</button></details>
  <p>Checked {new Date(proof.checkedAt).toLocaleString('en-GB')}. Source classification: {proof.category.toLowerCase()}.</p>

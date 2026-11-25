@@ -46,5 +46,11 @@
     "requirement": "Retain and reverify the exact supplier validation archive within the site workspace after the upstream download expires",
     "file": "tests/trial-support.integration.test.ts",
     "test": "the workspace retains only the exact supplier release archive and retrieves its bytes after the upstream download expires"
+  },
+  {
+    "id": "PH-09",
+    "requirement": "Trace a T&D WebStorage Celsius channel and its instrument serial through credential rejection and renewal, independently reviewed calibration, a stock disposition and retrieval of the site inspection archive.",
+    "file": "tests/operational-records.integration.test.ts",
+    "test": "a T&D WebStorage logger recovers after credential rejection and carries its serial and channel into the signed site inspection"
   }
 ]

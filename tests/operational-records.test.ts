@@ -311,3 +311,28 @@ test('Prometheus scopes reads to one approved host, group and alert and treats u
   await assert.rejects(collectOperationalRecord('PROMETHEUS_ALERT_RULE',{...target,scope:'another.example.test'},credential,async()=>assert.fail('Unapproved origin')),{code:'INVALID_TARGET'});
  }finally{if(previous===undefined)delete process.env.REGPILOT_PROMETHEUS_HOST;else process.env.REGPILOT_PROMETHEUS_HOST=previous;}
 });
+
+test('T&D selects the instrument and Celsius channel and preserves authentication and rate errors',async()=>{
+ const target={scope:'2',record:'52B001EF',reference:['a8fb5405-c386-4e08-8729-4d44d14da410',1,'2025-01-01','2030-01-01',2,8,30].join('/')};
+ const credentials={loginId:'test0001',password:'fictional-only',apiKey:'x'.repeat(45)},stored=JSON.stringify(credentials);
+ const serial=target.record,at=String(Math.floor(Date.now()/1000)-5),certificate='a'.repeat(64);
+ const selected={num:'2',unit:'C',value:'6.3'};
+ const read=(channel:typeof selected[],unixtime=at,deviceSerial=serial)=>collectOperationalRecord('TANDD_WEBSTORAGE',target,stored,async(url,init)=>{
+  assert.equal(url,'https://api.webstorage-service.com/v1/devices/current');
+  assert.equal(init?.redirect,'error');assert.equal(init?.method,'POST');
+  assert.equal(new Headers(init.headers).get('X-HTTP-Method-Override'),'GET');
+  assert.deepEqual(JSON.parse(String(init.body)),{'api-key':credentials.apiKey,'login-id':credentials.loginId,'login-pass':credentials.password,'remote-serial':[serial]});
+  return Response.json({devices:[{serial:deviceSerial,unixtime,channel,group:{name:'unrelated private data'}}]});
+ },certificate);
+ const observed=await read([{num:'1',unit:'%',value:'85'},selected]);
+ assert.equal(observationOutcome(observed),'OBSERVED');
+ assert.doesNotMatch(JSON.stringify(observed),/fictional-only|test0001|xxxxxxxxxx|unrelated private/);
+ assert.equal(observationOutcome(await read([{...selected,value:'10.1'}])),'FOLLOW_UP');
+ for(const reading of [{...selected,value:'E1'},{...selected,value:''},{...selected,unit:'F'}])
+  assert.equal(observationOutcome(await read([reading])),'INCOMPLETE');
+ assert.equal(observationOutcome(await read([selected],String(Number(at)-3600))),'FOLLOW_UP');
+ await assert.rejects(read([selected],at,'52B00100'),{code:'TARGET_MISMATCH',step:'tandd-reading'});
+ await assert.rejects(read([selected,selected]),{code:'TARGET_MISMATCH'});
+ await assert.rejects(collectOperationalRecord('TANDD_WEBSTORAGE',target,stored,async()=>new Response(null,{status:401})),{code:'CREDENTIAL_REJECTED',step:'tandd-reading'});
+ await assert.rejects(collectOperationalRecord('TANDD_WEBSTORAGE',target,stored,async()=>new Response(null,{status:429,headers:{'x-ratelimit-reset':'75'}})),{code:'RATE_LIMITED',retryAfterSeconds:75});
+});

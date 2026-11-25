@@ -254,18 +254,30 @@ test('a hosted monitor resumes only after scoped broker reauthorisation and earn
  }finally{globalThis.fetch=original;await f.cleanup();}
 });
 
-test('repeated logger collection checks the physical serial, rotated key and current certificate review on each collection',async()=>{
+for(const loggerProvider of ['UBIBOT','TANDD_WEBSTORAGE'] as const)test(loggerProvider==='TANDD_WEBSTORAGE'?'a T&D WebStorage logger recovers after credential rejection and carries its serial and channel into the signed site inspection':'repeated logger collection checks the physical serial, rotated key and current certificate review on each collection',async()=>{
  const f=await assuranceFixture(),original=globalThis.fetch;
  Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:'true',REGPILOT_CONNECTORS_ENABLED:'true',REGPILOT_UBIBOT_ENABLED:'true',REGPILOT_CONNECTOR_ENCRYPTION_KEY:'dc'.repeat(32),SUPABASE_URL:'https://auth.invalid',SUPABASE_PUBLISHABLE_KEY:'fictional'});
  try{
   const file=await f.file(),cert=await db.evidence.findUniqueOrThrow({where:{id:file.id}});
   const programme=await db.programmeImport.create({data:{organizationId:f.a.id,createdById:f.o.userId,inputHash:f.a.id,method:'SEARCH',status:'ACCEPTED',evidenceManifest:[]}});
   const control=await db.managedControl.create({data:{organizationId:f.a.id,importId:programme.id,proposalKey:'logger',title:'Logger calibration',description:'Check the current calibrated thermometer',testProcedure:'Read the current channel',theme:'quality',ownerId:f.editor.id,scheduledById:f.owner.id,intervalDays:30,nextReviewAt:new Date()}});
-  const base={provider:'UBIBOT',scope:'812',record:'WS1-fixture',reference:[file.id,cert.reviewVersion,'2025-01-01','2030-01-01',2,8,15].join('/'),controlId:control.id,consent:true,enabled:true,intervalHours:24};
-  let temperature=4,expected=token;
+  const tandd=loggerProvider==='TANDD_WEBSTORAGE';
+  const base={provider:loggerProvider,scope:tandd?'2':'812',record:tandd?'52A021FE':'WS1-fixture',reference:[file.id,cert.reviewVersion,'2025-01-01','2030-01-01',2,8,15].join('/'),controlId:control.id,consent:true,enabled:true,intervalHours:tandd?1:24};
+  let temperature=4,expected=token,rejectCredential=false;
+  const credentials=(replaced:boolean)=>tandd?{credentials:{loginId:'qa000001',password:'fixture-pass',apiKey:(replaced?'b':'a').repeat(45)}}:{token:expected};
   const clock=Math.floor(Date.now()/1000);let sensorTime=clock-180;
-  globalThis.fetch=async raw=>{assert.equal(new URL(String(raw)).searchParams.get('api_key'),expected);return Response.json({result:'success',channels:[{channel_id:812,serial:'WS1-fixture',last_values:{field1:{value:temperature,created_at:sensorTime}}}]});};
-  const saved=await saveConnector(f.o,{...base,token,version:0});
+  globalThis.fetch=async(raw,init)=>{
+   if(tandd){
+    assert.equal(String(raw),'https://api.webstorage-service.com/v1/devices/current');
+    const body=JSON.parse(String(init?.body));
+    assert.deepEqual(body['remote-serial'],[base.record]);
+    if(rejectCredential&&body['api-key']!=='b'.repeat(45))return new Response(null,{status:401});
+    return Response.json({devices:[{serial:base.record,unixtime:String(sensorTime),channel:[{num:'1',unit:'%',value:'41'},{num:'2',unit:'C',value:String(temperature)}]}]});
+   }
+   assert.equal(new URL(String(raw)).searchParams.get('api_key'),expected);
+   return Response.json({result:'success',channels:[{channel_id:812,serial:base.record,last_values:{field1:{value:temperature,created_at:sensorTime}}}]});
+  };
+  const saved=await saveConnector(f.o,{...base,...credentials(false),version:0});
   await assert.rejects(approveLoggerCalibration(f.o,saved.id,saved.version,true),rejects(403));
   await assert.rejects(approveLoggerCalibration(f.out,saved.id,saved.version,true),rejects(409));
   assert.equal((await verifyConnectorNow(f.o,saved.id,saved.version)).outcome,'INCOMPLETE');
@@ -273,7 +285,13 @@ test('repeated logger collection checks the physical serial, rotated key and cur
   assert.deepEqual(await approveLoggerCalibration(f.ad,saved.id,saved.version,true),approval);
   await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
   assert.equal((await verifyConnectorNow(f.o,saved.id,saved.version)).outcome,'OBSERVED');
-  expected=token+'-rotated';const updated=await saveConnector(f.o,{...base,id:saved.id,version:saved.version,token:expected});
+  if(tandd){
+   rejectCredential=true;
+   await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
+   await verifyConnectorNow(f.o,saved.id,saved.version);
+   assert.equal((await db.evidenceConnector.findUniqueOrThrow({where:{id:saved.id}})).failureCode,'CREDENTIAL_REJECTED');
+  }
+  expected=token+'-rotated';const updated=await saveConnector(f.o,{...base,id:saved.id,version:saved.version,...credentials(true)});
   await db.evidenceConnector.update({where:{id:saved.id},data:{lastSuccessAt:new Date(Date.now()-600000)}});
   assert.equal((await verifyConnectorNow(f.o,saved.id,updated.version)).outcome,'OBSERVED');
   const run=await db.connectorRun.findFirstOrThrow({where:{connectorId:saved.id},orderBy:{capturedAt:'desc'}});
@@ -349,7 +367,8 @@ test('repeated logger collection checks the physical serial, rotated key and cur
    const files=await readZipParts(await siteInspectionArchive(f.re,id,f.store)) as Map<string,Buffer>;
    const bundle=JSON.parse(files.get('site-inspection.json')!.toString());
    assert.equal(bundle.site.status,'APPROVED_FOR_SITE_USE');assert.equal(bundle.site.decisions[0].excursion.qualification.ownership.id,ownership.id);
-   assert.equal(bundle.site.decisions[0].excursion.serial,'WS1-fixture');assert.deepEqual(bundle.site.decisions[0].excursion.stock,['TEST-001']);
+   assert.equal(bundle.site.decisions[0].excursion.provider,loggerProvider);assert.equal(bundle.site.decisions[0].excursion.channel,base.scope);
+   assert.equal(bundle.site.decisions[0].excursion.serial,base.record);assert.deepEqual(bundle.site.decisions[0].excursion.stock,['TEST-001']);
    assert.equal(bundle.site.decisions[0].excursion.disposition,'QUARANTINE');assert.equal(bundle.site.decisions[0].excursion.assessorId,f.re.userId);
    assert.deepEqual(bundle.sources.flatMap((s:{roles:string[]})=>s.roles).filter((r:string)=>r.startsWith('excursion-')).sort(),['excursion-authority','excursion-calibration','excursion-disposition','excursion-stock']);
    for(const source of bundle.sources)assert.equal(createHash('sha256').update(files.get(source.entry)!).digest('hex'),source.sha256);

@@ -3,17 +3,19 @@ import {z} from 'zod';
 import type {AuthorizedContext} from './authorization';
 import {ADMIN,requireMember} from './workspace-member';
 import {IntelligenceError,transaction} from './intelligence-service';
+import {isTemperatureLogger,loggerProviders} from '../connectors/record-catalogue';
 import {readRecordKeys} from '../connectors/operational-records';
 import type {Observation} from '../connectors/observation';
 import {hashValue} from '../regulatory/intelligence';
 
-type Logger=Pick<EvidenceConnector,'id'|'organizationId'|'repository'|'branch'|'controlId'|'configuredById'>;
+type Logger=Pick<EvidenceConnector,'id'|'organizationId'|'provider'|'repository'|'branch'|'controlId'|'configuredById'>;
 async function calibration(tx:Prisma.TransactionClient,logger:Logger){
- const {scope:channel,record:serial,reference}=readRecordKeys('UBIBOT',logger.repository,logger.branch);
+ if(!isTemperatureLogger(logger.provider))throw new IntelligenceError('Choose a supported temperature logger',409);
+ const {scope:channel,record:serial,reference}=readRecordKeys(logger.provider,logger.repository,logger.branch);
  const [id,version,from,until,low,high,minutes]=reference!.split('/');
  const file=await tx.evidence.findFirst({where:{id,organizationId:logger.organizationId,reviewVersion:Number(version),reviewStatus:'APPROVED',scanStatus:'CLEAN'},select:{sha256:true,uploadedById:true,reviewerId:true,reviewedAt:true}});
  if(!file?.reviewedAt||!file.reviewerId||!file.uploadedById||file.reviewerId===file.uploadedById)return null;
- const facts={channel,serial,field:'field1',unit:'Celsius',fileId:id,reviewVersion:Number(version),sha256:file.sha256,from,until,low,high,minutes,controlId:logger.controlId};
+ const facts={channel,serial,field:logger.provider==='UBIBOT'?'field1':'T&D channel '+channel,unit:'Celsius',fileId:id,reviewVersion:Number(version),sha256:file.sha256,from,until,low,high,minutes,controlId:logger.controlId};
  return {uploader:file.uploadedById,facts,basis:hashValue({organizationId:logger.organizationId,connectorId:logger.id,...facts})};
 }
 const action='logger.calibration-approved';
@@ -24,7 +26,7 @@ export async function approveLoggerCalibration(ctx:AuthorizedContext,id:string,v
  if(!Number.isSafeInteger(version)||version<1||confirm!==true)throw new IntelligenceError('Confirm the instrument, certificate and operating limits');
  return transaction(ctx,async tx=>{
   await requireMember(tx,ctx,ADMIN);
-  const logger=await tx.evidenceConnector.findFirst({where:{id,organizationId:ctx.organizationId,provider:'UBIBOT',enabled:true,version}});
+  const logger=await tx.evidenceConnector.findFirst({where:{id,organizationId:ctx.organizationId,provider:{in:[...loggerProviders]},enabled:true,version}});
   if(!logger)throw new IntelligenceError('Logger configuration changed or is unavailable',409);
   const current=await calibration(tx,logger);
   if(!current)throw new IntelligenceError('Select the current independently reviewed and clean calibration certificate',409);
@@ -58,4 +60,19 @@ export async function calibrationStillCurrent(tx:Prisma.TransactionClient,logger
  if(!observation)return false;
  const current=await applyLoggerCalibration(tx,logger,observation);
  return hashValue(current.checks)===hashValue(observation.checks);
+}
+
+export function loggerSampleCurrent(logger:Logger,observation:Observation|null,now=Date.now()){
+ if(!observation||!isTemperatureLogger(logger.provider))return false;
+ const sample=observation.checks.find(check=>check.id==='logger-fresh'&&check.status==='PASS');
+ if(!sample||!observation.checks.some(check=>check.id==='logger-calibration'&&check.status==='PASS')||
+    !observation.checks.some(check=>check.id==='logger-temperature'&&check.status!=='UNKNOWN'))return false;
+ const {reference}=readRecordKeys(logger.provider,logger.repository,logger.branch);
+ const [,,from,until,,,minutes]=reference!.split('/');
+ const age=now-Date.parse(sample.observed),today=new Date(now).toISOString().slice(0,10);
+ return age>=0&&age<=Number(minutes)*60000&&from<=today&&today<until;
+}
+
+export async function loggerReadingCurrent(tx:Prisma.TransactionClient,logger:Logger,observation:Observation|null,now=Date.now()){
+ return loggerSampleCurrent(logger,observation,now)&&await calibrationStillCurrent(tx,logger,observation);
 }

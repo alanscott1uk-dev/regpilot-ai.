@@ -14,14 +14,32 @@ export async function questionnaireFields(expected,answers){
   return parts.join(' ');
  }
  const sensitive=/password|passcode|one.time|verification code|sign.in|bank account|sort code|credit card|email address|login|username|token|api.key/i;
- const controls=[];
- for(const el of document.querySelectorAll('textarea,input[type="text"],input:not([type]),select:not([multiple])')){
-  if(el.matches(':disabled')||el.readOnly||el.closest('[hidden],[inert],[aria-hidden="true"]')||!el.getClientRects().length||getComputedStyle(el).visibility!=='visible')continue;
+ const available=el=>!el.matches(':disabled')&&!el.readOnly&&!el.closest('[hidden],[inert],[aria-hidden="true"]')&&el.getClientRects().length>0&&getComputedStyle(el).visibility==='visible';
+ function accessibleName(el,fallback){
   const ids=(el.getAttribute('aria-labelledby')||'').trim().split(/\s+/).filter(Boolean);
   const referenced=ids.map(id=>labelText(document.getElementById(id))).join(' ').trim();
-  const label=normalise(referenced||el.getAttribute('aria-label')||[...el.labels||[]].map(labelText).join(' '));
+  return normalise(referenced||el.getAttribute('aria-label')||fallback);
+ }
+ const optionName=el=>accessibleName(el,[...el.labels||[]].map(labelText).join(' '));
+ const controls=[],seen=new Set();
+ const radios=[...document.querySelectorAll('input[type="radio"]')];
+ for(const el of document.querySelectorAll('textarea,input[type="text"],input:not([type]),select:not([multiple]),input[type="radio"]')){
+  if(!available(el)||seen.has(el))continue;
+  let label,choices;
+  if(el.type==='radio'){
+   if(!el.name)continue;
+   choices=radios.filter(r=>r.name===el.name&&r.form===el.form);
+   for(const choice of choices)seen.add(choice);
+   const group=el.closest('fieldset,[role="radiogroup"]');
+   if(!group||choices.length<2||choices.some(r=>r.closest('fieldset,[role="radiogroup"]')!==group))continue;
+   const legend=[...group.children].find(child=>child.tagName==='LEGEND');
+   label=accessibleName(group,labelText(legend));
+   if(choices.some(r=>sensitive.test([r.name,r.id,r.autocomplete,optionName(r)].join(' '))))continue;
+  }else{
+   label=optionName(el);
+  }
   if(label.length<3||label.length>600||sensitive.test([label,el.name,el.id,el.autocomplete].join(' ')))continue;
-  controls.push({label,el});
+  controls.push({label,el,choices});
  }
  if(!controls.length||controls.length>100)throw Error('The page has no supported fields or exceeds the 100-field limit.');
  const capture={format:'regpilot-portal-fields-v1',origin:url.origin,pageHash,fields:controls.map(c=>c.label)};
@@ -31,7 +49,14 @@ export async function questionnaireFields(expected,answers){
  const plan=answers.map(answer=>{
   const matches=controls.filter(c=>c.label===answer.label);
   if(matches.length!==1||typeof answer.answer!=='string'||!answer.answer.trim())throw Error('A reviewed answer has no unique buyer field.');
-  const {el}=matches[0];
+  const {el,choices}=matches[0];
+  if(choices){
+   if(choices.some(r=>r.checked))throw Error('The buyer already selected an answer. Review that question in the portal.');
+   const matching=choices.filter(r=>available(r)&&optionName(r)===normalise(answer.answer));
+   if(matching.length!==1||!matching[0].hasAttribute('value')||!matching[0].value||choices.filter(r=>r.value===matching[0].value).length!==1)
+    throw Error('The approved answer must match one available radio choice exactly. Review this question in the buyer portal.');
+   return {el:matching[0],property:'checked',value:true};
+  }
   if(el instanceof HTMLSelectElement){
    const current=el.selectedOptions[0];
    if(current&&(current.value!==''||!/^((please )?(select|choose)( (an? )?(answer|option|response|value|one))?)?[\s.…*:-]*$/i.test(normalise(current.label))))throw Error('The buyer already selected an answer. Review that field in the portal.');
@@ -47,5 +72,6 @@ export async function questionnaireFields(expected,answers){
   Object.getOwnPropertyDescriptor(proto,property).set.call(el,value);
   el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));
  }
+ if(plan.some(({el,property,value})=>!el.isConnected||el[property]!==value))throw Error('The buyer page changed during filling. Review its answers before capturing the page again.');
  return {filled:plan.length};
 }

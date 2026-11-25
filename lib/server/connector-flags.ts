@@ -32,6 +32,7 @@ const providerGates=new Map<string,()=>boolean>(Object.entries({
  KEYCLOAK_REALM:()=>connectorsEnabled()&&!!process.env.REGPILOT_KEYCLOAK_HOST,
  GITHUB_WORKFLOW:()=>connectorsEnabled(),
  NANGO_SYNC:()=>connectorsEnabled()&&process.env.REGPILOT_MARKETPLACE_ENABLED==="true"&&!!process.env.REGPILOT_NANGO_API_KEY,
+ TANDD_WEBSTORAGE:()=>connectorsEnabled()&&process.env.REGPILOT_TANDD_ENABLED!=="false",
  UBIBOT:()=>connectorsEnabled()&&process.env.REGPILOT_UBIBOT_ENABLED==="true",
  BENCHLING:()=>connectorsEnabled()&&process.env.REGPILOT_BENCHLING_ENABLED==="true",
  JIRA:()=>connectorsEnabled()&&process.env.REGPILOT_JIRA_ENABLED==="true",

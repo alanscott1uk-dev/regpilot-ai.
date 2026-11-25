@@ -1,5 +1,6 @@
 import {CollectionError} from './collection-error';
 export const collectionSteps={
+ 'tandd-reading':['Read the T&D temperature channel','Verify the WebStorage read-only ID, password and API key. Check the instrument serial, channel number and Celsius unit.'],
  'logger-channel':['Read the logger channel','Check the read-only channel key, channel ID and physical serial against the instrument record.'],
  'lab-token':['Authenticate the Benchling application','Verify the app ID and secret for the selected Benchling tenant.'],
  'lab-result':['Read the assay result','Check access to the result and confirm its linked entry ID.'],

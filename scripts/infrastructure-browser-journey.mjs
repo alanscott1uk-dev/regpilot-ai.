@@ -6,7 +6,7 @@ export async function infrastructureJourney(browser,base,viewport,name){
  const org='123e4567-e89b-42d3-a456-426614174000',user='123e4567-e89b-42d3-a456-426614174001',control='123e4567-e89b-42d3-a456-426614174002',now=new Date().toISOString();
  const session={access_token:'fixture.'+Buffer.from(JSON.stringify({sub:user,exp:Math.floor(Date.now()/1000)+3600})).toString('base64url')+'.fixture',refresh_token:'fictional-browser-only',expires_at:Math.floor(Date.now()/1000)+3600,expires_in:3600,token_type:'bearer',user:{id:user,email:'fictional@example.invalid',aud:'authenticated',role:'authenticated',app_metadata:{},user_metadata:{},created_at:now}};
  await context.addInitScript(value=>localStorage.setItem('sb-auth-fixture-auth-token',JSON.stringify(value)),session);
- const data={tasks:[],summary:{policyReading:0,vendorReviewsDue:0,open:0,overdue:0,evidencePending:0,monitoringAttention:0},assessments:[],imports:[],proposal:null,controls:[{id:control,title:'Fictional infrastructure control',enabled:true,nextReviewAt:now,owner:{id:user,email:session.user.email},links:[],_count:{links:0,tasks:0}}],members:[{role:'OWNER',user:{id:user,email:session.user.email}}],evidence:[],connectors:[],sourceImpact:{tasks:[]},features:{programme:false,ai:false,connectors:true,microsoft365:false,googleWorkspace:false,gitlab:false,cloudflare:false,companiesHouse:false,vercel:true,supabase:true,okta:true,automation:false},generatedAt:now};
+ const data={tasks:[],summary:{policyReading:0,vendorReviewsDue:0,open:0,overdue:0,evidencePending:0,monitoringAttention:0},assessments:[],imports:[],proposal:null,controls:[{id:control,title:'Fictional infrastructure control',enabled:true,nextReviewAt:now,owner:{id:user,email:session.user.email},links:[],_count:{links:0,tasks:0}}],members:[{role:'OWNER',user:{id:user,email:session.user.email}}],evidence:[],connectors:[],sourceImpact:{tasks:[]},features:{programme:false,ai:false,connectors:true,microsoft365:false,googleWorkspace:false,gitlab:false,cloudflare:false,companiesHouse:false,vercel:true,supabase:true,okta:true,automation:false,recordProviders:['TANDD_WEBSTORAGE']},generatedAt:now};
  let role='OWNER';const groupId='00g'+'B'.repeat(17),removedUserId='00u'+'A'.repeat(17);
  await context.route('https://auth-fixture.example.invalid/**',route=>route.fulfill({json:{user:session.user}}));
  await context.route('**/api/ai/context',route=>route.fulfill({json:{email:session.user.email,userId:user,organisations:[{id:org,name:'Fictional infrastructure',role}]}}));
@@ -60,8 +60,27 @@ export async function infrastructureJourney(browser,base,viewport,name){
   const okta=(await saved).postDataJSON();
   assert.equal(okta.organizationId,org);assert.equal(okta.groupId,groupId);assert.equal(okta.removedUserId,removedUserId);
   assert.equal(okta.connectionId,'FictionalDirectory');assert.ok(!('token' in okta));
+  await page.goto(base+'/team/operations?view=connections&logger=TANDD_WEBSTORAGE',{waitUntil:'domcontentloaded'});
+  await page.getByLabel('Temperature channel number').waitFor();
+  await page.getByLabel('Responsible control').selectOption(control);
+  assert.equal(await page.locator('select[name="intervalHours"]').inputValue(),'1');
+  const certificate='1d736994-5d71-4ad8-8571-ac96398055d9';
+  for(const [label,value] of [
+   ['Temperature channel number','2'],['Eight-character instrument serial','52A011FE'],
+   ['Calibration certificate evidence UUID',certificate],['Approved certificate revision','1'],['Valid from (UTC)','2025-01-01'],
+   ['Recalibration due (UTC)','2030-01-01'],['Minimum Celsius','2'],['Maximum Celsius','8'],['Maximum reading age in minutes','15'],
+   ['Read-only ID','test0001'],['Read-only password','fixture-pass'],['API key','x'.repeat(45)]
+  ])await page.getByLabel(label,{exact:true}).fill(value);
+  await page.getByRole('checkbox',{name:/I authorise read-only collection/}).check();
+  const received=page.waitForRequest(req=>new URL(req.url()).pathname==='/api/workspace/connectors'&&req.method()==='POST');
+  await page.getByRole('button',{name:'Save connection',exact:true}).click();
+  const logged=(await received).postDataJSON();
+  assert.equal(logged.provider,'TANDD_WEBSTORAGE');assert.equal(logged.record,'52A011FE');assert.equal(logged.scope,'2');
+  assert.equal(logged.intervalHours,1);assert.equal(logged.reference,[certificate,1,'2025-01-01','2030-01-01',2,8,15].join('/'));
+  assert.deepEqual(logged.credentials,{loginId:'test0001',password:'fixture-pass',apiKey:'x'.repeat(45)});
+  assert.equal(await page.getByLabel('Read-only password',{exact:true}).inputValue(),'');
   const overflow=await page.evaluate(()=>Math.max(0,document.documentElement.scrollWidth-innerWidth));assert.ok(overflow<=3,'infrastructure form overflow '+overflow);
   role='VIEWER';await page.reload({waitUntil:'domcontentloaded'});await page.getByText('Collect evidence. Spot changes. Assign action.').waitFor();assert.equal(await page.getByRole('combobox',{name:'System',exact:true}).count(),0);
-  assert.deepEqual(errors,[]);return {scenario:'infrastructure-'+name,passed:true,overflowPx:overflow,steps:19,testType:'fictional connector UI fixture; no customer credential assertion'};
+  assert.deepEqual(errors,[]);return {scenario:'infrastructure-'+name,passed:true,overflowPx:overflow,steps:24,loggerSetup:'T&D hourly Celsius channel',testType:'fictional connector UI fixture; no customer credential assertion'};
  }catch(e){throw new Error(e.message+'; browser errors: '+JSON.stringify(errors));}finally{await context.close();}
 }

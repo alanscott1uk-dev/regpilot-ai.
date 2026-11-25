@@ -1,5 +1,6 @@
 import {currentFailureStages} from './connector-directory';
-import {calibrationStillCurrent} from './logger-calibration';
+import {isTemperatureLogger} from '../connectors/record-catalogue';
+import {loggerReadingCurrent} from './logger-calibration';
 import {connectorHistoryPageSize,maxWorkspaceConnectorTargets} from '../connectors/capacity';
 import {verifiedObservation} from './connector-observation';
 import {connectorProviderEnabled} from "./connector-flags";
@@ -30,8 +31,8 @@ export async function operationsWorkspace(ctx:AuthorizedContext,importId?:string
    tx.watchSchedule.count({where:{organizationId:org,OR:[{failureCode:{not:null}},{enabled:true,nextCheckAt:{lt:new Date(Date.now()-3600000)}}]}})
   ]);
   const invalidLoggers=new Set<string>();
-  for(const logger of connectors.filter(item=>item.provider==='UBIBOT'&&item.runs.length)){
-   if(!await calibrationStillCurrent(tx,logger,verifiedObservation(logger.runs[0])))invalidLoggers.add(logger.id);
+  for(const logger of connectors.filter(item=>isTemperatureLogger(item.provider)&&item.runs.length)){
+   if(!await loggerReadingCurrent(tx,logger,verifiedObservation(logger.runs[0])))invalidLoggers.add(logger.id);
   }
   const [failureStages,policyReading,vendorReviewsDue]=await Promise.all([
    currentFailureStages(tx,org,connectors),

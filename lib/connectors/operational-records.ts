@@ -1,3 +1,5 @@
+import {collectTandD} from './tandd';
+import {temperatureObservation} from './temperature-logger';
 import {atStep} from './collection-step';
 import {collectPrometheus,prometheusTarget} from './prometheus';
 import {applicationTargets,collectApplication} from './application-controls';
@@ -34,6 +36,7 @@ export const recordTargets = {
   KEYCLOAK_REALM:keycloakTarget,
   GITHUB_WORKFLOW:workflowTarget,
   NANGO_SYNC:z.object({scope:z.string().max(201).regex(/^(?:regpilot-|rpw-)[A-Za-z0-9._-]{1,92}\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/),record:z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,79}$/),reference:z.string().refine(v=>{const [provider,policy,...rest]=v.split('/');return !rest.length&&/^[a-z0-9][a-z0-9_-]{0,79}$/.test(provider)&&(policy===undefined||z.uuid().safeParse(policy).success);})}),
+  TANDD_WEBSTORAGE:z.object({scope:z.string().regex(/^[1-9]\d?$/),record:z.string().regex(/^[0-9a-fA-F]{8}$/).toUpperCase(),reference:calibrationBasis}),
   UBIBOT:z.object({scope:number,record:z.string().regex(/^[A-Za-z0-9_-]{3,60}$/),reference:calibrationBasis}),
   BENCHLING:z.object({scope:slug,record:z.string().regex(/^(?:[a-z]{1,8}_[A-Za-z0-9]{1,48}|[a-f0-9-]{36})$/),reference:z.string().regex(/^etr_[A-Za-z0-9]{1,48}\/ent_[A-Za-z0-9]{1,48}$|^etr_[A-Za-z0-9]{1,48}\/usr_[A-Za-z0-9]{1,48}$/)}),
   JIRA: z.object({scope: guid, record: z.string().toUpperCase().regex(/^[A-Z][A-Z0-9_]{1,19}-[1-9]\d{0,10}$/)}),
@@ -80,6 +83,7 @@ export async function collectOperationalRecord(provider: RecordProvider, target:
   const parsed = recordTargets[provider].strict().safeParse(target);
   if (!parsed.success)throw new CollectionError("INVALID_TARGET");
   if(provider==="NHSBSA_MAPPING"||provider==="CLINICALTRIALS_GOV"||provider==="OPENFDA_RECALL"||provider==="DAILYMED_LABEL"||provider==="EUROPE_PMC"||provider==="MHRA_GUIDANCE")return collectPublicRegister(provider,parsed.data as Target,fetcher);
+  if(provider==="TANDD_WEBSTORAGE")return atStep('tandd-reading',()=>collectTandD(parsed.data as Required<Target>,token,fetcher,certificateHash));
   if (!(provider==="BENCHLING"&&token.startsWith('{')?token.length<=1200:validCredential(token))) throw new CollectionError("INVALID_TARGET");
   const {scope, record, reference} = parsed.data as Target;
   if(provider==="BENCHLING")token=await atStep('lab-token',()=>benchlingAccess(scope,token,fetcher));
@@ -100,19 +104,14 @@ export async function collectOperationalRecord(provider: RecordProvider, target:
       const data=(await atStep('logger-channel',()=>providerReader(fetcher,{})(source+"?"+new URLSearchParams({api_key:token}))))!.body;
       const channel=Array.isArray(data?.channels)&&data.channels.length===1?data.channels[0]:data?.channel;
       if(data?.result!=="success"||String(channel?.channel_id)!==scope||channel?.serial!==record)throw new CollectionError("TARGET_MISMATCH",undefined,'logger-channel');
-      const [file,version,from,until,low,high,maxMinutes]=reference!.split("/");
       let values=channel.last_values;
       if(typeof values==="string"){try{values=JSON.parse(values);}catch{throw new CollectionError("INVALID_RESPONSE",undefined,'logger-channel');}}
       const sample=values?.field1,value=sample?.value,stamp=sample?.created_at;
       const celsius=typeof value==="number"&&Number.isFinite(value)?value:undefined;
       const ms=typeof stamp==="number"&&Number.isInteger(stamp)&&stamp>0&&stamp<1e11?stamp*1000:NaN;
-      const now=Date.now(),when=Number.isFinite(ms)?new Date(ms).toISOString():undefined;
-      const calibrated=when&&certificateHash?from<=when.slice(0,10)&&when.slice(0,10)<until:undefined;
-      return observation("ubibot-temperature",source,[
-       check("logger-fresh","Reading within approved age",when?ms<=now&&now-ms<=Number(maxMinutes)*60000:undefined,"Check connectivity and collection interval.",when),
-       check("logger-temperature","Latest internal temperature within limits",celsius===undefined?undefined:celsius>=Number(low)&&celsius<=Number(high),"Investigate excursions against the site procedure.",celsius===undefined?undefined:celsius+" °C · limits "+low+" to "+high+" °C"),
-       check("logger-calibration","Reviewed certificate and calibration interval cover the reading",calibrated,"Check certificate identity, review revision and calibration dates.",file+" v"+version+" · "+(certificateHash??"certificate unavailable")+" · "+from+" to "+until)
-      ],"Point reading for serial "+record+" from field1. The site binds the certificate and limits. Continuous interval coverage requires a logger window.");
+      return temperatureObservation({engine:'ubibot-temperature-1.0.0',source,reference:reference!,celsius,sampleMs:ms,certificateHash,
+       temperatureLabel:'Latest internal temperature within limits',
+       limitation:'Point reading for serial '+record+' from field1. The site binds the certificate and limits. Continuous interval coverage requires a logger window.'});
     }
     case "BENCHLING": {
       const [entryId,reviewer]=reference!.split("/"),base="https://"+scope+".benchling.com/api/v2";

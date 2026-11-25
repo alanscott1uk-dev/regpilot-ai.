@@ -8,6 +8,7 @@ import {transaction,IntelligenceError} from './intelligence-service';
 import {hashValue} from '../regulatory/intelligence';
 import {verifiedObservation} from './connector-observation';
 import {calibrationStillCurrent} from './logger-calibration';
+import {isTemperatureLogger,loggerProviders} from '../connectors/record-catalogue';
 import {readRecordKeys} from '../connectors/operational-records';
 import {reviewedFiles,reviewedFilesSchema,assertReviewedFiles,verifyReviewedBytes} from './reviewed-files';
 import {archiveFilename,makeAuditZip} from '../audit-archive';
@@ -29,7 +30,7 @@ const pack=(v:unknown):Prisma.InputJsonValue=>JSON.parse(JSON.stringify(v));
 type Tx=Prisma.TransactionClient;
 const problem=(message:string)=>new IntelligenceError(message,409);
 const basis=(r:QualityCase)=>({caseId:r.id,cycle:r.cycle,occurredOn:r.occurredAt.toISOString().slice(0,10),impact:r.impact,containment:r.containment,investigation:r.investigationNotes,rootCause:r.rootCause});
-const attachment=z.object({runId:z.uuid(),connectorId:z.uuid(),resultHash:z.string(),signalHash:z.string(),channel:z.string(),serial:z.string(),sampleAt:z.iso.datetime(),temperature:z.string(),
+const attachment=z.object({runId:z.uuid(),connectorId:z.uuid(),resultHash:z.string(),signalHash:z.string(),provider:z.enum(loggerProviders).optional(),channel:z.string(),serial:z.string(),sampleAt:z.iso.datetime(),temperature:z.string(),
  calibration:z.string(),calibrationApprovalId:z.uuid().optional(),calibrationApproverId:z.uuid().optional(),site:text,stock:z.array(text),stockEvidenceId:z.uuid(),files:reviewedFilesSchema});
 const decision=z.object({disposition:decide.shape.disposition,sourceRef:text,signatory:text,decidedAt:z.iso.datetime(),rationale:z.string(),decisionEvidenceId:z.uuid(),authorityEvidenceId:z.uuid(),
  files:reviewedFilesSchema,history:temperatureHistory.optional(),basisHash:z.string(),attachmentHash:z.string(),investigation:z.string(),rootCause:z.string()});
@@ -62,27 +63,27 @@ async function qualifiedReading(tx:Tx,row:QualityCase,run:LoggerRun|null){
  const sample=observation?.checks.find(check=>check.id==='logger-fresh'&&check.status==='PASS');
  const temperature=observation?.checks.find(check=>check.id==='logger-temperature'&&check.status==='FAIL');
  const certificate=observation?.checks.find(check=>check.id==='logger-calibration'&&check.status==='PASS');
- if(!run||!observation||!sample||!temperature||!certificate||run.configVersion!==run.connector.version)
+ if(!run||!isTemperatureLogger(run.connector.provider)||!observation||!sample||!temperature||!certificate||run.configVersion!==run.connector.version)
   throw problem('Select an out-of-range reading with a verified instrument and reviewed calibration.');
  const time=new Date(sample.observed);
  if(!Number.isFinite(time.getTime())||londonDay.format(time)!==basis(row).occurredOn)
   throw problem('Choose a reading from the UK occurrence date recorded on this deviation.');
  if(!await calibrationStillCurrent(tx,run.connector,observation))throw problem('Review the current instrument calibration.');
- const keys=readRecordKeys('UBIBOT',run.connector.repository,run.connector.branch);
+ const keys=readRecordKeys(run.connector.provider,run.connector.repository,run.connector.branch);
  const approval=z.uuid().safeParse(certificate.observed.split(' · instrument review ').at(-1));
  const reviewer=approval.success?await tx.auditEvent.findFirst({where:{id:approval.data,organizationId:row.organizationId,entityType:'EvidenceConnector',entityId:run.connectorId,action:'logger.calibration-approved'},select:{actorId:true}}):null;
  if(!approval.success||!reviewer?.actorId)throw problem('A verified instrument review is required for this reading.');
- return {runId:run.id,connectorId:run.connectorId,resultHash:run.resultHash,signalHash:run.signalHash,channel:keys.scope,serial:keys.record,
+ return {runId:run.id,connectorId:run.connectorId,resultHash:run.resultHash,signalHash:run.signalHash,provider:run.connector.provider,channel:keys.scope,serial:keys.record,
   sampleAt:sample.observed,temperature:temperature.observed,calibration:certificate.observed,certificateId:keys.reference!.split('/')[0],calibrationApprovalId:approval.data,calibrationApproverId:reviewer.actorId};
 }
 async function matchingReadings(tx:Tx,row:QualityCase){
  const day=row.occurredAt.getTime(),hour=3600000;
  // The longest accepted logger freshness window is one day. Include the UK midnight offset.
- const runs=await tx.connectorRun.findMany({where:{organizationId:row.organizationId,connector:{provider:'UBIBOT'},outcome:'FOLLOW_UP',
+ const runs=await tx.connectorRun.findMany({where:{organizationId:row.organizationId,connector:{provider:{in:[...loggerProviders]}},outcome:'FOLLOW_UP',
   capturedAt:{gte:new Date(day-2*hour),lt:new Date(day+49*hour)}},orderBy:[{capturedAt:'desc'},{id:'desc'}],take:41,include:{connector:true}});
  const readings=[];
  for(const run of runs.slice(0,40)){
-  try{const {runId,serial,channel,sampleAt,temperature}=await qualifiedReading(tx,row,run);readings.push({runId,serial,channel,sampleAt,temperature});}
+  try{const {runId,provider,serial,channel,sampleAt,temperature}=await qualifiedReading(tx,row,run);readings.push({runId,provider,serial,channel,sampleAt,temperature});}
   catch(err){if(!(err instanceof IntelligenceError)||err.status!==409)throw err;}
  }
  return {readings,limited:runs.length>40};
@@ -116,7 +117,7 @@ async function processExcursion(c:AuthorizedContext,id:string,raw:unknown,store?
   if(d.action==='LINK'){
    if(prior&&chain.reading?.id===prior.id)return {row,prior,body:chain.reading.data,files:chain.reading.data.files};
    if(chain.reading||prior)throw problem('An excursion has already been linked in this investigation cycle.');
-   const run=await tx.connectorRun.findFirst({where:{id:d.runId,organizationId:c.organizationId,connector:{provider:'UBIBOT'}},include:{connector:true}});
+   const run=await tx.connectorRun.findFirst({where:{id:d.runId,organizationId:c.organizationId,connector:{provider:{in:[...loggerProviders]}}},include:{connector:true}});
    const reading=await qualifiedReading(tx,row,run);
    if(reading.certificateId===d.stockEvidenceId)throw problem('Select separate evidence identifying the affected stock.');
    const {certificateId,...measurement}=reading;
@@ -176,7 +177,7 @@ async function processExcursion(c:AuthorizedContext,id:string,raw:unknown,store?
 }
 
 const qualifiedContext=z.object({release:z.string().regex(/^[a-f0-9]{40}$/),ownership:z.object({id:z.uuid(),actor:z.uuid(),category:z.literal('CUSTOMER'),scopeHash:z.string(),version:z.number().int().positive()})});
-export const siteExcursionSchema=z.object({receiptId:z.uuid(),caseId:z.uuid(),digest:z.string(),assessorId:z.uuid(),at:z.iso.datetime(),site:text,serial:z.string(),temperature:z.string(),sampleAt:z.iso.datetime(),stock:z.array(text),disposition:decide.shape.disposition,sourceRef:text,stockEvidenceId:z.uuid(),decisionEvidenceId:z.uuid(),authorityEvidenceId:z.uuid(),history:temperatureHistory.optional(),qualification:qualifiedContext,files:reviewedFilesSchema});
+export const siteExcursionSchema=z.object({receiptId:z.uuid(),caseId:z.uuid(),digest:z.string(),assessorId:z.uuid(),at:z.iso.datetime(),site:text,provider:z.enum(loggerProviders).optional(),channel:z.string().optional(),serial:z.string(),temperature:z.string(),sampleAt:z.iso.datetime(),stock:z.array(text),disposition:decide.shape.disposition,sourceRef:text,stockEvidenceId:z.uuid(),decisionEvidenceId:z.uuid(),authorityEvidenceId:z.uuid(),history:temperatureHistory.optional(),qualification:qualifiedContext,files:reviewedFilesSchema});
 export async function siteExcursion(tx:Tx,c:AuthorizedContext,receiptId:string,site:string,release:string,since:Date){
  const event=await tx.auditEvent.findFirst({where:{id:receiptId,organizationId:c.organizationId,entityType,action:'excursion.retrieve',createdAt:{gte:since}}});
  if(!event?.actorId)throw problem('Select an independent excursion retrieval for this site protocol.');
@@ -188,7 +189,7 @@ export async function siteExcursion(tx:Tx,c:AuthorizedContext,receiptId:string,s
   throw problem('The retrieval must match this site, release, independently confirmed customer logger and current investigation.');
  await checkSource(tx,row,reading.data);await assertReviewedFiles(tx,c.organizationId,disposition.data.files);
  if(disposition.data.history)await verifyTemperatureHistory(tx,c.organizationId,reading.data,disposition.data.history);
- return siteExcursionSchema.parse({...(disposition.data.history?{history:disposition.data.history}:{}),receiptId,caseId:row.id,digest:p.digest,assessorId:event.actorId,at:event.createdAt.toISOString(),site,serial:reading.data.serial,temperature:reading.data.temperature,sampleAt:reading.data.sampleAt,stock:reading.data.stock,disposition:disposition.data.disposition,sourceRef:disposition.data.sourceRef,stockEvidenceId:reading.data.stockEvidenceId,decisionEvidenceId:disposition.data.decisionEvidenceId,authorityEvidenceId:disposition.data.authorityEvidenceId,qualification:proof.data,files:[...reading.data.files,...disposition.data.files]});
+ return siteExcursionSchema.parse({...(disposition.data.history?{history:disposition.data.history}:{}),receiptId,caseId:row.id,digest:p.digest,assessorId:event.actorId,at:event.createdAt.toISOString(),site,...(reading.data.provider?{provider:reading.data.provider,channel:reading.data.channel}:{}),serial:reading.data.serial,temperature:reading.data.temperature,sampleAt:reading.data.sampleAt,stock:reading.data.stock,disposition:disposition.data.disposition,sourceRef:disposition.data.sourceRef,stockEvidenceId:reading.data.stockEvidenceId,decisionEvidenceId:disposition.data.decisionEvidenceId,authorityEvidenceId:disposition.data.authorityEvidenceId,qualification:proof.data,files:[...reading.data.files,...disposition.data.files]});
 }
 export async function verifyInspectionTemperatures(tx:Tx,org:string,excursion:z.infer<typeof siteExcursionSchema>){
  if(!excursion.history)return;
