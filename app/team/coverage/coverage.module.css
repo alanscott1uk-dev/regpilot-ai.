@@ -20,3 +20,7 @@
 .attempts{font-size:11px;line-height:1.55;margin-top:12px;color:#63536e}.attempts summary{cursor:pointer;min-height:32px;font-weight:750}.attempts ol{padding-left:20px;margin:0}.attempts li{margin:0 0 9px;padding-left:3px}.attempts strong,.attempts span{display:block}.attempts span{color:#7b6b84}
 .actions a:focus-visible,.actions button:focus-visible,.recover:focus-visible,.sourceActions a:focus-visible{outline:3px solid #9c82bc;outline-offset:3px}.toolbar select:disabled{opacity:.6}
 @media(max-width:700px){.runtime{grid-template-columns:1fr;padding:17px}.runtime dl{grid-template-columns:1fr}.actions button,.actions a{min-height:44px;display:flex;align-items:center;justify-content:center}.sourceActions a{min-height:36px;display:flex;align-items:center}.sourceMeta b{overflow-wrap:anywhere}}
+
+.finding{padding:8px 0;border-bottom:1px solid #e5dfec;overflow-wrap:anywhere}.finding p{margin:4px 0}
+
+.pageHealth{font-size:13px;color:#625677}

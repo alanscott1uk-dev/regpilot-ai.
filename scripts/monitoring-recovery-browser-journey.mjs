@@ -27,9 +27,19 @@ export async function monitoringRecoveryJourney(browser,base,viewport,name){
  await ctx.route('https://auth-fixture.example.invalid/**',r=>r.fulfill({json:{user:actor.user}}));
  await ctx.route('**/api/ai/context',r=>r.fulfill({json:{email:actor.user.email,userId:actor.user.id,organisations:[{id:org,name:'First company',role},{id:second,name:'Second company',role}]}}));
  await ctx.route('**/api/workspace/intelligence/profile*',r=>r.fulfill({json:{profile:{activities:['personal-data'],jurisdictions:['Scotland'],version:1}}}));
+ const olderConnection='b23e4567-e89b-42d3-a456-426614174099';
  await ctx.route('**/api/workspace/connectors/health*',r=>{
-  assert.equal(r.request().method(),'GET');const id=new URL(r.request().url()).searchParams.get('organizationId');
-  return r.fulfill({json:{organizationId:id,items:[],total:0,observed:0,needsAttention:0,notice:'No fictional connectors configured.'}});
+  assert.equal(r.request().method(),'GET');
+  const params=new URL(r.request().url()).searchParams,id=params.get('organizationId');
+  const fleet=id===second?21:0,term=params.get('q'),filter=params.get('filter');
+  const matchesTerm=!term||term==='Cold room',matched=matchesTerm?(filter==='collection-failed'||term?Math.min(1,fleet):fleet):0;
+  const pages=Math.max(1,Math.ceil(matched/20)),pageNumber=Math.min(pages,Number(params.get('page')||1));
+  if(params.get('format')==='csv')return r.fulfill({json:{organizationId:id,rows:matched,csv:'Connection ID,Target\r\n'+olderConnection+',Cold room logger'}});
+  const all=[...Array.from({length:20},(_,i)=>({id:'recent-'+i,target:'Recent fixture '+i})),{id:olderConnection,target:'Cold room logger'}];
+  const selected=matched===1?all.slice(-1):all.slice((pageNumber-1)*20,Math.min(pageNumber*20,matched));
+  return r.fulfill({json:{organizationId:id,items:selected.map(item=>({...item,provider:'GITHUB',status:item.id===olderConnection?'revoked':'paused',
+    reason:'Fixture connection status',checksSeen:0,checksFailed:0,checksUnknown:0,owner:'operator@example.invalid'})),
+    configured:fleet,matched,page:pageNumber,pages,observed:0,needsAttention:selected.filter(item=>item.id===olderConnection).length,countsByFilter:{all:matchesTerm?(term?1:fleet):0,'collection-failed':matchesTerm?Math.min(1,fleet):0,'failed-checks':0,overdue:0,incomplete:0,'awaiting-read':0}}});
  });
  await ctx.route('**/api/workspace/sources*',async r=>{
   assert.equal(r.request().method(),'GET','monitoring refresh must not collect a source');
@@ -52,6 +62,24 @@ export async function monitoringRecoveryJourney(browser,base,viewport,name){
   assert.ok(reads.length>0&&reads.every(id=>id===second),'a linked second organisation must never use the first membership');
   assert.equal(await page.getByRole('combobox',{name:'Organisation',exact:true}).inputValue(),second);
   await page.getByRole('region',{name:'Monitoring runtime',exact:true}).getByRole('heading',{name:'The latest monitoring run needs attention',exact:true}).waitFor();
+  const connections=page.getByRole('region',{name:'Connected evidence health'});
+  await connections.getByText('21 matching',{exact:true}).waitFor();
+  await connections.getByRole('button',{name:'Next connections'}).click();
+  const older=connections.getByRole('article',{name:'Cold room logger'});
+  await older.waitFor();
+  const target=new URL(await older.getByRole('link',{name:/Inspect connection/}).getAttribute('href'),base);
+  assert.equal(target.searchParams.get('organizationId'),second);assert.equal(target.searchParams.get('connectionId'),olderConnection);
+  await connections.getByRole('combobox',{name:'Filter evidence connections'}).selectOption('collection-failed');
+  await connections.getByText('1 matching',{exact:true}).waitFor();
+  await connections.getByRole('searchbox').fill('Unknown target');
+  await connections.getByRole('button',{name:'Search connections'}).click();
+  await connections.getByText('No connections match these filters.').waitFor();
+  await connections.getByRole('searchbox').fill('Cold room');
+  await connections.getByRole('button',{name:'Search connections'}).click();
+  await older.waitFor();
+  const exportReady=page.waitForEvent('download');
+  await connections.getByRole('button',{name:'Export all matches (CSV)'}).click();
+  const inventory=await exportReady;assert.match(await readFile(await inventory.path(),'utf8'),new RegExp(olderConnection));
   const reviewUrl=new URL(await source().getByRole('link',{name:'Review source and diffs',exact:true}).getAttribute('href'),base);
   assert.equal(reviewUrl.searchParams.get('organizationId'),second);assert.equal(reviewUrl.searchParams.get('sourceId'),sourceId);
   for(const label of ['Manage source portfolio','Manage connections'])assert.equal(new URL(await page.getByRole('link',{name:label,exact:true}).getAttribute('href'),base).searchParams.get('organizationId'),second);

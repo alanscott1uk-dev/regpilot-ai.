@@ -15,7 +15,8 @@ export function matchesNamedScope(text:string,scope:string){
   const expected=scopeWords(scope);
   return !scope.trim()||Boolean(expected&&(" "+scopeWords(text)+" ").includes(" "+expected+" "));
 }
-export function relevantConnections(question:string,asset:string,connections:ConnectorHealthItem[]){
+type SearchableConnection = Pick<ConnectorHealthItem, 'id'|'target'|'provider'|'scope'> & {controls: {title: string}[]};
+export function relevantConnections<T extends SearchableConnection>(question:string,asset:string,connections:T[]){
   const query=normalisePublicationText(question);
   const words=[...new Set(scopeWords(query).split(" "))].filter(w=>w.length>2&&!/^(the|can|and|for|show|our|does|current|with|what|which|has|have|evidence|control|please)$/.test(w));
   const issue=question.match(/\b([a-z][a-z0-9_]{1,19}-[1-9]\d{0,10})\b/i)?.[1]?.toUpperCase();

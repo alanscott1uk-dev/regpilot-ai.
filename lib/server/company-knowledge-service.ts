@@ -1,6 +1,7 @@
 import {searchPartnerReports} from './customer-api-service';
 import {researchRequirements} from './requirement-research';
 import {supplierResearch} from "./vendor-service";
+import {connectionDirectory} from './connector-directory';
 import {connectionEvidence} from "./connector-health-service";
 import {relevantConnections,operatorQuestions} from "../operator-answer";
 import {Prisma,type KnowledgeIndexRun,type KnowledgeSearchRun} from "@prisma/client";
@@ -259,7 +260,9 @@ export async function researchWorkspaceQuestion(c:AuthorizedContext,input:unknow
   const records=productId?[]:await searchWorkspaceRecords(tx,c.organizationId,question,asset);
   const requirements=await researchRequirements(tx,c,question,{asset,productId,nation});
   const passages=supportingPassages(question,asset,current.chunks,policies);
-  const connections=productId?[]:relevantConnections(question,asset,(await connectionEvidence(tx,c.organizationId,true)).items);
+  const ranked=productId?[]:relevantConnections(question,asset,await connectionDirectory(tx,c.organizationId));
+  const details=ranked.length?(await connectionEvidence(tx,c.organizationId,ranked.map(row=>row.id))).items:[];
+  const connections=ranked.flatMap(row=>details.filter(item=>item.id===row.id));
   const suppliers=await supplierResearch(tx,c,records.filter(r=>r.kind==="Supplier").map(r=>r.id),asset);
   const clarifications=operatorQuestions(question,asset,!!passages.procedures.length,!!passages.evidence.length,connections);
   return {organizationId:c.organizationId,productId,asset,question,nation:nation||null,records,partnerReports,documents:current.documents,official,connections,suppliers,requirements,clarifications,...passages};

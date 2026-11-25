@@ -279,6 +279,36 @@ test('an organisation can manage 1,000 targets and retrieve a connection outside
   assert.equal(overview.connectors.some(c=>c.id===oldest.id),false);
   assert.deepEqual((await operationsWorkspace(f.ad,undefined,oldest.id)).connectors.map(row=>row.id),[oldest.id]);
   assert.equal((await operationsWorkspace(f.out,undefined,oldest.id)).connectors.length,0);
+  const {getConnectorHealth,exportConnectorHealth}=await import('../lib/server/connector-health-service');
+  const {researchWorkspaceQuestion}=await import('../lib/server/company-knowledge-service');
+  const {hashValue}=await import('../lib/regulatory/intelligence');
+  const capturedAt=new Date(Date.now()-25*3600000),result={engine:'fleet-fixture',sourceUrl:'https://example.invalid/oldest',capturedAt:capturedAt.toISOString(),
+    checks:[{id:'test',label:'Required review',status:'FAIL',observed:'Review missing',nextStep:'Assign reviewer'}],limitations:[]};
+  await db.connectorRun.create({data:{organizationId:f.a.id,connectorId:oldest.id,leaseToken:randomUUID(),configVersion:oldest.version,
+    result,resultHash:hashValue(result),signalHash:hashValue({engine:result.engine,checks:result.checks}),outcome:'FOLLOW_UP',capturedAt}});
+  await db.evidenceConnector.update({where:{id:oldest.id},data:{enabled:true,lastSuccessAt:capturedAt,failureCode:'CREDENTIAL_REJECTED'}});
+  const first=await getConnectorHealth(f.ad);
+  assert.equal(first.configured,1000);assert.equal(first.pages,50);assert.equal(first.items.length,20);
+  assert.equal(first.countsByFilter.overdue,1);assert.equal(first.countsByFilter['failed-checks'],1);assert.equal(first.countsByFilter['awaiting-read'],999);
+  const last=await getConnectorHealth(f.ad,{page:50});assert.ok(last.items.some(row=>row.id===oldest.id));
+  const issue=await getConnectorHealth(f.st,{q:'Site devices',filter:'collection-failed'});
+  assert.equal(issue.matched,1);assert.equal(issue.items[0].id,oldest.id);assert.equal(issue.items[0].status,'revoked');
+  assert.equal(issue.items[0].findings[0].observed,'Review missing');
+  const filtered=await getConnectorHealth(f.ad,{q:'example/oldest',filter:'failed-checks',page:51});
+  assert.equal(filtered.page,1);assert.equal(filtered.items[0].runId,issue.items[0].runId);
+  const csv=await exportConnectorHealth(f.st,{});assert.equal(csv.rows,1000);assert.equal(csv.csv.split('\r\n').length,1001);
+  const report=await exportConnectorHealth(f.st,{q:f.editor.email,filter:'failed-checks'});assert.equal(report.rows,1);
+  assert.ok(report.csv.includes(oldest.id)&&report.csv.includes(issue.items[0].runId!));
+  assert.ok(!(await exportConnectorHealth(f.out,{})).csv.includes(oldest.id));
+  Object.assign(process.env,{REGPILOT_EVIDENCE_ENABLED:'true',REGPILOT_ASSURANCE_ENABLED:'true',
+    SUPABASE_SECRET_KEY:'fictional',REGPILOT_EVIDENCE_BUCKET:'fixture',REGPILOT_CLAMD_HOST:'fixture'});
+  const answer=await researchWorkspaceQuestion(f.ad,{question:'Check oldest repository evidence'},async()=>({
+    status:'no_match' as const,catalogueSize:0,nations:[],checked:[],unavailable:0,citations:[],answer:{points:[],model:null}}));
+  assert.deepEqual(answer.connections.map(row=>row.id),[oldest.id]);
+  await db.evidenceConnector.update({where:{id:oldest.id},data:{version:{increment:1}}});
+  assert.equal((await getConnectorHealth(f.ad,{filter:'failed-checks'})).matched,0);
+  assert.equal((await getConnectorHealth(f.ad,{filter:'awaiting-read'})).matched,1000);
+
  }finally{await f.cleanup();}
 });
 

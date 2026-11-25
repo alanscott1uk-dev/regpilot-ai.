@@ -7,13 +7,12 @@ import type {SourceCoverage} from "../../../lib/regulatory/source-coverage";
 import type {RegulatorySource} from "../../../lib/regulatory-sources.mjs";
 import {coverageDashboard,exportCoverageCsv} from "../../../lib/regulatory/coverage-dashboard.mjs";
 import {matchesPublicationText} from "../../../lib/regulatory/publication-query.mjs";
-import type {ConnectorHealthItem} from "../../../lib/connectors/health-dashboard.mjs";
+import {ConnectionMonitoring} from "./connection-monitoring";
 import shell from "../../workbench/workbench.module.css";
 import css from "./coverage.module.css";
 type Runtime={configured:boolean;mode:"worker"|"cron"|"both"|"inactive";state:string;lastStartedAt:string|null;lastFinishedAt:string|null;lastSuccessfulAt:string|null;cadenceMinutes:number|null;staleAfterMinutes:number|null;reason:string};
 type Feed={organizationId?:string;catalogue:RegulatorySource[];coverage:SourceCoverage[];monitoringRuntime?:Runtime};
 type Schedule=NonNullable<SourceCoverage["schedule"]>&{state?:string;lastAttemptAt?:string|null;checking?:boolean;recoveryPending?:boolean;retryAvailable?:boolean;retryReason?:string|null;history?:{id:string;at:string;action:string;outcome:string|null;failureCode:string|null;attempt:number|null;paused:boolean|null}[];historyLimited?:boolean};
-type Connections={items:ConnectorHealthItem[];total:number;observed:number;needsAttention:number;notice:string};
 const runtimeLabels:Record<string,string>={inactive:"Monitoring awaits activation","never-observed":"No worker run observed",stale:"Worker check-in overdue",running:"A monitoring run is in progress",degraded:"The latest monitoring run needs attention",healthy:"Recent monitoring run recorded"};
 const runtimeDetails:Record<string,string>={inactive:"Schedules are saved, but the monitoring service and its trigger are not both configured. An administrator must activate and verify them before scheduled collection can run.","never-observed":"The service is configured, but there is no recorded execution yet. A saved schedule does not establish that collection is running.",stale:"No recent worker execution was recorded within the expected window. Review the service and trigger before relying on future scheduled checks.",running:"A worker has started and has not yet reported completion. Individual source results below remain separate from this runtime status.",degraded:"A worker execution failed or was interrupted. Inspect the individual source results below.",healthy:"A recent worker execution completed. Each publication still needs its own successful, timely collection and any required independent review."};
 const stateLabel:Record<string,string>={failed:"Collection failed",overdue:"Watch overdue",stale:"Source stale",current:"Recently checked",
@@ -25,29 +24,26 @@ export default function Coverage(){
  const workspace=useWorkspaceContext();
  const {organisations:orgs,organizationId:orgId,request,capture,chooseOrganization}=workspace;
  const href=(path:string,values:Record<string,string>={})=>workspaceHref(path,orgId,values);
- const [stored,setStored]=useState<{revision:number;feed:Feed;connections:Connections|null;connectionError:string}|null>(null);
+ const [stored,setStored]=useState<{revision:number;feed:Feed}|null>(null);
  const feed=stored?.revision===workspace.revision?stored.feed:null;
- const connections=stored?.revision===workspace.revision?stored.connections:null;
- const connectionError=stored?.revision===workspace.revision?stored.connectionError:"";
  const [loading,setLoading]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState(""),[term,setTerm]=useState(""),[status,setStatus]=useState("attention"),[agency,setAgency]=useState("all");
  const [pending,setPending]=useState(""),[uncertain,setUncertain]=useState(false);
+ const [connectionRefresh,setConnectionRefresh]=useState(0);
  const serial=useRef(0),mutation=useRef(false);
  const load=useCallback(async()=>{
   if(!orgId)return false;
   const valid=capture(),revision=workspace.revision,ticket=++serial.current;
   const current=()=>valid()&&serial.current===ticket;
   setLoading(true);setError("");
-  const responses=await Promise.allSettled([
-   request("/api/workspace/sources?organizationId="+encodeURIComponent(orgId)),
-   request("/api/workspace/connectors/health?organizationId="+encodeURIComponent(orgId))
-  ]);
-  if(!current())return false;
-  const [sources,health]=responses;
-  if(sources.status!=="fulfilled"||!Array.isArray(sources.value.catalogue)||!Array.isArray(sources.value.coverage)||(sources.value.organizationId&&sources.value.organizationId!==orgId)){
-   setStored(null);setError(sources.status==="rejected"&&sources.reason instanceof Error?sources.reason.message:"Could not verify the latest source monitoring status.");setLoading(false);return false;
+  try {
+   const sources=await request("/api/workspace/sources?organizationId="+encodeURIComponent(orgId));
+   if(!current())return false;
+   if(!Array.isArray(sources.catalogue)||!Array.isArray(sources.coverage)||(sources.organizationId&&sources.organizationId!==orgId))throw Error("Could not verify the latest source monitoring status.");
+   setStored({revision,feed:sources});
+  }catch(problem){
+   if(!current())return false;
+   setStored(null);setError(problem instanceof Error?problem.message:"Could not retrieve source monitoring status.");setLoading(false);return false;
   }
-  const healthOk=health.status==="fulfilled"&&Array.isArray(health.value.items)&&(!health.value.organizationId||health.value.organizationId===orgId);
-  setStored({revision,feed:sources.value,connections:healthOk?health.value:null,connectionError:healthOk?"":"Could not independently retrieve the latest connector health. Previously recorded signals should not be treated as current."});
   setLoading(false);setUncertain(false);return true;
  },[orgId,workspace.revision,request,capture]);
  useEffect(()=>{
@@ -57,7 +53,7 @@ export default function Coverage(){
  },[workspace.signedIn,orgId,workspace.revision,load]);
  async function refresh(){
   if(mutation.current||loading)return;
-  const valid=capture();setNotice("");
+  const valid=capture();setNotice("");setConnectionRefresh(value=>value+1);
   if(await load()&&valid())setNotice("Latest saved monitoring status loaded. Refreshing does not run a source check or repeat a recovery request.");
  }
  async function recover(sourceId:string){
@@ -134,27 +130,10 @@ export default function Coverage(){
    <section className={css.sectors}><div className={css.heading}><h2>Regulator coverage</h2><small>Baselines, monitored publications and unresolved attention by publisher</small></div>
     <div className={css.agencyGrid}>{dashboard.agencies.map(a=><button key={a.agency} onClick={()=>{setAgency(a.agency);setStatus("all")}} aria-label={"Filter "+a.agency}><strong>{a.agency}</strong><span>{a.baseline} of {a.total} baselines</span><small>{a.attention} need attention</small></button>)}</div>
    </section>
-   <section className={css.sectors} aria-label="Connected evidence health">
-    <div className={css.heading}><div><h2>Evidence integration health</h2><small>Read-only provider collection, integrity and freshness — not a compliance verdict</small></div>
-     <a href={href("/team/operations?view=connections")} style={{fontSize:12,fontWeight:750,color:"#68429c",textDecoration:"none"}}>Manage connections</a></div>
-    {connectionError&&<p className={css.error} role="status">{connectionError}</p>}
-    {connections&&<><div className={css.connectMetrics}><span><b>{connections.total}</b> connections configured</span><span><b>{connections.observed}</b> recent clean observations</span><span><b>{connections.needsAttention}</b> require investigation or verification</span></div>
-     {connections.items.length===0?<p className={css.empty}>No evidence connections configured. Set up a read-only provider in Operations.</p>:
-      <div className={css.connectionGrid}>{connections.items.map(c=><article key={c.id} className={css.connection}>
-       <div className={css.sourceTop}><span>{c.provider}</span><span className={css.state} data-state={c.status==="observed"?"current":["failed","revoked"].includes(c.status)?"failed":"stale"}>{c.status.replaceAll("-"," ")}</span></div>
-       <h3>{c.target}</h3><p>{c.reason}</p>
-       <p>Owner {c.owner||"unassigned"} · {c.checksSeen} checks · expires {format(c.expiresAt)}</p>
-       {c.sourceUrl&&<p><a href={c.sourceUrl} rel="noreferrer" target="_blank">Provider source</a> · captured {format(c.sourceCapturedAt)}</p>}
-       {c.openTasks?.map(task=><p key={task.id}><a href={href("/team/work",{taskId:task.id})}>{task.title}</a> · {task.ownerName}</p>)}
-       {c.history?.length>0&&<details><summary>Recent collection and recovery history</summary><ol>{c.history.map(e=><li key={e.id}>{format(e.at)} · {e.action.replace("connector.","").replaceAll("_"," ")} {e.code||e.outcome||""}</li>)}</ol></details>}
-       <small>{c.checksFailed} failing observations · {c.checksUnknown} unknown · last retrieved {format(c.lastSuccessAt)}</small>
-       {c.controls?.length>0&&<p>Used by {c.controls.length} active control{c.controls.length===1?'':'s'}: {c.controls.map(control=>control.title).join(', ')}. {c.status!=='observed'&&'Review these controls before relying on this connection.'}</p>}
-       <a href={href(c.href)}>Inspect connection and actual signals →</a>
-      </article>)}</div>}
-     <p className={css.disclaimer}>{connections.notice}</p></>}
-   </section>
-   <footer className={css.footer}>Source health updated from tenant-scoped records. Public publication identity and applicability must be checked by a qualified person. No live checks are initiated by viewing this dashboard.</footer>
+
    </>}
+   {workspace.signedIn&&orgId&&<ConnectionMonitoring key={workspace.revision+":"+orgId} workspace={workspace} refresh={connectionRefresh}/>}
+   {dashboard&&<footer className={css.footer}>Source health updated from tenant-scoped records. Public publication identity and applicability must be checked by a qualified person. No live checks are initiated by viewing this dashboard.</footer>}
   </main>
  </div>;
 }
