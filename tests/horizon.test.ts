@@ -224,3 +224,29 @@ test('dated legislation indexes preserve instrument identity, bilingual titles a
  assert.equal(matchesHorizonView({...slip,publisherIds:['wsi'],title:'Human medicines'},businessView,first.generatedAt,false),false);
  const old={...first,feeds:first.feeds.slice(0,16),items:first.items.filter(i=>i.publisherIds.every(id=>isGov(id)||id==='us-fda'))};assert.doesNotThrow(()=>validateReport(old,+now));
 });
+
+test('a Scottish wholesaler can trace an England-only medicines instrument to its own opening clause while uncertain instruments stay in review',async()=>{
+ const {readApplicationClause}=await import('../lib/horizon/instrument-application');
+ const {applicationProvisionUrl}=await import('../lib/horizon/instrument-series');
+ const {otherNationMedicine}=await import('../lib/horizon/watchlists');
+ const source='https://www.legislation.gov.uk/uksi/2026/1184/made',wording='These Regulations extend to England and Wales and apply in relation to England only.';
+ const provision=source.replace('/made','/regulation/1/made'),xml=(text:string,extra='')=>'<Legislation xmlns="http://www.legislation.gov.uk/namespaces/legislation" DocumentURI="'+source+'"><Secondary><Body><P1group><P1 id="regulation-1" DocumentURI="'+provision+'"><P1para><P2><P2para><Text>'+text+'</Text>'+extra+'</P2para></P2></P1para></P1></P1group></Body></Secondary></Legislation>';
+ const explicit=xml(wording.replace('only.','only<FootnoteRef Ref="f2"/>.'));
+ assert.deepEqual(readApplicationClause(explicit,source),{provision:'regulation',wording});
+ assert.throws(()=>readApplicationClause(explicit,source.replace('1184','1185')));
+ for(const ambiguous of [xml('These Regulations extend to England and Wales.'),xml(wording.replace('only.','only, except for regulation 3.')),xml(wording,'<Text>Regulation 4 applies in Scotland.</Text>'),xml('<BlockAmendment>'+wording+'</BlockAmendment>'),explicit.replace('id="regulation-1"','id="regulation-2"'),explicit.replace('<Body>','<Schedules>').replace('</Body>','</Schedules>')])assert.equal(readApplicationClause(ambiguous,source),undefined);
+ const d='2026-11-11',instrument='<entry><id>http://www.legislation.gov.uk/id/uksi/2026/1184</id><title>Pharmaceutical services amendment</title><published>'+d+'T12:00:00Z</published></entry>';
+ const simulation=(verified:boolean)=>async(input:Parameters<typeof fetch>[0],opts?:RequestInit)=>{
+  const u=new URL(String(input));if(u.hostname!=='www.legislation.gov.uk')return fixture().fetch(input,opts);
+  if(u.href===source+'/data.xml')return verified?new Response(explicit):new Response(null,{status:404});
+  return new Response(daily(u.pathname.split('/')[2],u.pathname.includes(d)?instrument:''));
+ };
+ const report=await collectHorizon(null,simulation(true),now),item=report.items.find(i=>i.url===source)!;
+ const view=watchlistFilters.parse({...emptyHorizonView,siteView:'scottish-pharma-wholesale'});
+ assert.equal(applicationProvisionUrl(item.url,item.asMadeApplication!),provision);assert.equal(otherNationMedicine(item),'England');
+ assert.equal(matchesHorizonView(item,view,report.generatedAt,false),false);assert.ok(matchesHorizonView(item,emptyHorizonView,report.generatedAt,false));
+ const next=await collectHorizon(report,simulation(false),new Date(+now+60000)),unknown=next.items.find(i=>i.url===source)!;
+ assert.equal(unknown.asMadeApplication,undefined);assert.equal(unknown.discovery,'METADATA_UPDATED');assert.ok(matchesHorizonView(unknown,view,next.generatedAt,false));
+ const unrelated=report.items.find(i=>!i.url.includes('legislation.gov.uk'))!;
+ assert.throws(()=>validateReport({...report,items:[{...unrelated,asMadeApplication:item.asMadeApplication}]},+now));
+});

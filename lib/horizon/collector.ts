@@ -101,8 +101,9 @@ export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch
     if(Date.parse(updatedAt)<Date.parse(windowStart))continue;
     const url=horizonSourceUrl(path,[publisher.id]),title=plain(row.title,240),summary=plain(row.description,360),documentType=plain(row.content_store_document_type,100);
     if(!title||!documentType)throw new CollectionError('INVALID_PUBLICATION_METADATA');
-    const id=digest(url),revision=digest(JSON.stringify({title,summary,documentType,updatedAt})),before=prior.get(id);
-    const item:HorizonItem={id,revision,path,url,title,summary,documentType,kind:itemKind(path,documentType),publisherIds:[publisher.id],updatedAt,firstSeenAt:before?.firstSeenAt||generatedAt,observedAt:generatedAt,discovery:!old||(!priorFeed&&!before)?'BASELINE':!before?'FIRST_SEEN':before.revision!==revision?'METADATA_UPDATED':'UNCHANGED'};
+    const application=publisher.id==='uksi'&&row.asMadeApplication?{asMadeApplication:row.asMadeApplication}:{};
+    const id=digest(url),revision=digest(JSON.stringify({title,summary,documentType,updatedAt,...application})),before=prior.get(id);
+    const item:HorizonItem={id,revision,path,url,title,summary,documentType,...application,kind:itemKind(path,documentType),publisherIds:[publisher.id],updatedAt,firstSeenAt:before?.firstSeenAt||generatedAt,observedAt:generatedAt,discovery:!old||(!priorFeed&&!before)?'BASELINE':!before?'FIRST_SEEN':before.revision!==revision?'METADATA_UPDATED':'UNCHANGED'};
     if(event){const group=openEvents.get(path)??{item,revisions:[]};group.revisions.push(revision);if(item.updatedAt>group.item.updatedAt)group.item=item;openEvents.set(path,group);}else staged.push(item);
    }
    if(retrieved>=raw.total)break;

@@ -35,7 +35,7 @@ def validate(data, expected_commit=None, max_age_hours=2):
     assert isinstance(data['items'],list) and len(data['items'])<=10000
     ids=set()
     for item in data['items']:
-        assert set(item)=={'id','revision','path','url','title','summary','documentType','kind','publisherIds','updatedAt','firstSeenAt','observedAt','discovery'}
+        assert set(item)-{'asMadeApplication'}=={'id','revision','path','url','title','summary','documentType','kind','publisherIds','updatedAt','firstSeenAt','observedAt','discovery'}
         assert re.fullmatch('[a-f0-9]{32}',item['id']) and item['id'] not in ids;ids.add(item['id'])
         assert re.fullmatch('[a-f0-9]{32}',item['revision'])
         path=item['path'];assert isinstance(path,str) and len(path)<=450 and re.fullmatch('/[a-z0-9][a-z0-9/-]*',path) and '//' not in path and not path.endswith('/') and not path.startswith('/api/')
@@ -53,6 +53,13 @@ def validate(data, expected_commit=None, max_age_hours=2):
             expected=f'{base}/pdfs/{code}cs_{year}{number.zfill(4)}_{language}_{seq}.pdf' if seq else base+'/made'
             assert item['url']==expected
         else:assert not path.startswith(('/us-fda/','/legislation/')) and item['url']=='https://www.gov.uk'+path
+        if 'asMadeApplication' in item:
+            clause=item['asMadeApplication']
+            assert item['publisherIds']==['uksi'] and re.fullmatch(r'/legislation/uksi/\d{4}/[1-9]\d{0,5}',path) and item['documentType']=='statutory_instrument'
+            assert isinstance(clause,dict) and set(clause)=={'wording','provision'} and clause['provision'] in ('article','rule','regulation')
+            assert isinstance(clause['wording'],str) and len(clause['wording'])<=240
+            extent=r'(?:England and Wales|Scotland|Northern Ireland|England, Wales and Scotland|the United Kingdom)'
+            assert re.fullmatch(r'(?:These (?:Regulations|Rules) (?:extend to '+extent+r' and )?apply|This Order (?:extends to '+extent+r' and )?applies) (?:in relation to |in |to )(?:England|Wales|Scotland|Northern Ireland) only\.',clause['wording'])
         for key,limit in [('title',240),('summary',360),('documentType',100)]:assert isinstance(item[key],str) and len(item[key])<=limit
         assert item['title'] and item['kind'] in ('Safety alert','Consultation','Regulation or decision','Guidance','Policy','News','Other publication')
         assert isinstance(item['publisherIds'],list) and 1<=len(item['publisherIds'])<=len(manifest) and set(item['publisherIds'])<=manifest

@@ -1,11 +1,13 @@
 import {SaxesParser} from 'saxes';
 import {CollectionError} from '../connectors/collection-error';
 import {resilientGet} from '../connectors/resilient-http';
-import {instrumentSeries,isInstrumentSeries,instrumentPath} from './instrument-series';
+import {instrumentSeries,isInstrumentSeries,instrumentPath,instrumentUrl,type InstrumentApplication} from './instrument-series';
+import {readApplicationClause} from './instrument-application';
+import {medicinesPublicationTerm} from './watchlists';
 
 const host='https://www.legislation.gov.uk',atom='http://www.w3.org/2005/Atom',leg='http://www.legislation.gov.uk/namespaces/legislation';
 const dayFormat=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'});
-type Row={link:string;title:string;description:string;public_timestamp:string;content_store_document_type:string;organisations:{slug:string}[]};
+type Row={asMadeApplication?:InstrumentApplication;link:string;title:string;description:string;public_timestamp:string;content_store_document_type:string;organisations:{slug:string}[]};
 const bad=()=>new CollectionError('INVALID_LEGISLATION_INDEX');
 export function parseInstrumentPage(xml:string,day:string,page:number){
  const parser=new SaxesParser({xmlns:true}),rows:Row[]=[];
@@ -49,15 +51,19 @@ export function parseInstrumentPage(xml:string,day:string,page:number){
  if(!rootSeen||index.replace(/^http:/,'https:')!==host+'/new/'+day||!selfPage||pageText!==String(page)||entries>100||next&&!entries)throw bad();
  return {rows,next};
 }
+async function readXml(url:string,read:(url:string)=>Promise<Response>){
+ const res=await read(url);
+ if(!res.ok||!res.body||res.url&&res.url!==url){await res.body?.cancel();throw bad();}
+ const reader=res.body.getReader(),chunks:Uint8Array[]=[];let bytes=0;
+ try{for(;;){const chunk=await reader.read();if(chunk.done)break;if((bytes+=chunk.value.length)>1_500_000)throw bad();chunks.push(chunk.value);}}
+ finally{await reader.cancel().catch(()=>{});}
+ return Buffer.concat(chunks).toString('utf8');
+}
 async function readDay(day:string,read:(url:string)=>Promise<Response>){
  const rows:Row[]=[],seen=new Set<string>();
  for(let page=1;page<=12;page++){
-  const url=host+'/new/'+day+'/data.feed'+(page===1?'':'?page='+page),res=await read(url);
-  if(!res.ok||!res.body||res.url&&res.url!==url){await res.body?.cancel();throw bad();}
-  const reader=res.body.getReader(),chunks:Uint8Array[]=[];let bytes=0;
-  try{for(;;){const chunk=await reader.read();if(chunk.done)break;if((bytes+=chunk.value.length)>1_500_000)throw bad();chunks.push(chunk.value);}}
-  finally{await reader.cancel().catch(()=>{});}
-  const result=parseInstrumentPage(Buffer.concat(chunks).toString('utf8'),day,page);
+  const url=host+'/new/'+day+'/data.feed'+(page===1?'':'?page='+page);
+  const result=parseInstrumentPage(await readXml(url,read),day,page);
   for(const row of result.rows){if(seen.has(row.link))throw bad();seen.add(row.link);rows.push(row);}
   if(!result.next)return rows;
  }
@@ -73,5 +79,16 @@ export async function instrumentWindow(start:string,end:string,fetcher:typeof fe
  await Promise.all(Array.from({length:3},worker));
  const unique=new Map<string,Row>();let duplicate=false;
  for(const day of days)for(const row of observations.get(day)??[]){if(unique.has(row.link)){duplicate=true;continue;}if(Date.parse(row.public_timestamp)<=Date.parse(end))unique.set(row.link,row);}
- return {rows:[...unique.values()],limited:failed.length>0||duplicate,unavailable:!observations.size};
+ const rows=[...unique.values()];
+ const candidates=rows.filter(row=>row.organisations[0].slug==='uksi'&&row.content_store_document_type==='statutory_instrument'&&medicinesPublicationTerm(row.title)).slice(0,12);
+ const detailMetrics={requests:0,retries:0};
+ const detailRead=resilientGet(fetcher,host,{accept:'application/xml'},{timeoutMs:8000,maxRequests:15,metrics:detailMetrics});
+ let candidate=0;
+ async function verifyApplication(){while(candidate<candidates.length){
+  const row=candidates[candidate++],source=instrumentUrl(row.link,'uksi');
+  try{const clause=readApplicationClause(await readXml(source+'/data.xml',detailRead),source);if(clause)row.asMadeApplication=clause;}catch{/* Unverified territorial scope stays in the review queue. */}
+ }}
+ await Promise.all(Array.from({length:Math.min(3,candidates.length)},verifyApplication));
+ metrics.requests+=detailMetrics.requests;metrics.retries+=detailMetrics.retries;
+ return {rows,limited:failed.length>0||duplicate,unavailable:!observations.size};
 }

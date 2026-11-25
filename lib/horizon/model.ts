@@ -1,5 +1,5 @@
 import {z} from 'zod';
-import {instrumentSeries,isInstrumentSeries,instrumentUrl} from './instrument-series';
+import {instrumentSeries,isInstrumentSeries,instrumentUrl,applicationNation} from './instrument-series';
 export const PUBLISHERS=[
  {id:'mhra',slug:'medicines-and-healthcare-products-regulatory-agency',name:'MHRA',topics:['medicines']},
  {id:'home-office',slug:'home-office',name:'Home Office',topics:['controlled-drugs','employing-staff']},
@@ -40,7 +40,7 @@ export const MAX_PUBLISHER_RESULTS=2000,MAX_RETAINED_ITEMS=10000,MAX_REPORT_BYTE
 export const PUBLIC_HORIZON_URL='https://raw.githubusercontent.com/alanscott1uk-dev/regpilot-ai./regpilot-public-feed/horizon.json';
 export const horizonPath=z.string().max(450).regex(/^\/[a-z0-9][a-z0-9\/-]*$/).refine(s=>!s.includes('//')&&!s.endsWith('/')&&!s.startsWith('/api/'));
 const hash=z.string().regex(/^[a-f0-9]{32}$/),date=z.iso.datetime();
-export const itemSchema=z.object({id:hash,revision:hash,path:horizonPath,url:z.string().url(),title:z.string().min(1).max(240),summary:z.string().max(360),documentType:z.string().max(100),kind:z.enum(['Safety alert','Consultation','Regulation or decision','Guidance','Policy','News','Other publication']),publisherIds:z.array(z.string()).min(1).max(PUBLISHERS.length),updatedAt:date,firstSeenAt:date,observedAt:date,discovery:z.enum(['BASELINE','FIRST_SEEN','METADATA_UPDATED','UNCHANGED'])}).strict();
+export const itemSchema=z.object({id:hash,revision:hash,path:horizonPath,url:z.string().url(),asMadeApplication:z.object({provision:z.enum(['rule','regulation','article']),wording:z.string().max(240).refine(s=>!!applicationNation(s))}).strict().optional(),title:z.string().min(1).max(240),summary:z.string().max(360),documentType:z.string().max(100),kind:z.enum(['Safety alert','Consultation','Regulation or decision','Guidance','Policy','News','Other publication']),publisherIds:z.array(z.string()).min(1).max(PUBLISHERS.length),updatedAt:date,firstSeenAt:date,observedAt:date,discovery:z.enum(['BASELINE','FIRST_SEEN','METADATA_UPDATED','UNCHANGED'])}).strict();
 export const feedSchema=z.object({id:z.string(),state:z.enum(['available','limited','unavailable']),checkedAt:date,total:z.number().int().nonnegative().nullable(),retrieved:z.number().int().min(0).max(MAX_PUBLISHER_RESULTS),reason:z.string().max(100).nullable(),retryAt:date.nullable().optional(),failureCount:z.number().int().min(0).max(100).optional()}).strict();
 export const runSummarySchema=z.object({generatedAt:date,runId:z.string().regex(/^\d+$/).nullable(),publications:z.number().int().min(0).max(MAX_RETAINED_ITEMS),available:z.number().int().min(0).max(PUBLISHERS.length),limited:z.number().int().min(0).max(PUBLISHERS.length),unavailable:z.number().int().min(0).max(PUBLISHERS.length)}).strict();
 export const pipelineSchema=z.object({cadenceMinutes:z.literal(60),durationMs:z.number().int().min(0).max(720000),requests:z.number().int().min(0).max(720),retries:z.number().int().min(0).max(720),retentionLimited:z.boolean(),history:z.array(runSummarySchema).max(48)}).strict();
@@ -54,7 +54,8 @@ export function validateReport(raw:unknown,now=Date.now()):HorizonReport{
  const validSize=r.feeds.length===PUBLISHERS.length||[originalPublishers,expandedPublishers].some(set=>r.feeds.length===set.size&&r.feeds.every(f=>set.has(f.id)));
  if(!validSize||manifest.size!==r.feeds.length||r.feeds.some(f=>!ids.has(f.id as any)||Date.parse(f.checkedAt)>Date.parse(r.generatedAt)))throw Error('Invalid publisher manifest');
  if(r.pipeline){const seenRuns=new Set<string>();for(const h of r.pipeline.history){if(Date.parse(h.generatedAt)>Date.parse(r.generatedAt)||seenRuns.has(h.generatedAt)||![originalPublishers.size,expandedPublishers.size,PUBLISHERS.length].includes(h.available+h.limited+h.unavailable))throw Error('Invalid run history');seenRuns.add(h.generatedAt);}}
- for(const i of r.items){if(seen.has(i.id)||i.url!==horizonSourceUrl(i.path,i.publisherIds)||i.publisherIds.some(id=>!manifest.has(id))||new Set(i.publisherIds).size!==i.publisherIds.length||Date.parse(i.updatedAt)>now+300000||Date.parse(i.observedAt)>Date.parse(r.generatedAt)||Date.parse(i.firstSeenAt)>Date.parse(i.observedAt))throw Error('Invalid publication identity');seen.add(i.id);}
+ for(const i of r.items){if(i.asMadeApplication&&(!/^\/legislation\/uksi\/\d{4}\/[1-9]\d{0,5}$/.test(i.path)||i.documentType!=='statutory_instrument'))throw Error('Unexpected territorial application evidence');
+ if(seen.has(i.id)||i.url!==horizonSourceUrl(i.path,i.publisherIds)||i.publisherIds.some(id=>!manifest.has(id))||new Set(i.publisherIds).size!==i.publisherIds.length||Date.parse(i.updatedAt)>now+300000||Date.parse(i.observedAt)>Date.parse(r.generatedAt)||Date.parse(i.firstSeenAt)>Date.parse(i.observedAt))throw Error('Invalid publication identity');seen.add(i.id);}
  return r;
 }
 export function reportState(r:HorizonReport,now=Date.now()){return now-Date.parse(r.generatedAt)>(r.pipeline?3:12)*3600000?'stale':r.feeds.some(f=>f.state==='unavailable')?'degraded':r.feeds.some(f=>f.state==='limited')||r.pipeline?.retentionLimited?'limited':'current';}

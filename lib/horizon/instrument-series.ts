@@ -26,3 +26,12 @@ export function instrumentReference(url:string,publisher:string){
  if(!url.startsWith('https://'))return null;
  const path=instrumentPath(url,publisher);return path?instrumentUrl(path,publisher):null;
 }
+
+export type InstrumentApplication={provision:'regulation'|'article'|'rule';wording:string};
+export function applicationNation(wording:string){
+ const match=/^(?:These (?:Regulations|Rules) (?:extend to (?:England and Wales|Scotland|Northern Ireland|England, Wales and Scotland|the United Kingdom) and )?apply|This Order (?:extends to (?:England and Wales|Scotland|Northern Ireland|England, Wales and Scotland|the United Kingdom) and )?applies) (?:in relation to |in |to )(England|Wales|Scotland|Northern Ireland) only\.$/.exec(wording);
+ return match?.[1]??null;
+}
+export function applicationProvisionUrl(source:string,clause:InstrumentApplication){
+ return source.replace(/\/made$/,'/'+clause.provision+'/1/made');
+}

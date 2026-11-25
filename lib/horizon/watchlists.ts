@@ -1,4 +1,5 @@
 import {z} from 'zod';
+import {applicationNation} from './instrument-series';
 import {itemSchema, PUBLISHERS, rankItem, type HorizonItem} from './model';
 
 const publishers = new Set<string>(PUBLISHERS.map(publisher => publisher.id));
@@ -40,14 +41,21 @@ export const watchlistMutation = z.discriminatedUnion('action', [
 export type WatchlistMutation = z.infer<typeof watchlistMutation>;
 
 // Match whole words within one metadata field so short terms such as GMP stay precise.
-export function matchingPhrase(item: HorizonItem, phrases: string[]) {
+export function matchingPhrase(item: Pick<HorizonItem,'title'|'summary'>, phrases: string[]) {
   const title = ' ' + words(item.title) + ' ';
   const summary = ' ' + words(item.summary) + ' ';
   return phrases.find(phrase => title.includes(' '+phrase+' ') || summary.includes(' '+phrase+' '));
 }
 
 const medicinesTerms=['medicine','medicines','pharmaceutical','pharmaceuticals','controlled drug','controlled drugs','misuse of drugs','good distribution practice','wholesale dealer','wholesale dealers','cold chain','pharmacy','pharmacies'];
+export function medicinesPublicationTerm(title:string,summary=''){return matchingPhrase({title,summary},medicinesTerms);}
+export function otherNationMedicine(item:HorizonItem){
+ if(!item.asMadeApplication||!medicinesPublicationTerm(item.title,item.summary))return null;
+ const nation=applicationNation(item.asMadeApplication.wording);
+ return nation&&nation!=='Scotland'?nation:null;
+}
 export function scottishPharmaReason(item:HorizonItem){
+ if(otherNationMedicine(item))return null;
  if(item.publisherIds.includes('mhra')&&item.kind==='Safety alert')return 'MHRA safety alert';
  if(!item.publisherIds.some(id=>['mhra','home-office','dhsc','ukhsa','hse','uksi','ssi'].includes(id)))return null;
  const phrase=matchingPhrase(item,medicinesTerms);
