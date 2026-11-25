@@ -12,15 +12,17 @@ export async function databaseScheduleProof(revision:string,fetcher:typeof fetch
  if(!run)return {revision,runUrl:null,state:'No release run found',rows};
  const root='/actions/runs/'+run.id,attempt=root+'/attempts/'+run.run_attempt,runUrl=web+attempt;
  if(run.status!=='completed')return {revision,runUrl,state:'Collection tests running',rows};
- const [jobsResponse,artifactsResponse]=await Promise.all([get(base+attempt+'/jobs?per_page=100'),get(base+root+'/artifacts?per_page=100')]);
+ const [jobsResponse,artifactsResponse]=await Promise.all([get(base+root+'/jobs?filter=latest&per_page=100'),get(base+root+'/artifacts?per_page=100')]);
  const jobs=jobsResponse?.body.jobs,artifacts=artifactsResponse?.body.artifacts;
  if(!Array.isArray(jobs)||!Array.isArray(artifacts))throw Error('Incomplete provider receipt list.');
  for(const [engine,name] of Object.entries(engines)){
   const job=jobs.find(j=>j.name==='database-source ('+engine+')'&&j.conclusion==='success'&&j.run_id===run.id&&Number.isSafeInteger(j.id)&&j.id>0&&
    j.steps?.some((s:{name:string;conclusion:string})=>s.name==='Verify timed source failure and recovery through the workspace API'&&s.conclusion==='success'));
-  const matching=artifacts.filter(a=>a.name==='scheduled-database-'+engine+'-'+revision+'-'+run.run_attempt&&a.workflow_run?.id===run.id&&a.workflow_run?.head_sha===revision&&
+  if(!job||!Number.isSafeInteger(job.run_attempt)||job.run_attempt<1||job.run_attempt>run.run_attempt)continue;
+  // GitHub can retry only failed jobs. Each successful job retains the artifact from its own attempt.
+  const matching=artifacts.filter(a=>a.name==='scheduled-database-'+engine+'-'+revision+'-'+job.run_attempt&&a.workflow_run?.id===run.id&&a.workflow_run?.head_sha===revision&&
    !a.expired&&Date.parse(a.expires_at)>Date.now()&&Number.isSafeInteger(a.id)&&a.id>0&&/^sha256:[a-f0-9]{64}$/.test(a.digest));
-  if(!job||matching.length!==1)continue;
+  if(matching.length!==1)continue;
   const receipt=matching[0];
   rows.push({engine,name,jobUrl:web+root+'/job/'+job.id,receiptUrl:web+root+'/artifacts/'+receipt.id,digest:String(receipt.digest),expiresAt:String(receipt.expires_at)});
  }
