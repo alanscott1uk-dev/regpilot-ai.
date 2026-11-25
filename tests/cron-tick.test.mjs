@@ -41,3 +41,8 @@ test("fully processed but bounded backlog remains visible and never silently cla
  assert.equal(result.modules.sources.state,"backlog");
  assert.equal(result.modules.sources.processed,12);
 });
+
+test("connector telemetry retains measured queue age and bounded collector counters",async()=>{
+ const result=await executeScheduledTick({connectors:async()=>({processed:12,elapsedMs:450,dispatches:5,peakInFlight:4,maxQueueLagMs:1700,sourceName:'private target'})});
+ assert.deepEqual(result.modules.connectors,{state:'completed',processed:12,outcomeCount:0,attention:0,elapsedMs:450,dispatches:5,peakInFlight:4,maxQueueLagMs:1700});
+});

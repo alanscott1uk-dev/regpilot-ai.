@@ -1,10 +1,16 @@
-import test from 'node:test';
+import test,{type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {performance} from 'node:perf_hooks';
 import type {WatchSchedule} from '@prisma/client';
 import {db} from '../lib/server/db';
-import {claimFairWatch,claimFairConnector,claimManualConnectorLane,releaseDispatchLease} from '../lib/server/fair-dispatch';
+import {createServer} from 'node:http';
+import {writeFile} from 'node:fs/promises';
+import {runConnectorBatch,executeConnector,maxConnectorReadsPerTick} from '../lib/server/connector-service';
+import {recordKeys} from '../lib/connectors/operational-records';
+import {encryptConnectorSecret} from '../lib/server/connector-secret';
+import {verifiedObservation} from '../lib/server/connector-observation';
+import {claimFairWatch,claimFairConnector,claimFairConnectors,claimManualConnectorLane,releaseDispatchLease} from '../lib/server/fair-dispatch';
 
 async function fixture(count:number){
  const marker=randomUUID(),user=await db.user.create({data:{externalId:marker,email:marker+'@example.invalid'}});
@@ -113,4 +119,102 @@ test('connector dispatch respects providers, credentials and cooldowns; manual a
   }));
   assert.equal(await claimFairConnector(['MICROSOFT365']),null,'rollback preserves active slot');
  }finally{await f.cleanup();}
+});
+
+async function benchmarkFleet(t:TestContext,tenantCount:number){
+ const f=await fixture(tenantCount),originalFetch=globalThis.fetch,previous={...process.env};
+ Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:'true',REGPILOT_CONNECTORS_ENABLED:'true',
+  REGPILOT_CONNECTOR_ENCRYPTION_KEY:'b2'.repeat(32),REGPILOT_AI_ALLOWED_EMAILS:f.user.email,
+  SUPABASE_URL:'https://auth.invalid',SUPABASE_PUBLISHABLE_KEY:'fixture',REGPILOT_HEALTHCHECKS_JOB_ENABLED:'true'});
+ const orgWhere={organizationId:{in:f.ids}},targets=new Map<string,{org:string;slug:string;token:string}>();
+ const requests=new Map<string,number>(),activeTenants=new Set<string>();
+ const latencies:number[]=[];let peakAtSource=0,violations=0;
+ const server=createServer((req,res)=>{
+  const key=req.url?.split('/').at(-1)??'',target=targets.get(key);
+  if(!target||req.headers['x-api-key']!==target.token){violations++;res.writeHead(403).end();return;}
+  if(activeTenants.has(target.org))violations++;
+  activeTenants.add(target.org);peakAtSource=Math.max(peakAtSource,activeTenants.size);
+  requests.set(key,(requests.get(key)??0)+1);
+  const entered=performance.now();
+  setTimeout(()=>{
+   activeTenants.delete(target.org);latencies.push(performance.now()-entered);
+   res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({
+    unique_key:key,slug:target.slug,status:'up',last_ping:new Date(Date.now()-60000).toISOString()}));
+  },parseInt(key.slice(-6),16)%25===0?55:5);
+ });
+ try{
+  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const address=server.address();assert.ok(address&&typeof address==='object');
+  globalThis.fetch=async(input,options)=>{
+   const url=new URL(String(input));assert.equal(url.origin,'https://healthchecks.io');
+   const local='http://127.0.0.1:'+address.port+url.pathname;
+   const received=await originalFetch(local,options);assert.equal(received.url,local);
+   const response=new Response(received.body,{status:received.status,headers:received.headers});
+   Object.defineProperty(response,'url',{value:url.href});
+   return response;
+  };
+  await db.membership.createMany({data:f.ids.map(organizationId=>({organizationId,userId:f.user.id,role:'OWNER'}))});
+  const imports=f.ids.map(organizationId=>({organizationId,id:randomUUID(),createdById:f.user.id,inputHash:randomUUID(),method:'SEARCH',status:'ACCEPTED',evidenceManifest:[]}));
+  await db.programmeImport.createMany({data:imports});
+  const controls=imports.map(row=>({organizationId:row.organizationId,id:randomUUID(),importId:row.id,proposalKey:'scheduled',title:'Scheduled collection',description:'Observe source',testProcedure:'Read configured target',theme:'operations',ownerId:f.user.id,scheduledById:f.user.id,intervalDays:1,nextReviewAt:new Date()}));
+  await db.managedControl.createMany({data:controls});
+  const due=new Date(Date.now()-1000);
+  const perTenant=500/tenantCount;
+  const jobs=controls.flatMap((control,orgIndex)=>Array.from({length:perTenant},(_,index)=>{
+   const id=randomUUID(),key=(perTenant*orgIndex+index).toString(16).padStart(40,'0'),slug='job-'+index,token='load-test-'+control.organizationId;
+   targets.set(key,{org:control.organizationId,slug,token});
+   return {id,organizationId:control.organizationId,controlId:control.id,configuredById:f.user.id,provider:'HEALTHCHECKS_JOB',enabled:true,
+    ...recordKeys('HEALTHCHECKS_JOB',{scope:slug,record:key,reference:'60'}),encryptedSecret:encryptConnectorSecret(token,control.organizationId,id),
+    intervalHours:1,nextRunAt:due,lastSuccessAt:new Date(due.getTime()-3600000)};
+  }));
+  await db.evidenceConnector.createMany({data:jobs});
+  const claims=await Promise.all([claimFairConnectors(['HEALTHCHECKS_JOB'],4),claimFairConnectors(['HEALTHCHECKS_JOB'],4)]);
+  const crashed=claims.flat();assert.equal(crashed.length,Math.min(8,tenantCount));assert.equal(new Set(crashed.map(j=>j.organizationId)).size,crashed.length);
+  assert.equal(new Set(crashed.map(j=>j.leaseToken)).size,crashed.length);
+  await db.evidenceConnector.updateMany({where:{id:{in:crashed.map(j=>j.id)}},data:{leaseUntil:new Date(0)}});
+  await db.dispatchLane.updateMany({where:{organizationId:{in:crashed.map(j=>j.organizationId)},kind:'CONNECTOR'},data:{leaseUntil:new Date(0)}});
+  const started=performance.now();let processed=0,dispatches=0,peakInFlight=0,ticks=0;
+  while(processed<500&&ticks<10){
+   const result=await runConnectorBatch();ticks++;processed+=result.processed;dispatches+=result.dispatches;
+   peakInFlight=Math.max(peakInFlight,result.peakInFlight);
+   if(result.outcomes.some(outcome=>outcome!=='OBSERVED')){
+    const failures=await db.evidenceConnector.groupBy({by:['failureCode'],where:orgWhere,_count:true});
+    assert.fail('Unexpected collection outcomes '+JSON.stringify({outcomes:[...new Set(result.outcomes)],failures,sourceRequests:requests.size,violations}));
+   }
+   assert.ok(result.processed>0,'A due fleet must make progress');
+  }
+  const elapsedMs=Math.round(performance.now()-started);
+  assert.equal(processed,500);assert.equal(requests.size,500);assert.ok([...requests.values()].every(n=>n===1));assert.equal(violations,0);
+  assert.ok(peakAtSource>=Math.min(2,tenantCount)&&peakAtSource<=Math.min(tenantCount,4));
+  assert.equal(await executeConnector(crashed[0]),'SUPERSEDED');assert.equal(requests.size,500);
+  const reads=await db.connectorRun.findMany({where:orgWhere});
+  assert.equal(new Set(reads.map(r=>r.connectorId)).size,500);assert.equal(reads.length,500);
+  assert.ok(reads.every(r=>verifiedObservation(r)?.checks.length===2));
+  const scheduled=await db.auditEvent.count({where:{...orgWhere,action:'connector.evidence_collected',details:{path:['collectionMode'],equals:'SCHEDULED'}}});
+  const recovered=await db.auditEvent.count({where:{...orgWhere,action:'connector.evidence_collected',details:{path:['collectionMode'],equals:'RETRY'}}});
+  assert.equal(scheduled,500-crashed.length);assert.equal(recovered,crashed.length);assert.equal(await db.evidenceConnector.count({where:{...orgWhere,nextRunAt:{lte:new Date()}}}),0);
+  latencies.sort((a,b)=>a-b);
+  const metrics={targets:500,tenants:tenantCount,checks:1000,scheduledReceipts:scheduled,retryReceipts:recovered,duplicateReads:0,expiredLeasesRecovered:crashed.length,
+   ticks,elapsedMs,readsPerSecond:Math.round(500000/elapsedMs*10)/10,dispatchQueries:dispatches,peakInFlight,
+   sourceLatencyP95Ms:Math.round(latencies[Math.floor(latencies.length*.95)]),admissionCeiling:maxConnectorReadsPerTick,
+   scope:'PostgreSQL and an isolated HTTP fixture with the native Healthchecks parser'};
+  t.diagnostic('connector engine '+JSON.stringify(metrics));
+  return metrics;
+ }finally{
+  globalThis.fetch=originalFetch;
+  server.closeAllConnections();if(server.listening)await new Promise<void>(resolve=>server.close(()=>resolve()));
+  for(const key of Object.keys(process.env))if(!(key in previous))delete process.env[key];Object.assign(process.env,previous);
+  await db.automationEvent.deleteMany({where:orgWhere});
+  await db.auditEvent.deleteMany({where:orgWhere});
+  await db.obligation.deleteMany({where:orgWhere});
+  await db.connectorRun.deleteMany({where:orgWhere});
+  await db.membership.deleteMany({where:orgWhere});
+  await f.cleanup();
+ }
+}
+
+test('the scheduled connector engine drains 500 distinct HTTP targets in a single tenant and across 25 tenants, recovering crashed leases',async t=>{
+ const scenarios=[];
+ for(const tenants of [1,25])scenarios.push(await benchmarkFleet(t,tenants));
+ if(process.env.REGPILOT_FLEET_BENCHMARK_OUTPUT)
+  await writeFile(process.env.REGPILOT_FLEET_BENCHMARK_OUTPUT,JSON.stringify({format:'regpilot-connector-capacity-v1',scenarios},null,2)+'\n');
 });

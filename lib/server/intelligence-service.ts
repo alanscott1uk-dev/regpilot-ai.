@@ -16,17 +16,28 @@ function requireRole(ctx:AuthorizedContext,review=false) {
 function uuid(value:string) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new IntelligenceError("Invalid record identifier");
 }
-// Retry serialization conflicts only. Validation/auth failures are never retried.
-export async function transaction<T>(ctx:AuthorizedContext,fn:(tx:Prisma.TransactionClient)=>Promise<T>):Promise<T> {
-  for(let attempt=0;attempt<3;attempt++) {
+export class DatabaseContention extends IntelligenceError {
+ constructor(){super("Another transaction changed these records. Try again.",409);}
+}
+// A retry re-enters only the database callback. External reads must stay outside it.
+export async function transaction<T>(ctx:AuthorizedContext,fn:(tx:Prisma.TransactionClient)=>Promise<T>,serializationAttempts=3):Promise<T> {
+  for(let attempt=0;attempt<serializationAttempts;attempt++) {
     try {return await db.$transaction(async tx => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${ctx.organizationId}, 0))`;
       return fn(tx);
     },{isolationLevel:"Serializable",maxWait:5000,timeout:12000});}
     catch(e) {
-      if(e instanceof Prisma.PrismaClientKnownRequestError && ["P2034","P2002"].includes(e.code)) {
-        if(attempt<2) continue;
+      if(!(e instanceof Prisma.PrismaClientKnownRequestError))throw e;
+      if(e.code==='P2002'){
+        if(attempt<2)continue;
         throw new IntelligenceError("Another change was saved at the same time. Refresh and retry.",409);
+      }
+      const sqlState=String(e.meta?.code??'');
+      if(e.code==='P2034'||(e.code==='P2010'&&['40001','40P01'].includes(sqlState))){
+        if(attempt+1>=serializationAttempts)throw new DatabaseContention();
+        const delay=Math.min(250,8*2**attempt);
+        await new Promise(resolve=>setTimeout(resolve,delay/2+Math.random()*delay));
+        continue;
       }
       throw e;
     }

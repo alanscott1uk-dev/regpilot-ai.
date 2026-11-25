@@ -17,7 +17,7 @@ import {PROVIDERS,requiresStoredSecret,maxWorkspaceConnectorTargets} from "../co
 import {verifiedObservation} from './connector-observation';
 import {enqueueConnectorObservationDelivery,enqueueConnectorFailureDelivery} from './integration-delivery-events';
 import {connectorRecovery} from "../connectors/recovery";
-import {claimFairConnector,claimManualConnectorLane,releaseDispatchLease} from "./fair-dispatch";
+import {maxConnectorLanes,claimFairConnectors,claimFairConnector,claimManualConnectorLane,releaseDispatchLease} from "./fair-dispatch";
 import {acquireProviderPermit,settleProviderPermit} from "./provider-gate";
 import type {ProviderPermit} from "@prisma/client";
 import {collectVercel,collectSupabase,vercelTarget,supabaseTarget} from "../connectors/infrastructure";
@@ -33,7 +33,7 @@ import {collectCloudflare,cloudflareTarget} from "../connectors/cloudflare";
 import {collectCompaniesHouse,companiesHouseTarget} from "../connectors/companies-house";
 import {validCredential} from "../connectors/bounded-http";
 import type {AuthorizedContext} from "./authorization";
-import {IntelligenceError,transaction} from "./intelligence-service";
+import {DatabaseContention,IntelligenceError,transaction} from "./intelligence-service";
 import {requireMember,ADMIN} from "./workspace-member";
 import {encryptConnectorSecret,decryptConnectorSecret} from "./connector-secret";
 import {collectGithub,githubTarget,CollectionError} from "../connectors/github";
@@ -319,7 +319,7 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector,man
  const ctx:AuthorizedContext={organizationId:job.organizationId,userId:job.configuredById,role:"ADMIN"};
  let permit:ProviderPermit|undefined,providerOutcome='NEUTRAL';
  try{
-  await transaction(ctx,tx=>assertJob(tx,job));if(job.attempts>3)throw new CollectionError("INTERRUPTED_REPEATEDLY");
+  await transaction(ctx,tx=>assertJob(tx,job),8);if(job.attempts>3)throw new CollectionError("INTERRUPTED_REPEATEDLY");
   if(requiresStoredSecret(job.provider)&&!job.encryptedSecret)throw new CollectionError("CREDENTIAL_UNAVAILABLE");
   const admission=await acquireProviderPermit(job.provider,job.organizationId);
   if(!admission.allowed){
@@ -352,9 +352,14 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector,man
    const current=await tx.evidenceConnector.findUniqueOrThrow({where:{id:job.id},select:{eventRevision:true}});
    await tx.evidenceConnector.update({where:{id:job.id},data:{leaseToken:null,leaseUntil:null,attempts:0,lastSuccessAt:new Date(),failureCode:null,collectedEventRevision:job.eventRevision,nextRunAt:new Date(Date.now()+(current.eventRevision>job.eventRevision?60000:job.intervalHours*3600000))}});
    await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:"connector.evidence_collected",entityType:"EvidenceConnector",entityId:job.id,details:{runId:run.id,collectionMode,scopeHash:connectorScopeHash(job),outcome,resultHash:run.resultHash,configVersion:job.version,changedChecks:changes.map(c=>c.id)}}});return outcome;
-  });
+  },8);
  }catch(error){
   if(error instanceof Superseded||!connectorProviderEnabled(job.provider))return "SUPERSEDED";
+  if(error instanceof DatabaseContention){
+   const putBack=await db.evidenceConnector.updateMany({where:{id:job.id,organizationId:job.organizationId,version:job.version,enabled:true,leaseToken:job.leaseToken,leaseUntil:{gt:new Date()}},
+    data:{leaseToken:null,leaseUntil:null,attempts:Math.max(0,job.attempts-1),nextRunAt:new Date(Date.now()+15000)}});
+   return putBack.count?'DATABASE_BUSY':'SUPERSEDED';
+  }
   const code=error instanceof CollectionError?error.code:error instanceof IntelligenceError&&error.status===403?"PERMISSION_REVOKED":"COLLECTION_FAILED";
   const throttled=code==="RATE_LIMITED",retryAfter=error instanceof CollectionError?error.retryAfterSeconds:undefined;
   const paused=!throttled&&job.attempts>=3||code==="PERMISSION_REVOKED"||code==="AWS_TRUST_UNSCOPED"||code==="CREDENTIAL_REJECTED"||code==="RETRY_REQUIRES_REVIEW";
@@ -371,19 +376,49 @@ export async function executeConnector(job:EvidenceConnector,collector:Collector
  if(!options.deferAutomation)await processConnectorEvent(job).catch(()=>{});
  return outcome;
 }
-export async function runConnectorBatch(limit=2,parallelism=1,admissionDeadline=Date.now()+20000){
+export const maxConnectorReadsPerTick=512;
+export async function runConnectorBatch(limit=maxConnectorReadsPerTick,parallelism=4,admissionDeadline=Date.now()+20000){
  if(!connectorsEnabled())throw new IntelligenceError("Connectors await activation",503);
- if(!Number.isInteger(limit)||limit<1||limit>6||!Number.isInteger(parallelism)||parallelism<1||parallelism>2||!Number.isFinite(admissionDeadline))
+ if(!Number.isInteger(limit)||limit<1||limit>maxConnectorReadsPerTick||!Number.isInteger(parallelism)||parallelism<1||parallelism>maxConnectorLanes||!Number.isFinite(admissionDeadline))
   throw new IntelligenceError("Connector worker bounds invalid",400);
- let claimed=0;const collected:Array<{index:number;outcome:string}>=[];
- const deadline=Math.min(admissionDeadline,Date.now()+20000);
- async function worker(){while(connectorsEnabled()&&Date.now()<deadline&&claimed<limit){
-  const index=claimed++;const job=await claimConnector();if(!job)return;
-  collected.push({index,outcome:await executeConnector(job)});
- }}
- await Promise.all(Array.from({length:Math.min(limit,parallelism)},()=>worker()));
- collected.sort((a,b)=>a.index-b.index);
- return {processed:collected.length,outcomes:collected.map(x=>x.outcome),limitReached:collected.length===limit,budgetExhausted:Date.now()>=deadline};
+ const started=Date.now(),deadline=Math.min(admissionDeadline,started+20000),outcomes:string[]=[];
+ const active=new Set<Promise<void>>();
+ let claimed=0,dispatches=0,peakInFlight=0,maxQueueLagMs=0;
+ const failures:unknown[]=[];
+ function start(job:EvidenceConnector){
+  const index=claimed++;
+  maxQueueLagMs=Math.max(maxQueueLagMs,Date.now()-job.nextRunAt.getTime());
+  const work=executeConnector(job)
+   .then(outcome=>{outcomes[index]=outcome;},error=>{failures.push(error);})
+   .finally(()=>active.delete(work));
+  active.add(work);peakInFlight=Math.max(peakInFlight,active.size);
+ }
+ try{
+  while(!failures.length&&connectorsEnabled()&&claimed<limit&&Date.now()<deadline){
+   const available=Math.min(parallelism-active.size,limit-claimed);
+   if(available){
+    const jobs=await claimFairConnectors(PROVIDERS.filter(connectorProviderEnabled),available);
+    dispatches++;
+    for(const job of jobs)start(job);
+    if(!jobs.length&&!active.size)break;
+    if(jobs.length===available&&active.size<parallelism)continue;
+   }
+   if(active.size){
+    await Promise.race(active);
+    // Amortise claims when several reads finish together without waiting for a slow tenant.
+    if(active.size>Math.floor(parallelism/2)&&claimed<limit&&Date.now()<deadline){
+     let timer:ReturnType<typeof setTimeout>|undefined;
+     const window=new Promise<void>(resolve=>{timer=setTimeout(resolve,6);});
+     try{await Promise.race([...active,window]);}finally{clearTimeout(timer);}
+    }
+   }
+  }
+ }finally{
+  // Finish or release every lease already admitted, including if the next claim fails.
+  await Promise.all(active);
+ }
+ if(failures.length)throw failures[0];
+ return {processed:outcomes.length,outcomes,dispatches,peakInFlight,maxQueueLagMs,elapsedMs:Date.now()-started,limitReached:claimed===limit,budgetExhausted:Date.now()>=deadline};
 }
 export async function exportConnectorRun(ctx:AuthorizedContext,id:string,taskId?:string){
  return transaction(ctx,async tx=>{const actor=await requireMember(tx,ctx);const row=await tx.connectorRun.findFirst({where:{id,organizationId:ctx.organizationId},include:{connector:{select:{id:true,organizationId:true,repository:true,branch:true,controlId:true,configuredById:true,provider:true,version:true,enabled:true,lastSuccessAt:true,failureCode:true,intervalHours:true}}}});if(!row)throw new IntelligenceError("Observation not found",404);

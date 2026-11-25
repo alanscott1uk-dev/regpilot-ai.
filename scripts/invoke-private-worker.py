@@ -43,6 +43,11 @@ def invoke_slot(slot, token):
             state, count = module.get('state'), module.get('processed')
             if state in ['completed', 'disabled', 'backlog', 'attention', 'failed'] and type(count) is int and 0 <= count <= 100000:
                 lines.append('slot ' + str(slot) + ' ' + name + ' ' + state + ' processed: ' + str(count))
+                if name == 'connectors':
+                    metrics = {key: module[key] for key in ('elapsedMs', 'dispatches', 'peakInFlight', 'maxQueueLagMs')
+                               if type(module.get(key)) is int and 0 <= module[key] < 2**53}
+                    if metrics:
+                        lines.append('connector runtime ' + json.dumps(metrics, sort_keys=True))
         return slot, True, lines
     except urllib.error.HTTPError as error:
         return slot, False, ['Worker slot ' + str(slot) + ' failed; HTTP status: ' + str(error.code)]

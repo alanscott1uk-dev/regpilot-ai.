@@ -60,6 +60,15 @@ jobs:
         run: python -m venv "$RUNNER_TEMP/opcua-env" && "$RUNNER_TEMP/opcua-env/bin/python" -m pip install asyncua==1.1.8
       - run: npm run test:integration
         env:
+          REGPILOT_FLEET_BENCHMARK_OUTPUT: connector-fleet-benchmark.json
+      - name: Save executed connector capacity benchmark
+        uses: actions/upload-artifact@v4
+        with:
+          name: connector-fleet-${{ github.event.pull_request.head.sha || github.sha }}
+          path: connector-fleet-benchmark.json
+          if-no-files-found: error
+          retention-days: 30
+        env:
           REGPILOT_INSTRUMENT_PYTHON: ${{ runner.temp }}/opcua-env/bin/python
       - name: Trace three live publication changes into a private workspace
         env:

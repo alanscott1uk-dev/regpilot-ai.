@@ -5,7 +5,7 @@ import {db} from './db';
 import {workspaceConfigured} from './ai-auth';
 import {executeScheduledTick} from '../cron-tick.mjs';
 import {monitoringEnabled,runMonitoringBatch} from './monitoring-service';
-import {connectorsEnabled,runConnectorBatch} from './connector-service';
+import {connectorsEnabled,maxConnectorReadsPerTick,runConnectorBatch} from './connector-service';
 import {runReviewBatch} from './control-service';
 import {executeWithMaintenance,runWorkerMaintenance} from './worker-maintenance';
 import {runIntegrationDeliveryBatch,finalizeIntegrationDeliveryTick,integrationDeliveryHealth} from './integration-delivery-queue';
@@ -71,7 +71,7 @@ async function runClaimedRuntime(claim:Awaited<ReturnType<typeof claimRuntime>>,
  try{
   result=await executeWithMaintenance(execute||(()=>executeScheduledTick({
    ...(monitoringEnabled()?{sources:()=>runMonitoringBatch(12,3,admissionDeadline)}:{}),
-   ...(connectorsEnabled()?{connectors:()=>runConnectorBatch(4,2,admissionDeadline),automations:()=>runAutomationBatch(20,2,admissionDeadline)}:{}),
+   ...(connectorsEnabled()?{connectors:()=>runConnectorBatch(maxConnectorReadsPerTick,4,admissionDeadline),automations:()=>runAutomationBatch(20,2,admissionDeadline)}:{}),
    ...(outboundIntegrationsEnabled()?{deliveries:()=>runIntegrationDeliveryBatch(12,2,admissionDeadline)}:{}),
    // One slot owns recurring review generation. Collection slots share fair queues.
    ...(slot===0?{controlReviews:()=>runReviewBatch(admissionDeadline),policyReleases:()=>runDuePolicyReleaseBatch(5,admissionDeadline)}:{})
