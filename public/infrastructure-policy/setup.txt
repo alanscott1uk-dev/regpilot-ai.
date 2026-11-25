@@ -4,6 +4,8 @@ Run the collector on a company-controlled Linux CI runner with Python 3.12 and G
 
 For hourly monitoring on GitHub, copy /infrastructure-policy/monitor.yml from this RegPilot release to .github/workflows/regpilot-infrastructure.yml in the authorised repository. Set the Actions variables REGPILOT_WORKSPACE_ORIGIN and REGPILOT_CONTROL_ID and the Actions secret REGPILOT_OBSERVATION_TOKEN. Set REGPILOT_POLICY_FORMATS to the applicable space-separated format names, such as terraform kubernetes. Run the job manually to verify the first collection. The template pins the collector files by SHA-256 and then runs on the default branch each hour.
 
+For a Vercel-protected staging environment, set REGPILOT_PREVIEW_ORIGIN to the exact approved preview HTTPS origin and place the project's automation access secret in REGPILOT_PREVIEW_TOKEN. The GitHub template sends this additional credential only to that origin. The workspace observation credential still controls which company control can receive a result. For a local installation on a protected preview, download the four files listed below in your signed-in browser, then set both preview variables in the delivery process.
+
 For another CI system or a local scan, set REGPILOT_ORIGIN to the HTTPS origin of your RegPilot workspace. From an empty working directory, download the collector and install its pinned engine.
 
   curl -fsS "$REGPILOT_ORIGIN/infrastructure-policy/collect.py" -o collect.py

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+from unittest.mock import MagicMock, patch
 import sys
 from tempfile import TemporaryDirectory
 from uuid import uuid4
@@ -119,6 +120,19 @@ def verify(output):
     template = (TOOL.parent / "monitor.yml").read_text()
     for source in (TOOL, bridge.CATALOGUE, TOOL.parent / "requirements.txt", ROOT / "public/instrument-bridge/deliver.py"):
         assert hashlib.sha256(source.read_bytes()).hexdigest() + "  " + source.name in template
+    sender_spec = importlib.util.spec_from_file_location("regpilot_sender", ROOT / "public/instrument-bridge/deliver.py")
+    sender = importlib.util.module_from_spec(sender_spec)
+    sender_spec.loader.exec_module(sender)
+    preview = "https://authorised.example.invalid"
+    credentials = {"REGPILOT_PREVIEW_ORIGIN": preview, "REGPILOT_PREVIEW_TOKEN": "fixture-key"}
+    assert sender.preview_headers(preview, credentials) == {"x-vercel-protection-bypass": "fixture-key"}
+    assert sender.preview_headers(preview, {}) == {}
+    for destination in ("https://other.example.invalid", preview+".foreign.invalid"):
+        try:
+            sender.preview_headers(destination, credentials)
+            raise AssertionError("A different origin cannot receive the preview credential.")
+        except ValueError:
+            pass
     empty = {"check_type": "terraform", "summary": {"checkov_version": bridge.ENGINE, "passed": 0, "failed": 0,
              "skipped": 0, "resource_count": 0, "parsing_errors": 1},
              "results": {"passed_checks": [], "failed_checks": [], "skipped_checks": [], "parsing_errors": ["fixture"]}}
@@ -161,6 +175,17 @@ def verify(output):
         assert all(e["body"]["checks"][0]["status"] == "FAIL" for e in bundle["observations"])
         assert not any(secret in report.read_text() for secret in ("internal-fixture-object", "private-fixture", "sample.tf", "Deferred in"))
         assert all(len(e["body"]["checks"]) <= 20 for e in bundle["observations"])
+        envelope = bundle["observations"][0]
+        returned = {"id": str(uuid4()), "externalId": envelope["body"]["externalId"],
+                    "controlId": envelope["body"]["controlId"], "reused": False}
+        transport = MagicMock()
+        transport.getresponse.return_value.status = 201
+        transport.getresponse.return_value.read.return_value = json.dumps(returned).encode()
+        with patch.dict(sender.os.environ, credentials), patch.object(sender.http.client, "HTTPSConnection", return_value=transport):
+            assert sender.deliver(preview, envelope, "workspace-scope")["id"] == returned["id"]
+        headers = transport.request.call_args.kwargs["headers"]
+        assert headers["Authorization"] == "Bearer workspace-scope"
+        assert headers["x-vercel-protection-bypass"] == "fixture-key"
         delivered, lost = [], [True]
         def send(origin, envelope, credential):
             assert origin == "https://fixture.invalid" and credential == "test"

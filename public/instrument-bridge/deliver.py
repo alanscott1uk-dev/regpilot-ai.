@@ -12,6 +12,17 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 
+def preview_headers(origin, environ):
+    token = environ.get("REGPILOT_PREVIEW_TOKEN", "")
+    if not token:
+        return {}
+    trusted = environ.get("REGPILOT_PREVIEW_ORIGIN", "").rstrip("/")
+    if (origin.rstrip("/") != trusted or not token.isascii() or len(token) > 512
+            or any(ord(char) <= 32 or ord(char) >= 127 for char in token)):
+        raise ValueError("The protected preview origin or credential does not match the authorised destination")
+    return {"x-vercel-protection-bypass": token}
+
+
 def deliver(origin, envelope, credential):
     url = urlsplit(origin)
     if url.scheme != "https" or not url.hostname or url.username or url.password or url.path not in ("", "/") or url.query or url.fragment:
@@ -30,10 +41,11 @@ def deliver(origin, envelope, credential):
     payload = json.dumps(body, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
     if len(payload) > 32768:
         raise ValueError("Observation exceeds the intake limit")
+    extra_headers = preview_headers(origin, os.environ)
     client = http.client.HTTPSConnection(url.hostname, url.port or 443, timeout=20, context=ssl.create_default_context())
     try:
         client.request("POST", "/api/v1/observations", body=payload, headers={
-            "Authorization": "Bearer " + credential, "Content-Type": "application/json", "Idempotency-Key": key})
+            "Authorization": "Bearer " + credential, "Content-Type": "application/json", "Idempotency-Key": key, **extra_headers})
         response = client.getresponse()
         if response.status != 201:
             raise ValueError(f"RegPilot returned HTTP {response.status}. Retain this envelope for retry.")
