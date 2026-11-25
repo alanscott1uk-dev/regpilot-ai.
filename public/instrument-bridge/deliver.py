@@ -23,10 +23,21 @@ def preview_headers(origin, environ):
     return {"x-vercel-protection-bypass": token}
 
 
-def deliver(origin, envelope, credential):
+class DeliveryRejected(ValueError):
+    def __init__(self, status, code):
+        super().__init__(f"RegPilot returned HTTP {status}. Retain this envelope for retry.")
+        self.status, self.code = status, code
+
+
+def workspace_url(origin):
     url = urlsplit(origin)
     if url.scheme != "https" or not url.hostname or url.username or url.password or url.path not in ("", "/") or url.query or url.fragment:
         raise ValueError("Configure the HTTPS origin of your authorised RegPilot workspace")
+    return url
+
+
+def deliver(origin, envelope, credential):
+    url = workspace_url(origin)
     key = str(UUID(envelope["idempotencyKey"]))
     body = envelope["body"]
     reference = body["externalId"].split("/")
@@ -48,7 +59,14 @@ def deliver(origin, envelope, credential):
             "Authorization": "Bearer " + credential, "Content-Type": "application/json", "Idempotency-Key": key, **extra_headers})
         response = client.getresponse()
         if response.status != 201:
-            raise ValueError(f"RegPilot returned HTTP {response.status}. Retain this envelope for retry.")
+            raw = response.read(4097)
+            code = None
+            if len(raw) <= 4096:
+                try:
+                    code = json.loads(raw)["error"]["code"]
+                except (ValueError, TypeError, KeyError):
+                    pass
+            raise DeliveryRejected(response.status, code)
         raw = response.read(65537)
         if len(raw) > 65536:
             raise ValueError("The acknowledgement exceeded the supported size")
@@ -73,5 +91,5 @@ if __name__ == "__main__":
         token = os.environ.get("REGPILOT_OBSERVATION_TOKEN") or getpass.getpass("Workspace observation credential: ")
         print(json.dumps(deliver(args.workspace, envelope, token)))
     except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException) as error:
-        reason = str(error) if type(error) is ValueError else "Delivery or acknowledgement unavailable. Retry the saved envelope."
+        reason = str(error) if isinstance(error, ValueError) else "Delivery or acknowledgement unavailable. Retry the saved envelope."
         sys.exit(reason)

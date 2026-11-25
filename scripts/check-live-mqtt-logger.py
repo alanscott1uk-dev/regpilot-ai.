@@ -45,7 +45,7 @@ def certificates(work):
                 "-days", "1", "-extfile", "ext", "-out", name+".crt")
 
 
-def verify(work, output, control):
+def verify(work, output, control, retained_site):
     binary = os.environ.get("REGPILOT_MOSQUITTO") or shutil.which("mosquitto")
     if not binary:
         raise RuntimeError("Mosquitto is required for the real broker check.")
@@ -172,8 +172,49 @@ def verify(work, output, control):
         cfg["calibrationSha256"] = "0"*64
         path.write_text(json.dumps(cfg))
         assert "Calibration document differs" in capture(clean_start, end, work/"bad", check=False).stderr
+        cfg["calibrationSha256"] = hashlib.sha256(certificate).hexdigest()
+        path.write_text(json.dumps(cfg))
+        if retained_site:
+            retained_site.mkdir(mode=0o700)
+            shutil.copyfile(path,retained_site/"config.json")
+            shutil.copyfile(work/"cal.txt",retained_site/"cal.txt")
+            with sqlite3.connect(spool) as source, sqlite3.connect(retained_site/"spool.sqlite") as copy:
+                source.backup(copy)
+        # Exercise the durable interval cursor across a multi-hour destination outage.
+        sys.path.insert(0,str(COLLECTOR.parent))
+        import mqtt_forward as forward
+        from deliver import DeliveryRejected
+        from mqtt_logger import config as load_config, open_spool
+        settings = load_config(path)
+        def unavailable(origin, envelope, token):
+            raise ConnectionError("Controlled loss of transport")
+        def restore(origin, envelope, token):
+            if envelope["body"]["validUntil"] < stamp(now()):
+                raise DeliveryRejected(400,"invalid_observation_window")
+            return {"idempotencyKey":envelope["idempotencyKey"],"id":str(uuid4())}
+        from contextlib import closing
+        archive, origin = work/"archive", "https://fixture.example.invalid"
+        with closing(open_spool(spool,settings["scope"])) as samples:
+            try:
+                forward.tick(settings,samples,archive,origin,3600,"fixture",unavailable,now()-timedelta(hours=5))
+            except ConnectionError:
+                pass
+            else:
+                raise AssertionError("Expected an unconfirmed delivery")
+            recovered = forward.tick(settings,samples,archive,origin,3600,"fixture",restore)
+            assert recovered["acknowledged"] and recovered["expiredUndelivered"] and not recovered["pending"]
+            with sqlite3.connect(archive/"delivery.sqlite") as index:
+                for end, status, ack in index.execute("SELECT end,status,ack FROM windows"):
+                    assert (archive/str(end)/"source.jsonl").is_file()
+                    assert bool(ack) == (status=="ACKNOWLEDGED")
+            try:
+                forward.tick(settings,samples,archive,"https://different.example.invalid",3600,"fixture",restore)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("A different workspace cannot reuse the archive")
         report = {"provenance":"Local Eclipse Mosquitto with mutual TLS and synthetic logger readings and calibration.",
-                  "distinctSamplesInCombinedWindow":3,"sourceExceptions":4,"lateExcursionDeniedFreshness":True,"late":late,"retainedExcluded":True,"duplicateExcluded":True,
+                  "controlledOutageRecovery":recovered,"distinctSamplesInCombinedWindow":3,"sourceExceptions":4,"lateExcursionDeniedFreshness":True,"late":late,"retainedExcluded":True,"duplicateExcluded":True,
                   "queuedReadingRecoveredAfterCertificateRotation":True,"archiveHashVerified":True,"excursion":envelope,
                   "baseline":json.loads((work/"clean/receipt.json").read_bytes()),"missing":json.loads((work/"missing/receipt.json").read_bytes())}
         output.write_text(json.dumps(report, indent=2)+"\n")
@@ -192,6 +233,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--control", default=str(uuid4()))
+    parser.add_argument("--site",type=Path,help="Keep the synthetic spool for the HTTPS acceptance test")
     args = parser.parse_args()
     with TemporaryDirectory() as tmp:
-        verify(Path(tmp), args.output, args.control)
+        verify(Path(tmp), args.output, args.control, args.site)

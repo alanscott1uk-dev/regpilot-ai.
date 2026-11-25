@@ -322,9 +322,10 @@ for(const instrument of [
  const exec=promisify(execFile),folder=await mkdtemp(join(tmpdir(),'regpilot-intake-')),x=await fixture();
  const pem=join(folder,'server.pem'),key=join(folder,'server.key'),report=join(folder,'capture.json'),envelope=join(folder,'excursion.json');
  let server:ReturnType<typeof createServer>|undefined;
+ let dropNext=false,lostResponse:{key:string;id:string}|undefined;
  try{
   if(instrument.kind==='mqtt'){
-   await exec(instrument.python!,['scripts/check-live-mqtt-logger.py','--control',x.primary.id,'--output',report]);
+   await exec(instrument.python!,['scripts/check-live-mqtt-logger.py','--control',x.primary.id,'--output',report,'--site',join(folder,'site')]);
   }else{
    await exec(instrument.python!,['scripts/check-live-instrument.py'],{env:{...process.env,REGPILOT_TEST_CONTROL_ID:x.primary.id,REGPILOT_INSTRUMENT_REPORT:report}});
   }
@@ -337,7 +338,9 @@ for(const instrument of [
     const chunks=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
     const headers=new Headers();for(const [name,value] of Object.entries(req.headers))if(typeof value==='string')headers.set(name,value);
     const received=await postObservation(new Request('https://regpilot.test/api/v1/observations',{method:'POST',headers,body:Buffer.concat(chunks).toString('utf8')}));
-    res.writeHead(received.status,{'Content-Type':'application/json'}).end(await received.text());
+    const response=await received.text();
+    if(dropNext&&received.status===201){dropNext=false;lostResponse={key:headers.get('Idempotency-Key')!,id:JSON.parse(response).id};res.destroy();return;}
+    res.writeHead(received.status,{'Content-Type':'application/json'}).end(response);
    }catch{res.writeHead(500).end();}
   });
   await new Promise<void>(resolve=>server!.listen(0,'127.0.0.1',resolve));
@@ -370,7 +373,24 @@ for(const instrument of [
     const reported=await readOutcome(results[window].idempotencyKey,ack.id);assert.equal(reported,expected);
     receipts.push({window,outcome:reported,receiptId:row.id});
    }
-   if(process.env.REGPILOT_MQTT_REPORT)await writeFile(process.env.REGPILOT_MQTT_REPORT,JSON.stringify({...results,receipts,duplicateReceiptRecovered:true,ungrantedControlRejected:true},null,2));
+   const site=join(folder,'site'),archive=join(site,'archive');
+   const forward=(token:string)=>exec(instrument.python!,['public/instrument-bridge/mqtt_forward.py','--once','--config',join(site,'config.json'),
+    '--spool',join(site,'spool.sqlite'),'--archive',archive,'--workspace','https://127.0.0.1:'+addr.port,'--interval-seconds','2'],
+    {env:{...process.env,SSL_CERT_FILE:pem,REGPILOT_OBSERVATION_TOKEN:token}});
+   await assert.rejects(forward(unauthorised.secret!),/HTTP 404/);
+   dropNext=true;
+   await assert.rejects(forward(writer.secret!),/Could not confirm workspace delivery/);
+   assert.ok(lostResponse);
+   await new Promise(resolve=>setTimeout(resolve,2200));
+   const recovered=JSON.parse((await forward(writer.secret!)).stdout);
+   assert.ok(recovered.acknowledged>=2);assert.equal(recovered.pending,0);
+   const saved=await exec(instrument.python!,['-c',
+    'import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("SELECT count(*) FROM windows WHERE ack=? AND status=\'ACKNOWLEDGED\'", (sys.argv[2],)).fetchone()[0])',
+    join(archive,'delivery.sqlite'),lostResponse.id]);
+   assert.equal(saved.stdout.trim(),'1');
+   assert.equal(await db.customerApiObservation.count({where:{requestKey:lostResponse.key}}),1);
+   if(process.env.REGPILOT_MQTT_REPORT)await writeFile(process.env.REGPILOT_MQTT_REPORT,JSON.stringify({...results,receipts,automaticDelivery:recovered,
+    lostWorkspaceAcknowledgementRecovered:true,duplicateReceiptRecovered:true,ungrantedControlRejected:true},null,2));
   }else{
    assert.equal((stored.payload as typeof sample.body).checks.find((c:{key:string})=>c.key==='temperature-limits').status,'FAIL');
   }

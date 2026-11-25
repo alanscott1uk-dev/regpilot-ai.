@@ -17,6 +17,7 @@ if [ "$VERCEL_GIT_COMMIT_REF" = "feature/traceability-benchmark-batch-20261106" 
       'Authenticate infrastructure monitors to the approved staging origin|da466c9de0e391955a322f832aa59ef52dea5bfc') exit 1 ;;
       'Fence receipt writes by workspace across independent collector workers|9eb2ed7c37fbee310dbf46935344febe9ab37eaf') exit 1 ;;
       'Collect authenticated MQTT logger windows and inspect release infrastructure|36de4b78258cc117a4f3a9bfc7d26880a1f6476e') exit 1 ;;
+      'Forward closed MQTT windows with durable recovery on customer sites|d0e115f1543430ca3e238466a7c48e08f7c3907e') exit 1 ;;
     esac
   fi
   exit 0

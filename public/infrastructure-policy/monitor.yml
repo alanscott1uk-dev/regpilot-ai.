@@ -51,7 +51,7 @@ jobs:
           7f15cbeb87d6720e6ac3500b9590258085fab37993745e4c42b02293414dd970  collect.py
           ba27c912ec3b044b0948e2e69da2480e3615c1f343519b786043a3521fc720e8  catalogue.json
           a84786833f8d4160eb1d4f07a007213c3aeae5afc6a64f3a654656cb5ca0b115  requirements.txt
-          4e82ca908831b701c8d9842f60f2b4614641e111efca2b7bd5995d3cdce6420d  deliver.py
+          30c5b7463aaf322cfb568b9bcbef2105a3b569024867d5d922ab26900c08af8f  deliver.py
           CHECKSUMS
           python -m venv env
           env/bin/python -m pip install -r requirements.txt
