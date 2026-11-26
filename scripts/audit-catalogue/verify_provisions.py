@@ -18,15 +18,19 @@ def words(element):
     return ' '.join(''.join(element.itertext()).split())
 def uk_headings(key, refs):
     root = etree.fromstring(download(f'https://www.legislation.gov.uk/{key}/contents/data.xml'))
-    all_refs = {}
+    result = {}
     for item in root.xpath('//*[@DocumentURI or @ContentRef]'):
         title = item.xpath('./*[local-name()="ContentsTitle"]')
         if not title: continue
         uri = item.get('DocumentURI','').split('?')[0].rstrip('/')
-        ref = item.get('ContentRef','')
-        if uri: all_refs[uri.rsplit(key + '/', 1)[-1]] = words(title[0])
-        if ref: all_refs[ref.replace('-', '/')] = words(title[0])
-    return {ref: all_refs[ref] for ref in refs}
+        ref = uri.rsplit(key + '/', 1)[-1] if key+'/' in uri else item.get('ContentRef','').replace('-', '/')
+        if not re.fullmatch(r'(section|regulation|article|schedule)/[A-Z]*[0-9]+[A-Z]*', ref, re.I): continue
+        heading = words(title[0])
+        if heading and heading.strip('. …') and ref not in result:
+            result[ref] = heading
+    if not set(refs) <= result.keys(): raise ValueError('Missing '+', '.join(set(refs)-result.keys()))
+    return result
+
 def eu_headings(key, refs):
     kind, year, num = key.split('/')
     celex = f'3{year}'+{'reg':'R','dir':'L'}[kind]+num.zfill(4)
@@ -37,23 +41,28 @@ def eu_headings(key, refs):
     for url in urls:
         try:
             tree = html.fromstring(download(url,'application/xhtml+xml,text/html;q=0.9'))
-            for item in tree.xpath("//*[contains(@class,'ti-art') or contains(@class,'title-article-norm') or contains(@class,'stitle-article-norm')]"):
-                match = re.fullmatch(r'Article\s+(\d+[a-z]?)', words(item), re.I)
+            for item in tree.xpath('//p | //h3 | //h4 | //b | //strong'):
+                label = words(item)
+                if len(label)>20: continue
+                match = re.fullmatch(r'Article\s+(\d+[a-z]?)', label, re.I)
                 if not match: continue
-                following = item.getnext()
+                ref = match[1]
+                parent = item if item.tag not in ('strong','b') else item.getparent()
+                following = parent.getnext() if parent is not None else None
+                heading = ''
                 if following is not None:
+                    css = following.get('class','')
                     title = words(following)
-                    if title: found.setdefault(match[1], title[:280])
-            for ref in refs:
-                if ref in found: continue
-                nodes = tree.xpath('//*[@id=$target]',target='art_'+ref)
-                if nodes:
-                    children = [words(e) for e in nodes[0].xpath('./*') if words(e)]
-                    if len(children)>=2: found[ref]=children[1][:280]
-            if all(ref in found for ref in refs): return {r:found[r] for r in refs}
+                    if ('sti-art' in css or 'stitle-article' in css or following.tag in ('h4','h5')
+                        or (len(title)<155 and following.xpath('./b | ./strong') and not title.endswith('.'))):
+                        heading = title
+                if ref not in found or (heading and found[ref] == label):
+                    found[ref] = heading or label
+            if set(refs) <= found.keys(): return found
         except Exception:
             continue
-    raise ValueError(f'could not resolve articles {", ".join(r for r in refs if r not in found)}')
+    raise ValueError('Could not resolve articles '+', '.join(r for r in refs if r not in found))
+
 def capture(row):
     region, key, refs = row
     for attempt in range(2):
