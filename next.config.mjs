@@ -4,6 +4,8 @@ const pdfRuntime=["./lib/server/pdf-extraction-worker.mjs","./node_modules/pdfjs
 const config={
   serverExternalPackages:["@open-policy-agent/opa-wasm","pdfjs-dist","@yarflam/potion-base-8m"],
   outputFileTracingIncludes:{
+    "/audit-programmes/frameworks/*": ["./public/audit-catalogue/*-content.json.gz"],
+    "/api/workspace/framework-audits": ["./public/audit-catalogue/*-content.json.gz"],
     "/api/tools/database-bridge":["./public/database-bridge/*.py","./public/database-bridge/setup.txt","./public/instrument-bridge/deliver.py"],
     "/api/tools/portal-helper":["./public/portal-helper/**/*"],
     "/api/workspace/controls/test":["./lib/policies/connected-control.wasm"],

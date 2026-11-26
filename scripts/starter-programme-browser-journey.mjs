@@ -65,6 +65,35 @@ export async function starterProgrammeJourney(browser,base,viewport,name){
  }
  async function replaceAccount(next){auth=next;await page.evaluate(({key,value})=>{localStorage.setItem(key,JSON.stringify(value));const channel=new BroadcastChannel(key);channel.postMessage({event:'SIGNED_IN',session:value});channel.close();},{key:storageKey,value:auth});}
  try{
+  const clinical='eu-reg-2014-536',clinicalName='EU Clinical Trials Regulation';
+  let auditScope='';
+  await context.route(url=>url.pathname==='/api/workspace/framework-audits',async route=>{
+   const request=route.request();
+   if(request.method()==='POST'){
+    const input=request.postDataJSON();
+    assert.equal(input.operation,'enable');assert.equal(input.framework,clinical);assert.equal(input.organizationId,first);
+    auditScope=input.scope;return route.fulfill({json:{framework:clinical,enabled:true}});
+   }
+   assert.equal(new URL(request.url()).searchParams.get('framework'),clinical);
+   return route.fulfill({json:{organizationId:first,canEdit:true,owners:[{id:owner,email:'owner@example.invalid'}],audits:[],selected:{
+    profile:{id:clinical,name:clinicalName,source:'eu',url:'https://eur-lex.europa.eu/eli/reg/2014/536/oj/eng',count:99,digest:'a'.repeat(64)},active:!!auditScope,scope:auditScope,assessed:0,page:1,pages:7,total:99,rows:[]
+   }}});
+  });
+  await page.goto(base+'/audit-programmes');
+  await page.getByRole('searchbox',{name:'Find a programme or control'}).fill('clinical trials');
+  await page.getByRole('button',{name:'Search',exact:true}).click();
+  await page.getByRole('link',{name:clinicalName,exact:true}).click();
+  await page.getByRole('heading',{name:clinicalName,exact:true}).waitFor();
+  const article=page.locator('details').filter({hasText:'Authorised protocol, site record and deviation review'}).first();
+  await article.locator('summary').first().click();
+  await article.getByRole('heading',{name:'Evidence to collect'}).waitFor();
+  assert.ok((await article.getByRole('link',{name:'Source document'}).getAttribute('href')).startsWith('https://eur-lex.europa.eu/'));
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth<=3),'framework details fit the viewport');
+  await page.getByRole('link',{name:'Open in workspace'}).click();
+  await page.getByLabel('Audit scope',{exact:true}).fill('Fictional clinical trial site filing and protocol management');
+  await page.getByRole('button',{name:'Start framework audit'}).click();
+  await page.getByText('Scope · Fictional clinical trial site filing and protocol management',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Export full audit CSV'}).waitFor();
   await page.goto(base+'/audit-programmes');
   await page.getByRole('searchbox',{name:'Find a programme or control'}).fill('CC6.2');
   await page.getByRole('button',{name:'Search',exact:true}).click();

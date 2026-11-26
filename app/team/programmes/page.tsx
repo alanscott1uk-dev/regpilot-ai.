@@ -1,4 +1,5 @@
 "use client";
+import {FrameworkMatches} from './framework-matches';
 import {CrosswalkPanel} from './crosswalk';
 import {socCrosswalkPacks} from '../../../lib/programme-crosswalk';
 import {ReferenceStatementPanel} from './reference-statement';
@@ -159,7 +160,7 @@ export default function StarterProgrammes(){
  }
  return <div className={shell.app}><WorkspaceNav/><main className={shell.main}>
   <div className={shell.topbar}><span className={shell.crumb}>Workspace / Starter programmes</span><span className={shell.demo}>PRIVATE WORKSPACE</span></div>
-  <header className={css.hero}><div><span className={css.eyebrow}>A PRACTICAL START, SHAPED TO YOUR BUSINESS</span><h1>Starter programmes</h1><p>Choose a ready-made work plan, adapt the tasks, and give each one an owner and a target date. Keep the resulting work connected to your evidence and reviews.</p></div>{organizationId&&<a href={href('/team/operations?view=programme')}>Import an existing programme →</a>}</header>
+  <header className={css.hero}><div><span className={css.eyebrow}>A PRACTICAL START, SHAPED TO YOUR BUSINESS</span><h1>Starter programmes</h1><p><a href={href('/team/programmes/frameworks')}>Open framework audits</a> · <a href="/audit-programmes/frameworks">Browse the framework catalogue</a></p><p>Choose a ready-made work plan, adapt the tasks, and give each one an owner and a target date. Keep the resulting work connected to your evidence and reviews.</p></div>{organizationId&&<a href={href('/team/operations?view=programme')}>Import an existing programme →</a>}</header>
   {(workspace.error||link.error||error)&&<div className={css.alert} role="alert"><p>{workspace.error||link.error||error}</p>{(link.error||link.id)&&organizationId&&!uncertain&&<button type="button" onClick={()=>openProgramme('')}>Open programme list</button>}</div>}
   {notice&&<p className={css.notice} role="status">{notice}</p>}
   {uncertain&&<section className={css.notice} aria-label="Unconfirmed programme creation"><strong>Check the saved result before continuing</strong><p>The creation request may have been saved. Further changes are paused while you check the existing programme. This check reads saved records without repeating the request.</p><button type="button" disabled={busy} onClick={()=>void reconcile()}>{busy?'Checking saved programmes…':'Check saved programmes'}</button></section>}
@@ -170,6 +171,7 @@ export default function StarterProgrammes(){
   {data&&<>
    <section className={css.panel} aria-label="Choose a starting programme"><div className={css.sectionHeader}><div><span className={css.eyebrow}>01 / CHOOSE A STARTING POINT</span><h2>Start with a focused plan</h2><p>These original operational templates help organise work. Choose what fits your business and confirm applicable requirements separately.</p></div>{data.programmes.length>0&&<a href="#saved-programmes">Your saved programmes ↓</a>}</div>
     <label>Find an audit programme<input type="search" value={packSearch} onChange={e=>findPack(e.target.value)} placeholder="e.g. wholesale, data protection, CC6.2"/></label>
+    <FrameworkMatches query={packSearch} organisation={organizationId}/>
     <p aria-live="polite">{visiblePacks.length} of {data.packs.length} programmes</p>{!visiblePacks.length&&<button onClick={()=>findPack('')}>Clear programme search</button>}
     <div className={css.packs}>{visiblePacks.map(value=>{const existing=data.programmes.find(plan=>plan.packId===value.id);return <article className={css.pack} key={value.id} data-selected={packId===value.id}><span className={css.eyebrow}>{value.items.length} EDITABLE TASKS</span><h3>{value.title}</h3><p>{value.description}</p><small>{existing?`${existing.completed} of ${existing.total} tasks recorded complete`:'Suggested planning dates · named owners · evidence prompts'}</small><button type="button" disabled={blocked} onClick={()=>choosePack(value)}>{existing?'Open saved programme':'Choose '+value.title}</button></article>;})}</div>
     {!canCreate&&<p className={css.hint}>You can inspect these starting points and saved work. An owner or administrator must create a programme.</p>}

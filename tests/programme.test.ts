@@ -13,3 +13,35 @@ test("ambiguous text, unknown themes and repeated proposals are withheld",()=>{a
 test("search keeps conditions and incomplete extraction visible without declaring sufficiency",()=>{const r=findProgrammePassages([{...docs[0],document:{...docs[0].document,totalPages:2,truncated:true,skippedPages:[2]}}]);assert.equal(r.controls[0].citations[0].quote,quote);assert.equal(r.documents[0].truncated,true);assert.deepEqual(r.documents[0].skippedPages,[2]);assert.match(r.warnings[0],/reviewer/);});
 test("programme model uses bounded structured output with no tools",async()=>{let calls=0;const model=new MockLanguageModelV3({doGenerate:async options=>{calls++;assert.equal(options.maxOutputTokens,6500);assert.equal(options.tools?.length||0,0);assert.match(JSON.stringify(options.prompt),/UNTRUSTED DATA/);assert.match(JSON.stringify(options.prompt),/negative statements/);return {content:[{type:"text",text:JSON.stringify({controls:[proposal]})}],finishReason:{unified:"stop",raw:undefined},usage:{inputTokens:{total:20,noCache:20,cacheRead:undefined,cacheWrite:undefined},outputTokens:{total:20,text:20,reasoning:undefined}},warnings:[]};}});assert.equal(groundProgramme(await generateProgramme(docs,model),docs).controls.length,1);assert.equal(calls,1);});
 test("programme provider failure is not retried",async()=>{let calls=0;const model=new MockLanguageModelV3({doGenerate:async()=>{calls++;throw Error("fixture failure");}});await assert.rejects(()=>generateProgramme(docs,model));assert.equal(calls,1);});
+
+test('the published catalogue counts distinct families and opens source-backed controls in every profile',async()=>{
+ const m=await import('../lib/audit-catalogue/catalogue');
+ const totals=m.catalogueTotals;
+ assert.ok(totals.families>=300);
+ assert.equal(totals.families,totals.mappedFamilies+totals.uk+totals.eu);
+ assert.ok(totals.profiles>totals.families);
+ const first=m.searchFrameworks('','',1),all=Array.from({length:first.pages},(_,i)=>m.searchFrameworks('','',i+1).rows).flat();
+ assert.equal(new Set(all.map(v=>v[0].family)).size,totals.families);
+ assert.equal(all.flat().length,totals.profiles);
+ for(const p of all.flat()){
+   const ids=m.controlIds(p);assert.equal(ids.length,p.count);assert.ok(p.count>0);
+   const c=m.getAuditControl(p,ids[0])!;assert.ok(c.name&&c.reference&&c.url.startsWith('http'));
+   for(const id of ids)assert.ok(m.referenceFor(p,id));
+   assert.equal(m.getAuditControl(p,'__proto__'),undefined);
+   if(p.source!=='scf'){
+     const prepared=m.frameworkPage(p,'',1).rows.filter(r=>r.evidence.length&&!r.suggestedEvidence);
+     assert.equal(prepared.length,p.sampleCount);
+     assert.ok(prepared.every(r=>r.sourcePassage&&r.sourcePassage.length>=24));
+   }
+ }
+ assert.ok(m.searchFrameworks('PCI DSS','',1).rows[0].length>1);
+ const p=m.getProfile('general-iso-27001-2022')!,c=m.frameworkPage(p,'GOV-02',1).rows.find(r=>r.id==='GOV-02');
+ assert.ok(c?.objectives.length);
+ const trial=m.getProfile('eu-reg-2014-536')!,protocol=m.getAuditControl(trial,'47')!;
+ assert.match(protocol.name,/good clinical practice/i);assert.match(protocol.sourcePassage!,/sponsor of a clinical trial/i);
+ assert.ok(protocol.url.endsWith('#art_47'));assert.equal(protocol.suggestedEvidence,false);
+ const modification=m.getAuditControl(trial,'18')!;
+ assert.match(modification.sourcePassage!,/shall assess/i);
+ assert.match(modification.evidence[0].name,/completed assessment/i);assert.equal(modification.suggestedEvidence,true);
+ assert.equal(m.frameworkPage(p,'impossibletermxyz',1).rows.length,0);
+});

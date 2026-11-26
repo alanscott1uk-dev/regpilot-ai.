@@ -52,6 +52,12 @@ jobs:
       - run: python -m pip install 'lxml==6.0.2'
       - name: Resolve regulatory references at their official publishers
         run: python scripts/audit-catalogue/verify_provisions.py --output "$RUNNER_TEMP/provisions.json"
+      - name: Compare the shipped regulatory catalogue with the verified provisions
+        run: |
+          python -m pip install 'openpyxl==3.1.5'
+          python scripts/audit-catalogue/build_regulations.py "$RUNNER_TEMP/provisions.json" --output "$RUNNER_TEMP/regulatory-catalogue"
+          cmp public/audit-catalogue/regulatory-index.json "$RUNNER_TEMP/regulatory-catalogue/regulatory-index.json"
+          cmp <(gzip -dc public/audit-catalogue/regulatory-content.json.gz) <(gzip -dc "$RUNNER_TEMP/regulatory-catalogue/regulatory-content.json.gz")
       - uses: actions/upload-artifact@v4
         if: always()
         with:

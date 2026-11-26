@@ -183,3 +183,46 @@ test('a mapped evidence task is shared by both audit references in the saved pro
   assert.match(referenceStatementCsv(final),/REVIEW_NEEDED/);assert.equal(referenceStatementCsv(final).split('\r\n').length,94);
  }finally{await f.clean();}
 });
+
+test('framework audits share reviewed evidence only for the same control, tenant, release and boundary',async()=>{
+ const {changeFrameworkAudit,frameworkWorkspace,frameworkCsv}=await import('../lib/server/framework-audits');
+ const {getProfile}=await import('../lib/audit-catalogue/catalogue');
+ const f=await setup(),{owner,reviewer,editor,viewer,foreign}=f;
+ const soc=getProfile('general-aicpa-tsc-2017')!,iso=getProfile('general-iso-27001-2022')!,pv=getProfile('eu-reg-2014-536')!;
+ const scope='Approved distribution systems at the pilot site';
+ const activate=(actor:AuthorizedContext,p:typeof soc,boundary=scope)=>changeFrameworkAudit(actor,{operation:'enable',framework:p.id,digest:p.digest,scope:boundary});
+ try{
+  await assert.rejects(()=>activate(viewer,soc),(e:any)=>e.status===403);
+  await Promise.all([activate(owner,soc),activate(owner,soc)]);
+  await activate(owner,iso);await activate(foreign,soc,'Other organisation and site');await activate(owner,pv);
+  await assert.rejects(()=>activate(owner,soc,'A different audit boundary'),(e:any)=>e.status===409);
+  const future=new Date(Date.now()+21*86400000).toISOString().slice(0,10);
+  const apply={operation:'assess',framework:soc.id,digest:soc.digest,controlId:'GOV-02',decision:'APPLIES',reason:'This control covers the documented pilot site boundary.',version:0,ownerId:editor.userId,dueDate:future};
+  await assert.rejects(()=>changeFrameworkAudit(owner,{...apply,ownerId:foreign.userId}),(e:any)=>e.status===403);
+  const [a,b]=await Promise.all([changeFrameworkAudit(owner,apply),changeFrameworkAudit(owner,apply)]);
+  assert.ok('taskId' in a&&a.taskId);assert.ok('taskId' in b&&b.taskId===a.taskId);
+  const taskId=a.taskId;
+  assert.equal(await db.obligation.count({where:{organizationId:owner.organizationId,category:'Framework audit'}}),1);
+  await assert.rejects(()=>changeFrameworkAudit(owner,{...apply,framework:iso.id,digest:iso.digest}),(e:any)=>e.status===409);
+  await changeFrameworkAudit(owner,{...apply,framework:iso.id,digest:iso.digest,existingTaskId:taskId});
+  const inspect=async(ctx:AuthorizedContext,p:typeof soc)=>{const v=await frameworkWorkspace(ctx,p.id,'GOV-02');return v.selected!.rows.find(x=>x.control.id==='GOV-02')!;};
+  assert.equal((await inspect(owner,iso)).task?.id,taskId);
+  assert.equal((await inspect(foreign,soc)).task,null);
+  await assert.rejects(()=>changeFrameworkAudit(owner,{...apply,framework:pv.id,digest:pv.digest}),(e:any)=>e.status===400);
+  const attached=await db.evidence.create({data:{organizationId:owner.organizationId,obligationId:taskId,filename:'reviewed.pdf',storageKey:'audit/'+randomUUID(),contentType:'application/pdf',sizeBytes:50,sha256:'a'.repeat(64),uploadedById:editor.userId,reviewerId:reviewer.userId,reviewStatus:'APPROVED',scanStatus:'CLEAN',reviewedAt:new Date()}});
+  assert.equal((await inspect(owner,iso)).reviewedEvidence,1);
+  assert.equal((await inspect(viewer,iso)).evidence.length,0);
+  await assert.rejects(()=>frameworkWorkspace(viewer,iso.id,'',1,true),(e:any)=>e.status===403);
+  const csv=frameworkCsv(await frameworkWorkspace(owner,iso.id,'',1,true));
+  assert.ok(csv.includes(attached.id)&&csv.includes('a'.repeat(64))&&csv.includes('creativecommons.org'));
+  assert.equal(csv.split('"\r\n"').length,iso.count+1);
+  await db.evidence.update({where:{id:attached.id},data:{reviewStatus:'DRAFT'}});
+  assert.equal((await inspect(owner,iso)).reviewedEvidence,0);
+  await changeFrameworkAudit(owner,{operation:'assess',framework:iso.id,digest:iso.digest,controlId:'GOV-02',decision:'EXCLUDED',reason:'Documented as out of scope following review.',version:1});
+  await assert.rejects(()=>changeFrameworkAudit(owner,{...apply,framework:iso.id,digest:iso.digest,reason:'A stale competing decision.'}),(e:any)=>e.status===409);
+  const sample=(await frameworkWorkspace(owner,pv.id)).selected!.rows[0];
+  const local=await changeFrameworkAudit(owner,{...apply,framework:pv.id,digest:pv.digest,controlId:sample.control.id});
+  assert.ok('taskId' in local&&local.taskId!==taskId);assert.ok(sample.control.evidence.length);
+  assert.equal((await frameworkWorkspace(owner,'')).audits.length,3);
+ }finally{await f.clean();await db.$disconnect();}
+});

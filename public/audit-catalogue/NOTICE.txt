@@ -1,0 +1,15 @@
+The SCF catalogue includes Secure Controls Framework® (SCF) 2026.3.
+Copyright Secure Controls Framework Council, LLC.
+Published control names, descriptions, assessment objectives, evidence requests
+and framework mappings are reproduced unchanged. RegPilot groups and indexes
+the published material for display. Use is under CC BY-ND 4.0.
+https://creativecommons.org/licenses/by-nd/4.0/legalcode.en
+https://securecontrolsframework.com/terms-and-conditions
+https://github.com/securecontrolsframework/securecontrolsframework/releases/tag/2026.3
+
+The regulatory catalogue includes UK public sector information under the
+Open Government Licence v3.0 and legislative material from the Official Journal
+of the European Union. Each programme identifies the official instrument.
+RegPilot authored the two audit samples in each regulatory programme.
+https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/
+https://eur-lex.europa.eu/content/legal-notice/legal-notice.html

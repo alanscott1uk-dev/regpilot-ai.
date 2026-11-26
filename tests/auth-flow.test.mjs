@@ -176,3 +176,14 @@ test('a participant returns to their assigned trial and release after a same-bro
  }
  assert.equal(workspaceReturnIntent(path,'participant=operator&release=other',email,100),null);
 });
+
+test('framework audit sign-in restores the selected public profile on the same account',async()=>{
+ const {workspaceReturnIntent,workspaceReturnPath}=await import('../lib/auth-flow.mjs');
+ const path='/team/programmes/frameworks',query='?framework=general-aicpa-tsc-2017',email='auditor@example.invalid';
+ assert.equal(signInDestination(path),path);
+ const saved=workspaceReturnIntent(path,query,email,100);
+ assert.equal(workspaceReturnPath(saved,email,101),path+query);
+ assert.equal(workspaceReturnPath(saved,'other@example.invalid',101),null);
+ assert.equal(workspaceReturnIntent(path,'?framework=a&framework=b',email),null);
+ assert.equal(workspaceReturnIntent(path,'?framework=https://example.invalid',email),null);
+});
