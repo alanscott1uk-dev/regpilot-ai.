@@ -13,7 +13,8 @@ def build(headings, output):
         for line in (ROOT / (region + '.psv')).read_text().splitlines():
             if not line or line.startswith('#'): continue
             key, name, a, act, evidence, b, act2, evidence2 = line.split('|')
-            provisions = published[key]
+            instrument = published[key]
+            provisions = instrument['provisions']
             if a == b or a not in provisions or b not in provisions:
                 raise ValueError(f'Unverified audit sample for {name}')
             identifier = region + '-' + key.replace('/', '-')
@@ -21,12 +22,15 @@ def build(headings, output):
                    'https://eur-lex.europa.eu/eli/' + key + '/oj/eng')
             if key=='reg/2006/1907': url='https://eur-lex.europa.eu/eli/reg/2006/1907/2026-06-22/eng'
             if identifier in content: raise ValueError('Duplicate instrument')
-            content[identifier] = {'provisions':provisions, 'samples':{a:[act,evidence], b:[act2,evidence2]}}
+            if not set(instrument['passages']) <= provisions.keys() or not set(instrument['anchors']) <= provisions.keys():
+                raise ValueError(f'Passage or anchor outside the published instrument: {name}')
+            content[identifier] = {**instrument, 'samples':{a:[act,evidence], b:[act2,evidence2]}}
             digest = hashlib.sha256(json.dumps(content[identifier],ensure_ascii=False,sort_keys=True).encode()).hexdigest()
             profiles.append({'id':identifier, 'family':identifier, 'name':name,
                              'label':key, 'publisher':'UK legislation' if region=='uk' else 'European Union',
                              'region':'United Kingdom' if region=='uk' else 'European Union', 'url':url,
-                             'count':len(provisions), 'sampleCount':2, 'digest':digest, 'source':region})
+                             'count':len(provisions), 'sampleCount':2, 'passageCount':len(instrument['passages']),
+                             'digest':digest, 'source':region})
     if set(published) != {p['label'] for p in profiles}:
         raise ValueError('Source inventory and selected instruments differ')
     output.mkdir(parents=True,exist_ok=True)

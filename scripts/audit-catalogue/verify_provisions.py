@@ -16,8 +16,17 @@ def download(url, accept='*/*'):
         return response.read(24_000_000)
 def words(element):
     return ' '.join(''.join(element.itertext()).split())
+
+def passage(text):
+    if len(text) <= 500: return text
+    return text[:500].rsplit(' ',1)[0] + '…'
+
+def xml_root(url):
+    return etree.fromstring(download(url), etree.XMLParser(resolve_entities=False,no_network=True,huge_tree=True))
+
 def uk_headings(key, refs):
-    root = etree.fromstring(download(f'https://www.legislation.gov.uk/{key}/contents/data.xml'))
+    base=f'https://www.legislation.gov.uk/{key}'
+    root = xml_root(base+'/contents/data.xml')
     result = {}
     for item in root.xpath('//*[@DocumentURI or @ContentRef]'):
         title = item.xpath('./*[local-name()="ContentsTitle"]')
@@ -31,7 +40,29 @@ def uk_headings(key, refs):
         if heading and heading.strip('. …') and ref not in result:
             result[ref] = heading
     if not set(refs) <= result.keys(): raise ValueError('Missing '+', '.join(set(refs)-result.keys()))
-    return result
+    passages={}
+    def opening(element):
+        for para in element.xpath('.//*[local-name()="Text" and not(ancestor::*[local-name()="Footnote"])]'):
+            text=words(para)
+            if len(text)>=24: return passage(text)
+        return ''
+    try:
+        body=xml_root(base+'/data.xml')
+    except (OSError,ValueError,etree.XMLSyntaxError):
+        body=None
+    if body is not None:
+        for element in body.xpath('//*[@id]'):
+            ref=element.get('id').replace('-','/')
+            if ref not in result or ref in passages: continue
+            text=opening(element)
+            if text: passages[ref]=text
+    for ref in refs:
+        if ref not in passages:
+            item=xml_root(base+'/'+ref+'/data.xml')
+            specific=item.xpath('//*[@id=$ref]',ref=ref.replace('/','-'))
+            text=opening(specific[0] if specific else item)
+            if text: passages[ref]=text
+    return {'provisions':result,'passages':passages,'anchors':{}}
 
 def eu_headings(key, refs):
     kind, year, num = key.split('/')
@@ -41,7 +72,7 @@ def eu_headings(key, refs):
             f'https://publications.europa.eu/resource/celex/{celex}']
     if key=='reg/2006/1907':
         urls.insert(0,'https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:02006R1907-20260622')
-    found = {}
+    found, passages, anchors = {}, {}, {}
     for url in urls:
         try:
             tree = html.fromstring(download(url,'application/xhtml+xml,text/html;q=0.9'))
@@ -66,7 +97,19 @@ def eu_headings(key, refs):
                     if title and following.tag=='p' and not list(following): break
                 if ref not in found or (heading and found[ref] == label):
                     found[ref] = heading or label
-            if set(refs) <= found.keys(): return found
+                if ref in passages: continue
+                # Retain an opening paragraph and article target from this edition of EUR-Lex.
+                for para in parent.xpath('following::p[position() <= 8]'):
+                    text=words(para)
+                    if re.fullmatch(r'(Article\s+\d+[a-z]?|ANNEX(?:\s+[IVXLCDM]+)?)',text,re.I): break
+                    if text in (heading,label) or len(text)<24: continue
+                    if 'normal' in para.get('class','').lower() or 'norm' in para.get('class','').lower():
+                        passages[ref]=passage(text);break
+                for node in [parent,*parent.iterancestors()]:
+                    target=node.get('id','')
+                    if target in ('art_'+ref,'art-'+ref,'art'+ref):
+                        anchors[ref]=target;break
+            if set(refs) <= found.keys(): return {'provisions':found,'passages':passages,'anchors':anchors}
         except Exception:
             continue
     raise ValueError('Could not resolve articles '+', '.join(r for r in refs if r not in found))
@@ -76,7 +119,7 @@ def capture(row):
     for attempt in range(2):
         try:
             headings = (uk_headings if region=='uk' else eu_headings)(key, refs)
-            if any(not h.strip() for h in headings.values()): raise ValueError('Missing heading')
+            if any(not h.strip() for h in headings['provisions'].values()): raise ValueError('Missing heading')
             return key, headings, None
         except Exception as error:
             message = str(error)
