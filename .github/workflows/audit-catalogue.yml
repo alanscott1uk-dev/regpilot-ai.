@@ -1,0 +1,32 @@
+name: Verify published audit mappings
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/audit-catalogue.yml'
+      - 'scripts/audit-catalogue/**'
+      - 'lib/audit-catalogue/**'
+      - 'public/audit-catalogue/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify the publisher's original workbook
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 2 --max-time 90 \
+            https://github.com/securecontrolsframework/securecontrolsframework/releases/download/2026.3/secure-controls-framework-scf-2026-3.xlsx \
+            -o "$RUNNER_TEMP/scf-2026.3.xlsx"
+          echo "5a89bf2d3c106a9a87d4b6e3d62dd3e147d0e960d4c07473045a10aa8a7df697  $RUNNER_TEMP/scf-2026.3.xlsx" | sha256sum --check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audit-catalogue-source-2026.3
+          path: ${{ runner.temp }}/scf-2026.3.xlsx
+          retention-days: 14
+          if-no-files-found: error
