@@ -91,7 +91,8 @@ def eu_headings(key, refs):
                     if len(title)>350: continue
                     if re.fullmatch(r'Article\s+\d+[a-z]?',title,re.I): break
                     if ('sti-art' in css or 'stitle-article' in css or 'subtitle' in css or following.tag in ('h4','h5')
-                        or (following is parent.getnext() and len(title)<155 and following.xpath('./b | ./strong') and not title.endswith('.'))):
+                        or (following is parent.getnext() and len(title)<155 and not re.search(r'[.:;!?]$|^\d|\b(?:shall|must)\b',title,re.I)
+                            and (following.xpath('./b | ./strong') or (not css and following.tag=='p')))):
                         heading = title
                         break
                     if title and following.tag=='p' and not list(following): break
@@ -99,11 +100,12 @@ def eu_headings(key, refs):
                     found[ref] = heading or label
                 if ref in passages: continue
                 # Retain an opening paragraph and article target from this edition of EUR-Lex.
-                for para in parent.xpath('following::p[position() <= 8]'):
+                for para in parent.xpath('following::*[self::p or (self::div and contains(@class,"norm") and not(.//p))][position() <= 12]'):
                     text=words(para)
                     if re.fullmatch(r'(Article\s+\d+[a-z]?|ANNEX(?:\s+[IVXLCDM]+)?)',text,re.I): break
                     if text in (heading,label) or len(text)<24: continue
-                    if 'normal' in para.get('class','').lower() or 'norm' in para.get('class','').lower():
+                    css=para.get('class','').lower()
+                    if 'norm' in css or (not css and re.search(r'[.;:]$|\b(?:shall|must)\b',text,re.I)):
                         passages[ref]=passage(text);break
                 for node in [parent,*parent.iterancestors()]:
                     target=node.get('id','')
