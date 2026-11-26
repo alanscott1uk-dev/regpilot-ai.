@@ -30,6 +30,7 @@ if [ "$VERCEL_GIT_COMMIT_REF" = "feature/traceability-benchmark-batch-20261106" 
       'Release 314 audit frameworks and regulatory programmes to staging|c3205ca9daa85a38e66460c2bb797110b631b022') exit 1 ;;
       'Preserve executable staging release checks for the audit catalogue|9b3842fca1c50cdc687eb1437a4c5cd11c89a2d9') exit 1 ;;
       'Release HITRUST preparation and scoped MyCSF integration to staging|41040594c78feb549fc704ba7ab4204fab188f2a') exit 1 ;;
+      'Release HITRUST evidence matching and reviewed batch export to staging|c231e5cc89cdb6177331766bcc86656d08756b3a') exit 1 ;;
     esac
   fi
   exit 0

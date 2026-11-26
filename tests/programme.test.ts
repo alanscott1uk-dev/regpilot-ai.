@@ -65,3 +65,12 @@ test('MyCSF keeps scoped boundaries in the requirement revision and rejects part
  listing={Items:[],Next:'https://fictional.example.invalid/next'};
  const before=requests;await assert.rejects(()=>api.assessments(7));assert.equal(requests,before+1);
 });
+
+test('first-import suggestions distinguish requirement IDs, linked control tests and unrelated files',async()=>{
+ const {suggestReviewedEvidence}=await import('../lib/mycsf/evidence-search');
+ const row={buid:'FAKE.12',domain:'Access',text:'Independently reconcile privileged account grants.',applicability:'',reference:'',hash:'x'};
+ const file={id:'a',filename:'sample.pdf',task:'Quarterly records',test:'',procedure:'',taskId:'demo'};
+ const hits=suggestReviewedEvidence([row],[{...file,filename:'FAKE.12.pdf'},{...file,id:'b',test:'Privileged access controls',procedure:'Reconcile account grants'},
+  {...file,id:'c',filename:'FAKE.123.pdf'},{...file,id:'d',filename:'FAKEx12.pdf'},{...file,id:'e',test:'Buildings',procedure:'Check inspection dates'}]);
+ assert.deepEqual(hits.map(h=>h.id),['a','b']);assert.ok(hits[0].exact);assert.ok(hits[1].matched.includes('privileged'));assert.equal(hits[1].test,'Privileged access controls');
+});

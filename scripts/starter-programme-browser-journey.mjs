@@ -2,6 +2,7 @@
 // The private-services journey separately verifies task creation and persistence.
 import assert from 'node:assert/strict';
 import {scopedSecurityProgramme} from '../lib/scoped-security-programme.mjs';
+import {myCsfEvidenceJourney} from './mycsf-browser-journey.mjs';
 import {mkdir,writeFile} from 'node:fs/promises';
 
 const org='d23e4567-e89b-42d3-a456-426614174000',first='d23e4567-e89b-42d3-a456-426614174001';
@@ -74,6 +75,7 @@ export async function starterProgrammeJourney(browser,base,viewport,name){
   await measurement.locator('summary').first().click();
   await measurement.getByText('Measurement definition, source population and recalculation',{exact:true}).waitFor();
   assert.equal(await page.getByRole('link',{name:'Open in workspace'}).getAttribute('href'),'/team/programmes/frameworks?framework=hitrust-r2');
+  await myCsfEvidenceJourney(page,base,org);
   const clinical='eu-reg-2014-536',clinicalName='EU Clinical Trials Regulation';
   let auditScope='';
   await context.route(url=>url.pathname==='/api/workspace/framework-audits',async route=>{

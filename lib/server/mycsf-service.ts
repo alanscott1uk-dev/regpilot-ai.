@@ -3,6 +3,8 @@ import type {MyCsfConnection,Prisma} from '@prisma/client';
 import {z} from 'zod';
 import {apiCredentials,uploadParts,maturityLevels,myCsfApi,remoteId,uid,type ApiCredentials,type MaturityLevel,type Snapshot,type Statement} from '../mycsf/api';
 import {hitrustTiers,type HitrustTier} from '../audit-catalogue/hitrust';
+import {suggestReviewedEvidence} from '../mycsf/evidence-search';
+import {MAX_ORG_EVIDENCE_FILES} from '../evidence/file-guard.mjs';
 import {db} from './db';
 import {transaction,IntelligenceError} from './intelligence-service';
 import {requireMember,ADMIN} from './workspace-member';
@@ -66,12 +68,21 @@ export async function myCsfWorkspace(c:AuthorizedContext,kind:HitrustTier,id='',
   const projected=mappings.map(m=>({id:m.id,buid:m.buid,version:m.version,evidenceId:m.evidenceId,filename:m.evidence.filename,levels:m.levels,reason:m.reason,mappedBy:m.mappedBy,approved:!!m.approvedBy,exported:!!m.exportedAt,remoteDocument:m.remoteDocumentId,
    stale:hashes.get(m.buid)!==m.requirementHash||m.evidence.sha256!==m.sha256||m.evidence.reviewVersion!==m.evidenceVersion||m.evidence.reviewStatus!=='APPROVED'||m.evidence.scanStatus!=='CLEAN'||!m.evidence.reviewerId||m.evidence.reviewerId===m.evidence.uploadedById}));
   const earlier=canEdit&&shown.length?await tx.myCsfMapping.findMany({where:{organizationId:c.organizationId,connectionId:{not:a.id},approvedBy:{not:null},buid:{in:shown.map(r=>r.buid)},requirementHash:{in:shown.map(r=>r.hash)}},
-   select:{buid:true,requirementHash:true,evidenceId:true,evidenceVersion:true,sha256:true,connection:{select:{name:true,tier:true}},evidence:{select:{filename:true,reviewVersion:true,reviewerId:true,uploadedById:true,reviewStatus:true,scanStatus:true,sha256:true}}},orderBy:{approvedAt:'desc'},take:150}):[];
+   select:{buid:true,requirementHash:true,evidenceId:true,evidenceVersion:true,sha256:true,connection:{select:{id:true,name:true,tier:true}},evidence:{select:{filename:true,reviewVersion:true,reviewerId:true,uploadedById:true,reviewStatus:true,scanStatus:true,sha256:true}}},orderBy:{approvedAt:'desc'},take:150}):[];
   const reuse=earlier.filter(m=>hashes.get(m.buid)===m.requirementHash&&m.evidence.reviewVersion===m.evidenceVersion&&m.evidence.sha256===m.sha256&&m.evidence.reviewStatus==='APPROVED'&&m.evidence.scanStatus==='CLEAN'&&m.evidence.reviewerId&&m.evidence.uploadedById&&m.evidence.reviewerId!==m.evidence.uploadedById)
-   .map(m=>({buid:m.buid,id:m.evidenceId,filename:m.evidence.filename,assessment:m.connection.name,tier:m.connection.tier}));
-  const available=canEdit?await tx.evidence.findMany({where:{organizationId:c.organizationId,scanStatus:'CLEAN',reviewStatus:'APPROVED',reviewedAt:{not:null},...(evidenceQuery?{OR:[{filename:{contains:evidenceQuery,mode:'insensitive'}},{obligation:{title:{contains:evidenceQuery,mode:'insensitive'}}}]}:{})},select:{id:true,filename:true,reviewerId:true,uploadedById:true,obligation:{select:{title:true}}},orderBy:{reviewedAt:'desc'},take:100}):[];
+   .map(m=>({buid:m.buid,id:m.evidenceId,filename:m.evidence.filename,connection:m.connection.id,assessment:m.connection.name,tier:m.connection.tier}));
+  const available=canEdit?await tx.evidence.findMany({where:{organizationId:c.organizationId,scanStatus:'CLEAN',reviewStatus:'APPROVED',reviewedAt:{not:null}},
+   select:{id:true,filename:true,reviewerId:true,uploadedById:true,obligation:{select:{id:true,title:true,managedControl:{select:{enabled:true,title:true,testProcedure:true}}}}},
+   orderBy:[{reviewedAt:'desc'},{id:'asc'}],take:MAX_ORG_EVIDENCE_FILES}):[];
+  const reviewed=available.filter(f=>f.reviewerId&&f.uploadedById&&f.reviewerId!==f.uploadedById).map(f=>{
+   const test=f.obligation.managedControl;
+   return {id:f.id,filename:f.filename,taskId:f.obligation.id,task:f.obligation.title,test:test?.enabled?test.title:'',procedure:test?.enabled?test.testProcedure:''};
+  });
+  const fileQuery=evidenceQuery.toLowerCase();
   return {...base,selected:{...summary(a),total:all.length,matches:filtered.length,page:current,pages,rows:shown,reuse,mappings:projected.filter(m=>shown.some(r=>r.buid===m.buid)),staleCount:projected.filter(m=>m.stale).length,mapped:projected.filter(m=>!m.stale).length,
-   evidence:available.filter(f=>f.reviewerId&&f.uploadedById&&f.reviewerId!==f.uploadedById).map(f=>({id:f.id,name:f.filename,task:f.obligation.title}))}};
+   suggestions:suggestReviewedEvidence(shown,reviewed),
+   exportable:canEdit?projected.filter(m=>m.approved&&!m.stale&&!m.exported).map(m=>({id:m.id,version:m.version,filename:m.filename,buid:m.buid})):[],
+   evidence:reviewed.filter(f=>[f.filename,f.task,f.test].some(text=>text.toLowerCase().includes(fileQuery))).map(f=>({id:f.id,name:f.filename,task:f.task}))}};
  });
 }
 async function refresh(c:AuthorizedContext,id:string,v:number,fetcher:typeof fetch){
