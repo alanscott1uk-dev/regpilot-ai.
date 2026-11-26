@@ -142,6 +142,7 @@ enum ReviewStatus {
 }
 
 model User {
+ myCsfConnections MyCsfConnection[]
  lossScenarios RiskLossScenario[]
  aiSystemsOwned AiSystem[] @relation("AiSystemOwner")
  aiSystemsEdited AiSystem[] @relation("AiSystemEditor")
@@ -256,6 +257,7 @@ model User {
 }
 
 model Organization {
+ myCsfConnections MyCsfConnection[]
  accountShortcuts String[] @default([])
  lossScenarios RiskLossScenario[]
  aiSystems AiSystem[]
@@ -505,6 +507,7 @@ model Obligation {
 }
 
 model Evidence {
+ myCsfMappings MyCsfMapping[]
  lossScenarios RiskLossScenario[]
  aiSystemDecisions AiSystemDecision[]
  productApplicability EvidenceApplicability?
@@ -2587,4 +2590,52 @@ model RiskLossScenario {
   evidence       Evidence? @relation(fields:[evidenceId,organizationId],references:[id,organizationId],onDelete:Restrict)
   @@unique([riskId,requestKey])
   @@index([organizationId,riskId,createdAt])
+}
+
+model MyCsfConnection {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ configuredById String @db.Uuid
+ subscriberId Int
+ assessmentId Int
+ tier String @db.VarChar(2)
+ name String @db.VarChar(200)
+ encryptedSecret String
+ version Int @default(1)
+ scopeHash String @db.VarChar(64)
+ requirements Json
+ syncedAt DateTime
+ nextSyncAt DateTime
+ failure String? @db.VarChar(60)
+ leaseId String? @db.Uuid
+ leaseUntil DateTime?
+ organization Organization @relation(fields:[organizationId],references:[id],onDelete:Cascade)
+ configuredBy User @relation(fields:[configuredById],references:[id],onDelete:Restrict)
+ mappings MyCsfMapping[]
+ @@unique([id,organizationId])
+ @@unique([organizationId,subscriberId,assessmentId])
+ @@index([nextSyncAt])
+}
+
+model MyCsfMapping {
+ id String @id @default(uuid()) @db.Uuid
+ organizationId String @db.Uuid
+ connectionId String @db.Uuid
+ buid String @db.VarChar(100)
+ requirementHash String @db.VarChar(64)
+ evidenceId String @db.Uuid
+ evidenceVersion Int
+ sha256 String @db.VarChar(64)
+ levels String[]
+ reason String @db.VarChar(1000)
+ mappedBy String @db.Uuid
+ approvedBy String? @db.Uuid
+ approvedAt DateTime?
+ exportedAt DateTime?
+ remoteDocumentId Int?
+ version Int @default(1)
+ connection MyCsfConnection @relation(fields:[connectionId,organizationId],references:[id,organizationId],onDelete:Cascade)
+ evidence Evidence @relation(fields:[evidenceId,organizationId],references:[id,organizationId],onDelete:Restrict)
+ @@unique([connectionId,buid,evidenceId])
+ @@index([organizationId,connectionId])
 }

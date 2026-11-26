@@ -50,4 +50,6 @@ vendor-site-authorisation
 workspace-account-shortcuts
 partner-and-trust
 group-observation-follow-up
+mycsf-assessments
+mycsf-runtime
 MIGRATIONS

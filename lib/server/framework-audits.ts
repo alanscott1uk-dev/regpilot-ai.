@@ -37,7 +37,7 @@ async function findEnabled(tx:Tx,c:AuthorizedContext,p:Profile){
   return event?readEnabled(p,event.details):null;
 }
 function taskKey(p:Profile,scope:string,controlId:string){
-  return hashValue({kind:'framework-evidence-task',scope,edition:release,digest:p.digest,control:p.source==='scf'?controlId:p.id+'/'+controlId});
+  return hashValue({kind:'framework-evidence-task',scope,edition:release,digest:p.digest,control:p.source==='scf'||p.source==='preparation'?controlId:p.id+'/'+controlId});
 }
 const taskFields={id:true,title:true,status:true,assigneeId:true,ownerName:true,dueDate:true,automationKey:true} as const;
 async function scopeDecisions(tx:Tx,c:AuthorizedContext,p:Profile){
@@ -85,7 +85,7 @@ export async function changeFrameworkAudit(c:AuthorizedContext,raw:unknown){
         const task=await tx.obligation.create({data:{organizationId:c.organizationId,category:'Framework audit',title:control.name,
           ownerName:owner.email,assigneeId:d.ownerId,dueDate:new Date(d.dueDate+'T00:00:00Z'),automationKey,sourceUrl:control.url,
           notes:[active.scope,control.description,control.sourcePassage,control.suggestedEvidence?'Suggested evidence request':'',...control.evidence.map(e=>[e.id,e.name,e.description].filter(Boolean).join('\n')),
-            p.source==='scf'?'Secure Controls Framework® (SCF) '+scfAttribution.edition+' · © '+scfAttribution.publisher+' · '+scfAttribution.license:'RegPilot regulatory audit · '+control.reference].filter(Boolean).join('\n\n')},select:{id:true}});
+            p.source==='scf'?'Secure Controls Framework® (SCF) '+scfAttribution.edition+' · © '+scfAttribution.publisher+' · '+scfAttribution.license:control.reference].filter(Boolean).join('\n\n')},select:{id:true}});
         taskId=task.id;
         await tx.auditEvent.create({data:{organizationId:c.organizationId,actorId:c.userId,entityType:'Obligation',entityId:taskId,action:'obligation.created',details:{via:'framework_audit',framework:p.id,controlId:d.controlId}}});
       }
@@ -141,7 +141,7 @@ export async function frameworkWorkspace(c:AuthorizedContext,framework:string,qu
 export function frameworkCsv(result:Awaited<ReturnType<typeof frameworkWorkspace>>){
   if(!result.selected?.active)throw new IntelligenceError('Audit unavailable.',404);
   const {profile,scope,rows}=result.selected;
-  const credit=profile.source==='scf'?'Secure Controls Framework® (SCF) '+scfAttribution.edition+' © '+scfAttribution.publisher+' '+scfAttribution.license:'RegPilot evidence samples. '+(profile.source==='uk'?'UK public sector information, Open Government Licence v3.0.':'Source: Official Journal of the European Union.');
+  const credit=profile.source==='scf'?'Secure Controls Framework® (SCF) '+scfAttribution.edition+' © '+scfAttribution.publisher+' '+scfAttribution.license:profile.source==='preparation'?'RegPilot evidence preparation workpaper.':'RegPilot evidence samples. '+(profile.source==='uk'?'UK public sector information, Open Government Licence v3.0.':'Source: Official Journal of the European Union.');
   const header=['Framework','Source digest','Scope','Control ID','Control','Published reference','Source URL','Opening passage','Assessment objectives','Evidence request','Request type','Applicability','Rationale','Reviewer','Reviewed UTC','Task ID','Owner','Due','Task status','Reviewed evidence IDs and SHA-256','Source attribution'];
   return [header,...rows.map(r=>[profile.name,profile.digest,scope,r.control.id,r.control.name,r.control.reference,r.control.url,r.control.sourcePassage??'',
     r.control.objectives.map(o=>o.id+' '+o.text).join('\n'),r.control.evidence.map(e=>[e.id,e.name,e.description].filter(Boolean).join('\n')).join('\n'),

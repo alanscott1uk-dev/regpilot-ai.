@@ -5,11 +5,22 @@ on:
       - '.github/workflows/audit-catalogue.yml'
       - 'scripts/audit-catalogue/**'
       - 'lib/audit-catalogue/**'
+      - 'lib/mycsf/**'
+      - 'lib/server/mycsf-service.ts'
       - 'public/audit-catalogue/**'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
+  mycsf-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify the public MyCSF API contract
+        run: python scripts/audit-catalogue/verify_mycsf.py
   source:
     runs-on: ubuntu-latest
     timeout-minutes: 8

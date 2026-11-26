@@ -3,10 +3,11 @@ import {join} from 'node:path';
 import {gunzipSync} from 'node:zlib';
 import scfIndex from '../../public/audit-catalogue/scf-index.json';
 import regulatoryIndex from '../../public/audit-catalogue/regulatory-index.json';
+import {hitrustProfiles,preparationRows,preparationControl} from './hitrust';
 
 export type Profile = {
   id:string; family:string; label:string; name:string; region:string; publisher:string; url:string;
-  count:number; source:'scf'|'uk'|'eu'; digest:string; sampleCount?:number; passageCount?:number;
+  count:number; source:'scf'|'uk'|'eu'|'preparation'; digest:string; sampleCount?:number; passageCount?:number;
 };
 export type AuditControl = {
   id:string; name:string; domain:string; description:string; reference:string; url:string;
@@ -21,7 +22,7 @@ export const scfAttribution = {publisher:'Secure Controls Framework Council, LLC
 export const release = '2026-11-26.1';
 const profiles:Profile[] = [
   ...scfIndex.profiles.map(p=>({...p,source:'scf' as const,digest:source.sha256})),
-  ...regulatoryIndex as Profile[]
+  ...regulatoryIndex as Profile[],...hitrustProfiles
 ];
 const byId = new Map(profiles.map(p=>[p.id,p]));
 const families = new Map<string,Profile[]>();
@@ -32,7 +33,8 @@ for (const p of profiles) {
 }
 export const catalogueTotals = {
   families:families.size, profiles:profiles.length, mappedFamilies:new Set(profiles.filter(p=>p.source==='scf').map(p=>p.family)).size,
-  uk:profiles.filter(p=>p.source==='uk').length, eu:profiles.filter(p=>p.source==='eu').length
+  uk:profiles.filter(p=>p.source==='uk').length, eu:profiles.filter(p=>p.source==='eu').length,
+  preparationFamilies:new Set(hitrustProfiles.map(p=>p.family)).size
 };
 export function getProfile(id:string) { return byId.get(id); }
 function readPublished<T>(filename:string):T {
@@ -57,6 +59,7 @@ export function searchFrameworks(query:string,region:string,page:number) {
 export const frameworkRegions=[...new Set(profiles.map(p=>p.region))].sort();
 export function variantsOf(p:Profile){return families.get(p.family)??[];}
 function coreRows(profile:Profile):Record<string,string> {
+  if(profile.source==='preparation')return Object.fromEntries(preparationRows(profile).map(p=>['RP-'+p[0],p[1]]));
   return profile.source==='scf'?dictionary().mappings[profile.id]:provisions()[profile.id].provisions;
 }
 export function referenceFor(profile:Profile,id:string):string|undefined {
@@ -82,6 +85,7 @@ function suggestedRequest(text:string){
   return evidenceByAction.find(rule=>rule.action.test(action))?.request;
 }
 export function getAuditControl(profile:Profile,id:string):AuditControl|undefined {
+  if(profile.source==='preparation')return preparationControl(profile,id);
   const reference=referenceFor(profile,id);
   if(reference===undefined)return;
   if(profile.source==='scf'){
@@ -99,7 +103,7 @@ export function getAuditControl(profile:Profile,id:string):AuditControl|undefine
 }
 export function frameworkPage(profile:Profile,query:string,page:number) {
   const words=terms(query),rows=coreRows(profile);
-  const prioritised=profile.source==='scf'?[]:Object.keys(provisions()[profile.id].samples);
+  const prioritised=profile.source==='eu'||profile.source==='uk'?Object.keys(provisions()[profile.id].samples):[];
   const ids=[...new Set([...prioritised,...Object.keys(rows)])].filter(id=>{
     if(!words.length)return true;
     const c=getAuditControl(profile,id)!;

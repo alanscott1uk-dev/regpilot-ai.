@@ -18,22 +18,24 @@ test('the published catalogue counts distinct families and opens source-backed c
  const m=await import('../lib/audit-catalogue/catalogue');
  const totals=m.catalogueTotals;
  assert.ok(totals.families>=300);
- assert.equal(totals.families,totals.mappedFamilies+totals.uk+totals.eu);
+ assert.equal(totals.families,totals.mappedFamilies+totals.uk+totals.eu+totals.preparationFamilies);
  assert.ok(totals.profiles>totals.families);
  const first=m.searchFrameworks('','',1),all=Array.from({length:first.pages},(_,i)=>m.searchFrameworks('','',i+1).rows).flat();
  assert.equal(new Set(all.map(v=>v[0].family)).size,totals.families);
  assert.equal(all.flat().length,totals.profiles);
  for(const p of all.flat()){
    const ids=m.controlIds(p);assert.equal(ids.length,p.count);assert.ok(p.count>0);
-   const c=m.getAuditControl(p,ids[0])!;assert.ok(c.name&&c.reference&&c.url.startsWith('http'));
+   const c=m.getAuditControl(p,ids[0])!;assert.ok(c.name&&c.reference&&(c.url.startsWith('http')||p.source==='preparation'&&c.url.startsWith('/audit-programmes/')));
    for(const id of ids)assert.ok(m.referenceFor(p,id));
    assert.equal(m.getAuditControl(p,'__proto__'),undefined);
-   if(p.source!=='scf'){
+   if(p.source==='uk'||p.source==='eu'){
      const prepared=m.frameworkPage(p,'',1).rows.filter(r=>r.evidence.length&&!r.suggestedEvidence);
      assert.equal(prepared.length,p.sampleCount);
      assert.ok(prepared.every(r=>r.sourcePassage&&r.sourcePassage.length>=24));
    }
  }
+ const hit=m.searchFrameworks('HITRUST','',1);assert.equal(hit.total,1);assert.deepEqual(hit.rows[0].map(p=>p.id),['hitrust-e1','hitrust-i1','hitrust-r2']);
+ for(const profile of hit.rows[0]){assert.equal(profile.source,'preparation');assert.equal(m.controlIds(profile).length,profile.count);assert.ok(m.getAuditControl(profile,'RP-identity')!.evidence.length);}
  assert.ok(m.searchFrameworks('PCI DSS','',1).rows[0].length>1);
  const p=m.getProfile('general-iso-27001-2022')!,c=m.frameworkPage(p,'GOV-02',1).rows.find(r=>r.id==='GOV-02');
  assert.ok(c?.objectives.length);
@@ -44,4 +46,22 @@ test('the published catalogue counts distinct families and opens source-backed c
  assert.match(modification.sourcePassage!,/shall assess/i);
  assert.match(modification.evidence[0].name,/completed assessment/i);assert.equal(modification.suggestedEvidence,true);
  assert.equal(m.frameworkPage(p,'impossibletermxyz',1).rows.length,0);
+});
+
+test('MyCSF keeps scoped boundaries in the requirement revision and rejects partial or ambiguous lists',async()=>{
+ const {myCsfApi}=await import('../lib/mycsf/api');
+ const detail={BUID:'FAKE-1','OBJ ID':123,TYPE:'e1',STATEMENT:'Fictional evidence requirement.',SCOPE:'Test site A',LEVEL:'one','BASELINE CONTROL':true};
+ let listing:unknown=[{Id:123,Name:'Fictional assessment',Type:'e1'}],requests=0;
+ const api=myCsfApi({username:'test',key:'test'},async url=>{
+   requests++;
+   return Response.json(new URL(String(url)).pathname.includes('assessmentdetailed')?[detail]:listing);
+ });
+ const first=await api.snapshot(7,123,'e1');
+ detail.SCOPE='Test site B';const second=await api.snapshot(7,123,'e1');
+ assert.notEqual(second.rows[0].hash,first.rows[0].hash);
+ detail.TYPE='e1 or r2';
+ await assert.rejects(()=>api.snapshot(7,123,'e1'));
+ listing={Items:[],Total:1};await assert.rejects(()=>api.assessments(7));
+ listing={Items:[],Next:'https://fictional.example.invalid/next'};
+ const before=requests;await assert.rejects(()=>api.assessments(7));assert.equal(requests,before+1);
 });

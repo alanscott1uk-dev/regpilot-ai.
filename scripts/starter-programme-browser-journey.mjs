@@ -65,6 +65,15 @@ export async function starterProgrammeJourney(browser,base,viewport,name){
  }
  async function replaceAccount(next){auth=next;await page.evaluate(({key,value})=>{localStorage.setItem(key,JSON.stringify(value));const channel=new BroadcastChannel(key);channel.postMessage({event:'SIGNED_IN',session:value});channel.close();},{key:storageKey,value:auth});}
  try{
+  await page.goto(base+'/audit-programmes/frameworks?q=HITRUST');
+  await page.getByRole('link',{name:'HITRUST e1 evidence preparation',exact:true}).click();
+  await page.locator('summary').filter({hasText:'Versions and assessment profiles'}).click();
+  await page.getByRole('link',{name:'HITRUST r2',exact:true}).click();
+  await page.getByRole('heading',{name:'HITRUST r2 evidence preparation',exact:true}).waitFor();
+  const measurement=page.locator('details').filter({hasText:'Reproduce a performance measure'}).last();
+  await measurement.locator('summary').first().click();
+  await measurement.getByText('Measurement definition, source population and recalculation',{exact:true}).waitFor();
+  assert.equal(await page.getByRole('link',{name:'Open in workspace'}).getAttribute('href'),'/team/programmes/frameworks?framework=hitrust-r2');
   const clinical='eu-reg-2014-536',clinicalName='EU Clinical Trials Regulation';
   let auditScope='';
   await context.route(url=>url.pathname==='/api/workspace/framework-audits',async route=>{

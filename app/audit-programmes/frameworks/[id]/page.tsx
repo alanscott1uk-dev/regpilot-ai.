@@ -9,8 +9,8 @@ export default async function FrameworkDetail({params,searchParams}:{params:Prom
   const href=(page:number)=>'?'+new URLSearchParams({q,page:String(page)});
   const alternatives=variantsOf(p);
   return <main className={css.main}><nav className={css.nav}><a href="/audit-programmes/frameworks">All frameworks</a><a href={'/team/programmes/frameworks?'+new URLSearchParams({framework:p.id})}>Open in workspace</a></nav>
-    <header className={css.header}><h1>{p.name}</h1><p>{p.publisher} · {p.region} · {p.count} {p.source==='scf'?'mapped controls':'indexed provisions'}</p>
-      <p>{p.source==='scf'?'The published crosswalk ties each control to the source references it addresses.':p.sampleCount+' provisions have prepared evidence samples. '+(p.passageCount??0)+' provisions include an opening passage from the source. Review applicability before assigning evidence.'} <a href={p.url}>Read the source instrument</a></p>
+    <header className={css.header}><h1>{p.name}</h1><p>{p.publisher} · {p.region} · {p.count} {p.source==='scf'?'mapped controls':p.source==='preparation'?'RegPilot workpapers':'indexed provisions'}</p>
+      {p.source==='preparation'?<p>Use these workpapers to prepare your own evidence. Your licensed MyCSF assessment determines the official requirements in scope. <a href={p.url}>HITRUST MyCSF</a></p>:<p>{p.source==='scf'?'The published crosswalk ties each control to the source references it addresses.':p.sampleCount+' provisions have prepared evidence samples. '+(p.passageCount??0)+' provisions include an opening passage from the source. Review applicability before assigning evidence.'} <a href={p.url}>Read the source instrument</a></p>}
       {p.source==='eu'&&<p>Source edition · {p.url.includes('/oj/')?'Original Official Journal publication':'Consolidated text dated 22 June 2026'}. Check subsequent amendments for the period under audit.</p>}
     </header>
     {alternatives.length>1&&<details className={css.panel}><summary>Versions and assessment profiles</summary><ul>{alternatives.map(v=><li key={v.id}><a href={'/audit-programmes/frameworks/'+v.id}>{v.label}</a></li>)}</ul></details>}
@@ -21,7 +21,7 @@ export default async function FrameworkDetail({params,searchParams}:{params:Prom
       {c.sourcePassage&&<><h3>Opening passage</h3><blockquote>{c.sourcePassage}</blockquote></>}
       {!!c.objectives.length&&<><h3>Assessment objectives</h3><ul>{c.objectives.map(a=><li key={a.id}>{a.id} · {a.text}</li>)}</ul></>}
       {!!c.evidence.length&&<><h3>{c.suggestedEvidence?'Suggested evidence request':'Evidence to collect'}</h3><ul>{c.evidence.map(e=><li key={e.id}>{e.name}{e.description&&<p>{e.description}</p>}</li>)}</ul></>}
-      <a href={c.url}>Source document</a>
+      {p.source!=='preparation'&&<a href={c.url}>Source document</a>}
     </details>)}</section>
     <nav className={css.nav} aria-label="Control pages">{result.page>1&&<a href={href(result.page-1)}>Previous page</a>}{result.page<result.pages&&<a href={href(result.page+1)}>Next page</a>}</nav>
     <footer><CatalogueNotice source={p.source}/></footer>

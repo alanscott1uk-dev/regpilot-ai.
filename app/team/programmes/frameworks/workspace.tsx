@@ -2,6 +2,7 @@
 import {useEffect,useState,type FormEvent} from 'react';
 import type {frameworkWorkspace} from '../../../../lib/server/framework-audits';
 import {useWorkspaceContext,workspaceHref} from '../../../../lib/client/workspace-context';
+import MyCsfPanel from './mycsf-panel';
 import WorkspaceNav from '../../../components/workspace-nav';
 import EmailSignIn from '../../../components/email-sign-in';
 import css from '../programmes.module.css';
@@ -78,7 +79,7 @@ export default function FrameworkWorkspace({framework}:{framework:string}){
         <label>Audit scope<textarea name="scope" required minLength={8} maxLength={600} placeholder="Organisation, sites and services included"/></label>
         <p>Frameworks with the same recorded scope can share evidence tasks for the same published control.</p><button disabled={busy}>Start framework audit</button>
       </form>:<p>A workspace administrator can start this audit.</p>):<>
-        <p>Scope · {selected.scope}</p><p>{selected.assessed} of {selected.profile.count} controls have a recorded scope decision.</p>
+        <p>Scope · {selected.scope}</p><p>{selected.assessed} of {selected.profile.count} {selected.profile.source==='preparation'?'workpapers':'controls'} have a recorded scope decision.</p>
         {data.canEdit&&<button onClick={()=>void exportAudit()}>Export full audit CSV</button>}</>}
     </section>
     {selected.active&&<section className={css.panel}><form onSubmit={e=>{e.preventDefault();setQ(search.trim());setPage(1);}}>
@@ -96,6 +97,7 @@ export default function FrameworkWorkspace({framework}:{framework:string}){
       </details>)}
       <nav className={css.toolbar} aria-label="Control pages"><button disabled={selected.page<=1||busy} onClick={()=>setPage(selected.page-1)}>Previous</button><button disabled={selected.page>=selected.pages||busy} onClick={()=>setPage(selected.page+1)}>Next</button></nav>
     </section>}
+    {selected.profile.source==='preparation'&&<MyCsfPanel key={organizationId+'|'+revision+'|'+framework} tier={framework.slice(8)} ctx={ctx}/>}
     {selected.profile.source==='scf'&&<p>Secure Controls Framework® (SCF) 2026.3, © Secure Controls Framework Council, LLC. Published content is unchanged. <a href="https://creativecommons.org/licenses/by-nd/4.0/legalcode.en">CC BY-ND 4.0</a> · <a href={'/audit-programmes/frameworks/'+framework}>Source and attribution</a></p>}
     {selected.profile.source==='uk'&&<p>UK legislation contains public sector information licensed under the <a href="https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/">Open Government Licence v3.0</a>.</p>}
     {selected.profile.source==='eu'&&<p>Source · <a href={selected.profile.url}>Official Journal of the European Union, EUR-Lex</a>.</p>}

@@ -1,3 +1,4 @@
+import {myCsfOrganisations,runDueMyCsf} from './mycsf-service';
 import {maxConnectorEventsPerTick,runAutomationBatch,finalizeAutomationTick} from './automation-queue';
 import {finalizeCollectionTick,collectionAttention} from './collection-health';
 import {Prisma} from '@prisma/client';
@@ -102,6 +103,7 @@ async function runClaimedRuntime(claim:Awaited<ReturnType<typeof claimRuntime>>,
    ...(connectorsEnabled()?{connectors:()=>runConnectorBatch(maxConnectorReadsPerTick,4,admissionDeadline),automations:()=>runAutomationBatch(maxConnectorEventsPerTick,2,Math.min(Date.now()+20000,admissionDeadline+20000))}:{}),
    ...(outboundIntegrationsEnabled()?{deliveries:()=>runIntegrationDeliveryBatch(12,2,admissionDeadline)}:{}),
    // One slot owns recurring review generation. Collection slots share fair queues.
+   ...(slot===0&&myCsfOrganisations().length?{myCsf:()=>runDueMyCsf(admissionDeadline)}:{}),
    ...(slot===0?{controlReviews:()=>runReviewBatch(admissionDeadline),policyReleases:()=>runDuePolicyReleaseBatch(5,admissionDeadline)}:{})
   })),slot===0?runWorkerMaintenance:undefined);
   result=await finalizeAutomationTick(result);

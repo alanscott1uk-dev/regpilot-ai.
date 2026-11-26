@@ -226,3 +226,60 @@ test('framework audits share reviewed evidence only for the same control, tenant
   assert.equal((await frameworkWorkspace(owner,'')).audits.length,3);
  }finally{await f.clean();await db.$disconnect();}
 });
+
+test('MyCSF scopes e1, i1 and r2, verifies reviewed evidence bytes, reconciles a lost upload and invalidates changed requirements',async()=>{
+ const {changeMyCsf,myCsfWorkspace,runDueMyCsf}=await import('../lib/server/mycsf-service');
+ const {digest}=await import('../lib/mycsf/api');
+ const f=await setup(),{owner,reviewer,editor,viewer,foreign}=f,keys=['REGPILOT_MYCSF_AUTHORISED_ORGANISATIONS','REGPILOT_CONNECTOR_ENCRYPTION_KEY','REGPILOT_MYCSF_UPLOAD_PARTS'];
+ const previous=keys.map(k=>process.env[k]);const bytes=Buffer.from('Fictional evidence object used for the MyCSF connector contract.'),docs=new Map<number,Uint8Array>();
+ const storage:EvidenceObjectStore={put:async()=>{},remove:async()=>{},get:async()=>bytes};
+ const credentials={username:'fixture-user',key:'fictional-mycsf-secret'};const types=['e1','i1','r2'] as const;
+ let uploads=0,links=0,reads=0,lost=true,changed=false,incorrectBytes=false,filename='';
+ const fetcher:typeof fetch=async(url,options)=>{
+  const u=new URL(String(url));assert.equal(u.origin,'https://api.mycsf.net');assert.equal(new Headers(options?.headers).get('X-API-KEY'),'fixture-user:fictional-mycsf-secret');assert.equal(options?.redirect,'error');reads++;
+  if(u.pathname==='/v1/subscribers/70/assessments')return Response.json({Assessments:types.map((t,i)=>({Id:300+i,Name:'Fictional '+t,AssessmentTypeName:t+' validated'}))});
+  if(u.pathname.startsWith('/v1/assessmentdetailed/')){const n=Number(u.pathname.split('/').pop());return Response.json([{BUID:'FAKE-ROW',TYPE:types[n-300],'OBJ ID':n,'CONTROL REFERENCE':'Fictional reference',DOMAIN:'Fictional domain',APPLICABILITY:'In scope',STATEMENT:changed?'A revised fictional detail for a contract test.':'Fictional test input without framework text.'}]);}
+  if(u.pathname==='/v1/assessment/300/documents/7')return Response.json([...docs.keys()].map(id=>({Id:id,CSFAssessmentId:300,DocumentTypeId:7,Name:filename,AttachmentFilename:filename,AttachmentId:'attachment-'+id})));
+  if(u.pathname==='/v1/assessment/300/document'){
+   assert.equal(options?.method,'POST');const form=options.body as FormData,meta=JSON.parse(String(form.get('fixture-model')));assert.equal(meta.DocumentOverwrite,false);filename=meta.DocumentName;
+   const remoteBytes=new Uint8Array(await (form.get('fixture-file') as Blob).arrayBuffer());docs.set(801,remoteBytes);uploads++;if(lost){lost=false;throw Error('fictional lost response');}return Response.json({AssessmentId:300,DocumentId:801},{status:201});
+  }
+  if(u.pathname==='/v1/documents/801/download/attachment-801')return new Response(Buffer.from(incorrectBytes?'different':bytes));
+  if(u.pathname==='/v1/assessment/300/requirement/FAKE-ROW/document/801'){
+   assert.equal(options?.method,'PUT');assert.deepEqual(JSON.parse(String(options.body)),{Actor:'SUBSCRIBER',MaturityLevels:['IMPLEMENTED']});links++;return new Response(null,{status:204});
+  }
+  throw Error('Unexpected MyCSF endpoint');
+ };
+ const invoke=(actor:AuthorizedContext,command:any)=>changeMyCsf(actor,command,{fetcher,storage}) as Promise<any>;
+ try{
+  process.env.REGPILOT_CONNECTOR_ENCRYPTION_KEY='9a'.repeat(32);delete process.env.REGPILOT_MYCSF_AUTHORISED_ORGANISATIONS;delete process.env.REGPILOT_MYCSF_UPLOAD_PARTS;
+  const discovery={op:'discover',subscriber:70,credentials};await assert.rejects(()=>invoke(owner,discovery),(e:any)=>e.status===403);assert.equal(reads,0);assert.equal((await myCsfWorkspace(owner,'e1')).licensed,false);
+  process.env.REGPILOT_MYCSF_AUTHORISED_ORGANISATIONS=[owner.organizationId,foreign.organizationId].join(',');await assert.rejects(()=>invoke(viewer,discovery),(e:any)=>e.status===403);
+  assert.equal((await invoke(owner,discovery)).assessments.length,3);
+  const start=(assessment:number,tier:string)=>({op:'connect',subscriber:70,credentials,assessment,tier,version:0});
+  await assert.rejects(()=>invoke(owner,start(301,'e1')),(e:any)=>e.status===409);await assert.rejects(()=>invoke(owner,start(100,'e1')),(e:any)=>e.status===409);
+  const [a,i,r]=await Promise.all(types.map((t,n)=>invoke(owner,start(n+300,t))));const conn={connection:a.id,version:a.version};
+  const raw=await db.myCsfConnection.findUniqueOrThrow({where:{id:a.id}});assert.ok(raw.encryptedSecret.startsWith('v1.')&&!raw.encryptedSecret.includes(credentials.key));
+  assert.equal((await myCsfWorkspace(owner,'i1',i.id)).selected!.total,1);await assert.rejects(()=>myCsfWorkspace(foreign,'e1',a.id),(e:any)=>e.status===404);
+  const task=await db.obligation.create({data:{organizationId:owner.organizationId,title:'Fictional shared SOC 2 audit task',category:'Framework audit',ownerName:'Fictional owner',dueDate:new Date()}});
+  const file=await db.evidence.create({data:{organizationId:owner.organizationId,obligationId:task.id,filename:'fictional.pdf',contentType:'application/pdf',sizeBytes:bytes.length,storageKey:'fixture/'+randomUUID(),sha256:digest(bytes),scanStatus:'CLEAN',reviewStatus:'APPROVED',uploadedById:editor.userId,reviewerId:reviewer.userId,reviewedAt:new Date()}});
+  const proposal={op:'map',...conn,buid:'FAKE-ROW',evidence:file.id,levels:['IMPLEMENTED'],reason:'The fictional record covers the stated boundary.',mappingVersion:0};
+  await assert.rejects(()=>invoke(owner,{...proposal,levels:['POLICY']}),(e:any)=>e.status===400);const r2=await invoke(owner,{...proposal,connection:r.id,levels:['POLICY','PROCEDURE','IMPLEMENTED','MEASURED','MANAGED']});assert.ok(r2.id);
+  const m=await invoke(owner,proposal);await assert.rejects(()=>invoke(owner,{op:'approve',...conn,mapping:m.id,mappingVersion:m.version}),(e:any)=>e.status===403);
+  const checked=await invoke(reviewer,{op:'approve',...conn,mapping:m.id,mappingVersion:m.version});
+  const reusable=(await myCsfWorkspace(owner,'i1',i.id)).selected!;
+  assert.equal(reusable.reuse[0].id,file.id);assert.equal(reusable.mappings.length,0);
+  const send={op:'export',...conn,mapping:m.id,mappingVersion:checked.version,documentType:7,typeName:'Fictional evidence',confirm:true};
+  await assert.rejects(()=>invoke(owner,send),(e:any)=>e.status===409);assert.equal(uploads,0);
+  process.env.REGPILOT_MYCSF_UPLOAD_PARTS='fixture-model,fixture-file';await assert.rejects(()=>invoke(owner,send),(e:any)=>e.status===502);assert.equal(uploads,1);assert.equal(links,0);
+  incorrectBytes=true;await assert.rejects(()=>invoke(owner,send),(e:any)=>e.status===409);assert.equal(links,0);incorrectBytes=false;
+  const sent=await invoke(owner,send);assert.equal(sent.document,801);assert.equal(uploads,1);assert.equal(links,1);assert.equal((await invoke(owner,send)).reused,true);assert.equal(links,1);
+  const view=await myCsfWorkspace(owner,'e1',a.id);assert.equal(view.selected!.mappings[0].exported,true);assert.equal(view.selected!.mapped,1);
+  changed=true;const updated=await invoke(owner,{op:'sync',...conn});assert.equal(updated.version,a.version+1);assert.equal((await myCsfWorkspace(owner,'e1',a.id)).selected!.staleCount,1);
+  await assert.rejects(()=>invoke(owner,send),(e:any)=>e.status===409);assert.equal(links,1);
+  const rotated=await invoke(owner,{...start(300,'e1'),version:updated.version});assert.ok(rotated.version>updated.version);
+  const auditRows=await db.auditEvent.findMany({where:{organizationId:owner.organizationId,entityType:{in:['MyCsfUpload','MyCsfAssessment']}}});assert.ok(!JSON.stringify(auditRows).includes(credentials.key));
+  delete process.env.REGPILOT_MYCSF_AUTHORISED_ORGANISATIONS;assert.equal((await runDueMyCsf(Date.now()+30000)).disabled,true);
+  await invoke(owner,{op:'disconnect',connection:a.id,version:rotated.version});assert.equal(await db.myCsfMapping.count({where:{connectionId:a.id}}),0);
+ }finally{await db.myCsfConnection.deleteMany({where:{organizationId:f.owner.organizationId}});keys.forEach((k,i)=>{const value=previous[i];if(value===undefined)delete process.env[k];else process.env[k]=value;});await f.clean();await db.$disconnect();}
+});
