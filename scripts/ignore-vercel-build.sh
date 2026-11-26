@@ -27,6 +27,7 @@ if [ "$VERCEL_GIT_COMMIT_REF" = "feature/traceability-benchmark-batch-20261106" 
       'Show verified hourly product reads to the owning workspace|de88a9b7e8fe04322fe1d15abb6b01cee76934bb') exit 1 ;;
       'Evaluate repository security settings on each live GitHub inventory read|5a6b4ac72d9f4d3498645066b74db493f9a9a028') exit 1 ;;
       'Read scoped repository details for GitHub settings omitted from inventory|82301bbb998bc4ba709c61bf586f593a5ec7be7c') exit 1 ;;
+      'Release 314 audit frameworks and regulatory programmes to staging|c3205ca9daa85a38e66460c2bb797110b631b022') exit 1 ;;
     esac
   fi
   exit 0
