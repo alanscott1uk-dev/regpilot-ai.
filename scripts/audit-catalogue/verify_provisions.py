@@ -23,7 +23,9 @@ def uk_headings(key, refs):
         title = item.xpath('./*[local-name()="ContentsTitle"]')
         if not title: continue
         uri = item.get('DocumentURI','').split('?')[0].rstrip('/')
-        ref = uri.rsplit(key + '/', 1)[-1] if key+'/' in uri else item.get('ContentRef','').replace('-', '/')
+        ref = uri.rsplit(key + '/', 1)[-1] if key+'/' in uri else ''
+        if not re.fullmatch(r'(section|regulation|article|schedule)/[A-Z]*[0-9]+[A-Z]*', ref, re.I):
+            ref=item.get('ContentRef','').replace('-', '/')
         if not re.fullmatch(r'(section|regulation|article|schedule)/[A-Z]*[0-9]+[A-Z]*', ref, re.I): continue
         heading = words(title[0])
         if heading and heading.strip('. …') and ref not in result:
@@ -37,6 +39,8 @@ def eu_headings(key, refs):
     urls = [f'https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:{celex}',
             f'https://eur-lex.europa.eu/eli/{key}/oj/eng',
             f'https://publications.europa.eu/resource/celex/{celex}']
+    if key=='reg/2006/1907':
+        urls.insert(0,'https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:02006R1907-20260622')
     found = {}
     for url in urls:
         try:
