@@ -24,9 +24,38 @@ jobs:
             https://github.com/securecontrolsframework/securecontrolsframework/releases/download/2026.3/secure-controls-framework-scf-2026-3.xlsx \
             -o "$RUNNER_TEMP/scf-2026.3.xlsx"
           echo "5a89bf2d3c106a9a87d4b6e3d62dd3e147d0e960d4c07473045a10aa8a7df697  $RUNNER_TEMP/scf-2026.3.xlsx" | sha256sum --check
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install 'openpyxl==3.1.5'
+      - name: Reproduce catalogue from the verified source
+        run: |
+          python scripts/audit-catalogue/build_scf.py "$RUNNER_TEMP/scf-2026.3.xlsx" --output "$RUNNER_TEMP/audit-catalogue"
+          cmp public/audit-catalogue/scf-index.json "$RUNNER_TEMP/audit-catalogue/scf-index.json"
+          cmp <(gzip -dc public/audit-catalogue/scf-content.json.gz) <(gzip -dc "$RUNNER_TEMP/audit-catalogue/scf-content.json.gz")
       - uses: actions/upload-artifact@v4
         with:
           name: audit-catalogue-source-2026.3
           path: ${{ runner.temp }}/scf-2026.3.xlsx
+          retention-days: 14
+          if-no-files-found: error
+  provisions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install 'lxml==6.0.2'
+      - name: Resolve regulatory references at their official publishers
+        run: python scripts/audit-catalogue/verify_provisions.py --output "$RUNNER_TEMP/provisions.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: official-audit-provisions
+          path: ${{ runner.temp }}/provisions.json
           retention-days: 14
           if-no-files-found: error
