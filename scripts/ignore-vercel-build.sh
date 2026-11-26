@@ -31,6 +31,7 @@ if [ "$VERCEL_GIT_COMMIT_REF" = "feature/traceability-benchmark-batch-20261106" 
       'Preserve executable staging release checks for the audit catalogue|9b3842fca1c50cdc687eb1437a4c5cd11c89a2d9') exit 1 ;;
       'Release HITRUST preparation and scoped MyCSF integration to staging|41040594c78feb549fc704ba7ab4204fab188f2a') exit 1 ;;
       'Release HITRUST evidence matching and reviewed batch export to staging|c231e5cc89cdb6177331766bcc86656d08756b3a') exit 1 ;;
+      'Monitor the two private MyCSF assessment tables on staging|98645934ddc6222af9ebf0334b3fd46624fa19a4') exit 1 ;;
     esac
   fi
   exit 0

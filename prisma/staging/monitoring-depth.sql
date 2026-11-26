@@ -77,6 +77,8 @@ INSERT INTO regpilot_verification.inventory(name) VALUES
 ('LibraryRevision'),
 ('ManagedControl'),
 ('Membership'),
+('MyCsfConnection'),
+('MyCsfMapping'),
 ('Obligation'),
 ('OcrReview'),
 ('OcrRun'),

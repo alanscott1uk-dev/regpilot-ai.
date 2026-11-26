@@ -1,11 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
 import {db} from "../lib/server/db";
 
-const PRIVATE_TABLES=[
- "RiskLossScenario","AiSystem","AiSystemDecision","HorizonWatchlist","EvaluationOperation","EvaluationAnswerReview","EvaluationRun","EvaluationCase","IntegrationEndpoint","IntegrationEndpointControl","IntegrationEvent","IntegrationDelivery","IntegrationAttempt","IntegrationBudget","IntegrationOperation","PolicyRelease","DocumentSignatureChallenge","DocumentAttestation","PolicyEffectivityOperation","OcrRun","OcrReview","ConnectorControlLink","AutomationEvent","PublicSourceFetch","ProviderGate","ProviderPermit","WebhookReceipt","DispatchLane","WorkerRun","User","Organization","Membership","Obligation","Evidence","AuditEvent",
- "AiDailyUsage","AiReview","RegulatorySnapshot","BusinessProfile","IntelligenceRun","IntelligenceDecision","WatchSchedule","SemanticRequest","AssuranceAssessment","ProgrammeImport","ManagedControl","ControlLink","EvidenceConnector","ConnectorRun","RegisteredSource","LibraryRequirement","LibraryRevision","LibraryApplicability","CoverageRun","CoverageDecision","WorkspaceInvitation","PaidBudget","PaidReservation","ServiceJob","BillingAccount","BillingEvent","AuditRoom","AuditGrant","AuditQuestion","Policy","PolicyRevision","PolicyAssignment","Vendor","VendorReview","AuditRequest","ChangeResponse","ChangeAction","AccessInventory","AccessCampaign","AccessReviewItem","AssuranceAnswer","AssuranceQuestionnaire","QuestionnaireDraftRun","TrainingCurriculum","TrainingRequirement","TrainingEnrollment","TrainingAssignment","TrainingAttempt","TrainingOperation","CustomerApiCredential","CustomerApiControlGrant","CustomerApiBudget","CustomerApiObservation","CustomerApiOperation","QualityCase","QualityAction","QualityEffectiveness","QualityOperation","KnowledgeIndexRun","KnowledgeChunk","KnowledgeSearchRun","CompanyProduct","EvidenceApplicability","EvidenceProductLink","RiskRecord","RiskControl","RiskTreatment","RiskReview"
-];
+const schema=readFileSync(new URL("../prisma/schema.prisma",import.meta.url),"utf8");
+const PRIVATE_TABLES=Array.from(schema.matchAll(/^model (\w+) \{/gm),match=>match[1]);
+
+test("the staging monitor inventories every private application model",()=>{
+ const source=readFileSync(new URL("../prisma/staging/monitoring-depth.sql",import.meta.url),"utf8");
+ const list=source.split("INSERT INTO regpilot_verification.inventory(name) VALUES")[1].split("ON CONFLICT DO NOTHING")[0];
+ const names=Array.from(list.matchAll(/\('([^']+)'\)/g),match=>match[1]);
+ assert.deepEqual(names.sort(),[...PRIVATE_TABLES].sort());
+});
+
 const UNTRUSTED_ROLES=["anon","authenticated","service_role"];
 
 test("Prisma-owned private tables are RLS enabled and not exposed to Supabase Data API roles",async()=>{
