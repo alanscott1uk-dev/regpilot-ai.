@@ -52,14 +52,18 @@ def eu_headings(key, refs):
                 if not match: continue
                 ref = match[1]
                 parent = item if item.tag not in ('strong','b') else item.getparent()
-                following = parent.getnext() if parent is not None else None
                 heading = ''
-                if following is not None:
+                # EUR-Lex publishes both flat article headers and nested ELI title blocks.
+                for following in parent.xpath('following::*[position() <= 6]'):
                     css = following.get('class','')
                     title = words(following)
-                    if ('sti-art' in css or 'stitle-article' in css or following.tag in ('h4','h5')
-                        or (len(title)<155 and following.xpath('./b | ./strong') and not title.endswith('.'))):
+                    if len(title)>350: continue
+                    if re.fullmatch(r'Article\s+\d+[a-z]?',title,re.I): break
+                    if ('sti-art' in css or 'stitle-article' in css or 'subtitle' in css or following.tag in ('h4','h5')
+                        or (following is parent.getnext() and len(title)<155 and following.xpath('./b | ./strong') and not title.endswith('.'))):
                         heading = title
+                        break
+                    if title and following.tag=='p' and not list(following): break
                 if ref not in found or (heading and found[ref] == label):
                     found[ref] = heading or label
             if set(refs) <= found.keys(): return found
