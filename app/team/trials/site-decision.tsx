@@ -64,7 +64,7 @@ export default function SiteDecision({w,id,files,participant}:{w:Workspace;id:st
     if(valid()){setDownloadDigest(res.headers.get('Content-Digest')??'');const href=URL.createObjectURL(blob),a=document.createElement('a');a.href=href;a.download='regpilot-site-'+id+'.zip';a.click();setTimeout(()=>URL.revokeObjectURL(href),1000);}
     return load();
    });}}>Download inspection ZIP with release tests, signed site decision and originals</button>}
-   {downloadDigest&&<p>Inspection download digest <code>{downloadDigest}</code>. Give the assessor this digest through the private workspace. <a href="/site-validation/verify.py" download>Download offline cold-chain verifier</a></p>}
+   {downloadDigest&&<p>Inspection download digest <code>{downloadDigest}</code>. Give the assessor this digest through the private workspace. <a href="/site-validation/verify.py" download>Download offline cold-chain verifier</a>. Include <code>--require-history</code> to require a match between the exported temperatures and the reviewed excursion.</p>}
    <p>Protocol and results fingerprint <code>{packet.basisHash}</code></p>
    {packet.blockers.length>0&&<ul>{packet.blockers.map(reason=><li key={reason}>{reason}</li>)}</ul>}
    {packet.decisions.map(d=><div key={d.id}><p>{d.input.decision} · {d.input.signatory}, {d.input.role} · {d.at}</p><p>{d.input.rationale}</p></div>)}

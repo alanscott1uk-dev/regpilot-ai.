@@ -403,6 +403,16 @@ for(const scenario of ['UBIBOT','TANDD_WEBSTORAGE','UBIBOT_HISTORY'] as const)te
     const digest='sha-256=:'+createHash('sha256').update(siteZip).digest('base64')+':';
     const cli=['public/site-validation/verify.py',zip,'--site',bundle.site.protocol.site,'--release',bundle.site.protocol.release,'--digest',digest,'--serial',base.record,'--stock'];
     const checked=JSON.parse(execFileSync('python3',[...cli,'TEST-001'],{encoding:'utf8'}));assert.equal(checked.case,q.id);
+    assert.equal(checked.temperatureEvidence.state,'VERIFIED');
+    assert.equal(checked.temperatureEvidence.readings,bundle.site.decisions[0].excursion.history.points.length);
+    assert.equal(checked.temperatureEvidence.hourlyRanges,bundle.site.decisions[0].excursion.history.hourlyTemperature?.hours.length??0);
+    // Recompute the outer digest to exercise the independent CSV-to-receipt comparison itself.
+    const {makeAuditZip}=await import('../lib/audit-archive');
+    const wrongEntry=archiveHours?bundle.temperatureReadings[0].rangesEntry:bundle.temperatureReadings[0].entry;
+    const modified=makeAuditZip([...files].map(([name,bytes])=>({name,bytes:name===wrongEntry?Buffer.concat([bytes,Buffer.from('unexpected,row\r\n')]):bytes})));
+    const modifiedPath=join(directory,'mismatched.zip');writeFileSync(modifiedPath,modified);
+    const wrongCli=[...cli];wrongCli[1]=modifiedPath;wrongCli[wrongCli.indexOf(digest)]=createHash('sha256').update(modified).digest('hex');
+    assert.throws(()=>execFileSync('python3',[...wrongCli,'TEST-001','--require-history'],{stdio:'pipe'}));
     assert.throws(()=>execFileSync('python3',[...cli,'DIFFERENT-LOT'],{stdio:'pipe'}));
    }finally{rmSync(directory,{recursive:true,force:true});}
    assert.equal(bundle.site.decisions[0].excursion.serial,base.record);assert.deepEqual(bundle.site.decisions[0].excursion.stock,['TEST-001']);
