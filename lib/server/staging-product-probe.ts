@@ -38,7 +38,7 @@ export async function runStagingProductProbe(target:NonNullable<ReturnType<typeo
 
 const checkSchema=z.object({id:z.string().refine(id=>githubInventoryLabels.has(id)),status:z.enum(['PASS','FAIL','UNKNOWN'])});
 const receiptSchema=z.discriminatedUnion('state',[
- z.object({state:z.literal('read'),checkedAt:z.iso.datetime(),count:z.number().int().nonnegative(),digest:z.string().regex(/^[a-f0-9]{64}$/),checks:z.array(checkSchema).max(5).optional(),providerHealth:z.boolean().nullable().optional(),inventory:z.enum(['first','unchanged','changed']).optional()}),
+ z.object({state:z.literal('read'),checkedAt:z.iso.datetime(),count:z.number().int().nonnegative(),digest:z.string().regex(/^[a-f0-9]{64}$/),checks:z.array(checkSchema).max(githubInventoryLabels.size).optional(),providerHealth:z.boolean().nullable().optional(),inventory:z.enum(['first','unchanged','changed']).optional()}),
  z.object({state:z.literal('attention'),checkedAt:z.iso.datetime(),code:z.string().regex(/^[A-Z_]{2,40}$/)})
 ]);
 

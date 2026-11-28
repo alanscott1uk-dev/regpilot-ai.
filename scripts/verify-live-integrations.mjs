@@ -6,7 +6,7 @@ import * as module from '../lib/connectors/github.ts';
 const collect=module.collectGithub||module.default?.collectGithub;
 const repository=process.env.GITHUB_REPOSITORY,branch=process.env.GITHUB_BASE_REF||process.env.GITHUB_REF_NAME||'main';
 const report={format:'regpilot-live-contract-v1',checkedAt:new Date().toISOString(),commit:process.env.REGPILOT_VERIFIED_CODE_SHA||process.env.GITHUB_SHA||null,
- provider:'GITHUB',repository,branch,state:'failed',httpReads:0,checks:null,observationHash:null,
+ provider:'GITHUB',repository,branch,state:'failed',httpReads:0,checks:null,activityChecks:null,observationHash:null,
  limitations:['This uses a short-lived Actions token, not a configured customer connector.',
  'Unavailable administration settings remain UNKNOWN; this does not prove private-tenant credentials, MFA, or continuous enforcement.',
  'Microsoft 365, Google Workspace, GitLab, Cloudflare and Companies House live customer verification is still pending dedicated credentials.']};
@@ -14,6 +14,7 @@ try{
  if(!repository||!process.env.GITHUB_TOKEN)throw Error('configuration');
  const observation=await collect({repository,branch},process.env.GITHUB_TOKEN,async(url,init)=>{report.httpReads++;return fetch(url,init);});
  report.checks=Object.fromEntries(['PASS','FAIL','UNKNOWN'].map(s=>[s,observation.checks.filter(c=>c.status===s).length]));
+ report.activityChecks=Object.fromEntries(observation.checks.filter(c=>['sampled-merge-review','dependabot-open-high-critical'].includes(c.id)).map(c=>[c.id,c.status]));
  report.observationHash=createHash('sha256').update(JSON.stringify(observation)).digest('hex');
  // Contract success is data retrieval and verified scope, not passing controls.
  report.state=observation.checks.find(c=>c.id==='ruleset-coverage')?.status==='PASS'?'verified-read-contract':'partial-read-contract';

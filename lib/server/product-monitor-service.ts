@@ -111,7 +111,8 @@ export async function productMonitorCommand(ctx:AuthorizedContext,input:unknown,
  if(!sample.count)throw new IntelligenceError('The action returned an empty inventory. Select an account with identifiable records.',409);
  if(cmd.op==='DISCOVER')return {suggestions:sample.suggestions??{}};
  const reviewDigest=cmd.policy&&sample.mapped?hashValue([org,cfg.project,cfg.environment,cmd.account,recipe.app,recipe.action,recipe.version,cmd.policy,sample.digest,sample.mapped.digest]):undefined;
- if(cmd.op==='PREVIEW')return {count:sample.count,digest:sample.digest,...(sample.mapped?{reviewDigest,checks:sample.mapped.checks,observable:sample.mapped.observable}:{})};
+ if(cmd.op==='PREVIEW')return {count:sample.count,digest:sample.digest,
+  ...(sample.policyChecks?{repositoryChecks:sample.policyChecks.map(({id,label,status})=>({id,label,status})),providerHealth:sample.providerHealth}:{}),...(sample.mapped?{reviewDigest,checks:sample.mapped.checks,observable:sample.mapped.observable}:{})};
  if(reviewDigest!==cmd.reviewDigest||sample.mapped&&!sample.mapped.observable)
   throw new IntelligenceError('Preview the current mapping. Each rule needs at least one observable result before approval.',409);
  if(sample.digest!==cmd.digest)throw new IntelligenceError('The sample has changed. Review the current inventory before approval.',409);

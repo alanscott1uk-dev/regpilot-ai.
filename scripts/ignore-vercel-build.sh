@@ -40,6 +40,7 @@ if [ "$VERCEL_GIT_COMMIT_REF" = "feature/traceability-benchmark-batch-20261106" 
       'Verify hosted dispatch across every distinct product family|4e3a69fe19856f237ab87758e8bdeeac71a4318c') exit 1 ;;
       'Pin trial evidence and route operators to their selected integration|81fdd79fd1f762c11cb2ec777de1191485e2448b') exit 1 ;;
       'Give operators and assessors a dedicated trial overview and history|14ec8ea426edf20f525e61f0fe4fe70ba7077596') exit 1 ;;
+      'Extend GitHub evidence and page through all hosted product reads|16a9219f7275a60357da3d4f225af93277647108') exit 1 ;;
     esac
   fi
   exit 0

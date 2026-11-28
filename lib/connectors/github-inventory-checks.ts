@@ -24,10 +24,14 @@ const policies:Policy[]=[
  {id:'repository_secret_scanning_enabled',label:'Secret scanning is enabled',nextStep:'Review secret scanning in the repository security settings.',
   evaluate:r=>securitySetting(r,'secret_scanning')},
  {id:'repository_secret_scanning_push_protection_enabled',label:'Secret scanning push protection is enabled',nextStep:'Review push protection in the repository security settings.',
-  evaluate:r=>securitySetting(r,'secret_scanning_push_protection')}
+  evaluate:r=>securitySetting(r,'secret_scanning_push_protection')},
+ {id:'github-dependabot-security-updates',label:'Dependabot security updates are enabled',nextStep:'Review automatic security updates in the repository security settings.',
+  evaluate:r=>securitySetting(r,'dependabot_security_updates')},
+ {id:'github-web-commit-signoff',label:'GitHub web commits require sign-off',nextStep:'Check the sign-off requirement for commits made through the GitHub web interface.',
+  evaluate:r=>typeof r.web_commit_signoff_required==='boolean'?r.web_commit_signoff_required:null}
 ];
 
-export const githubInventoryRevision=2;
+export const githubInventoryRevision=3;
 export const githubInventoryLabels=new Map(policies.map(p=>[p.id,p.label]));
 export function githubInventoryChecks(rows:unknown[],now=Date.now()):ConnectorCheck[]{
  return policies.map(({id,label,nextStep,evaluate})=>{

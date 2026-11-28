@@ -1,4 +1,5 @@
 'use client';
+import type {PilotReceipt} from '../../../lib/pilot-receipt';
 import RepositoryResults from './repository-results';
 import {useEffect,useState} from 'react';
 import type {useWorkspaceContext} from '../../../lib/client/workspace-context';
@@ -8,11 +9,12 @@ import type {ProductRead} from '../../../lib/connectors/product-recipes';
 import styles from '../questionnaires/questionnaires.module.css';
 
 type Grant={id:string;name:string;healthy:boolean;canVerify:boolean};
-type Preview={count:number;digest:string;reviewDigest?:string;checks?:{id:string;label:string;status:string;observed:string}[];observable?:boolean};
+type Preview={repositoryChecks?:PilotReceipt['checks'];providerHealth?:boolean|null;count:number;digest:string;reviewDigest?:string;checks?:{id:string;label:string;status:string;observed:string}[];observable?:boolean};
 type Schedule={id:string;product:string;action:string;control:string;state:string;failureCode:string|null;lastSuccessAt:string|null;nextRunAt:string|null};
 type Paused={id:string;version:number;repository:string};
 export default function ProductMonitors({workspace,controls}:{workspace:ReturnType<typeof useWorkspaceContext>;controls:{id:string;title:string}[]}){
  const [query,setQuery]=useState(''),[products,setProducts]=useState<ProductRead[]>([]),[selected,setSelected]=useState('');
+ const [offset,setOffset]=useState(0),[matches,setMatches]=useState<number|null>(null);
  const [enabled,setEnabled]=useState(false),[busy,setBusy]=useState(false),[notice,setNotice]=useState(''),[error,setError]=useState('');
  const [accounts,setAccounts]=useState<Grant[]>([]),[account,setAccount]=useState(''),[control,setControl]=useState(controls[0]?.id??'');
  const [link,setLink]=useState(''),[sample,setSample]=useState<Preview|null>(null),[paused,setPaused]=useState<Paused[]>([]);
@@ -35,6 +37,7 @@ export default function ProductMonitors({workspace,controls}:{workspace:ReturnTy
  const utc=(value:string)=>new Date(value).toISOString().replace('T',' ').slice(0,19);
  const [linkedProduct,setLinkedProduct]=useState('');
  useEffect(()=>{const key=new URLSearchParams(window.location.search).get('monitorProduct');
+  setOffset(0);setMatches(null);
   if(key&&key.length<=200&&key.split('/').length===2){setLinkedProduct(key);setQuery(key.replace('/',' '));}
  },[organizationId]);
  const current=products.find(p=>p.app+'/'+p.action===selected);
@@ -42,12 +45,15 @@ export default function ProductMonitors({workspace,controls}:{workspace:ReturnTy
  useEffect(()=>{
   let stale=false;const valid=capture();
   const timer=window.setTimeout(async()=>{
-   try{const r=await request('/api/workspace/product-monitors',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({organizationId,op:'SEARCH',q:query})});
-    if(stale||!valid())return;setProducts(r.products);setLatest(r.history?{org:organizationId,value:r.history}:null);setEnabled(r.enabled);setPaused(r.paused);setSelected(linkedProduct?(r.products.some((p:ProductRead)=>p.app+'/'+p.action===linkedProduct)?linkedProduct:''):(r.products[0]?r.products[0].app+'/'+r.products[0].action:''));clearSelection();
+   try{const r=await request('/api/workspace/product-monitors',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({organizationId,op:'SEARCH',q:query,offset})});
+    if(stale||!valid())return;setProducts(r.products);setMatches(r.matches);setLatest(r.history?{org:organizationId,value:r.history}:null);setEnabled(r.enabled);setPaused(r.paused);setSelected(linkedProduct?(r.products.some((p:ProductRead)=>p.app+'/'+p.action===linkedProduct)?linkedProduct:''):(r.products[0]?r.products[0].app+'/'+r.products[0].action:''));clearSelection();
    }catch(e){if(!stale&&valid())setError(e instanceof Error?e.message:'Could not load product reads.');}
   },200);
   return ()=>{stale=true;window.clearTimeout(timer);};
- },[query,linkedProduct,organizationId,request,capture]);
+ },[query,linkedProduct,offset,organizationId,request,capture]);
+ function changePage(next:number){
+  clearSelection();setSelected('');setProducts([]);setLinkedProduct('');setOffset(next);
+ }
  async function operate(op:string,target?:Paused){
   const valid=capture();setBusy(true);setNotice('');setError('');
   const data={organizationId,op,...(op==='START_RENEWAL'?{id:target?.id,version:target?.version}:op==='VERIFY_RENEWAL'?renewal:
@@ -84,18 +90,22 @@ export default function ProductMonitors({workspace,controls}:{workspace:ReturnTy
     <tbody>{page.rows.map(row=><tr key={row.id}><td><a href={'/team/operations?'+new URLSearchParams({organizationId,view:'connections',connectionId:row.id})}>{row.product} · {row.action}</a><br/>{row.control}</td>
      <td>{row.state}{row.failureCode&&' · '+row.failureCode}</td><td>{row.lastSuccessAt?utc(row.lastSuccessAt):'Awaiting first read'}</td><td>{row.nextRunAt?utc(row.nextRunAt):'Paused'}</td></tr>)}</tbody></table>
     {page.next&&<button type="button" disabled={busy} onClick={()=>loadSchedules(page.next!)}>Next schedules</button>}</>:<p>No approved hourly product monitors in this workspace.</p>}</section>}
-  <fieldset disabled={busy}><label>Find a product <input value={query} maxLength={100} onChange={e=>{clearSelection();setLinkedProduct('');setSelected('');setProducts([]);setQuery(e.target.value);}}/></label>
-  <label>Inventory read <select value={selected} onChange={e=>{clearSelection();setSelected(e.target.value);}}>{products.map(p=><option key={p.app+'/'+p.action} value={p.app+'/'+p.action}>{p.name} · {p.action}</option>)}</select></label>
-  {enabled&&current?<><button type="button" onClick={()=>operate('CONNECT')}>Authorise account</button> <button type="button" onClick={()=>operate('ACCOUNTS')}>Refresh linked accounts</button></>:<p>Hosted reads require a Pipedream Connect project in this deployment. <a href="/product-monitors/setup.txt">Set up a project</a></p>}
+  <fieldset disabled={busy}><label>Find a product <input value={query} maxLength={100} onChange={e=>{clearSelection();setLinkedProduct('');setSelected('');setProducts([]);setOffset(0);setMatches(null);setQuery(e.target.value);}}/></label>
+  {matches===0&&<p role="status">No inventory reads match this search.</p>}
+  {matches!==null&&products.length>0&&<nav aria-label="Inventory read pages"><span aria-live="polite">Inventory reads {offset+1}–{offset+products.length} of {matches}</span>{' '}
+   {offset>0&&<button type="button" onClick={()=>changePage(Math.max(0,offset-40))}>Previous reads</button>}{' '}
+   {offset+products.length<matches&&<button type="button" onClick={()=>changePage(offset+products.length)}>Next reads</button>}</nav>}
+  <label>Inventory read <select disabled={!products.length} value={selected} onChange={e=>{clearSelection();setSelected(e.target.value);}}>{products.map(p=><option key={p.app+'/'+p.action} value={p.app+'/'+p.action}>{p.name} · {p.action}</option>)}</select></label>
+  {current&&(enabled?<><button type="button" onClick={()=>operate('CONNECT')}>Authorise account</button> <button type="button" onClick={()=>operate('ACCOUNTS')}>Refresh linked accounts</button></>:<p>Hosted reads require a Pipedream Connect project in this deployment. <a href="/product-monitors/setup.txt">Set up a project</a></p>)}
   {!!accounts.length&&<><label>Customer account <select value={account} onChange={e=>{setAccount(e.target.value);setSample(null);}}>{accounts.filter(g=>g.canVerify).map(g=><option key={g.id} value={g.id}>{g.name}{g.healthy?'':' · verify with a read'}</option>)}</select></label>
    <label>Checks to run hourly<select value={profile} onChange={e=>{const id=e.target.value;setProfile(id);setMapping(Object.fromEntries(profileFields(id).map(field=>[field,field])));setSample(null);}}>
-    <option value="">Inventory only</option>{Object.entries(profiles).map(([id,p])=><option key={id} value={id}>{p.name} and inventory</option>)}</select></label>
+    <option value="">{current?.app==='github'&&current.action==='list-repositories'?'Inventory and repository settings':'Inventory only'}</option>{Object.entries(profiles).map(([id,p])=><option key={id} value={id}>{p.name} and inventory</option>)}</select></label>
    {profile&&<fieldset><legend>Source field paths for {profiles[profile].name}</legend>
     <button type="button" disabled={!account} onClick={()=>operate('DISCOVER')}>Find matching source fields</button>
     {profileFields(profile).map(field=><label key={field}>{field}<input value={mapping[field]??''} maxLength={150} onChange={e=>{setSample(null);setMapping({...mapping,[field]:e.target.value});}}/></label>)}
     <small>Use the field names returned by the product. Separate nested fields with a dot.</small></fieldset>}
    <button type="button" disabled={!account||Object.values(mapping).some(path=>!path.trim())} onClick={()=>operate('PREVIEW')}>Read sample</button></>}
-  {sample&&<><p>{sample.count} unique identifiers returned. Hourly reads flag added and missing identifiers in this sample.</p>{sample.checks&&<><table><caption>Mapped checks on the returned sample</caption><thead><tr><th>Check</th><th>Result</th><th>Resources</th></tr></thead><tbody>{sample.checks.map(c=><tr key={c.id}><td>{c.label}</td><td>{c.status}</td><td>{c.observed}</td></tr>)}</tbody></table>
+  {sample&&<><p>{sample.count} unique identifiers returned. Hourly reads flag added and missing identifiers in this sample.</p>{sample.repositoryChecks&&<RepositoryResults checks={sample.repositoryChecks} health={sample.providerHealth??null}/>}{sample.checks&&<><table><caption>Mapped checks on the returned sample</caption><thead><tr><th>Check</th><th>Result</th><th>Resources</th></tr></thead><tbody>{sample.checks.map(c=><tr key={c.id}><td>{c.label}</td><td>{c.status}</td><td>{c.observed}</td></tr>)}</tbody></table>
     {sample.observable===false&&<p>At least one rule has no observable result. Check its field paths and read the sample again.</p>}</>}
    <label>Workspace control <select value={control} onChange={e=>setControl(e.target.value)}>{controls.map(c=><option key={c.id} value={c.id}>{c.title}</option>)}</select></label> <button type="button" disabled={!control||sample.observable===false} onClick={()=>operate('APPROVE')}>Approve sample and enable hourly monitoring</button></>}
   {!!paused.length&&<div><h3>Accounts requiring renewal</h3>{paused.map(p=><p key={p.id}>{p.repository.split(':').slice(1).join(' / ')} <button type="button" onClick={()=>operate('START_RENEWAL',p)}>Renew original account</button></p>)}</div>}

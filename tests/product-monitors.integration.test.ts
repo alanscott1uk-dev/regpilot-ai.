@@ -75,13 +75,13 @@ test('project signing binds the issuer, audience and scope and returns only a ve
 });
 test('GitHub repository policies distinguish missing fields, actual failures and the 180-day boundary',()=>{
  const now=Date.UTC(2026,10,25);
- const source={id:1,disabled:false,archived:false,pushed_at:new Date(now-180*86400000).toISOString(),delete_branch_on_merge:false,
-  security_and_analysis:{secret_scanning:{status:'enabled'},secret_scanning_push_protection:{status:'disabled'}}};
+ const source={id:1,disabled:false,archived:false,pushed_at:new Date(now-180*86400000).toISOString(),delete_branch_on_merge:false,web_commit_signoff_required:true,
+  security_and_analysis:{dependabot_security_updates:{status:'disabled'},secret_scanning:{status:'enabled'},secret_scanning_push_protection:{status:'disabled'}}};
  const statuses=(rows:unknown[])=>githubInventoryChecks(rows,now).map(c=>c.status);
- assert.deepEqual(statuses([source]),['PASS','FAIL','FAIL','PASS','FAIL']);
- assert.deepEqual(statuses([{}]),Array(5).fill('UNKNOWN'));
- assert.deepEqual(statuses([]),Array(5).fill('UNKNOWN'));
- assert.deepEqual(statuses([{...source,archived:true},{}]),['UNKNOWN','UNKNOWN','FAIL','UNKNOWN','FAIL']);
+ assert.deepEqual(statuses([source]),['PASS','FAIL','FAIL','PASS','FAIL','FAIL','PASS']);
+ assert.deepEqual(statuses([{}]),Array(7).fill('UNKNOWN'));
+ assert.deepEqual(statuses([]),Array(7).fill('UNKNOWN'));
+ assert.deepEqual(statuses([{...source,archived:true},{}]),['UNKNOWN','UNKNOWN','FAIL','UNKNOWN','FAIL','FAIL','UNKNOWN']);
  assert.equal(statuses([{...source,pushed_at:new Date(now-180*86400000+1).toISOString()}])[1],'PASS');
  const recipe=productReads.find(r=>r.app==='github'&&r.action==='list-repositories')!;
  setup();const sample=pdSample([source],'794e38e1-b6aa-40ab-9b5f-925f87138d6a',recipe);
@@ -243,6 +243,28 @@ test('scheduled inventory history is visible only in the authorised workspace an
   if(oldTarget===undefined)delete process.env.REGPILOT_PIPEDREAM_STAGING_PROBE;else process.env.REGPILOT_PIPEDREAM_STAGING_PROBE=oldTarget;
   await db.workerRun.deleteMany({where:{id:{in:ids}}});await f.cleanup();
  }
+});
+test('an operator can page through every inventory read and preview the hosted GitHub settings',async()=>{
+ setup();const f=await assuranceFixture();
+ try{
+  const keys=new Set<string>();
+  for(let offset=0;offset<productReads.length;offset+=40){
+   const page=await productMonitorCommand(f.o,{op:'SEARCH',q:'',offset});
+   assert.ok('products' in page);assert.equal(page.matches,productReads.length);
+   for(const r of page.products)keys.add(r.app+'/'+r.action);
+  }
+  assert.equal(keys.size,productReads.length);
+  const preview=await productMonitorCommand(f.o,{op:'PREVIEW',app:'github',action:'list-repositories',account:'apn_settings'},async(input)=>{
+   const path=new URL(String(input)).pathname;
+   if(path.endsWith('/oauth/token'))return Response.json({access_token:'test-preview',expires_in:3600});
+   if(path.endsWith('/accounts'))return Response.json({data:[{id:'apn_settings',healthy:false,app:{name_slug:'github'}}],page_info:{total_count:1}});
+   return Response.json({ret:[{id:4,disabled:false,web_commit_signoff_required:false}]});
+  });
+  assert.ok('repositoryChecks' in preview);assert.equal(preview.providerHealth,false);
+  assert.equal(preview.repositoryChecks?.length,7);
+  assert.equal(preview.repositoryChecks?.find(c=>c.id==='github-web-commit-signoff')?.status,'FAIL');
+  assert.equal(preview.repositoryChecks?.find(c=>c.id==='github-dependabot-security-updates')?.status,'UNKNOWN');
+ }finally{await f.cleanup();}
 });
 test('an hourly product monitor rejects another tenant, detects inventory drift and recovers the original grant for the same control',async()=>{
  setup();const f=await assuranceFixture(),original=globalThis.fetch;
