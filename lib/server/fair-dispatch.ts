@@ -7,10 +7,10 @@ type LaneKind='SOURCE'|'CONNECTOR';
  * tenant goes first, independent of the size or age of another tenant's backlog.
  * Lane and job are claimed in one statement; lane row locks fence concurrency. */
 export const maxConnectorLanes=8;
-async function claim(kind:LaneKind,providers:string[]=[],width=1){
+async function claim(kind:LaneKind,providers:string[]=[],width=1,hourlyOnly=false){
  const table=kind==='SOURCE'?Prisma.raw('"WatchSchedule"'):Prisma.raw('"EvidenceConnector"');
  const date=kind==='SOURCE'?Prisma.raw('"nextCheckAt"'):Prisma.raw('"nextRunAt"');
- const eligible=kind==='SOURCE'?Prisma.sql`TRUE`:Prisma.sql`j.provider IN (${Prisma.join(providers)}) AND (j."encryptedSecret" IS NOT NULL OR j.provider IN (${Prisma.join(providersWithoutStoredSecrets)}))`;
+ const eligible=kind==='SOURCE'?Prisma.sql`TRUE`:Prisma.sql`j.provider IN (${Prisma.join(providers)}) ${hourlyOnly?Prisma.sql`AND j."intervalHours"=1`:Prisma.empty} AND (j."encryptedSecret" IS NOT NULL OR j.provider IN (${Prisma.join(providersWithoutStoredSecrets)}))`;
  return db.$queryRaw<Array<WatchSchedule|EvidenceConnector>>(Prisma.sql`
   WITH lane AS MATERIALIZED (
    SELECT l."organizationId" FROM "DispatchLane" l
@@ -36,9 +36,9 @@ async function claim(kind:LaneKind,providers:string[]=[],width=1){
   ) SELECT j.* FROM claimed j JOIN advanced a ON a."organizationId"=j."organizationId"`);
 }
 export async function claimFairWatch():Promise<WatchSchedule|null>{return ((await claim('SOURCE'))[0] as WatchSchedule|undefined)??null;}
-export async function claimFairConnectors(providers:string[],width:number):Promise<EvidenceConnector[]>{
+export async function claimFairConnectors(providers:string[],width:number,hourlyOnly=false):Promise<EvidenceConnector[]>{
  if(!Number.isInteger(width)||width<1||width>maxConnectorLanes)throw Error('Invalid connector lease width');
- return providers.length?await claim('CONNECTOR',providers,width) as EvidenceConnector[]:[];
+ return providers.length?await claim('CONNECTOR',providers,width,hourlyOnly) as EvidenceConnector[]:[];
 }
 export async function claimFairConnector(providers:string[]):Promise<EvidenceConnector|null>{
  return (await claimFairConnectors(providers,1))[0]??null;

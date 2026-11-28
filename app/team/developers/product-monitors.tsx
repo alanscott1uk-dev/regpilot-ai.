@@ -8,6 +8,7 @@ import styles from '../questionnaires/questionnaires.module.css';
 
 type Grant={id:string;name:string;healthy:boolean;canVerify:boolean};
 type Preview={count:number;digest:string;reviewDigest?:string;checks?:{id:string;label:string;status:string;observed:string}[];observable?:boolean};
+type Schedule={id:string;product:string;action:string;control:string;state:string;failureCode:string|null;lastSuccessAt:string|null;nextRunAt:string|null};
 type Paused={id:string;version:number;repository:string};
 export default function ProductMonitors({workspace,controls}:{workspace:ReturnType<typeof useWorkspaceContext>;controls:{id:string;title:string}[]}){
  const [query,setQuery]=useState(''),[products,setProducts]=useState<ProductRead[]>([]),[selected,setSelected]=useState('');
@@ -20,6 +21,17 @@ export default function ProductMonitors({workspace,controls}:{workspace:ReturnTy
  const {request,organizationId,capture}=workspace;
  const [latest,setLatest]=useState<{org:string;value:StagingProductHistory}|null>(null);
  const history=latest?.org===organizationId?latest?.value:null;
+ const [schedulePage,setSchedulePage]=useState<{org:string;rows:Schedule[];next:string|null;asOf:string}|null>(null);
+ const page=schedulePage?.org===organizationId?schedulePage:null;
+ async function loadSchedules(after?:string){
+  const valid=capture();setBusy(true);setError('');
+  try{
+   const r=await request('/api/workspace/product-monitors',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({organizationId,op:'SCHEDULES',after})});
+   if(valid())setSchedulePage({org:organizationId,rows:r.schedules,next:r.next,asOf:r.asOf});
+  }catch(e){if(valid())setError(e instanceof Error?e.message:'Could not load hourly schedules.');}
+  finally{if(valid())setBusy(false);}
+ }
+ const utc=(value:string)=>new Date(value).toISOString().replace('T',' ').slice(0,19);
  const current=products.find(p=>p.app+'/'+p.action===selected);
  function clearSelection(){setCreated(null);setProfile('');setMapping({});setAccounts([]);setAccount('');setLink('');setSample(null);setRenewal(null);setNotice('');setError('');}
  useEffect(()=>{
@@ -62,6 +74,12 @@ export default function ProductMonitors({workspace,controls}:{workspace:ReturnTy
     <tbody>{history.checks.map(row=><tr key={row.id}><td>{row.label}</td><td>{row.status}</td></tr>)}</tbody></table>}
    {history.latestError&&<p role="status">The latest read needs attention ({history.latestError}).</p>}
   </section>}
+  <button type="button" disabled={busy} onClick={()=>loadSchedules()}>{page?'Refresh hourly schedules':'View approved hourly schedules'}</button>
+  {page&&<section aria-label="Approved hourly schedules"><h3>Approved hourly schedules</h3>
+   {page.rows.length?<><p>As of {utc(page.asOf)} UTC</p><table><thead><tr><th>Product and control</th><th>Collection status</th><th>Last successful read (UTC)</th><th>Next due (UTC)</th></tr></thead>
+    <tbody>{page.rows.map(row=><tr key={row.id}><td><a href={'/team/operations?'+new URLSearchParams({organizationId,view:'connections',connectionId:row.id})}>{row.product} · {row.action}</a><br/>{row.control}</td>
+     <td>{row.state}{row.failureCode&&' · '+row.failureCode}</td><td>{row.lastSuccessAt?utc(row.lastSuccessAt):'Awaiting first read'}</td><td>{row.nextRunAt?utc(row.nextRunAt):'Paused'}</td></tr>)}</tbody></table>
+    {page.next&&<button type="button" disabled={busy} onClick={()=>loadSchedules(page.next!)}>Next schedules</button>}</>:<p>No approved hourly product monitors in this workspace.</p>}</section>}
   <fieldset disabled={busy}><label>Find a product <input value={query} maxLength={100} onChange={e=>{clearSelection();setSelected('');setProducts([]);setQuery(e.target.value);}}/></label>
   <label>Inventory read <select value={selected} onChange={e=>{clearSelection();setSelected(e.target.value);}}>{products.map(p=><option key={p.app+'/'+p.action} value={p.app+'/'+p.action}>{p.name} · {p.action}</option>)}</select></label>
   {enabled&&current?<><button type="button" onClick={()=>operate('CONNECT')}>Authorise account</button> <button type="button" onClick={()=>operate('ACCOUNTS')}>Refresh linked accounts</button></>:<p>Hosted reads require a Pipedream Connect project in this deployment. <a href="/product-monitors/setup.txt">Set up a project</a></p>}

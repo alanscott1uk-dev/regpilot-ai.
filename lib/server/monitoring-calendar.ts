@@ -32,15 +32,19 @@ export async function monitoringCalendar(tx:Prisma.TransactionClient,org:string,
  const days:Day[]=Array.from({length:30},(_,index)=>({
   date:new Date(start.getTime()+index*dayMs).toISOString().slice(0,10),reads:[],unverified:0
  }));
+ // A read just before midnight can be committed just after it within the connector lease.
+ const hosted=provider==='PIPEDREAM_READ',commitEnd=hosted?new Date(end.getTime()+90000):end;
+ const hourly=hosted?days.map(day=>({date:day.date,hours:new Set<number>(),reads:0,partial:0,withFailures:0})):null;
+ const sourceReceipts=new Set<string>();
  const events=await tx.auditEvent.findMany({where:{
   organizationId:org,entityType:'EvidenceConnector',entityId:id,action:'connector.evidence_collected',
-  createdAt:{gte:start,lt:end},AND:[
+  createdAt:{gte:start,lt:commitEnd},AND:[
    {details:{path:['scopeHash'],equals:scopeHash}},{details:{path:['collectionMode'],equals:'SCHEDULED'}}
   ]},orderBy:[{createdAt:'desc'},{id:'desc'}],take:limit+1,select:{createdAt:true,details:true}});
  const limited=events.length>limit;
  const candidates=events.slice(0,limit).reverse().map(event=>({at:event.createdAt,facts:receipt.safeParse(event.details).data}));
  const ids=candidates.flatMap(event=>event.facts?[event.facts.runId]:[]);
- const rows=ids.length?await tx.connectorRun.findMany({where:{id:{in:ids},organizationId:org,connectorId:id,capturedAt:{gte:start,lt:end}},
+ const rows=ids.length?await tx.connectorRun.findMany({where:{id:{in:ids},organizationId:org,connectorId:id,capturedAt:{gte:start,lt:commitEnd}},
   select:{id:true,capturedAt:true,configVersion:true,result:true,resultHash:true,signalHash:true,outcome:true}}):[];
  const byId=new Map(rows.map(run=>[run.id,run])),seen=new Set<string>();
  let lastSourceTime=-Infinity;
@@ -48,8 +52,18 @@ export async function monitoringCalendar(tx:Prisma.TransactionClient,org:string,
   const day=days[Math.floor((at.getTime()-start.getTime())/dayMs)];
   if(facts&&seen.has(facts.runId))continue;
   const run=facts&&byId.get(facts.runId);
-  const observation=run&&run.resultHash===facts.resultHash&&run.configVersion===facts.configVersion&&
-   run.capturedAt.toISOString().slice(0,10)===day.date?verifiedObservation(run):null;
+  const checked=run&&run.resultHash===facts.resultHash&&run.configVersion===facts.configVersion?verifiedObservation(run):null;
+  if(hourly&&run&&checked&&checked.checks.length&&checked.engine.startsWith('pipedream-read-')&&facts?.intervalHours===1&&!sourceReceipts.has(run.id)){
+   const sourceAt=Date.parse(checked.capturedAt),lag=run.capturedAt.getTime()-sourceAt;
+   if(sourceAt>=start.getTime()&&sourceAt<end.getTime()&&lag>=-1000&&lag<=90000){
+    const entry=hourly[Math.floor((sourceAt-start.getTime())/dayMs)];
+    entry.hours.add(new Date(sourceAt).getUTCHours());entry.reads++;sourceReceipts.add(run.id);
+    if(checked.checks.some(c=>c.status==='UNKNOWN'))entry.partial++;
+    if(checked.checks.some(c=>c.status==='FAIL'))entry.withFailures++;
+   }
+  }
+  if(!day)continue;
+  const observation=run&&run.capturedAt.toISOString().slice(0,10)===day.date?checked:null;
   const stamp=observation&&sourceTime(provider,observation,facts?.intervalHours);
   if(!run||!observation||!observation.checks.length||observation.checks.some(c=>c.status==='UNKNOWN')||stamp===null||
       (provider==='NANGO_SYNC'||isTemperatureLogger(provider))&&stamp<=lastSourceTime){
@@ -59,5 +73,6 @@ export async function monitoringCalendar(tx:Prisma.TransactionClient,org:string,
   day.reads.push({id:run.id,at:run.capturedAt.toISOString(),sha256:run.resultHash,followUp:observation.checks.some(c=>c.status==='FAIL')});
  }
  const withReads=(period:Day[])=>period.filter(day=>day.reads.length>0).length;
- return {from:days[0].date,through:days[29].date,observedDays7:withReads(days.slice(-7)),observedDays30:withReads(days),limited,days};
+ return {from:days[0].date,through:days[29].date,observedDays7:withReads(days.slice(-7)),observedDays30:withReads(days),limited,days,hourly:hourly?.map(row=>({date:row.date,reads:row.reads,observedHours:row.hours.size,
+  missing:Array.from({length:24},(_,hour)=>hour).filter(hour=>!row.hours.has(hour)),partial:row.partial,withFailures:row.withFailures}))??null};
 }

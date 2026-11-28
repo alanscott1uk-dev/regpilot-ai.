@@ -334,6 +334,12 @@ async function assertJob(tx:Prisma.TransactionClient,job:EvidenceConnector){
  if(!owner||owner.role==="VIEWER")throw new IntelligenceError("Control ownership needs review",403);
 }
 type WriteQueue=<T>(write:()=>Promise<T>)=>Promise<T>;
+// Use the same UTC minute every hour, regardless of how long an upstream read took.
+export function nextHostedHour(createdAt:Date,completedAt:Date){
+ const next=new Date(completedAt);
+ next.setUTCHours(next.getUTCHours()+1,createdAt.getUTCMinutes(),0,0);
+ return next;
+}
 async function collectConnectorJob(job:EvidenceConnector,collector:Collector,manual:boolean,queueWrite?:WriteQueue){
  const ctx:AuthorizedContext={organizationId:job.organizationId,userId:job.configuredById,role:"ADMIN"};
  let permit:ProviderPermit|undefined,providerOutcome='NEUTRAL';
@@ -351,8 +357,10 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector,man
   const save=()=>transaction(ctx,async tx=>{await assertJob(tx,job);
    const due=job.nextRunAt.toISOString();
    const requested=manual?true:!!await tx.auditEvent.findFirst({where:{organizationId:job.organizationId,entityType:'EvidenceConnector',entityId:job.id,action:'connector.manual_due',details:{path:['due'],equals:due}},select:{id:true}});
+   const hourlyHosted=job.provider==='PIPEDREAM_READ'&&job.intervalHours===1;
+   const onHostedSchedule=hourlyHosted&&job.lastSuccessAt&&job.nextRunAt.getTime()===nextHostedHour(job.createdAt,job.lastSuccessAt).getTime();
    const collectionMode=requested?'MANUAL':job.eventRevision>job.collectedEventRevision?'EVENT':job.failureCode||job.attempts>1?'RETRY':
-    job.lastSuccessAt&&job.nextRunAt.getTime()>=job.lastSuccessAt.getTime()+job.intervalHours*3600000-1000?'SCHEDULED':'INITIAL';
+    (onHostedSchedule||job.lastSuccessAt&&job.nextRunAt.getTime()>=job.lastSuccessAt.getTime()+job.intervalHours*3600000-1000)?'SCHEDULED':'INITIAL';
    const previous=await tx.connectorRun.findFirst({where:{organizationId:job.organizationId,connectorId:job.id},orderBy:[{capturedAt:"desc"},{id:"desc"}]});
    const trustedPrevious=previous?.configVersion===job.version?verifiedObservation(previous):null;
    const checked=isTemperatureLogger(job.provider)?await applyLoggerCalibration(tx,job,result):
@@ -369,7 +377,10 @@ async function collectConnectorJob(job:EvidenceConnector,collector:Collector,man
    await enqueueConnectorEvent(tx,job,{kind:'CONNECTOR_OBSERVED',runId:run.id,fingerprint:signalHash,changed:changes.length>0});
    await enqueueConnectorObservationDelivery(tx,job,run);
    const current=await tx.evidenceConnector.findUniqueOrThrow({where:{id:job.id},select:{eventRevision:true}});
-   await tx.evidenceConnector.update({where:{id:job.id},data:{leaseToken:null,leaseUntil:null,attempts:0,lastSuccessAt:new Date(),failureCode:null,collectedEventRevision:job.eventRevision,nextRunAt:new Date(Date.now()+(current.eventRevision>job.eventRevision?60000:job.intervalHours*3600000))}});
+   const completedAt=new Date();
+   const regularDue=hourlyHosted?nextHostedHour(job.createdAt,completedAt):new Date(completedAt.getTime()+job.intervalHours*3600000);
+   const nextRunAt=current.eventRevision>job.eventRevision?new Date(completedAt.getTime()+60000):regularDue;
+   await tx.evidenceConnector.update({where:{id:job.id},data:{leaseToken:null,leaseUntil:null,attempts:0,lastSuccessAt:completedAt,failureCode:null,collectedEventRevision:job.eventRevision,nextRunAt}});
    await tx.auditEvent.create({data:{organizationId:job.organizationId,actorId:job.configuredById,action:"connector.evidence_collected",entityType:"EvidenceConnector",entityId:job.id,details:{runId:run.id,collectionMode,intervalHours:job.intervalHours,scopeHash:connectorScopeHash(job),outcome,resultHash:run.resultHash,configVersion:job.version,changedChecks:changes.map(c=>c.id)}}});return outcome;
   },8,'leased-connector');
   return await (queueWrite?queueWrite(save):save());
@@ -397,7 +408,7 @@ export async function executeConnector(job:EvidenceConnector,collector:Collector
  return outcome;
 }
 export const maxConnectorReadsPerTick=512;
-export async function runConnectorBatch(limit=maxConnectorReadsPerTick,parallelism=4,admissionDeadline=Date.now()+20000){
+export async function runConnectorBatch(limit=maxConnectorReadsPerTick,parallelism=4,admissionDeadline=Date.now()+20000,scope:'all'|'hosted-hourly'='all'){
  if(!connectorsEnabled())throw new IntelligenceError("Connectors await activation",503);
  if(!Number.isInteger(limit)||limit<1||limit>maxConnectorReadsPerTick||!Number.isInteger(parallelism)||parallelism<1||parallelism>maxConnectorLanes||!Number.isFinite(admissionDeadline))
   throw new IntelligenceError("Connector worker bounds invalid",400);
@@ -425,7 +436,8 @@ export async function runConnectorBatch(limit=maxConnectorReadsPerTick,paralleli
   while(!failures.length&&connectorsEnabled()&&claimed<limit&&Date.now()<deadline){
    const available=Math.min(parallelism-active.size,limit-claimed);
    if(available){
-    const jobs=await claimFairConnectors(PROVIDERS.filter(connectorProviderEnabled),available);
+    const providers=scope==='hosted-hourly'?(['PIPEDREAM_READ'] as const):PROVIDERS;
+    const jobs=await claimFairConnectors(providers.filter(connectorProviderEnabled),available,scope==='hosted-hourly');
     dispatches++;
     for(const job of jobs)start(job);
     if(!jobs.length&&!active.size)break;

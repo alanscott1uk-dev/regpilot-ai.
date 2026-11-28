@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {assuranceFixture} from './helpers/assurance-fixture';
 import {db} from '../lib/server/db';
-import {collectConfiguredConnector,saveConnector,executeConnector,claimConnector} from '../lib/server/connector-service';
+import {collectConfiguredConnector,saveConnector,executeConnector,claimConnector,nextHostedHour} from '../lib/server/connector-service';
 import {productMonitorCommand} from '../lib/server/product-monitor-service';
 import {productReads,productTotal} from '../lib/connectors/product-recipes';
 import {generateKeyPairSync} from 'node:crypto';
@@ -113,6 +113,11 @@ test('the GitHub monitor verifies bounded single-repository settings using the s
  const policy=observed.policyChecks!.find(p=>p.id==='repository_branch_delete_on_merge_enabled')!;
  assert.equal(policy.status,'FAIL');assert.equal(policy.observed,'2 passed, 1 failed, 2 unknown across 5 repositories.');
  substitute=true;await assert.rejects(readProduct(org,account,recipe,fetcher),(e:{code:string})=>e.code==='TARGET_MISMATCH');
+});
+test('hosted hourly deadlines retain their UTC minute after a slow read and across midnight',()=>{
+ const created=new Date('2026-09-02T07:14:55.123Z');
+ assert.equal(nextHostedHour(created,new Date('2026-11-26T05:19:32Z')).toISOString(),'2026-11-26T06:14:00.000Z');
+ assert.equal(nextHostedHour(created,new Date('2026-11-26T23:59:59Z')).toISOString(),'2026-11-27T00:14:00.000Z');
 });
 test('an incomplete hosted grant list cannot falsely revoke a later account',async()=>{
  setup();
@@ -305,5 +310,46 @@ test('an hourly product monitor rejects another tenant, detects inventory drift 
   delete rows[0].disk;assert.equal(check(await collect(),'encrypted'),'UNKNOWN');
   const incomplete=await call('PREVIEW',{policy});assert.ok('observable' in incomplete&&!incomplete.observable);
   await assert.rejects(call('APPROVE',{...approval,reviewDigest:incomplete.reviewDigest}));
+  // Exercise the deployed clock's ordinary dispatch path against the disposable provider.
+  const {runDatabaseWorker}=await import('../lib/server/worker-runtime');
+  const environment={...process.env},bucket=Math.floor(Date.now()/6)*6;
+  const dueKeys=[bucket,bucket+2].map(n=>'dbclock:'+n);
+  try{
+   Object.assign(process.env,{VERCEL_ENV:'preview',REGPILOT_WORKER_ENABLED:'true',REGPILOT_AUTOMATION_ENABLED:'true',REGPILOT_WORKER_SLOTS:'1'});
+   delete process.env.REGPILOT_PIPEDREAM_STAGING_PROBE;
+   rows[0].disk={encrypted:false};delete rows[0].supported;
+   const previousRead=new Date(Date.now()-2*3600000);
+   await db.evidenceConnector.update({where:{id:bound.id},data:{lastSuccessAt:previousRead,nextRunAt:nextHostedHour(bound.createdAt,previousRead)}});
+   await db.evidenceConnector.update({where:{id:saved.id},data:{intervalHours:24,nextRunAt:new Date(0)}});
+   const first=await runDatabaseWorker(bucket);
+   assert.equal(first.status,200);assert.equal(first.body.state,'queue_only');
+   const worker=await db.workerRun.findUniqueOrThrow({where:{invocationKey:dueKeys[0]}});
+   assert.deepEqual((worker.summary as any).hostedQueue.outcomes,{FOLLOW_UP:1});
+   const observation=await db.connectorRun.findFirstOrThrow({where:{connectorId:bound.id}});
+   assert.ok((observation.result as any).checks.some((c:{id:string;status:string})=>c.id==='mapped-endpoint-encrypted'&&c.status==='FAIL'));
+   const receipt=await db.auditEvent.findFirstOrThrow({where:{entityId:bound.id,action:'connector.evidence_collected'}});
+   assert.equal((receipt.details as any).collectionMode,'SCHEDULED');
+   const {monitoringCalendar}=await import('../lib/server/monitoring-calendar');
+   const {connectorScopeHash}=await import('../lib/server/connector-verification');
+   const calendar=await db.$transaction(tx=>monitoringCalendar(tx,f.a.id,bound.id,bound.provider,connectorScopeHash(bound),Date.now()+86400000));
+   const sourceAt=new Date((observation.result as any).capturedAt);
+   const day=calendar.hourly!.find(d=>d.date===sourceAt.toISOString().slice(0,10))!;
+   assert.equal(day.observedHours,1);assert.equal(day.partial,1);assert.equal(day.withFailures,1);assert.equal(day.missing.length,23);
+   assert.ok(!day.missing.includes(sourceAt.getUTCHours()));assert.equal(calendar.observedDays7,0);
+   const next=await db.evidenceConnector.findUniqueOrThrow({where:{id:bound.id}});
+   assert.equal(next.nextRunAt.toISOString(),nextHostedHour(bound.createdAt,next.lastSuccessAt!).toISOString());
+   assert.equal((await runDatabaseWorker(bucket)).body.reused,true);
+   assert.equal((await runDatabaseWorker(bucket+2)).status,200);
+   assert.equal(await db.connectorRun.count({where:{connectorId:bound.id}}),1);
+   assert.equal((await db.evidenceConnector.findUniqueOrThrow({where:{id:saved.id}})).nextRunAt.getTime(),0);
+   const list=await call('SCHEDULES');assert.ok('schedules' in list);assert.deepEqual(list.schedules.map(row=>row.id),[bound.id]);
+   assert.equal(list.schedules[0].state,'Scheduled');
+   const outside=await productMonitorCommand(f.out,{op:'SCHEDULES'});assert.ok('schedules' in outside&&!outside.schedules.length);
+  }finally{
+   await db.workerRun.deleteMany({where:{invocationKey:{in:dueKeys}}});
+   for(const k of Object.keys(process.env))if(!(k in environment))delete process.env[k];
+   Object.assign(process.env,environment);
+  }
+
  }finally{globalThis.fetch=original;await f.cleanup();}
 });

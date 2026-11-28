@@ -89,6 +89,11 @@ export default function SourceVerification({workspace,locked}:{workspace:ReturnT
  <p>{proof.qualifies?'This customer connection meets the monitoring criteria.':'Awaiting qualifying customer monitoring evidence.'} {proof.depth.scheduledReads} scheduled reads · {proof.depth.failures.length} recorded collection failures · {proof.depth.recoveries.length} evidenced credential recoveries.</p>
  {proof.calendar&&<section><h4>Scheduled evidence over 30 days</h4>
  <p>Verified readings on {proof.calendar.observedDays7} of the last 7 complete UTC days and {proof.calendar.observedDays30} of the last 30. This connection is set to collect every {proof.intervalHours} hours.</p>
+ {proof.calendar.hourly&&proof.intervalHours===1&&<details><summary>Actual hourly hosted reads by UTC day</summary>
+ <p>Each hour counts once when the source returned a verified scheduled read. The last two columns count reads. Empty hours can include time before approval or during a pause.</p>
+ {proof.calendar.limited&&<p>Only the latest 1,000 scheduled events in the window were inspected.</p>}
+ <table><thead><tr><th>UTC date</th><th>Hours observed</th><th>Missing UTC hours</th><th>Partial results</th><th>Failed controls present</th></tr></thead>
+ <tbody>{proof.calendar.hourly.slice().reverse().map(day=><tr key={day.date}><td>{day.date}</td><td>{day.observedHours}/24</td><td>{day.missing.map(h=>String(h).padStart(2,'0')).join(', ')||'None'}</td><td>{day.partial}</td><td>{day.withFailures}</td></tr>)}</tbody></table></details>}
  <details><summary>Inspect daily coverage and download source receipts</summary>
  <p>{proof.calendar.from} to {proof.calendar.through} UTC. Only scheduled collections with complete checks count. A failed control still provides evidence. Days between weekly collections can be empty.</p>
  {proof.calendar.limited&&<p role="status">The most recent 1,000 scheduled events are shown. Earlier dates may have additional readings.</p>}

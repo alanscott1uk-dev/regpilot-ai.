@@ -19,6 +19,7 @@ const selection=z.object({app:pdApp,action:pdAction});
 const chooseAccount=selection.extend({account:pdAccount,policy:resourcePolicy.optional()});
 const monitor=z.object({id:z.uuid(),version:z.number().int().positive()});
 export const productCommand=z.discriminatedUnion('op',[
+ z.object({op:z.literal('SCHEDULES'),after:z.uuid().optional()}),
  z.object({op:z.literal('SEARCH'),q:z.string().max(100).default(''),offset:z.number().int().min(0).max(10000).default(0)}),
  selection.extend({op:z.literal('CONNECT')}),selection.extend({op:z.literal('ACCOUNTS')}),
  selection.extend({op:z.literal('DISCOVER'),account:pdAccount,profile:resourceProfile}),
@@ -57,6 +58,21 @@ export async function productMonitorCommand(ctx:AuthorizedContext,input:unknown,
   const matches=productSearch(cmd.q);
   const [history,paused]=await Promise.all([stagingProductHistory(org),db.evidenceConnector.findMany({where:{organizationId:org,provider:'PIPEDREAM_READ',enabled:false,failureCode:'CREDENTIAL_REJECTED'},orderBy:{id:'asc'},take:100,select:{id:true,version:true,repository:true}})]);
   return {total:productTotal,matches:matches.length,products:matches.slice(cmd.offset,cmd.offset+40),enabled:connectorsEnabled()&&!!pdConfig(),paused,history};
+ }
+ if(cmd.op==='SCHEDULES'){
+  return transaction(ctx,async tx=>{
+   await requireMember(tx,ctx,ADMIN);
+   const rows=await tx.evidenceConnector.findMany({where:{organizationId:org,provider:'PIPEDREAM_READ',intervalHours:1,...(cmd.after?{id:{gt:cmd.after}}:{})},
+    orderBy:{id:'asc'},take:21,select:{id:true,repository:true,enabled:true,failureCode:true,lastSuccessAt:true,nextRunAt:true,leaseUntil:true,control:{select:{title:true}}}});
+   const now=new Date();
+   const schedules=rows.slice(0,20).map(row=>{
+    const [,app,action]=row.repository.split(':');
+    const state=!row.enabled?'Paused':row.leaseUntil&&row.leaseUntil>now?'Collecting':row.failureCode?'Retry pending':row.nextRunAt<=now?'Due':'Scheduled';
+    return {id:row.id,product:recipeFor(app,action)?.name??app,action,control:row.control.title,state,failureCode:row.failureCode,
+     lastSuccessAt:row.lastSuccessAt?.toISOString()??null,nextRunAt:row.enabled?row.nextRunAt.toISOString():null};
+   });
+   return {schedules,asOf:now.toISOString(),next:rows.length>20?schedules[19].id:null};
+  });
  }
  const cfg=pdConfig();if(!connectorsEnabled()||!cfg)throw new IntelligenceError('Connect the Pipedream project in deployment settings to enable hosted reads.',503);
  if(cmd.op==='START_RENEWAL'||cmd.op==='VERIFY_RENEWAL'){

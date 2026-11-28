@@ -59,20 +59,33 @@ export async function runPrivateWorker(invocationKey:string,execute?:()=>Promise
 }
 export async function runDatabaseWorker(bucket:number):Promise<RuntimeResult>{
  if(!workerEnabled())return {status:503,body:{ok:false,state:'disabled'}};
- if(!connectorsEnabled()||!stagingProbeTarget())return {status:503,body:{ok:false,state:'unconfigured'}};
+ if(!connectorsEnabled()||pdConfig()?.environment!=='development'||process.env.VERCEL_ENV!=='preview')return {status:503,body:{ok:false,state:'unconfigured'}};
  const claim=await claimRuntime('dbclock:'+bucket,0,workerSlotCount());
  if(claim.kind==='busy')return {status:409,body:{ok:false,state:'busy'}};
  if(claim.kind==='reused'){
   const state=claim.run.state;
   return {status:state==='COMPLETED'?200:state==='RUNNING'?409:503,body:{ok:state==='COMPLETED',state:state.toLowerCase(),reused:true}};
  }
- const product=await dueStagingProductProbe();
- const ok=product?.state!=='attention';
- const summary=product?{stagingProduct:product}:{skipped:'already_read_this_hour'};
+ // The configured pilot keeps its two collection opportunities per hour.
+ // Other deliveries only admit hourly monitors already approved in Company integrations.
+ const pilotSlot=bucket%6===1;
+ const [pilot,batch]=await Promise.allSettled([
+  pilotSlot?dueStagingProductProbe():Promise.resolve(null),
+  runConnectorBatch(maxConnectorReadsPerTick,4,Date.now()+12000,'hosted-hourly')
+ ]);
+ const product=pilot.status==='fulfilled'?pilot.value:null;
+ const outcomes=batch.status==='fulfilled'?batch.value.outcomes:[];
+ const hostedQueue=batch.status==='fulfilled'?{state:'completed',processed:batch.value.processed,peakInFlight:batch.value.peakInFlight,
+  elapsedMs:batch.value.elapsedMs,maxQueueLagMs:batch.value.maxQueueLagMs,limitReached:batch.value.limitReached,budgetExhausted:batch.value.budgetExhausted,outcomes:outcomes.reduce<Record<string,number>>((counts,outcome)=>{
+   counts[outcome]=(counts[outcome]??0)+1;return counts;
+  },{})}:{state:'failed'};
+ const ok=pilot.status==='fulfilled'&&batch.status==='fulfilled'&&product?.state!=='attention';
+ const skipped=!pilotSlot?'queue_only':pilot.status==='rejected'?'pilot_error':!stagingProbeTarget()?'pilot_unconfigured':'already_read_this_hour';
+ const summary={hostedQueue,...(product?{stagingProduct:product}:{skipped})};
  const saved=await db.workerRun.updateMany({where:{id:claim.run.id,state:'RUNNING',leaseUntil:{gt:new Date()}},
   data:{state:ok?'COMPLETED':'FAILED',finishedAt:new Date(),summary:summary as Prisma.InputJsonValue}});
  if(!saved.count)return {status:503,body:{ok:false,state:'interrupted'}};
- return {status:ok?200:503,body:{ok,state:product?.state??'already_read'}};
+ return {status:ok?200:503,body:{ok,state:ok?(product?.state??skipped):'attention'}};
 
 }
 /** Vercel supplies no invocation identifier. Deduplicate deliveries within five
