@@ -1,7 +1,7 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
 import {benchmarkProducts,benchmarkProductById} from '../../../lib/benchmark-products';
-import {productReads} from '../../../lib/connectors/product-recipes';
+import ProductChoice from './product-choice';
 import ReadingPicker,{ReadingControls,useTrialReadings} from './reading-picker';
 import ReceiptHandoff from './receipt-handoff';
 import {githubTrialTrack} from '../../../lib/pilot-receipt';
@@ -13,7 +13,8 @@ import {useWorkspaceContext} from '../../../lib/client/workspace-context';
 import {isExcursionTrial,isTimedPilot,allTrialTracks as trialTracks,trialTracks as benchmarkTracks,trialEnvironments} from '../../../lib/capability-trials';
 import type {trialWorkspace} from '../../../lib/server/capability-trial-service';
 import shell from '../../workbench/workbench.module.css';
-import ui from '../../sop-builder/sop.module.css';
+import ui from './trials.module.css';
+import {LaunchTrials,TrialList,trialHref,trialStatus} from './trial-directory';
 
 type Workspace=ReturnType<typeof useWorkspaceContext>;
 type View=Awaited<ReturnType<typeof trialWorkspace>>;
@@ -22,14 +23,17 @@ const moduleFor=(id:string)=>Object.values(trialTracks).flatMap(t=>t.steps).find
 const envText={FIXTURE:'Internal test',PARTNER_SANDBOX:'Authorised partner sandbox',PROTECTED_PILOT:'Protected customer pilot'};
 export default function Page(){
  const w=useWorkspaceContext();
- return <div className={shell.app}><WorkspaceNav/><main className={shell.main}><div className={ui.body}><header className={ui.intro}><div><h1>Capability trials</h1><p>Time an operating task, attach its evidence and record an independent decision against the release you tested.</p></div></header>
- {w.loading?<p>Loading…</p>:!w.signedIn?<EmailSignIn destination="/team/trials"/>:<><label>Workspace<select aria-label="Workspace" value={w.organizationId} onChange={e=>w.chooseOrganization(e.target.value)}>{w.organisations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></label>{w.organizationId&&<Trials key={w.revision} w={w}/>}</>}</div></main></div>;
+ return <div className={shell.app}><WorkspaceNav/><main className={ui.main}><div className={ui.body}>
+ <header className={ui.intro}><div><h1>Capability trials</h1><p>Run a test, inspect the evidence and record an independent review.</p></div>
+ {w.signedIn&&<label className={ui.workspace}>Workspace<select aria-label="Workspace" value={w.organizationId} onChange={e=>w.chooseOrganization(e.target.value)}>{w.organisations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></label>}</header>
+ {w.loading?<p role="status">Loading workspace…</p>:!w.signedIn?<section className={ui.card}><h2>Sign in to your workspace</h2><EmailSignIn destination="/team/trials"/></section>:<>{w.error&&<p role="alert">{w.error}</p>}{w.organizationId&&<Trials key={w.revision} w={w}/>}</>}</div></main></div>;
 }
 function Trials({w}:{w:Workspace}){
  const [view,setView]=useState<View|null>(null),[track,choose]=useState('systems'),[busy,lock]=useState(false),[message,tell]=useState(''),[environment,setEnv]=useState<keyof typeof envText>('FIXTURE');
  const [initialRelease,setInitialRelease]=useState(''),[caseId,setCaseId]=useState('');
  const [siteSteps,setSiteSteps]=useState(['stock-count']);
  const [linkedId,setLinkedId]=useState('');
+ const [screen,setScreen]=useState<'overview'|'history'|'new'|null>(null);
  const isGitHub=track===githubTrialTrack;
  const isSite=track==='site_qualification';
  const [template,setTemplate]=useState<ProtocolTemplate|null>(null),[templateVersion,newTemplate]=useState(0);
@@ -41,7 +45,7 @@ function Trials({w}:{w:Workspace}){
    if(valid()){setTemplate(data);setSiteSteps(data.criteria.map(c=>c.step));newTemplate(n=>n+1);tell('Protocol loaded. Review the criteria and identify the site and configuration for this run.');}
   }catch{if(valid())tell('Choose a RegPilot protocol template with supported site tests and acceptance criteria.');}
  }
- useEffect(()=>{const p=new URLSearchParams(window.location.search),choice=p.get('participant');if(p.has('trialId'))setLinkedId(p.get('trialId')||'invalid');if(choice==='github'){choose(githubTrialTrack);setEnv('PROTECTED_PILOT');}if(choice==='operator'||choice==='assessor'){choose(choice+'_pilot');setEnv('PARTNER_SANDBOX');}if(choice&&isExcursionTrial(choice)){choose(choice);setEnv('FIXTURE');setCaseId(p.get('caseId')??'');}const commit=p.get('release');if(commit&&/^[a-f0-9]{40}$/.test(commit))setInitialRelease(commit);},[]);
+ useEffect(()=>{const p=new URLSearchParams(window.location.search),choice=p.get('participant');setScreen(choice||p.has('release')||p.get('screen')==='new'?'new':p.get('screen')==='history'?'history':'overview');if(choice==='site')choose('site_qualification');if(p.has('trialId'))setLinkedId(p.get('trialId')||'invalid');if(choice==='github'){choose(githubTrialTrack);setEnv('PROTECTED_PILOT');}if(choice==='operator'||choice==='assessor'){choose(choice+'_pilot');setEnv('PARTNER_SANDBOX');}if(choice&&isExcursionTrial(choice)){choose(choice);setEnv('FIXTURE');setCaseId(p.get('caseId')??'');}const commit=p.get('release');if(commit&&/^[a-f0-9]{40}$/.test(commit))setInitialRelease(commit);},[]);
  const [release,filter]=useState(''),[releaseInput,setReleaseInput]=useState('');
  const historyEpoch=useRef(0),inFlight=useRef(false);
  const path='/api/workspace/trials?'+new URLSearchParams({organizationId:w.organizationId,...(linkedId?{trialId:linkedId}:release?{release}:{})});
@@ -58,16 +62,23 @@ function Trials({w}:{w:Workspace}){
 
  useEffect(()=>{const valid=w.capture(),epoch=++historyEpoch.current;setView(null);void w.request(path).then(v=>{if(valid()&&epoch===historyEpoch.current)setView(v);}).catch(e=>{if(valid()&&epoch===historyEpoch.current)tell(e.message);});return ()=>{historyEpoch.current++;};},[w.capture,w.request,path]);
  async function save(d:Record<string,unknown>){const valid=w.capture();lock(true);tell('');try{const saved=await w.request(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});if(!valid())return;
- if(d.action==='START'&&(d.track===githubTrialTrack||d.track==='operator_pilot')){
+ if(d.action==='START'){
   const url=new URL(window.location.href);url.searchParams.set('trialId',saved.id);url.hash='trial-'+saved.id;
   window.history.replaceState(null,'',url);setLinkedId(saved.id);tell('Trial started.');return;
  }
  const v=await w.request(path);if(valid()){setView(v);tell('Saved.');}}catch(e){if(valid())tell(e instanceof Error?e.message:'Trial unavailable.');}finally{if(valid())lock(false);}}
- if(linkedId)return <>{message&&<p role="alert">{message}</p>}{view&&!view.trials.length&&<p>This trial is unavailable in the selected workspace.</p>}{view?.trials.filter(t=>!linkedId||t.id===linkedId).map(t=><Run key={t.id} w={w} t={t} view={view} busy={busy} save={save}/>)}<a href={'/team/trials?'+new URLSearchParams({organizationId:w.organizationId})}>All workspace trials</a></>;
- return <>{view&&track==='operator_pilot'&&(!view.hasActiveControl||!view.canManage)&&<section className={ui.card}><h2>Before you start the timer</h2>{!view.hasActiveControl&&<p>A workspace administrator needs to assign an active test control for the connection. <a href={'/team/programmes?organizationId='+view.organizationId}>Open starter programmes</a></p>}{!view.canManage&&<p>Your current workspace role cannot configure a connection. Select the assigned pilot workspace or record this as a blocker in your trial.</p>}</section>}{message&&<p role="status">{message}</p>}<form className={ui.card} onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void save({action:'START',requestKey:crypto.randomUUID(),track,environment:isGitHub?'PROTECTED_PILOT':environment,...(isGitHub?{receiptWindow:f.get('receiptWindow')}:{}),...(track==='operator_pilot'?{operatorProduct:f.get('operatorProduct')}:{}),release:f.get('release'),intendedUse:f.get('use'),steps:f.getAll('steps'),...(isSite?{siteProtocol:{
+ const back=<a className={ui.back} href={trialHref(w.organizationId)}>← Trial overview</a>;
+ if(!screen)return <p role="status">Loading trials…</p>;
+ if(linkedId)return <>{back}{message&&<p role="status">{message}</p>}{!view&&!message&&<p role="status">Loading trial…</p>}{view&&!view.trials.length&&<p>This trial is unavailable in the selected workspace.</p>}{view?.trials.filter(t=>t.id===linkedId).map(t=><Run key={t.id} w={w} t={t} view={view} busy={busy} save={save}/>)}</>;
+ if(screen==='overview')return <><LaunchTrials org={w.organizationId}/>{view?<TrialList trials={view.trials} org={w.organizationId}/>:<p role="status">{message||'Loading recent trials…'}</p>}</>;
+ if(screen==='history')return <>{back}{message&&<p role="status">{message}</p>}<details className={ui.card}><summary>Filter by exact release</summary><form onSubmit={e=>{e.preventDefault();filter(releaseInput.trim());}}>
+ <label>Release commit<input value={releaseInput} onChange={e=>setReleaseInput(e.target.value)} pattern="[a-f0-9]{40}" placeholder="Full Git commit SHA"/></label>
+ <button disabled={busy}>Apply release filter</button>{release&&<button type="button" disabled={busy} onClick={()=>{setReleaseInput('');filter('');}}>Clear release filter</button>}</form></details>
+ {view?<><TrialList trials={view.trials} org={w.organizationId} history limited={view.limited}/>{view.limited&&<button disabled={busy} onClick={()=>void older()}>Load earlier trials</button>}{view.canManage&&<Coverage view={view}/>}</>:!message&&<p role="status">Loading trial history…</p>}</>;
+ return <>{back}{view&&track==='operator_pilot'&&(!view.hasActiveControl||!view.canManage)&&<section className={ui.card}><h2>Before you start the timer</h2>{!view.hasActiveControl&&<p>A workspace administrator needs to assign an active test control for the connection. <a href={'/team/programmes?organizationId='+view.organizationId}>Open starter programmes</a></p>}{!view.canManage&&<p>Your current workspace role cannot configure a connection. Select the assigned pilot workspace or record this as a blocker in your trial.</p>}</section>}{message&&<p role="status">{message}</p>}<form className={ui.card} onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void save({action:'START',requestKey:crypto.randomUUID(),track,environment:isGitHub?'PROTECTED_PILOT':environment,...(isGitHub?{receiptWindow:f.get('receiptWindow')}:{}),...(track==='operator_pilot'?{operatorProduct:f.get('operatorProduct')}:{}),release:f.get('release'),intendedUse:f.get('use'),steps:f.getAll('steps'),...(isSite?{siteProtocol:{
  operator:f.get('operator'),site:f.get('site'),licence:f.get('licence'),configuration:f.get('configuration'),
- criteria:f.getAll('steps').map(step=>({step,expected:f.get('expected-'+step)}))}}:{}),...(isExcursionTrial(track)?{caseId}:{}),...(track==='operator_pilot'||track==='excursion_operator'?{firstTime:f.get('firstTime')==='on'}:{}),ukExternal:environment!=='FIXTURE'&&f.get('external')==='on'});}}><fieldset disabled={busy}><legend>Start a timed run</legend><label>Trial track<select aria-label="Trial track" value={track} onChange={e=>{choose(e.target.value);if(e.target.value===githubTrialTrack)setEnv('PROTECTED_PILOT');}}>{Object.entries(trialTracks).map(([id,t])=><option key={id} value={id}>{t.title}</option>)}</select></label><label>Release commit<input key={isSite||isGitHub?track+view?.deployedRelease:initialRelease||view?.deployedRelease} name="release" defaultValue={isSite||isGitHub?view?.deployedRelease??'':initialRelease||view?.deployedRelease||''} readOnly={isSite||isGitHub} pattern="[a-f0-9]{40}" required maxLength={40} placeholder="Full Git commit SHA"/></label>
- {track==='operator_pilot'&&<label>Integration to set up<select name="operatorProduct" defaultValue="github/list-repositories"><option value="DAILYMED_LABEL">DailyMed test label</option>{productReads.map(p=><option key={p.app+'/'+p.action} value={p.app+'/'+p.action}>{p.name} · {p.action}</option>)}</select></label>}
+ criteria:f.getAll('steps').map(step=>({step,expected:f.get('expected-'+step)}))}}:{}),...(isExcursionTrial(track)?{caseId}:{}),...(track==='operator_pilot'||track==='excursion_operator'?{firstTime:f.get('firstTime')==='on'}:{}),ukExternal:environment!=='FIXTURE'&&f.get('external')==='on'});}}><fieldset disabled={busy}><legend>Configure trial</legend><label>Trial track<select aria-label="Trial track" value={track} onChange={e=>{choose(e.target.value);if(e.target.value===githubTrialTrack)setEnv('PROTECTED_PILOT');}}>{Object.entries(trialTracks).map(([id,t])=><option key={id} value={id}>{t.title}</option>)}</select></label><label>Release commit<input key={isSite||isGitHub?track+view?.deployedRelease:initialRelease||view?.deployedRelease} name="release" defaultValue={isSite||isGitHub?view?.deployedRelease??'':initialRelease||view?.deployedRelease||''} readOnly={isSite||isGitHub} pattern="[a-f0-9]{40}" required maxLength={40} placeholder="Full Git commit SHA"/></label>
+ {track==='operator_pilot'&&<ProductChoice/>}
  {isGitHub&&<label>GitHub inventory receipt<select name="receiptWindow"><option value="previous_day">Latest successful read yesterday (UTC)</option><option value="today">Latest successful read today (UTC)</option></select></label>}
  {isSite&&<fieldset><legend>Site protocol</legend>
  <label>Reuse a test protocol<input type="file" accept=".json,application/json" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void importProtocol(file);}}/></label>
@@ -76,16 +87,11 @@ function Trials({w}:{w:Workspace}){
  <label>Applicable licence reference<input name="licence" minLength={3} maxLength={240} required/></label>
  <label>Configuration or controlled document revision<input name="configuration" minLength={3} maxLength={240} required/></label>
  {!view?.deployedRelease&&<p role="status">Site protocols require a deployment with an identified Git commit.</p>}
- </fieldset>}{isExcursionTrial(track)&&<label>Assigned quality case ID<input value={caseId} required onChange={e=>setCaseId(e.target.value.trim())}/></label>}<label>Intended use and test scope<input key={isSite?'site-use-'+templateVersion:track} name="use" defaultValue={isGitHub?'Review the GitHub inventory receipt and explain its settings and connection health.':isSite?template?.intendedUse??'':isExcursionTrial(track)?'Timed temperature excursion in a fictional workspace.':track==='operator_pilot'?'First-time setup, failed-check review and exact reading export in staging.':track==='assessor_pilot'?'Independent review of isolated access, recovery and excursion evidence in staging.':''} required minLength={15} maxLength={360}/></label><label>Environment<select aria-label="Environment" disabled={isGitHub} value={environment} onChange={e=>setEnv(e.target.value as keyof typeof envText)}>{trialEnvironments.map(e=><option key={e} value={e}>{envText[e]}</option>)}</select></label>{environment!=='FIXTURE'&&<label><input name="external" type="checkbox"/> I am an independent UK operator participating in an authorised trial.</label>} {(track==='operator_pilot'||track==='excursion_operator')&&<label><input name="firstTime" type="checkbox" required/>This is my first attempt at the operator pilot.</label>}<div key={track}>{trialTracks[track].steps.map(s=>isSite?<div key={s.id}>
+ </fieldset>}{isExcursionTrial(track)&&<label>Assigned quality case ID<input value={caseId} required onChange={e=>setCaseId(e.target.value.trim())}/></label>}<label>Intended use and test scope<input key={isSite?'site-use-'+templateVersion:track} name="use" defaultValue={isGitHub?'Review the GitHub inventory receipt and explain its settings and connection health.':isSite?template?.intendedUse??'':isExcursionTrial(track)?'Timed temperature excursion in a fictional workspace.':track==='operator_pilot'?'First-time setup, failed-check review and exact reading export in staging.':track==='assessor_pilot'?'Independent review of isolated access, recovery and excursion evidence in staging.':''} required minLength={15} maxLength={360}/></label><label>Environment<select aria-label="Environment" disabled={isGitHub} value={environment} onChange={e=>setEnv(e.target.value as keyof typeof envText)}>{trialEnvironments.map(e=><option key={e} value={e}>{envText[e]}</option>)}</select></label>{environment!=='FIXTURE'&&<label><input name="external" type="checkbox"/> I am an independent UK operator participating in an authorised trial.</label>} {(track==='operator_pilot'||track==='excursion_operator')&&<label><input name="firstTime" type="checkbox" required/>This is my first attempt at the operator pilot.</label>}<div className={ui.tasks} key={track}><h3>Tasks to observe</h3>{trialTracks[track].steps.map(s=>isSite?<div key={s.id}>
  <label><input name="steps" type="checkbox" value={s.id} checked={siteSteps.includes(s.id)} onChange={e=>{const checked=e.currentTarget.checked;setSiteSteps(old=>checked?[...old,s.id]:old.filter(id=>id!==s.id));}}/> {s.title}</label>
  {siteSteps.includes(s.id)&&<label>Acceptance criterion for this test<textarea key={templateVersion} defaultValue={template?.criteria.find(c=>c.step===s.id)?.expected??''} name={'expected-'+s.id} required minLength={15} maxLength={500}/></label>}
- </div>:<label key={s.id}><input type="checkbox" name="steps" value={s.id} defaultChecked/> {s.title}</label>)}</div><button disabled={isSite&&(!view?.deployedRelease||!siteSteps.length)}>Start timer</button></fieldset></form>
- <form className={ui.card} onSubmit={e=>{e.preventDefault();filter(releaseInput.trim());}}>
-  <label>Filter trials by release<input value={releaseInput} onChange={e=>setReleaseInput(e.target.value)} pattern="[a-f0-9]{40}" placeholder="Full Git commit SHA"/></label>
-  <button disabled={busy}>Show release history</button>{release&&<button type="button" disabled={busy} onClick={()=>{setReleaseInput('');filter('');}}>Show all releases</button>}
- </form>
- {view?.canManage&&<Coverage view={view}/>}
- {view?.trials.length===0&&<p>No recorded runs in this workspace.</p>}{view?.trials.filter(t=>!linkedId||t.id===linkedId).map(t=><Run key={t.id} w={w} t={t} view={view} busy={busy} save={save}/>)}{view?.limited&&<button type="button" disabled={busy} onClick={()=>void older()}>Load earlier trials</button>}</>;
+ </div>:<label key={s.id}><input type="checkbox" name="steps" value={s.id} defaultChecked/> {s.title}</label>)}</div><button className={ui.primary} disabled={!view||isSite&&(!view.deployedRelease||!siteSteps.length)}>Start timer</button></fieldset></form>
+ </>;
 }
 function ComparatorOptions(){
  return <>{[...new Set(benchmarkProducts.map(p=>p.category))].map(category=><optgroup key={category} label={category}>
@@ -96,7 +102,7 @@ function Run({t,view,busy,save,w}:{w:Workspace;t:Trial;view:View;busy:boolean;sa
  const readings=useTrialReadings(w,t.id,t.track==='operator_pilot'&&t.canFinish&&view.canManage&&!!t.stoppedAt);
  const [outcomes,choose]=useState<Record<string,string>>({});
  const [compare,setCompare]=useState(false);
- return <article id={'trial-'+t.id} className={ui.card}><h2>{trialTracks[t.track].title}</h2><p>{envText[t.environment]} · {t.release.slice(0,10)} · {new Date(t.startedAt).toLocaleString('en-GB')}</p><p>{t.intendedUse}</p>
+ return <article id={'trial-'+t.id} className={ui.card}><header className={ui.runHeader}><h2>{trialTracks[t.track].title}</h2><span className={ui.status} data-state={trialStatus(t)}>{trialStatus(t)}</span></header><p>{envText[t.environment]} · {t.release.slice(0,10)} · {new Date(t.startedAt).toLocaleString('en-GB',{timeZone:'UTC'})} UTC</p><p>{t.intendedUse}</p>
  {t.receipt&&<ReceiptHandoff receipt={t.receipt} organizationId={view.organizationId} trialId={t.id}/>}
  {t.siteProtocol&&<section><h3>Site protocol</h3><p>{t.siteProtocol.operator} · {t.siteProtocol.site} · {t.siteProtocol.licence}</p>
  <p>Configuration {t.siteProtocol.configuration}</p>

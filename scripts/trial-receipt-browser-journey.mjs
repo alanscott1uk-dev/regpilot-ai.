@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {mkdir} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 
 export async function trialReceiptJourney(browser,base,viewport,name){
@@ -13,7 +14,9 @@ export async function trialReceiptJourney(browser,base,viewport,name){
   await context.route('**/api/ai/context',r=>r.fulfill({json:{email:session.user.email,userId:user,organisations:[{id:org,name:'Example workspace',role:'OWNER'}]}}));
   const receipt={id:randomUUID(),checkedAt:'2026-11-26T15:43:16.112Z',revision,action:'list-repositories',count:1,digest:'b'.repeat(64),providerHealth:false,
    checks:[{id:'repository_secret_scanning_enabled',label:'Secret scanning',status:'UNKNOWN'}]};
+  const previous={id:randomUUID(),steps:['connect-first'],ukExternal:false,track:'operator_pilot',release:revision,intendedUse:'Verify a repository connection',startedAt:'2026-11-26T10:12:00Z',elapsedSeconds:124,current:true,reviewCount:0,required:1,accepted:false};
   let trial;
+  await mkdir('artifacts/usability',{recursive:true});
   await context.route('**/api/workspace/trials?*',async r=>{
    if(r.request().method()==='POST'){
     const body=r.request().postDataJSON();
@@ -21,9 +24,22 @@ export async function trialReceiptJourney(browser,base,viewport,name){
     trial={...body,id:body.requestKey,receipt,checkpoints:[],caseReceipts:[],readings:[],readingDetails:[],startedAt:new Date().toISOString(),elapsedSeconds:null,canFinish:true};
     return r.fulfill({json:{id:trial.id}});
    }
-   return r.fulfill({json:{organizationId:org,trials:trial?[trial]:[],evidence:[],hasActiveControl:true,canManage:true,deployedRelease:revision}});
+   return r.fulfill({json:{organizationId:org,trials:new URL(r.request().url()).searchParams.has('trialId')?(trial?[trial]:[]):[...(trial?[trial]:[]),previous],evidence:[],hasActiveControl:true,canManage:true,deployedRelease:revision}});
   });
-  await page.goto(base+'/team/trials?'+new URLSearchParams({organizationId:org,participant:'operator'}));
+  const overview=base+'/team/trials?'+new URLSearchParams({organizationId:org});
+  await page.goto(overview);
+  await page.getByText('Awaiting review',{exact:true}).waitFor();
+  await page.screenshot({path:'artifacts/usability/trial-overview-'+name+'.png'});
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  await page.getByRole('link',{name:'View history'}).click();
+  await page.getByLabel('Status',{exact:true}).selectOption('Accepted');
+  await page.getByText('No loaded trials match these filters.').waitFor();
+  await page.getByLabel('Status',{exact:true}).selectOption('Awaiting review');
+  await page.getByLabel('Find a trial').fill('repository');
+  await page.getByRole('link',{name:/First-time operator/}).waitFor();
+  await page.getByRole('link',{name:'Trial overview'}).click();
+  await page.getByRole('link',{name:/Set up an integration/}).click();
+  await page.getByLabel('Find an integration').fill('github');
   await page.getByLabel('Integration to set up').selectOption('github/list-repositories');
   await page.goto(base+'/team/trials?'+new URLSearchParams({organizationId:org,participant:'github'}));
   await page.getByLabel('Release commit').waitFor();
@@ -32,6 +48,8 @@ export async function trialReceiptJourney(browser,base,viewport,name){
   await page.getByRole('heading',{name:'Attached GitHub inventory read'}).waitFor();
   await page.getByText(/The inventory read succeeded/).waitFor();
   await page.getByText(/Check code security in GitHub/).waitFor();
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  await page.screenshot({path:'artifacts/usability/trial-receipt-'+name+'.png'});
   const handoff=await page.getByRole('link',{name:'Assessor link to this trial and receipt'}).getAttribute('href');
   assert.equal(new URL(handoff,base).searchParams.get('trialId'),trial.id);
   await page.goto(new URL(handoff,base).href);
