@@ -1,0 +1,144 @@
+import {emaShortages} from './ema';
+import {instrumentWindow} from './instruments';
+import {isInstrumentSeries} from './instrument-series';
+import {fdaSearchPage} from './fda';
+import {CollectionError} from '../connectors/collection-error';
+import {resilientGet} from '../connectors/resilient-http';
+import {createHash} from 'node:crypto';
+import {PUBLISHERS,MAX_PUBLISHER_RESULTS,MAX_RETAINED_ITEMS,MAX_REPORT_BYTES,horizonSourceUrl,horizonPath,validateReport,type HorizonItem,type HorizonReport} from './model';
+const digest=(s:string)=>createHash('sha256').update(s).digest('hex').slice(0,32);
+const plain=(v:unknown,max:number)=>typeof v==='string'?v.replace(/<[^>]*>/g,' ').replace(/[\x00-\x1f\x7f]/g,' ').replace(/\s+/g,' ').trim().slice(0,max):'';
+export function itemKind(path:string,type:string):HorizonItem['kind']{
+ if(type==='medicine_shortage_notice')return 'Medicine shortage';
+ if(type==='drug_recall'||path.startsWith('/drug-device-alerts/')||type==='medical_safety_alert'||type==='product_safety_alert_report')return 'Safety alert';
+ if(type.includes('consultation'))return 'Consultation';
+ if(/regulation|decision|statutory|notice/.test(type))return 'Regulation or decision';
+ if(/guidance|guide|manual/.test(type))return 'Guidance';
+ if(/policy/.test(type))return 'Policy';
+ if(/news|press_release|speech/.test(type))return 'News';return 'Other publication';
+}
+export async function boundedJson(url:string,fetcher:typeof fetch=fetch,max=2_000_000,cache:RequestCache='no-store'){
+ const response=await fetcher(url,{method:'GET',headers:{accept:'application/json'},redirect:'error',cache,signal:AbortSignal.timeout(10000)});
+ if(!response.ok){await response.body?.cancel();throw new CollectionError('HTTP_STATUS_'+response.status);}
+ if(response.url&&response.url!==url){await response.body?.cancel();throw new CollectionError('RESPONSE_IDENTITY_MISMATCH');}
+ const reader=response.body?.getReader();if(!reader)throw new CollectionError('EMPTY_RESPONSE');let size=0;const chunks:Uint8Array[]=[];
+ try{
+  while(true){let chunk:ReadableStreamReadResult<Uint8Array>;try{chunk=await reader.read();}catch{throw new CollectionError('RESPONSE_READ_FAILED');}
+   if(chunk.done)break;size+=chunk.value.length;if(size>max)throw new CollectionError('RESPONSE_TOO_LARGE');chunks.push(chunk.value);}
+  try{return JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw new CollectionError('INVALID_JSON');}
+ }finally{await reader.cancel().catch(()=>{});}
+}
+// GOV.UK supports up to 1,500 results in one response. Most publisher windows
+// then have no offset boundary where a mutable index can repeat or omit a row.
+const MAX_SEARCH_PAGE = 1500;
+const MIN_SEARCH_PAGE = 50;
+
+async function readSearchPage(
+ publisher: string, windowStart: string, generatedAt: string, offset: number,
+ count: number, read: (url:string)=>Promise<Response>,
+) {
+ for (;;) {
+  const params = new URLSearchParams({
+   filter_organisations: publisher,
+   filter_public_timestamp: 'from:'+windowStart.slice(0,10)+',to:'+generatedAt,
+   order: '-public_timestamp',
+   count: String(count), start: String(offset),
+   fields: 'title,link,description,public_timestamp,content_store_document_type,organisations',
+  });
+  try {
+   const raw = await boundedJson('https://www.gov.uk/api/search.json?'+params, url=>read(String(url)));
+   if (!Array.isArray(raw?.results) || raw.results.length > count || !Number.isSafeInteger(raw.total) || raw.total < 0) {
+    throw new CollectionError('INVALID_RESPONSE_SHAPE');
+   }
+   if (raw.start !== undefined && raw.start !== offset) throw new CollectionError('PAGE_OFFSET_MISMATCH');
+   return {raw, count};
+  } catch (error) {
+   if (!(error instanceof CollectionError) || error.code !== 'RESPONSE_TOO_LARGE' || count <= MIN_SEARCH_PAGE) throw error;
+   count = Math.max(MIN_SEARCH_PAGE, Math.floor(count / 2));
+  }
+ }
+}
+export async function collectHorizon(previous:unknown,fetcher:typeof fetch=fetch,now=new Date(),provenance:{codeCommit:string|null;runId:string|null}={codeCommit:null,runId:null}):Promise<HorizonReport>{
+ const started=Date.now(),metrics={requests:0,retries:0};
+ const generatedAt=now.toISOString(),windowStart=new Date(now.getTime()-30*86400000).toISOString();let old:HorizonReport|null=null;
+ try{old=validateReport(previous,now.getTime());}catch{}
+ const prior=new Map((old?.items||[]).filter(i=>Date.parse(i.updatedAt)>=Date.parse(windowStart)).map(i=>[i.id,i]));
+ const collected=new Map<string,HorizonItem>(),feeds:HorizonReport['feeds']=new Array(PUBLISHERS.length);let cursor=0;
+ const legislationMetrics={requests:0,retries:0};
+ let legislation:ReturnType<typeof instrumentWindow>|undefined;
+ async function worker(){while(cursor<PUBLISHERS.length){const index=cursor++,publisher=PUBLISHERS[index];let total:number|null=null,retrieved=0,indexChanged=false;const staged:HorizonItem[]=[];const seen=new Set<string>();
+  const openEvents=new Map<string,{item:HorizonItem;revisions:string[]}>();
+  const priorFeed=old?.feeds.find(f=>f.id===publisher.id);
+  if(priorFeed?.state==='unavailable'&&(priorFeed.reason==='RETRY_REQUIRES_REVIEW'||priorFeed.retryAt&&Date.parse(priorFeed.retryAt)>now.getTime())){feeds[index]={...priorFeed,retrieved:0};continue;}
+  const feedMetrics={requests:0,retries:0};
+  const retryRead=resilientGet(fetcher,publisher.id==='eu-ema'?'https://www.ema.europa.eu':publisher.id==='us-fda'?'https://api.fda.gov':'https://www.gov.uk',{accept:'application/json'},{timeoutMs:90000,maxRequests:60,metrics:feedMetrics});
+  try{
+   let instruments:Awaited<ReturnType<typeof instrumentWindow>>|undefined;
+   if(isInstrumentSeries(publisher.id)){
+    legislation??=instrumentWindow(windowStart,generatedAt,fetcher,legislationMetrics);
+    instruments=await legislation;
+    if(instruments.unavailable)throw new CollectionError('INVALID_LEGISLATION_INDEX');
+   }
+   const shortages=publisher.id==='eu-ema'?await emaShortages(windowStart,generatedAt,retryRead):undefined;
+   let pageSize = MAX_SEARCH_PAGE;
+   while (retrieved < MAX_PUBLISHER_RESULTS) {
+    const offset = retrieved;
+    const seriesRows=shortages??instruments?.rows.filter(r=>r.organisations[0].slug===publisher.id);
+    const page = seriesRows?{raw:{results:seriesRows.slice(0,MAX_PUBLISHER_RESULTS),total:seriesRows.length},count:MAX_PUBLISHER_RESULTS}:publisher.id==='us-fda'?await fdaSearchPage(windowStart,generatedAt,offset,retryRead):await readSearchPage(publisher.slug, windowStart, generatedAt, offset,
+     Math.min(pageSize, MAX_PUBLISHER_RESULTS-offset), retryRead);
+    const {raw} = page;
+    pageSize = page.count;
+    if(total!==null && total!==raw.total) indexChanged=true;
+    total=raw.total;
+    if (raw.results.length < Math.min(pageSize, Math.max(0, raw.total-offset))) {
+     throw new CollectionError('INCOMPLETE_PAGE');
+    }
+    if (offset+raw.results.length > raw.total) indexChanged=true;
+   for(const row of raw.results){
+    const parsedPath=horizonPath.safeParse(row?.link);if(!parsedPath.success)throw new CollectionError('INVALID_PUBLICATION_PATH');const path=parsedPath.data;
+    const timestamp=typeof row.public_timestamp==='string'?Date.parse(row.public_timestamp):NaN;
+    if(!Number.isFinite(timestamp)||timestamp>now.getTime()+300000)throw new CollectionError('INVALID_PUBLICATION_TIMESTAMP');const updatedAt=new Date(timestamp).toISOString();
+    if(!Array.isArray(row.organisations)||!row.organisations.some((o:any)=>o?.slug===publisher.slug))throw new CollectionError('UNVERIFIED_PUBLISHER');
+    const event=publisher.id==='us-fda'&&path.startsWith('/us-fda/drug-events/'),key=event?path+'/'+row.recordKey:path;
+    if(seen.has(key))throw new CollectionError('DUPLICATE_PAGE');seen.add(key);retrieved++;
+    if(Date.parse(updatedAt)<Date.parse(windowStart))continue;
+    const url=horizonSourceUrl(path,[publisher.id]),title=plain(row.title,240),summary=plain(row.description,360),documentType=plain(row.content_store_document_type,100);
+    if(!title||!documentType)throw new CollectionError('INVALID_PUBLICATION_METADATA');
+    const application=publisher.id==='uksi'&&row.asMadeApplication?{asMadeApplication:row.asMadeApplication}:{};
+    const id=digest(url),revision=digest(JSON.stringify({title,summary,documentType,updatedAt,...application})),before=prior.get(id);
+    const item:HorizonItem={id,revision,path,url,title,summary,documentType,...application,kind:itemKind(path,documentType),publisherIds:[publisher.id],updatedAt,firstSeenAt:before?.firstSeenAt||generatedAt,observedAt:generatedAt,discovery:!old||(!priorFeed&&!before)?'BASELINE':!before?'FIRST_SEEN':before.revision!==revision?'METADATA_UPDATED':'UNCHANGED'};
+    if(event){const group=openEvents.get(path)??{item,revisions:[]};group.revisions.push(revision);if(item.updatedAt>group.item.updatedAt)group.item=item;openEvents.set(path,group);}else staged.push(item);
+   }
+   if(retrieved>=raw.total)break;
+  }
+  for(const {item,revisions} of openEvents.values()){
+   const before=prior.get(item.id);item.revision=digest(revisions.sort().join('/'));item.title='FDA drug recall event '+item.path.split('/').pop();
+   item.summary=revisions.length+' unnumbered drug recall '+(revisions.length===1?'record. ':'records. ')+(revisions.length===1?item.summary:'Open the FDA event for the individual products and reasons.');
+   item.summary=item.summary.slice(0,360);
+   item.discovery=!old||(!priorFeed&&!before)?'BASELINE':!before?'FIRST_SEEN':before.revision===item.revision?'UNCHANGED':'METADATA_UPDATED';staged.push(item);
+  }
+  for(const item of staged)if(collected.has(item.id)&&collected.get(item.id)!.revision!==item.revision)throw new CollectionError('INCONSISTENT_PUBLICATION');
+  for(const item of staged){const existing=collected.get(item.id);if(existing){existing.publisherIds=[...new Set([...existing.publisherIds,publisher.id])];}else collected.set(item.id,item);}
+  feeds[index]={id:publisher.id,state:instruments?.limited||total!>retrieved||indexChanged?'limited':'available',checkedAt:generatedAt,total,retrieved,reason:instruments?.limited?'LEGISLATION_INDEX_PARTIAL':indexChanged?'INDEX_CHANGED':total!>retrieved?'RESULT_LIMIT':null,retryAt:null,failureCount:0};
+  }catch(error){const failureCount=Math.min(100,(priorFeed?.failureCount||0)+1),delay=error instanceof CollectionError&&error.code==='RATE_LIMITED'?error.retryAfterSeconds||60:Math.min(21600,900*2**Math.min(5,failureCount-1));
+   feeds[index]={id:publisher.id,state:'unavailable',checkedAt:generatedAt,total,retrieved:0,reason:error instanceof CollectionError?error.code:'FETCH_OR_IDENTITY_FAILED',retryAt:error instanceof CollectionError&&error.code==='RETRY_REQUIRES_REVIEW'?null:new Date(now.getTime()+delay*1000).toISOString(),failureCount};}finally{metrics.requests+=feedMetrics.requests;metrics.retries+=feedMetrics.retries;}
+ }}
+ await Promise.all(Array.from({length:3},()=>worker()));
+ metrics.requests+=legislationMetrics.requests;metrics.retries+=legislationMetrics.retries;
+ // Earlier metadata is retained through outages, with its old observation time.
+ for(const [id,item] of prior)if(!collected.has(id))collected.set(id,item);
+ const sorted=[...collected.values()].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)||a.id.localeCompare(b.id));
+ // Keep the complete JSON response below the hosting response limit, including UTF-8 titles.
+ const items:HorizonItem[]=[];let retainedBytes=20000;
+ for(const item of sorted){const bytes=Buffer.byteLength(JSON.stringify(item),'utf8')+1;if(items.length>=MAX_RETAINED_ITEMS||retainedBytes+bytes>MAX_REPORT_BYTES)break;items.push(item);retainedBytes+=bytes;}
+ const summarize=(r:HorizonReport)=>({generatedAt:r.generatedAt,runId:r.runId,publications:r.items.length,available:r.feeds.filter(f=>f.state==='available').length,limited:r.feeds.filter(f=>f.state==='limited').length,unavailable:r.feeds.filter(f=>f.state==='unavailable').length});
+ const previousHistory=old?[summarize(old),...(old.pipeline?.history||[])]:[];
+ const history=[...new Map(previousHistory.filter(h=>h.generatedAt!==generatedAt).map(h=>[h.generatedAt,h])).values()].sort((a,b)=>b.generatedAt.localeCompare(a.generatedAt)).slice(0,48);
+ return validateReport({pipeline:{cadenceMinutes:60,durationMs:Date.now()-started,...metrics,retentionLimited:collected.size>items.length,history},format:'regpilot-horizon-v1',generatedAt,windowStart,...provenance,previousAvailable:!!old,feeds,items,limitations:[
+  'Discovery metadata from selected GOV.UK publishers, four UK legislative instrument series US FDA drug enforcement reports and EMA human medicine shortage notices over the last 30 days. Review the jurisdiction of each source.',
+  'Each publisher is bounded to 2,000 results per run and the retained feed to 10,000 records or 4 MB, whichever is reached first. Limits and unavailable feeds are explicit; older items keep their original observation time.',
+  'Publication timestamps and metadata changes are not legal effective dates or proof of changed obligations. Applicability and jurisdiction require review.',
+  'Publisher/activity matching and category priority are transparent sorting aids, not legal assessments. Full text, linked attachments and independently reviewed requirements are handled separately.',
+  'GOV.UK records contain public sector information licensed under the Open Government Licence v3.0. UK instruments are indexed by publication date. Their series alone does not establish territorial extent. US drug recall data is supplied by openFDA. EMA publishes the EU shortage status. UK availability requires a separate assessment.'
+ ]},now.getTime());
+}

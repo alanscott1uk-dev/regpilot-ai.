@@ -1,0 +1,5 @@
+import {context,reply,fail,readBody,validId} from '../../../../lib/server/operations-http';
+import {createCustomerCredential,developerWorkspace} from '../../../../lib/server/customer-api-service';
+export const runtime='nodejs',dynamic='force-dynamic';
+export async function GET(request:Request){try{const params=new URL(request.url).searchParams,ctx=await context(request,params.get('organizationId'),true);return reply(await developerWorkspace(ctx,{...(params.has('requestKey')?{requestKey:validId(params.get('requestKey'))}:{}),...(params.has('credentialId')?{credentialId:validId(params.get('credentialId'))}:{}),...(params.has('observationId')?{observationId:validId(params.get('observationId'))}:{}),...(params.has('beforeId')?{beforeId:validId(params.get('beforeId'))}:{}),all:params.get('all')==='true'}));}catch(error){return fail(error);}}
+export async function POST(request:Request){try{const ctx=await context(request,new URL(request.url).searchParams.get('organizationId'),true);return reply(await createCustomerCredential(ctx,await readBody(request,16384)),201);}catch(error){return fail(error);}}

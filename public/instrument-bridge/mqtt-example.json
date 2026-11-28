@@ -1,0 +1,21 @@
+{
+  "controlId": "42b64e48-6eb2-45d2-8b77-5a48cc8c4143",
+  "siteRef": "warehouse",
+  "expectedSerial": "LOGGER-7",
+  "decisionOwnerRef": "quality",
+  "host": "broker.example.invalid",
+  "port": 8883,
+  "topic": "warehouse/cold-room/LOGGER-7",
+  "brokerCA": "broker-ca.pem",
+  "clientCertificate": "reader-cert.pem",
+  "clientPrivateKey": "reader-key.pem",
+  "calibrationRef": "CAL-7",
+  "calibrationFile": "approved-calibration.pdf",
+  "calibrationSha256": "replace-with-the-approved-64-character-sha256",
+  "calibratedAt": "2026-01-01T00:00:00Z",
+  "calibrationDue": "2027-01-01T00:00:00Z",
+  "minimumC": 2,
+  "maximumC": 8,
+  "maxGapSeconds": 300,
+  "maxDeliveryDelaySeconds": 60
+}

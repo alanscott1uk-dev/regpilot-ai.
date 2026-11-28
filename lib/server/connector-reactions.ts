@@ -1,0 +1,65 @@
+import {settleLeaverFollowUp} from "./leaver-follow-up";
+import {recordTaskObservation} from './connector-task-observations';
+import {verifiedObservation} from './connector-observation';
+import {connectorControlIds} from './connector-scope';
+import {Prisma,type EvidenceConnector,type AutomationEvent,type ConnectorRun} from '@prisma/client';
+import {IntelligenceError} from './intelligence-service';
+import {requireMember,ADMIN,WRITER} from './workspace-member';
+import {connectorProviderEnabled} from './connector-flags';
+import {followUpVendorSignals} from './vendor-signals';
+import {hashValue} from '../regulatory/intelligence';
+import {observationOutcome} from '../connectors/observation';
+export class ReactionInvalid extends Error {constructor(public code:'INPUT_INTEGRITY_FAILED'|'EVENT_KIND_UNSUPPORTED'){super('Automation input requires review');}}
+export class ReactionPaused extends Error{}
+export async function followUpConnectorControls(tx:Prisma.TransactionClient,job:EvidenceConnector,reason:string,onlyControlIds?:string[],trigger?:{run:ConnectorRun;changed:boolean}){
+ const ids=onlyControlIds||await connectorControlIds(tx,job.organizationId,job.id,job.controlId);
+ if(!ids.length)return 0;
+ const controls=await tx.$queryRaw<{id:string;ownerId:string;title:string;email:string}[]>`
+  SELECT c.id,c."ownerId",c.title,u.email FROM "ManagedControl" c JOIN "User" u ON u.id=c."ownerId"
+  WHERE c."organizationId"=${job.organizationId}::uuid AND c.id=ANY(${ids}::uuid[]) AND c.enabled=true
+  ORDER BY c.id FOR SHARE OF c,u`;
+ let created=0;
+ for(const control of controls){
+  try{await requireMember(tx,{organizationId:job.organizationId,userId:control.ownerId,role:'EDITOR'},WRITER);}catch(e){if(e instanceof IntelligenceError&&e.status===403)continue;throw e;}
+  const existing=await tx.obligation.findFirst({where:{organizationId:job.organizationId,connectorId:job.id,controlId:control.id,status:{not:'COMPLETE'}},orderBy:[{createdAt:'asc'},{id:'asc'}],select:{id:true,category:true}});
+  const task=existing??await tx.obligation.create({data:{organizationId:job.organizationId,title:('Review connected evidence: '+control.title).slice(0,160),ownerName:control.email,assigneeId:control.ownerId,controlId:control.id,connectorId:job.id,category:'Automated evidence follow-up',dueDate:new Date(),notes:reason+' Review the collection and record your decision.'},select:{id:true,category:true}});
+  if(!existing)created++;
+  if(trigger&&task.category==='Automated evidence follow-up'){
+   await recordTaskObservation(tx,job.configuredById,{id:task.id,organizationId:job.organizationId,connectorId:job.id,controlId:control.id},trigger.run,trigger.changed);
+  }
+ }
+ return created;
+}
+
+/** Database effects only. The queue commits effects and acknowledgement together. */
+export async function applyConnectorReaction(tx:Prisma.TransactionClient,event:AutomationEvent):Promise<'DONE'|'CANCELLED'>{
+ const [job]=await tx.$queryRaw<EvidenceConnector[]>`SELECT * FROM "EvidenceConnector"
+  WHERE id=${event.connectorId}::uuid AND "organizationId"=${event.organizationId}::uuid FOR SHARE`;
+ if(!job||(!job.enabled&&event.kind!=='CONNECTOR_FAILED')||job.version!==event.configVersion)return 'CANCELLED';
+ if(!connectorProviderEnabled(job.provider))throw new ReactionPaused();
+ const ctx={organizationId:job.organizationId,userId:job.configuredById,role:'ADMIN' as const};
+ try{await requireMember(tx,ctx,ADMIN);}catch(error){if(error instanceof IntelligenceError&&error.status===403)return 'CANCELLED';throw error;}
+ const [control]=await tx.$queryRaw<{id:string}[]>`SELECT id FROM "ManagedControl"
+  WHERE id=${job.controlId}::uuid AND "organizationId"=${job.organizationId}::uuid AND enabled=true FOR SHARE`;
+ if(!control)return 'CANCELLED';
+ if(event.kind==='CONNECTOR_OBSERVED'){
+  const run=event.runId?await tx.connectorRun.findFirst({where:{id:event.runId,organizationId:job.organizationId,connectorId:job.id,configVersion:event.configVersion}}):null;
+  if(!run||hashValue(run.result)!==run.resultHash||run.signalHash!==event.fingerprint)throw new ReactionInvalid('INPUT_INTEGRITY_FAILED');
+  const observation=verifiedObservation(run);
+  if(!observation||!Array.isArray(observation.checks)||hashValue({engine:observation.engine,checks:observation.checks})!==run.signalHash)throw new ReactionInvalid('INPUT_INTEGRITY_FAILED');
+  if(observationOutcome(observation)!==run.outcome)throw new ReactionInvalid('INPUT_INTEGRITY_FAILED');
+  if(job.provider==="WORKFORCE_LEAVER"){
+   const settlement=await settleLeaverFollowUp(tx,job,run,observation);
+   if(settlement==="SUPERSEDED")return "CANCELLED";
+   if(settlement==="VERIFIED")return "DONE";
+   await followUpConnectorControls(tx,job,"Verify the effective BambooHR termination, linked Jira issue and disabled Microsoft identity.",undefined,{run,changed:event.changed});
+  }else if(run.outcome!=='OBSERVED'||event.changed)await followUpConnectorControls(tx,job,event.changed?'Observed signals changed since the last collection. Check the before/after values and remaining gaps.':'The collection contains failing or unknown signals requiring investigation.',undefined,{run,changed:event.changed});
+  await followUpVendorSignals(tx,ctx,job,event.fingerprint);
+ }else if(event.kind==='CONNECTOR_FAILED'){
+  // Recovered collections supersede old failures; do not create stale failure tasks.
+  if(!event.reasonCode||job.failureCode!==event.reasonCode||job.lastSuccessAt&&job.lastSuccessAt>=event.createdAt)return 'CANCELLED';
+  await followUpConnectorControls(tx,job,'Evidence collection failed. Earlier observations may be stale; check credentials, permissions and provider availability.');
+  await followUpVendorSignals(tx,ctx,job,event.reasonCode,true);
+ }else throw new ReactionInvalid('EVENT_KIND_UNSUPPORTED');
+ return 'DONE';
+}

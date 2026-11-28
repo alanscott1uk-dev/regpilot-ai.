@@ -1,0 +1,211 @@
+'use client';
+import {useEffect,useRef,useState} from 'react';
+import WorkspaceNav from '../../components/workspace-nav';
+import EmailSignIn from '../../components/email-sign-in';
+import {useWorkspaceContext,workspaceHref} from '../../../lib/client/workspace-context';
+import {workUuid} from '../../../lib/work-hub.mjs';
+import {questionnaireCoverageByProduct} from '../../../lib/questionnaire-automation';
+import {ExportPanel} from './export-panel';
+import {ImportPanel} from './import-panel';
+import {CandidatePreview,QuestionEditor} from './question-editor';
+import type {Automation,Detail,Overview,Reconciliation,Write,WriteAction} from './types';
+import {insightLabel,questionLabel,questionSourceLabel} from './types';
+import shell from '../../workbench/workbench.module.css';
+import css from './questionnaires.module.css';
+
+type Workspace=ReturnType<typeof useWorkspaceContext>;
+type Filter='all'|'unfinished'|'supported'|'gaps'|'conflicts'|'confirmed'|'unresolved';
+function buyerTransferNonce(){return /^#portal-import=([a-f0-9-]{36})$/i.exec(window.location.hash)?.[1]??'';}
+function linkedRecord(){
+ const params=new URLSearchParams(window.location.search),id=params.get('questionnaireId'),question=params.get('questionId');
+ if(params.getAll('questionnaireId').length>1||params.getAll('questionId').length>1||id&&(!workUuid(id)||params.getAll('organizationId').length!==1||!workUuid(params.get('organizationId')))||question&&(!workUuid(question)||!id))return {id:'',question:'',error:'This questionnaire link is incomplete or invalid. Choose a saved questionnaire below.'};
+ return {id:id?.toLowerCase()||'',question:question?.toLowerCase()||'',error:''};
+}
+function recordLink(organizationId:string,id:string,questionId=''){
+ const url=new URL(window.location.href);url.searchParams.set('organizationId',organizationId);
+ for(const key of ['questionnaireId','questionId','answerId'])url.searchParams.delete(key);
+ if(id)url.searchParams.set('questionnaireId',id);if(questionId)url.searchParams.set('questionId',questionId);
+ window.history.replaceState(window.history.state,'',url.pathname+url.search);window.dispatchEvent(new Event('regpilot-workspace-navigation'));
+}
+const productLabel=(value:{reference:string;productName?:string})=>value.reference+(value.productName?' · '+value.productName:'');
+export default function Questionnaires(){
+ const workspace=useWorkspaceContext(),[locked,setLocked]=useState(false);
+ const [portalNonce,setPortalNonce]=useState('');
+ useEffect(()=>{
+  const readTransfer=()=>setPortalNonce(buyerTransferNonce());
+  readTransfer();
+  window.addEventListener('hashchange',readTransfer);
+  window.addEventListener('regpilot-workspace-navigation',readTransfer);
+  return ()=>{window.removeEventListener('hashchange',readTransfer);window.removeEventListener('regpilot-workspace-navigation',readTransfer);};
+ },[]);
+ const current=workspace.organisations.find(organization=>organization.id===workspace.organizationId);
+ useEffect(()=>setLocked(false),[workspace.revision]);
+ return <div className={shell.app}><WorkspaceNav/><main className={shell.main}><div className={css.topline}><span>Customer assurance / Questionnaires</span><span>PRIVATE WORKSPACE</span></div><header className={css.hero}><div><span className={css.eyebrow}>CUSTOMER QUESTIONS, COMPANY KNOWLEDGE, SUPPORTING PROOF</span><h1>Customer questionnaires</h1><p>Import the customer’s workbook, find approved responses and prepare missing answers from evidence. Review the exact wording before exporting or sharing.</p></div><aside className={css.heroAside}><strong>One response workspace</strong>File import · answer reuse · grounded drafts · reviewed export</aside></header>
+  {workspace.error&&<div className={css.error} role="alert">{workspace.error}<div className={css.actions}><button type="button" onClick={()=>void workspace.refreshContext()}>Refresh access</button></div></div>}
+  {workspace.loading?<p role="status" className={css.empty}>Opening your workspace…</p>:!workspace.signedIn?<section className={css.panel}><h2>Sign in to your workspace</h2><p>Use your approved email to open your organisation’s questionnaires and evidence.</p>{portalNonce&&<p>Keep this tab open. If your sign-in email opens a new tab, return here to review the buyer’s questions. The helper on the buyer page can bring you back.</p>}<EmailSignIn destination="/team/questionnaires"/>{portalNonce&&<button type="button" onClick={()=>void workspace.refreshContext()}>Continue after signing in</button>}</section>:<>
+   <section className={css.toolbar}><label>Organisation<select aria-label="Organisation" value={workspace.organizationId} disabled={locked} onChange={event=>workspace.chooseOrganization(event.target.value)}><option value="" disabled>Choose an organisation</option>{workspace.organisations.map(organization=><option key={organization.id} value={organization.id}>{organization.name}</option>)}</select></label><div className={css.actions}><a className={css.link} href={workspaceHref('/team/answers',workspace.organizationId)}>Approved answer library →</a><a className={css.link} href={workspaceHref('/team/evidence',workspace.organizationId)}>Evidence library →</a><a className={css.link} href={workspaceHref('/team/products',workspace.organizationId)}>Products and evidence →</a></div></section>
+   {!workspace.organizationId?<section className={css.panel}><h2>Choose an available organisation</h2><p>The requested company’s records will not be opened in another organisation.</p>{!workspace.organisations.length&&<a className={css.link} href="/team/setup">Set up your organisation →</a>}</section>:current?.role==='VIEWER'?<section className={css.panel}><h2>Response preparation needs editor access</h2><p>An editor, administrator or owner can work with customer questionnaires. Ask an administrator to assign the work to an eligible colleague.</p></section>:<QuestionnaireDesk key={workspace.userId+':'+workspace.organizationId+':'+workspace.revision+':'+portalNonce} workspace={workspace} portalNonce={portalNonce} onLocked={setLocked}/>}
+  </>}
+ </main></div>;
+}
+function QuestionnaireDesk({workspace,portalNonce,onLocked}:{workspace:Workspace;portalNonce:string;onLocked:(locked:boolean)=>void}){
+ const {organizationId,userId,request,requestResponse,capture}=workspace;
+ const [overview,setOverview]=useState<Overview|null>(null),[detail,setDetail]=useState<Detail|null>(null),[automation,setAutomation]=useState<Automation|null>(null),[selectedId,setSelectedId]=useState(''),[selectedQuestion,setSelectedQuestion]=useState('');
+ const [loading,setLoading]=useState(true),[reading,setReading]=useState(false),[error,setError]=useState(''),[automationError,setAutomationError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(''),[unknown,setUnknown]=useState<WriteAction<unknown>|null>(null),[checking,setChecking]=useState(false);
+ const [showImport,setShowImport]=useState(false),[filter,setFilter]=useState<Filter>('unfinished'),[search,setSearch]=useState(''),[selectedQuestions,setSelectedQuestions]=useState<string[]>([]),[batch,setBatch]=useState<Automation|null>(null),[batchChoices,setBatchChoices]=useState<Record<string,string>>({}),[batchConfirmed,setBatchConfirmed]=useState(false),[previewing,setPreviewing]=useState(false);
+ const [coverageProduct,setCoverageProduct]=useState<string|null>(null);
+ const questionFilters=useRef<HTMLDivElement>(null);
+ const [productNotes,setProductNotes]=useState(''),[productConfirmed,setProductConfirmed]=useState(false);
+ const [reviewNotes,setReviewNotes]=useState(''),[disclosureConfirmed,setDisclosureConfirmed]=useState(false),[transitionNotes,setTransitionNotes]=useState(''),[transitionConfirmed,setTransitionConfirmed]=useState(false),[downloading,setDownloading]=useState('');
+ const alive=useRef(true),recordSerial=useRef(0),overviewSerial=useRef(0),selection=useRef(''),questionSelection=useRef(''),mutation=useRef(false),batchKey=useRef({payload:'',id:''});
+ const locked=!!busy||!!unknown||previewing;
+ const base='/api/workspace/questionnaires',query='?'+new URLSearchParams({organizationId});
+ useEffect(()=>{alive.current=true;return()=>{alive.current=false;recordSerial.current++;overviewSerial.current++;onLocked(false);};},[onLocked]);
+ useEffect(()=>onLocked(locked),[locked,onLocked]);
+ async function refreshOverview(){
+  const serial=++overviewSerial.current,valid=capture();const value:Overview=await request(base+query);
+  if(!alive.current||!valid()||serial!==overviewSerial.current)return;
+  if(!Array.isArray(value.questionnaires)||!Array.isArray(value.members))throw Error('The questionnaire workspace returned an incomplete result.');setOverview(value);
+ }
+ async function loadRecord(id:string,preferredQuestion=''){
+  if(!id)return;const serial=++recordSerial.current,valid=capture();setReading(true);setError('');setAutomationError('');
+  const results=await Promise.allSettled([request(base+'/'+id+query),request(base+'/'+id+'/automation'+query)]);
+  if(!alive.current||!valid()||serial!==recordSerial.current||selection.current!==id||buyerTransferNonce()!==portalNonce)return;
+  const record=results[0],insights=results[1];
+  if(record.status==='rejected'){setDetail(null);setAutomation(null);setError(record.reason instanceof Error?record.reason.message:'This questionnaire could not be opened.');setReading(false);return;}
+  const value:Detail=record.value;if(value?.questionnaire?.id!==id||!Array.isArray(value.questions)){setDetail(null);setAutomation(null);setError('The requested questionnaire was not returned.');setReading(false);return;}
+  setDetail(value);setDisclosureConfirmed(false);setTransitionConfirmed(false);setProductConfirmed(false);
+  const target=preferredQuestion||questionSelection.current;
+  if(target&&!value.questions.some(question=>question.id===target)){setSelectedQuestion('');questionSelection.current='';setError('The linked question is unavailable in this questionnaire. Choose a visible question to continue.');}
+  else{const chosen=target||value.questions.find(question=>question.status!=='READY')?.id||value.questions[0]?.id||'';setSelectedQuestion(chosen);questionSelection.current=chosen;if(chosen)recordLink(organizationId,id,chosen);}
+  if(insights.status==='fulfilled'&&insights.value?.questionnaireId===id&&insights.value.version===value.questionnaire.version&&Array.isArray(insights.value.questions))setAutomation(insights.value);
+  else{setAutomation(null);setAutomationError(insights.status==='rejected'&&insights.reason instanceof Error?insights.reason.message:'Answer suggestions changed during this read. Refresh the questionnaire before preparing suggestions.');}
+  setSelectedQuestions(previous=>previous.filter(questionId=>value.questions.some(question=>question.id===questionId&&question.status!=='READY')));setReading(false);
+ }
+ async function openRecord(id:string,questionId=''){
+  if(!alive.current||!workUuid(id)||buyerTransferNonce()!==portalNonce)return;selection.current=id;questionSelection.current=questionId;setSelectedId(id);setSelectedQuestion(questionId);setDetail(null);setAutomation(null);setBatch(null);setBatchChoices({});setSelectedQuestions([]);setBatchConfirmed(false);setReviewNotes('');setTransitionNotes('');setShowImport(false);setFilter('unfinished');setCoverageProduct(null);setSearch('');recordLink(organizationId,id,questionId);await loadRecord(id,questionId);
+ }
+ async function refresh(){setBatch(null);setBatchConfirmed(false);await refreshOverview();if(selection.current)await loadRecord(selection.current);}
+ useEffect(()=>{const valid=capture();const linked=linkedRecord();if(linked.error)setError(linked.error);
+  void refreshOverview().then(async()=>{if(!alive.current||!valid())return;if(linked.id&&!portalNonce)await openRecord(linked.id,linked.question);}).catch(problem=>{if(alive.current&&valid()){setOverview(null);setError(problem instanceof Error?problem.message:'The questionnaire workspace could not be loaded.');}}).finally(()=>{if(alive.current&&valid())setLoading(false);});
+ },[]);
+ const write:Write=async action=>{
+  if(mutation.current)return;mutation.current=true;setBusy(action.label);setError('');setNotice('');const valid=capture();let acknowledged=false;
+  try{const result=await action.run();if(!alive.current||!valid())return;acknowledged=true;await action.success(result);if(!alive.current||!valid())return;setUnknown(null);setNotice(action.message||'The change was saved.');}
+  catch(problem){if(alive.current&&valid()){if(acknowledged){setError('The change was saved, but the updated workspace could not be loaded. Refresh the questionnaire before continuing.');}else{setUnknown(action as WriteAction<unknown>);setError((problem instanceof Error?problem.message:'The response could not be read.')+' The saved outcome has not been confirmed.');}}}
+  finally{if(alive.current&&valid()){setBusy('');mutation.current=!acknowledged;}}
+ };
+ async function reconcile(){
+  if(!unknown||checking)return;const valid=capture();setChecking(true);setError('');
+  try{const result:Reconciliation=await unknown.reconcile();if(!alive.current||!valid())return;if(result.state==='pending'){setNotice(result.message);return;}if(result.after)await result.after();if(!alive.current||!valid())return;setUnknown(null);mutation.current=false;setNotice(result.message);}
+  catch(problem){if(alive.current&&valid())setError(problem instanceof Error?problem.message:'The saved result could not be checked.');}
+  finally{if(alive.current&&valid())setChecking(false);}
+ }
+ async function change(body:Record<string,unknown>,message:string){
+  if(!detail)return;const id=detail.questionnaire.id,version=detail.questionnaire.version;
+  await write({label:'Saving questionnaire review',run:async()=>{const value=await request(base+'/'+id+query,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,version})});if(value?.id!==id)throw Error('The saved review acknowledgement was incomplete.');return value;},success:async()=>{setBatch(null);setReviewNotes('');setTransitionNotes('');await refresh();},message,reconcile:async()=>{
+   const value:Detail=await request(base+'/'+id+query);if(value.questionnaire.id!==id)return {state:'pending',message:'The exact questionnaire could not be checked.'};
+   const question=value.questions.find(item=>item.id===body.questionId),matched=body.action==='ANSWER'?question?.status==='READY'&&question.answerId===body.answerId:body.action==='ASSIGN'?question?.ownerId===body.ownerId:body.action==='APPROVE'?value.questionnaire.status==='APPROVED'&&value.questionnaire.reviewerId===userId:body.action==='REOPEN'?value.questionnaire.status==='DRAFT':body.action==='WITHDRAW'?value.questionnaire.status==='WITHDRAWN':false;
+   if(matched&&value.questionnaire.version>version)return {state:'saved',message:'The expected review result is present in the saved questionnaire.',after:refresh};
+   if(value.questionnaire.version===version)return {state:'absent',message:'The questionnaire is unchanged. Review the current record before explicitly trying the action again.',after:refresh};
+   return {state:'saved',message:'The questionnaire changed, but the original action could not be matched conclusively. The current saved version is loaded; review it before another change.',after:refresh};
+  }});
+ }
+ async function preview(){
+  if(!detail||!selectedQuestions.length||!automation?.canPrepare||locked)return;const id=detail.questionnaire.id,version=detail.questionnaire.version,valid=capture();setPreviewing(true);setError('');setBatch(null);setBatchConfirmed(false);
+  try{const value:Automation=await request(base+'/'+id+'/automation'+query,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({operation:'PREVIEW',version})});if(!alive.current||!valid()||selection.current!==id)return;if(value.questionnaireId!==id||value.version!==version||!value.previewToken)throw Error('The preview did not match this questionnaire version. Refresh before trying again.');setBatch(value);const choices:Record<string,string>={};for(const question of value.questions)if(selectedQuestions.includes(question.id)&&question.recommendedAnswerId&&question.status!=='READY')choices[question.id]=question.recommendedAnswerId;setBatchChoices(choices);}
+  catch(problem){if(alive.current&&valid())setError(problem instanceof Error?problem.message:'The answer preview could not be prepared.');}
+  finally{if(alive.current&&valid())setPreviewing(false);}
+ }
+ async function applySuggestions(){
+  if(!batch?.previewToken||!batchConfirmed)return;const selections=Object.entries(batchChoices).filter(([,answerId])=>!!answerId).map(([questionId,answerId])=>({questionId,answerId}));if(!selections.length)return;
+  const id=batch.questionnaireId,version=batch.version,input={operation:'APPLY',version,previewToken:batch.previewToken,selections,confirm:true},payload=JSON.stringify(input);if(batchKey.current.payload!==payload)batchKey.current={payload,id:crypto.randomUUID()};const requestKey=batchKey.current.id;
+  await write({label:'Saving selected answer suggestions',run:async()=>{const value=await request(base+'/'+id+'/automation'+query,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...input,requestKey})});if(value?.id!==id||value.requestKey!==requestKey||!Number.isInteger(value.version)||!Number.isInteger(value.applied))throw Error('The suggestion acknowledgement was incomplete.');return value;},success:async()=>{setBatch(null);setBatchChoices({});setBatchConfirmed(false);setSelectedQuestions([]);await refresh();},message:selections.length+' suggestions were saved. Question owners must still confirm the responses.',reconcile:async()=>{
+   const value:Automation=await request(base+'/'+id+'/automation'+query+'&requestKey='+requestKey),operation=value.operation;if(operation&&operation.requestKey===requestKey&&operation.questionnaireId===id)return {state:'saved',message:'The original suggestion batch was saved. No duplicate batch was submitted.',after:async()=>{setBatch(null);setBatchChoices({});setSelectedQuestions([]);await refresh();}};
+   if(operation===null)return {state:'absent',message:'No saved suggestion batch was found for this request. Refresh the preview before explicitly applying again.',after:async()=>{setBatch(null);await refresh();}};
+   return {state:'pending',message:'The suggestion batch outcome is still unavailable. Check again before another change.'};
+  }});
+ }
+ async function download(format:'csv'|'xlsx'){
+  if(!detail||downloading||locked)return;const id=detail.questionnaire.id,valid=capture();setDownloading(format);setError('');
+  try{const response=await requestResponse(base+'/'+id+'/export'+query+'&format='+format),blob=await response.blob();if(!alive.current||!valid()||selection.current!==id)return;const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download='regpilot-questionnaire.'+format;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+  catch(problem){if(alive.current&&valid()&&selection.current===id)setError(problem instanceof Error?problem.message:'The approved response could not be downloaded.');}
+  finally{if(alive.current&&valid())setDownloading('');}
+ }
+ function showProductQuestions(productId:string|null, nextFilter:Filter){
+  setCoverageProduct(productId);
+  setFilter(nextFilter);
+  setSearch('');
+  setSelectedQuestions([]);
+  setBatch(null);
+  setBatchConfirmed(false);
+  const target=detail?.questions.find(value=>{
+   const insight=insights.get(value.id);
+   return (productId===null||(value.productId??'')===productId)
+    &&(nextFilter!=='unresolved'||value.status!=='READY'&&insight&&insight.classification!=='SUPPORTED');
+  });
+  questionSelection.current=target?.id??'';
+  setSelectedQuestion(questionSelection.current);
+  recordLink(organizationId,selectedId,questionSelection.current);
+  requestAnimationFrame(()=>questionFilters.current?.focus());
+ }
+ const insights=new Map(automation?.questions.map(question=>[question.id,question])||[]),question=detail?.questions.find(value=>value.id===selectedQuestion),currentInsight=question?insights.get(question.id):undefined;
+ const visible=detail?.questions.filter(value=>{const insight=insights.get(value.id),matches=(value.reference+' '+(value.productName||'')+' '+value.question+' '+(value.instructions||'')).toLowerCase().includes(search.trim().toLowerCase());return matches&&(coverageProduct===null||(value.productId??'')===coverageProduct)&&(filter==='all'||filter==='unresolved'&&value.status!=='READY'&&!!insight&&insight.classification!=='SUPPORTED'||filter==='unfinished'&&value.status!=='READY'||filter==='confirmed'&&value.status==='READY'||filter==='supported'&&insight?.classification==='SUPPORTED'||filter==='gaps'&&['UNANSWERED','EXPIRED'].includes(insight?.classification||'')||filter==='conflicts'&&['CONFLICTING','AMBIGUOUS'].includes(insight?.classification||''));})||[];
+ const questionnaire=detail?.questionnaire,admin=overview?.admin===true,summary=automation?.summary;
+ const coverage=questionnaireCoverageByProduct(automation?.questions??[]);
+ const eligibleReview=!!detail&&admin&&detail.questionnaire.createdById!==userId&&!detail.questions.some(value=>value.changedById===userId||value.files.some(file=>file.uploadedById===userId));
+ const batchRows=batch?.questions.filter(value=>selectedQuestions.includes(value.id)&&value.status!=='READY')||[];
+ return <>
+  {(error||notice||busy)&&<div className={error?css.error:css.notice} role={error?'alert':'status'}>{error||notice}{busy&&<p>{busy}…</p>}</div>}
+  {unknown&&<section className={css.warning} aria-label="Unconfirmed saved result"><strong>Check the saved result before continuing</strong><p>The response was interrupted. Changes are paused until this request is checked; no repeat write or generation has been sent.</p><button type="button" className={css.secondary} disabled={checking} onClick={()=>void reconcile()}>{checking?'Checking saved result…':'Check saved result'}</button></section>}
+  <section className={css.panel} aria-label="Saved questionnaires"><div className={css.heading}><h2>Your questionnaires</h2><div className={css.actions}><button type="button" className={css.secondary} disabled={locked||loading||reading} onClick={()=>{setError('');void refresh().catch(problem=>setError(problem instanceof Error?problem.message:'The workspace could not be refreshed.'));}}>Refresh questionnaires</button>{admin&&<button type="button" disabled={locked} onClick={()=>setShowImport(previous=>!previous)} aria-expanded={showImport}>{showImport?'Close import':'Import questionnaire'}</button>}</div></div>
+   {loading?<p role="status">Loading questionnaires…</p>:overview?.questionnaires.length?<div className={css.records}>{overview.questionnaires.map(value=><button type="button" className={css.record} aria-pressed={selectedId===value.id} disabled={locked} key={value.id} onClick={()=>void openRecord(value.id)}><strong>{value.title}</strong><span>{value.scope}</span><span>{value.status==='APPROVED'?'Disclosure approval recorded':value.status==='WITHDRAWN'?'Withdrawn':'Response preparation'} · version {value.version}</span></button>)}</div>:<p className={css.empty}>{admin?'Import a customer’s XLSX or CSV file to prepare your first response.':'Questionnaires assigned to you will appear here.'}</p>}
+  </section>
+  {!!overview?.recurringGaps?.length&&<section className={css.panel} aria-labelledby="recurring-questions">
+   <h2 id="recurring-questions">Recurring questions awaiting confirmation</h2>
+   <p>Up to 12 repeated questions from draft records in the latest 100 questionnaires. Groups use the same scope, product, wording and customer instructions.</p>
+   <div className={css.coverageGrid}>{overview.recurringGaps.map(group=><article key={group.links[0].questionId}>
+    <h3>{group.question}</h3>
+    <p>{group.productName} · {group.scope}</p>
+    {group.instructions&&<p>Customer instructions: {group.instructions}</p>}
+    <p>{group.pendingCount} responses awaiting confirmation across {group.questionnaireCount} questionnaires.</p>
+    <ul>{group.links.map(link=><li key={link.questionnaireId}>
+     <button type="button" className={css.secondary} disabled={locked||reading} onClick={()=>void openRecord(link.questionnaireId,link.questionId)}>{link.title}</button>
+    </li>)}</ul>
+    {group.questionnaireCount>group.links.length&&<small>Showing the latest {group.links.length} questionnaires.</small>}
+   </article>)}</div>
+  </section>}
+  {admin&&(portalNonce||showImport||!!overview&&!overview.questionnaires.length)&&<ImportPanel key={organizationId+portalNonce} portalNonce={portalNonce} requestResponse={requestResponse} organizationId={organizationId} members={overview?.members||[]} products={overview?.products||[]} request={request} capture={capture} write={write} locked={locked} onCreated={async id=>{await refreshOverview();await openRecord(id);}}/>}
+  {reading&&!detail&&<p className={css.empty} role="status">Opening the selected questionnaire and its answer knowledge…</p>}
+  {detail&&questionnaire&&<section className={css.panel+' '+css.anchor} aria-label="Questionnaire response workspace"><div className={css.heading}><div><span className={css.eyebrow}>02 / PREPARE THE RESPONSE</span><h2>{questionnaire.title}</h2><p>Prepared for {questionnaire.recipient} · {questionnaire.scope}</p></div><span className={css.badge}>{questionnaire.status==='APPROVED'?'Approval recorded':questionnaire.status==='WITHDRAWN'?'Withdrawn':'Draft disclosure'}</span></div>
+   {automationError&&<p className={css.warning} role="alert">{automationError}</p>}
+   {questionnaire.productContext&&<div className={css.notice}><strong>Products: {questionnaire.productContext.products.map(p=>p.name).join(' · ')}</strong><p>Each source question has a separate answer, owner confirmation and evidence check for every product.</p>{admin&&questionnaire.status==='DRAFT'&&<details><summary className={css.sectionToggle}>Refresh product versions</summary><p>After product details change, refresh their recorded versions and review all affected answers. Responses for changed products will require confirmation again.</p><form onSubmit={e=>{e.preventDefault();if(productConfirmed)void change({action:'REFRESH_PRODUCTS',notes:productNotes,confirm:true},'Product versions refreshed. Review and confirm the affected responses.');}}><label className={css.field}>Reason for refreshing product versions<textarea required minLength={40} maxLength={1600} value={productNotes} disabled={locked} onChange={e=>{setProductNotes(e.target.value);setProductConfirmed(false);}}/></label><label className={css.check}><input type="checkbox" checked={productConfirmed} required disabled={locked} onChange={e=>setProductConfirmed(e.target.checked)}/>I will review these responses against the current product details and supporting evidence.</label><button disabled={locked||!productConfirmed}>Refresh selected products</button></form></details>}</div>}
+
+   {summary&&<><div className={css.statGrid}><div className={css.stat}><span>Questions</span><strong>{summary.total}</strong><small>Within your access</small></div><div className={css.stat}><span>Exact approved matches</span><strong>{summary.supported}</strong><small>Owner relevance review required</small></div><div className={css.stat}><span>Questions without an exact match</span><strong>{summary.unanswered+summary.expired+summary.conflicting+summary.ambiguous}</strong><small>Inspect before responding</small></div><div className={css.stat}><span>Owner confirmed</span><strong>{summary.ready}</strong><small>Disclosure approval is separate</small></div></div><div className={css.progress} aria-label={summary.ready+' of '+summary.total+' questions owner confirmed'}><span style={{width:(summary.total?summary.ready/summary.total*100:0)+'%'}}/></div></>}
+   {automation&&<details style={{margin:'18px 0'}}><summary className={css.sectionToggle}>Answer library health</summary><p>{automation.knowledgeHealth.current} current · {automation.knowledgeHealth.expired} expired · {automation.knowledgeHealth.stale} changed supporting records · {automation.knowledgeHealth.draft} drafts · {automation.knowledgeHealth.withdrawn} withdrawn.</p><a className={css.link} href={workspaceHref('/team/answers',organizationId,{questionnaireId:questionnaire.id,...(selectedQuestion?{questionId:selectedQuestion}:{})})}>Review reusable answers →</a></details>}
+   {coverage.length>0&&<details className={css.coverage} aria-label="Answer coverage by product">
+    <summary className={css.sectionToggle}>Answer coverage by product</summary>
+    <p>Coverage uses the visible questions in this questionnaire. An exact match still needs owner confirmation.</p>
+    <div className={css.coverageGrid}>{coverage.map(group=><article key={group.id}>
+      <h3>{group.name}</h3>
+      <p>{group.supported} of {group.total} exact matches · {group.confirmed} owner confirmed</p>
+      <p>{group.unanswered} missing · {group.expired} needs fresh review · {group.conflicting} conflicting · {group.ambiguous} ambiguous</p>
+      <div className={css.actions}>
+        <button type="button" className={css.secondary} disabled={locked} onClick={()=>showProductQuestions(group.id,'all')}>View questions for {group.name}</button>
+        {group.unresolved>0&&<button type="button" className={css.secondary} disabled={locked} onClick={()=>showProductQuestions(group.id,'unresolved')}>Review {group.unresolved} unresolved for {group.name}</button>}
+      </div>
+    </article>)}</div>
+   </details>}
+   <div ref={questionFilters} tabIndex={-1} className={css.tabs} aria-label="Question filters">{([['all','All questions'],['unfinished','Needs confirmation'],['supported','Approved matches'],['gaps','Evidence gaps'],['conflicts','Review matches'],['unresolved','Unresolved coverage'],['confirmed','Owner confirmed']] as const).map(([value,label])=><button type="button" key={value} aria-pressed={filter===value} disabled={locked} onClick={()=>setFilter(value)}>{label}</button>)}</div>
+   {coverageProduct!==null&&<p className={css.notice}>Showing {coverage.find(group=>group.id===coverageProduct)?.name ?? 'selected product'} questions. <button type="button" className={css.secondary} disabled={locked} onClick={()=>showProductQuestions(null,'all')}>Show all products</button></p>}
+   <div className={css.search}><input aria-label="Find a question" value={search} maxLength={120} onChange={event=>setSearch(event.target.value)} placeholder="Find a reference, question or instruction"/>{automation?.canPrepare&&questionnaire.status==='DRAFT'&&<><button type="button" className={css.secondary} disabled={locked} onClick={()=>{setSelectedQuestions(visible.filter(value=>value.status!=='READY').map(value=>value.id));setBatch(null);setBatchConfirmed(false);}}>Select unfinished questions</button><button type="button" disabled={locked||!selectedQuestions.length} onClick={()=>void preview()}>{previewing?'Preparing preview…':'Preview '+selectedQuestions.length+' answer suggestions'}</button></>}</div>
+   {batch&&<section className={css.batch} aria-label="Answer suggestion preview"><div className={css.heading}><div><h3>Review the selected suggestions</h3><p>Choose the responses to save as suggestions. Each question owner must still confirm the answer against the customer’s context.</p></div><button type="button" className={css.secondary} disabled={locked} onClick={()=>{setBatch(null);setBatchConfirmed(false);}}>Close preview</button></div>{batchRows.map(value=>{const chosen=value.candidates.find(candidate=>candidate.id===batchChoices[value.id]);return <article className={css.candidate} key={value.id}><h4>{productLabel(value)} · {value.question}</h4>{detail.questions.find(question=>question.id===value.id)?.source&&<p className={css.metadata}>{questionSourceLabel(detail.questions.find(question=>question.id===value.id)?.source)}</p>}{value.instructions&&<><strong>Customer instructions</strong><div className={css.prose}>{value.instructions}</div></>}{value.suppliedAnswer&&<details><summary className={css.sectionToggle}>Unapproved response from the original file</summary><div className={css.prose}>{value.suppliedAnswer}</div></details>}<p className={css.muted}>{insightLabel(value.classification)} · {value.reason}</p><label className={css.field}>Suggested answer for {value.reference}<select aria-label={'Suggested answer for '+productLabel(value)} disabled={locked} value={batchChoices[value.id]||''} onChange={event=>{setBatchChoices(previous=>({...previous,[value.id]:event.target.value}));setBatchConfirmed(false);}}><option value="">Leave this question unchanged</option>{value.candidates.filter(candidate=>candidate.selectable).map(candidate=><option key={candidate.id} value={candidate.id}>{candidate.question}</option>)}</select></label>{chosen&&<CandidatePreview candidate={chosen} organizationId={organizationId}/>}</article>;})}<label className={css.check}><input type="checkbox" disabled={locked} checked={batchConfirmed} onChange={event=>setBatchConfirmed(event.target.checked)}/>I reviewed the selected response wording, scope, evidence and any conflicting alternatives.</label><button type="button" disabled={locked||!batchConfirmed||!Object.values(batchChoices).some(Boolean)} onClick={()=>void applySuggestions()}>Save {Object.values(batchChoices).filter(Boolean).length} selected suggestions</button></section>}
+   <div className={css.desk}><nav className={css.queue} aria-label="Question queue">{visible.length?visible.map(value=>{const insight=insights.get(value.id);return <div key={value.id} className={css.queueItem} data-active={selectedQuestion===value.id}>{automation?.canPrepare&&questionnaire.status==='DRAFT'&&value.status!=='READY'&&<input type="checkbox" aria-label={'Select question '+productLabel(value)} checked={selectedQuestions.includes(value.id)} disabled={locked} onChange={event=>{setSelectedQuestions(previous=>event.target.checked?[...previous,value.id]:previous.filter(id=>id!==value.id));setBatch(null);setBatchConfirmed(false);}}/>}<button type="button" disabled={locked} aria-label={'Open question '+productLabel(value)} aria-current={selectedQuestion===value.id?'true':undefined} onClick={()=>{questionSelection.current=value.id;setSelectedQuestion(value.id);recordLink(organizationId,questionnaire.id,value.id);}}><strong>{productLabel(value)} · {value.question}</strong><span>{questionLabel(value.status)}</span>{insight&&<span>{insightLabel(insight.classification)}</span>}</button></div>;}):<p className={css.empty}>No questions match this filter. Choose another view to inspect the full response.</p>}</nav><div>{question?<QuestionEditor key={question.id} organizationId={organizationId} userId={userId} detail={detail} question={question} insight={currentInsight} members={overview?.members||[]} admin={admin} request={request} capture={capture} write={write} locked={locked||reading} change={change} refresh={refresh}/>:<p className={css.empty}>Choose a question to inspect its response and supporting evidence.</p>}</div></div>
+   {admin&&<section className={css.review} aria-label="Disclosure review and export"><span className={css.eyebrow}>03 / REVIEW AND EXPORT</span><h3>Approve the exact customer disclosure</h3><details style={{marginBottom:20}}><summary className={css.sectionToggle}>Inspect all {detail.questions.length} response rows</summary><p>Recipient: <strong>{questionnaire.recipient}</strong> · Scope: <strong>{questionnaire.scope}</strong></p><div className={css.tableWrap}><table className={css.table}><thead><tr><th>Question and customer instructions</th><th>Response for disclosure</th><th>Evidence references</th></tr></thead><tbody>{detail.questions.map(question=><tr key={question.id}><td><strong>{productLabel(question)} · {question.question}</strong>{question.instructions&&<p>{question.instructions}</p>}{question.source&&<p className={css.muted}>{questionSourceLabel(question.source)}</p>}</td><td>{question.answer||'No current approved response'}<p className={css.muted}>{questionLabel(question.status)}</p></td><td>{question.files.map(file=>file.filename).join('; ')||'No current supporting evidence'}</td></tr>)}</tbody></table></div></details>{detail.blockers.length>0&&<details open={detail.blockers.length<6}><summary className={css.sectionToggle}>{detail.blockers.length} checks remain before approval</summary><ul className={css.plainList}>{detail.blockers.map((blocker,index)=><li key={index}>{blocker}</li>)}</ul></details>}
+    {questionnaire.status==='DRAFT'&&<>{!eligibleReview&&<p className={css.warning}>Approval requires a different administrator from the questionnaire creator, colleagues who confirmed its answers and supporting file uploaders.</p>}<form onSubmit={event=>{event.preventDefault();if(disclosureConfirmed)void change({action:'APPROVE',notes:reviewNotes,confirm:true},'The exact customer disclosure was independently approved.');}}><label className={css.field}>Independent disclosure review<textarea required minLength={40} maxLength={1600} rows={3} disabled={locked||!eligibleReview} value={reviewNotes} onChange={event=>{setReviewNotes(event.target.value);setDisclosureConfirmed(false);}}/></label><label className={css.check}><input type="checkbox" required disabled={locked||!eligibleReview} checked={disclosureConfirmed} onChange={event=>setDisclosureConfirmed(event.target.checked)}/>I independently reviewed these exact responses, evidence references, recipient and scope.</label><button disabled={locked||reading||!eligibleReview||!!detail.blockers.length||!disclosureConfirmed}>Approve customer disclosure</button></form></>}
+    {questionnaire.status==='APPROVED'&&<><p className={detail.current?css.success:css.warning}>{detail.current?'The recorded approval matches the current answer and evidence context. Export checks the selected file bytes again.':'This disclosure has changed supporting context. Reopen and review it before exporting or sharing.'}</p><div className={css.actions}><button type="button" disabled={locked||!!downloading||!detail.current} onClick={()=>void download('xlsx')}>{downloading==='xlsx'?'Preparing workbook…':'Download approved XLSX'}</button><button type="button" className={css.secondary} disabled={locked||!!downloading||!detail.current} onClick={()=>void download('csv')}>{downloading==='csv'?'Preparing CSV…':'Download approved CSV'}</button>{detail.current&&<a className={css.link} href={workspaceHref('/team/trust',organizationId,{questionnaireId:questionnaire.id})}>Prepare a private assurance room →</a>}</div><p className={css.muted}>The response workbook contains clean response and provenance sheets with question order, product identity and exact source references.</p><ExportPanel key={questionnaire.id+':'+questionnaire.version} organizationId={organizationId} detail={detail} requestResponse={requestResponse} capture={capture} locked={locked||!!downloading}/></>}
+    {questionnaire.status!=='WITHDRAWN'&&<details style={{marginTop:24}}><summary className={css.sectionToggle}>{questionnaire.status==='APPROVED'?'Reopen or withdraw this disclosure':'Withdraw this questionnaire'}</summary><form onSubmit={event=>event.preventDefault()}><label className={css.field}>Reason for this change<textarea required minLength={40} maxLength={1600} rows={3} value={transitionNotes} disabled={locked} onChange={event=>{setTransitionNotes(event.target.value);setTransitionConfirmed(false);}}/></label><label className={css.check}><input type="checkbox" checked={transitionConfirmed} disabled={locked} onChange={event=>setTransitionConfirmed(event.target.checked)}/>I understand this blocks existing exports and dependent private rooms until a fresh disclosure is reviewed.</label><div className={css.actions}>{questionnaire.status==='APPROVED'&&<button type="button" className={css.secondary} disabled={locked||!transitionConfirmed||transitionNotes.trim().length<40} onClick={()=>void change({action:'REOPEN',notes:transitionNotes,confirm:true},'The disclosure was reopened. Earlier approval remains in history; question owners must confirm the fresh response.')}>Reopen for fresh review</button>}<button type="button" className={css.danger} disabled={locked||!transitionConfirmed||transitionNotes.trim().length<40} onClick={()=>void change({action:'WITHDRAW',notes:transitionNotes,confirm:true},'The questionnaire was withdrawn and dependent sharing is blocked.')}>Withdraw disclosure</button></div></form></details>}
+   </section>}
+  </section>}
+ </>;
+}

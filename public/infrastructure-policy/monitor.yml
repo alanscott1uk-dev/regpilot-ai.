@@ -1,0 +1,81 @@
+name: RegPilot infrastructure controls
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '13 * * * *'
+permissions:
+  contents: read
+concurrency:
+  group: regpilot-infrastructure-controls
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    env:
+      ORIGIN: ${{ vars.REGPILOT_WORKSPACE_ORIGIN }}
+      CONTROL: ${{ vars.REGPILOT_CONTROL_ID }}
+      FORMATS: ${{ vars.REGPILOT_POLICY_FORMATS || 'terraform' }}
+      SOURCE: ${{ github.repository_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the pinned RegPilot collector
+        working-directory: ${{ runner.temp }}
+        env:
+          REGPILOT_PREVIEW_ORIGIN: ${{ vars.REGPILOT_PREVIEW_ORIGIN }}
+          REGPILOT_PREVIEW_TOKEN: ${{ secrets.REGPILOT_PREVIEW_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$ORIGIN" =~ ^https://[a-zA-Z0-9.-]+(:[0-9]+)?$ ]]
+          headers=()
+          if [[ -n "$REGPILOT_PREVIEW_TOKEN" ]]; then
+            [[ "$ORIGIN" == "$REGPILOT_PREVIEW_ORIGIN" && "$REGPILOT_PREVIEW_TOKEN" =~ ^[[:graph:]]{1,512}$ ]]
+            umask 077
+            header="$(mktemp "$RUNNER_TEMP/regpilot-preview-XXXXXX")"
+            trap 'rm -f "$header"' EXIT
+            printf 'x-vercel-protection-bypass: %s\n' "$REGPILOT_PREVIEW_TOKEN" > "$header"
+            headers=(--header "@$header")
+          fi
+          mkdir -p regpilot-policy
+          cd regpilot-policy
+          for f in collect.py catalogue.json requirements.txt; do
+            curl "${headers[@]}" --proto '=https' --fail --silent --show-error "$ORIGIN/infrastructure-policy/$f" -o "$f"
+          done
+          curl "${headers[@]}" --proto '=https' --fail --silent --show-error "$ORIGIN/instrument-bridge/deliver.py" -o deliver.py
+          sha256sum --check <<'CHECKSUMS'
+          df474d4c176fd78681c4ba50871c06c8662d43d8bb3e6da4b113d8fa7cf64309  collect.py
+          ba27c912ec3b044b0948e2e69da2480e3615c1f343519b786043a3521fc720e8  catalogue.json
+          a84786833f8d4160eb1d4f07a007213c3aeae5afc6a64f3a654656cb5ca0b115  requirements.txt
+          f0614b6ecaf3029bf6bea4cb8518abe54ef64c3be4d9556233d386a8f1bfe4d8  deliver.py
+          CHECKSUMS
+          python -m venv env
+          env/bin/python -m pip install -r requirements.txt
+      - name: Evaluate the checked-out revision
+        working-directory: ${{ runner.temp }}/regpilot-policy
+        run: |
+          set -euo pipefail
+          read -r -a selected <<< "$FORMATS"
+          env/bin/python collect.py scan --repo "$GITHUB_WORKSPACE" --source "$SOURCE" --control "$CONTROL" --framework "${selected[@]}" --output scan.json
+      - name: Deliver scoped policy results
+        working-directory: ${{ runner.temp }}/regpilot-policy
+        env:
+          REGPILOT_OBSERVATION_TOKEN: ${{ secrets.REGPILOT_OBSERVATION_TOKEN }}
+          REGPILOT_PREVIEW_ORIGIN: ${{ vars.REGPILOT_PREVIEW_ORIGIN }}
+          REGPILOT_PREVIEW_TOKEN: ${{ secrets.REGPILOT_PREVIEW_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$REGPILOT_OBSERVATION_TOKEN"
+          env/bin/python collect.py deliver --report scan.json --workspace "$ORIGIN"
+      - name: Retain the scan for retry
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regpilot-policy-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/regpilot-policy/scan.json
+          if-no-files-found: ignore
+          retention-days: 1

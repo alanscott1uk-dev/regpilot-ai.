@@ -1,0 +1,13 @@
+RegPilot OPC UA reader
+
+Use Python 3.12 on a host authorised to read the instrument. Install the tested dependency with python -m pip install asyncua==1.1.8 in a virtual environment.
+
+Download collect.py and example.json from the RegPilot integration directory. Configure the instrument endpoint, namespace URI and string object identifier. The serial, temperature and Celsius-unit fields must be direct children in that namespace. The unit field must report Cel, °C or degC. Configure a read-only client certificate accepted by the instrument. Match its application URI. Pin the server certificate supplied by the site administrator. Keep the private key on the site host with restricted permissions.
+
+Replace the example limits and dates with your approved values. Supply the actual instrument serial, reviewed calibration file, its SHA-256 fingerprint and validity period. The reader verifies the file fingerprint and the configured period. An authorised person must establish that the certificate covers that device. A point sample cannot establish uninterrupted storage conditions.
+
+For each manual reading, run python collect.py config.json receipt.json with a new output filename. The saved envelope contains the delivery key and observation. Inspect its checks before submission. An incorrect serial or unexpected server certificate stops collection. A missing source timestamp, unsupported unit or poor reading quality limits the checks that can pass.
+
+Download deliver.py from the same directory. Run python deliver.py receipt.json --workspace https://your-regpilot-host and enter the credential at its hidden prompt. A successful submission returns a RegPilot observation ID. Repeating the command returns the same ID.
+
+For other clients, use a credential granted observations:write on the configured control. POST the body object as application/json to /api/v1/observations on your RegPilot workspace with the envelope's idempotencyKey as the Idempotency-Key header and your Bearer credential as Authorization. Use the same saved body and key after a lost acknowledgement. The workspace's private API must be enabled. Review the accepted observation in the developer workspace.

@@ -1,0 +1,12 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {readZipParts} from './helpers/zip-inspection.mjs';
+import {RESPONSE_PACK_LIMITS,responsePackEvidenceSize,responsePackFiles,responsePackHash,writeResponsePackZip} from '../lib/questionnaire-response-pack';
+test('response packs verify actual bytes, deduplicate originals and generate safe flat archive names',async()=>{const bytes=Buffer.from('fictional approved document'),sha256=responsePackHash(bytes),base={bytes,sha256,sizeBytes:bytes.length};const pack=responsePackFiles([{...base,id:'one',filename:'../../private policy.pdf'},{...base,id:'two',filename:'same-content.pdf'}]);assert.equal(pack.entries.length,1);assert.equal(pack.byEvidence.get('one'),pack.byEvidence.get('two'));assert.doesNotMatch(pack.entries[0].name,/\.\.|[\/\\]/);assert.throws(()=>responsePackFiles([{...base,id:'one',filename:'x',bytes:Buffer.from('changed')}]),/changed/);assert.throws(()=>responsePackFiles([{...base,id:'one',filename:'x',sha256:'a'.repeat(64)}]),/changed/);
+ const archive=writeResponsePackZip([{name:'manifest.json',bytes:Buffer.from('{}')},...pack.entries]);const parts=await readZipParts(archive);assert.deepEqual(parts.get(pack.entries[0].name),bytes);assert.equal(parts.size,2);
+ for(const names of [['../x'],['file','file'],['FILE','file'],Array.from({length:54},(_,i)=>String(i))])assert.throws(()=>writeResponsePackZip(names.map(name=>({name,bytes:Buffer.alloc(0)}))));
+});
+
+
+test('response pack limits count distinct original bytes and the complete ZIP framing',()=>{
+ const duplicateRecords=Array.from({length:7},()=>({sha256:'a'.repeat(64),sizeBytes:5*1024*1024}));assert.equal(responsePackEvidenceSize(duplicateRecords),5*1024*1024,'seven references to a five-MiB original use five MiB of the evidence budget');assert.ok(duplicateRecords.reduce((n,f)=>n+f.sizeBytes,0)>RESPONSE_PACK_LIMITS.evidenceBytes);assert.throws(()=>responsePackEvidenceSize([...duplicateRecords,{sha256:'a'.repeat(64),sizeBytes:1}]),/inconsistent/);
+ const name='payload.bin',overhead=22+76+2*Buffer.byteLength(name),payload=Buffer.alloc(RESPONSE_PACK_LIMITS.archiveBytes-overhead),exact=writeResponsePackZip([{name,bytes:payload}]);assert.equal(exact.byteLength,RESPONSE_PACK_LIMITS.archiveBytes);assert.throws(()=>writeResponsePackZip([{name,bytes:new Uint8Array(payload.byteLength+1)}]),/archive limit/);assert.throws(()=>writeResponsePackZip([{name,bytes:payload},{name:'manifest.json',bytes:Buffer.from('{}')}]),/archive limit/);
+});

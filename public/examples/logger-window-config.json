@@ -1,0 +1,20 @@
+{
+  "controlId": "92c2d82f-cc64-4746-a3de-60ffefec3045",
+  "recordId": "store-a-s17-20261121-1000",
+  "revision": 1,
+  "sourceSystem": "Example logger export",
+  "sourceVersion": "export-1",
+  "decisionOwnerRef": "site-quality",
+  "siteRef": "store-a",
+  "sensorRef": "s17",
+  "calibrationRef": "certificate-007",
+  "calibratedAt": "2026-08-01T00:00:00Z",
+  "calibrationDue": "2027-08-01T00:00:00Z",
+  "unit": "CELSIUS",
+  "minimum": 2,
+  "maximum": 8,
+  "maxGapSeconds": 300,
+  "windowStart": "2026-11-21T10:00:00Z",
+  "windowEnd": "2026-11-21T11:00:00Z",
+  "validUntil": "2026-11-24T11:00:00Z"
+}

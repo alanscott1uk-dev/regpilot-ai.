@@ -1,0 +1,58 @@
+name: RegPilot hourly cloud controls
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 * * * *'
+permissions:
+  contents: read
+concurrency:
+  group: regpilot-hourly-cloud-controls
+  cancel-in-progress: false
+jobs:
+  observe:
+    runs-on: [self-hosted, regpilot-cloud]
+    timeout-minutes: 58
+    env:
+      RELEASE: ${{ vars.REGPILOT_RELEASE_SHA }}
+      CLOUD: ${{ vars.REGPILOT_CLOUD_PROVIDER }}
+      ACCOUNT: ${{ vars.REGPILOT_CLOUD_ACCOUNT }}
+      SOURCE: ${{ vars.REGPILOT_SOURCE_ID }}
+      CONTROL: ${{ vars.REGPILOT_CONTROL_ID }}
+      CHECKS: ${{ vars.REGPILOT_CLOUD_CHECKS }}
+      REGION: ${{ vars.REGPILOT_CLOUD_REGION }}
+      AUTH_MODE: ${{ vars.REGPILOT_CLOUD_AUTH_MODE }}
+    steps:
+      - name: Check release and runner configuration
+        run: |
+          set -eu
+          [[ "$RELEASE" =~ ^[a-f0-9]{40}$ && -n "$CLOUD" && -n "$ACCOUNT" && -n "$SOURCE" && -n "$CONTROL" ]]
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: alanscott1uk-dev/regpilot-ai.
+          ref: ${{ vars.REGPILOT_RELEASE_SHA }}
+          persist-credentials: false
+      - name: Run selected cloud checks in the authorised account
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE"
+          read -r -a checks <<< "$CHECKS"
+          options=()
+          if ((${#checks[@]})); then options+=(--check "${checks[@]}"); fi
+          if [[ -n "$AUTH_MODE" ]]; then options+=(--auth "$AUTH_MODE"); fi
+          if [[ -n "$REGION" ]]; then options+=(--region "$REGION"); fi
+          python public/cloud-controls/collect.py scan --provider "$CLOUD" --account "$ACCOUNT" --source "$SOURCE" --control "$CONTROL" "${options[@]}" --output "$RUNNER_TEMP/cloud-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+      - name: Deliver workspace observations
+        env:
+          ORIGIN: ${{ vars.REGPILOT_WORKSPACE_ORIGIN }}
+          REGPILOT_OBSERVATION_TOKEN: ${{ secrets.REGPILOT_OBSERVATION_TOKEN }}
+          REGPILOT_PREVIEW_ORIGIN: ${{ vars.REGPILOT_PREVIEW_ORIGIN }}
+          REGPILOT_PREVIEW_TOKEN: ${{ secrets.REGPILOT_PREVIEW_TOKEN }}
+        run: python public/cloud-controls/collect.py deliver --report "$RUNNER_TEMP/cloud-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json" --workspace "$ORIGIN"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: failure()
+        with:
+          name: cloud-retry-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cloud-${{ github.run_id }}-${{ github.run_attempt }}.json
+          if-no-files-found: ignore
+          retention-days: 1

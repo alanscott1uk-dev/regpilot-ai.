@@ -1,0 +1,194 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {db} from '../lib/server/db';
+import type {AuthorizedContext} from '../lib/server/authorization';
+import {workInbox,workTask,planWork,startWork,createWork} from '../lib/server/work-hub-service';
+import {createEvidence,reviewEvidence} from '../lib/server/evidence-service';
+import {prepareAssurance,reviewAssurance} from '../lib/server/assurance-service';
+import {saveBusinessProfile,createIntelligenceRun,decideCandidate} from '../lib/server/intelligence-service';
+import {workCompletion,completeWork} from '../lib/server/work-completion-service';
+import type {EvidenceObjectStore} from '../lib/server/evidence-storage';
+import type {Analysis} from '../lib/regulatory/intelligence';
+import type {AssuranceResult} from '../lib/evidence/assurance';
+import {sourceTextHash} from '../lib/regulatory/source-fingerprint.mjs';
+import {fixturePdf} from './helpers/pdf-fixture.mjs';
+
+test('work hub: full-list paging, tenant isolation, private metadata, atomic reviewed planning and stale permissions',async()=>{
+ const suffix=randomUUID(),users=await Promise.all(['owner','editor','viewer','outside'].map(name=>db.user.create({data:{externalId:name+suffix,email:name+suffix+'@example.invalid'}})));
+ const orgs=await Promise.all(['A','B'].map(name=>db.organization.create({data:{name:'Fictional work hub '+name+suffix}})));
+ const ids=orgs.map(o=>o.id),userIds=users.map(u=>u.id),previous=process.env.REGPILOT_AI_ALLOWED_EMAILS;
+ process.env.REGPILOT_AI_ALLOWED_EMAILS=users.map(u=>u.email).join(',');
+ const owner:AuthorizedContext={organizationId:ids[0],userId:userIds[0],role:'OWNER'},editor:AuthorizedContext={...owner,userId:userIds[1],role:'EDITOR'},viewer:AuthorizedContext={...owner,userId:userIds[2],role:'VIEWER'},outside:AuthorizedContext={organizationId:ids[1],userId:userIds[3],role:'OWNER'};
+ const query={view:'open' as const,q:'',page:1},now=new Date('2026-11-18T12:00:00.000Z');
+ try{
+  await db.membership.createMany({data:[owner,editor,viewer,outside]});
+  await db.obligation.createMany({data:Array.from({length:135},(_,i)=>({organizationId:ids[0],title:'Fictional work '+String(i).padStart(3,'0'),category:'Work hub test',ownerName:i%2?users[1].email:'Unassigned',assigneeId:i%2?editor.userId:null,dueDate:new Date(i%3?'2026-11-20':'2026-11-01'),status:i>=130?'COMPLETE':'OPEN'}))});
+  const foreign=await db.obligation.create({data:{organizationId:ids[1],title:'Foreign secret title',category:'Private',ownerName:users[3].email,dueDate:now}});
+  const first=await workInbox(owner,query,now),second=await workInbox(owner,{...query,page:2},now),last=await workInbox(owner,{...query,page:6},now);
+  assert.equal(first.total,130);assert.equal(first.items.length,25);assert.equal(first.pages,6);assert.equal(last.items.length,5);
+  assert.equal(new Set([...first.items,...second.items].map(t=>t.id)).size,50);
+  assert.equal((await workInbox(owner,{...query,page:999},now)).page,6);
+  assert.equal((await workInbox(owner,{...query,q:'work 129'},now)).total,1,'search reaches records beyond the old first-100 limit');
+  assert.equal((await workInbox(owner,{...query,view:'complete'},now)).total,5);
+  assert.equal((await workInbox(editor,{...query,view:'mine'},now)).total,65);
+  assert.equal((await workInbox(owner,{...query,view:'unassigned'},now)).total,65);
+  assert.equal((await workInbox(outside,query,now)).total,1);
+  await assert.rejects(()=>workInbox({...outside,organizationId:ids[0]},query,now),(e:any)=>e.status===403);
+  await assert.rejects(()=>workTask(outside,first.items[0].id),(e:any)=>e.status===404);
+  assert.equal((await workInbox(viewer,query,now)).items.every(t=>!t.canPlan),true);
+  const selected=first.items.slice(0,2),plan={items:selected.map(t=>({id:t.id,updatedAt:t.updatedAt.toISOString()})),changes:{assigneeId:editor.userId,dueDate:'2026-12-15'},reason:'Rebalance the fictional workload after reviewing task ownership.'};
+  const proof=await db.evidence.create({data:{organizationId:ids[0],obligationId:selected[0].id,filename:'fictional-proof.pdf',storageKey:'MUST_NOT_LEAK_PRIVATE_STORAGE',contentType:'application/pdf',sizeBytes:12,sha256:'a'.repeat(64),scanStatus:'CLEAN',reviewStatus:'PENDING_REVIEW'}});
+  const detail=await workTask(owner,selected[0].id);assert.equal(detail.task.evidence[0].id,proof.id);assert.doesNotMatch(JSON.stringify(detail),/storageKey|MUST_NOT_LEAK_PRIVATE_STORAGE|sha256|encryptedSecret/);
+  assert.equal((await workInbox(owner,{...query,view:'review'},now)).total,1);
+  const completed=await db.obligation.findFirstOrThrow({where:{organizationId:ids[0],status:'COMPLETE'}});
+  const closedProof=await db.evidence.create({data:{organizationId:ids[0],obligationId:completed.id,filename:'later.pdf',storageKey:randomUUID(),contentType:'application/pdf',sizeBytes:100,sha256:'c'.repeat(64),uploadedById:editor.userId,scanStatus:'CLEAN',reviewStatus:'PENDING_REVIEW'}});
+  const reviewQueue=await workInbox(owner,{...query,view:'review'},now);
+  assert.equal(reviewQueue.total,2);assert.equal(reviewQueue.counts.review,2);
+  assert.ok(reviewQueue.items.some(item=>item.id===completed.id));
+  await db.evidence.update({where:{id:closedProof.id},data:{uploadedById:owner.userId}});
+  assert.equal((await workInbox(owner,{...query,view:'review'},now)).total,1,'uploaders cannot review their own files');
+  assert.equal((await workInbox(editor,{...query,view:'review'},now)).counts.review,2,'editors can track pending files');
+  await assert.rejects(()=>planWork(viewer,plan),(e:any)=>e.status===403);
+  await assert.rejects(()=>planWork(editor,plan),(e:any)=>e.status===403);
+  await assert.rejects(()=>planWork(owner,{...plan,changes:{assigneeId:outside.userId}}),(e:any)=>e.status===409);
+  await assert.rejects(()=>planWork(owner,{...plan,changes:{assigneeId:viewer.userId}}),(e:any)=>e.status===409);
+  await assert.rejects(()=>planWork(owner,{...plan,items:[{id:foreign.id,updatedAt:foreign.updatedAt.toISOString()}]}),(e:any)=>e.status===409);
+  const preview=await planWork(owner,plan);assert.equal(preview.applied,0);assert.equal(preview.items.length,2);
+  assert.equal(await db.auditEvent.count({where:{organizationId:ids[0],action:'work.plan_applied'}}),0);
+  await assert.rejects(()=>planWork(owner,{...plan,token:'0'.repeat(64)},true),(e:any)=>e.status===409);
+  const applied=await planWork(owner,{...plan,token:preview.token},true);assert.equal(applied.applied,2);assert.ok(applied.batchId);
+  const updated=await db.obligation.findUniqueOrThrow({where:{id:selected[0].id}});assert.equal(updated.assigneeId,editor.userId);assert.equal(updated.dueDate.toISOString().slice(0,10),'2026-12-15');assert.equal(updated.status,'OPEN');
+  assert.equal((await db.evidence.findUniqueOrThrow({where:{id:proof.id}})).reviewStatus,'PENDING_REVIEW');
+  assert.equal(await db.auditEvent.count({where:{organizationId:ids[0],action:'work.plan_applied'}}),2);
+  await assert.rejects(()=>planWork(owner,{...plan,token:preview.token},true),(e:any)=>e.status===409);
+  const fresh=(await workInbox(owner,query,now)).items.slice(0,2),concurrent={...plan,items:fresh.map(t=>({id:t.id,updatedAt:t.updatedAt.toISOString()}))};
+  const next=await planWork(owner,concurrent);
+  const results=await Promise.allSettled([planWork(owner,{...concurrent,token:next.token},true),planWork(owner,{...concurrent,token:next.token},true)]);
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1,'two stale previews cannot both apply');
+  const atomic=(await workInbox(owner,query,now)).items.slice(0,2),bad={...plan,items:atomic.map(t=>({id:t.id,updatedAt:t.updatedAt.toISOString()}))};
+  await db.obligation.update({where:{id:atomic[0].id},data:{notes:'Concurrent fictional edit'}});
+  await assert.rejects(()=>planWork(owner,bad),(e:any)=>e.status===409);
+  assert.equal((await db.obligation.findUniqueOrThrow({where:{id:atomic[1].id}})).updatedAt.toISOString(),atomic[1].updatedAt.toISOString(),'failed batch changes no other task');
+  const complete=(await workInbox(owner,{...query,view:'complete'},now)).items[0];
+  await assert.rejects(()=>planWork(owner,{...plan,items:[{id:complete.id,updatedAt:complete.updatedAt.toISOString()}]}),(e:any)=>e.status===409);
+  const startable=(await workInbox(owner,query,now)).items[0];
+  const startInput={id:startable.id,updatedAt:startable.updatedAt.toISOString()};
+  await assert.rejects(()=>startWork(viewer,startInput),(e:any)=>e.status===403);
+  await assert.rejects(()=>startWork(outside,startInput),(e:any)=>e.status===404);
+  assert.equal((await startWork(editor,startInput)).status,'IN_PROGRESS');
+  await assert.rejects(()=>startWork(editor,startInput),(e:any)=>e.status===409,'stale start cannot overwrite changed status');
+  assert.equal((await db.obligation.findUniqueOrThrow({where:{id:startable.id}})).status,'IN_PROGRESS');
+  const newTask={title:'Fictional newly assigned work',category:'Quality',notes:'Created in the connected work hub',dueDate:'2026-12-01',assigneeId:editor.userId};
+  await assert.rejects(()=>createWork(viewer,newTask),(e:any)=>e.status===403);
+  await assert.rejects(()=>createWork(owner,{...newTask,assigneeId:outside.userId}),(e:any)=>e.status===409);
+  const created=await createWork(editor,newTask),createdRow=await db.obligation.findUniqueOrThrow({where:{id:created.id}});
+  assert.equal(createdRow.assigneeId,editor.userId);assert.equal(createdRow.ownerName,users[1].email);assert.equal(createdRow.status,'OPEN');
+  assert.equal(await db.auditEvent.count({where:{organizationId:ids[0],entityId:created.id,action:'obligation.created'}}),1);
+  await db.membership.update({where:{organizationId_userId:{organizationId:ids[0],userId:owner.userId}},data:{role:'VIEWER'}});
+  await assert.rejects(()=>planWork(owner,concurrent),(e:any)=>e.status===403,'server membership wins over the stale OWNER context');
+ }finally{
+  if(previous===undefined)delete process.env.REGPILOT_AI_ALLOWED_EMAILS;else process.env.REGPILOT_AI_ALLOWED_EMAILS=previous;
+  await db.evidence.deleteMany({where:{organizationId:{in:ids}}});await db.auditEvent.deleteMany({where:{organizationId:{in:ids}}});
+  await db.obligation.deleteMany({where:{organizationId:{in:ids}}});await db.membership.deleteMany({where:{organizationId:{in:ids}}});
+  await db.organization.deleteMany({where:{id:{in:ids}}});await db.user.deleteMany({where:{id:{in:userIds}}});await db.$disconnect();
+ }
+});
+
+test('treatment task backlinks are bounded, exact, company-scoped and contain only risk navigation metadata',async()=>{
+ const suffix=randomUUID(),users=await Promise.all(['risk-owner','other-owner'].map(name=>db.user.create({data:{externalId:name+suffix,email:name+suffix+'@example.invalid'}})));
+ const orgs=await Promise.all(['A','B'].map(name=>db.organization.create({data:{name:'Fictional risk handoff '+name+suffix}}))),ids=orgs.map(org=>org.id),userIds=users.map(user=>user.id),previous=process.env.REGPILOT_AI_ALLOWED_EMAILS;
+ process.env.REGPILOT_AI_ALLOWED_EMAILS=users.map(user=>user.email).join(',');
+ const owner:AuthorizedContext={organizationId:ids[0],userId:userIds[0],role:'OWNER'},outside:AuthorizedContext={organizationId:ids[1],userId:userIds[1],role:'OWNER'},now=new Date('2026-11-19T12:00:00.000Z');
+ try{
+  await db.membership.createMany({data:[owner,outside]});
+  const tasks=await Promise.all([owner,owner,outside].map((ctx,index)=>db.obligation.create({data:{organizationId:ctx.organizationId,title:'Fictional risk treatment '+index,category:'Risk treatment',ownerName:users[index===2?1:0].email,assigneeId:ctx.userId,dueDate:now,status:'IN_PROGRESS'}})));
+  const before=await workTask(owner,tasks[0].id),riskIds=Array.from({length:13},()=>randomUUID());
+  await db.riskRecord.createMany({data:riskIds.map((id,index)=>({id,organizationId:index===12?ids[1]:ids[0],createKey:randomUUID(),createdById:index===12?outside.userId:owner.userId,ownerId:index===12?outside.userId:owner.userId,title:index===12?'PRIVATE_FOREIGN_RISK':'Fictional related risk '+index,description:'PRIVATE_RISK_DESCRIPTION',category:'OPERATIONAL',likelihood:3,impact:4,ratingRationale:'PRIVATE_RISK_RATING_BASIS',strategy:'MITIGATE',reviewDueAt:now,status:index===10?'ACCEPTED':'OPEN'}))});
+  await db.riskTreatment.createMany({data:riskIds.map((riskId,index)=>({organizationId:index===12?ids[1]:ids[0],riskId,obligationId:tasks[index===12?2:index===11?1:0].id,requestKey:randomUUID(),purpose:'PRIVATE_TREATMENT_PURPOSE',createdAt:new Date(now.getTime()+index*1000)}))});
+  const linked=await workTask(owner,tasks[0].id);
+  assert.equal(linked.relatedRisks.length,10);assert.equal(linked.relatedRisksLimited,true,'the bounded projection declares remaining links');
+  assert.deepEqual(linked.relatedRisks.map(risk=>risk.id),riskIds.slice(1,11).reverse(),'only the ten most recently linked records for the exact task are returned');
+  for(const risk of linked.relatedRisks){
+   assert.deepEqual(Object.keys(risk).sort(),['href','id','status','title']);
+   const href=new URL(risk.href,'https://example.invalid');assert.equal(href.pathname,'/team/risks');assert.equal(href.searchParams.get('organizationId'),owner.organizationId);assert.equal(href.searchParams.get('riskId'),risk.id);
+  }
+  assert.equal(linked.relatedRisks[0].status,'ACCEPTED','only the recorded status is exposed, with no inferred current approval');
+  assert.doesNotMatch(JSON.stringify(linked),/PRIVATE_RISK_DESCRIPTION|PRIVATE_RISK_RATING_BASIS|PRIVATE_TREATMENT_PURPOSE|PRIVATE_FOREIGN_RISK|evidenceManifest|storageKey/);
+  assert.deepEqual(linked.workflow,before.workflow,'risk navigation does not alter task progress or completion authority');assert.equal(linked.canStart,before.canStart);assert.equal(linked.canPlan,before.canPlan);assert.equal(linked.task.updatedAt.toISOString(),before.task.updatedAt.toISOString());
+  const otherTask=await workTask(owner,tasks[1].id);assert.deepEqual(otherTask.relatedRisks.map(risk=>risk.id),[riskIds[11]]);assert.equal(otherTask.relatedRisksLimited,false);
+  const foreign=await workTask(outside,tasks[2].id);assert.deepEqual(foreign.relatedRisks.map(risk=>risk.id),[riskIds[12]]);assert.equal(new URL(foreign.relatedRisks[0].href,'https://example.invalid').searchParams.get('organizationId'),outside.organizationId);
+  await assert.rejects(()=>workTask(owner,tasks[2].id),(error:any)=>error.status===404);await assert.rejects(()=>workTask(outside,tasks[0].id),(error:any)=>error.status===404);
+ }finally{
+  if(previous===undefined)delete process.env.REGPILOT_AI_ALLOWED_EMAILS;else process.env.REGPILOT_AI_ALLOWED_EMAILS=previous;
+  await db.riskTreatment.deleteMany({where:{organizationId:{in:ids}}});await db.riskRecord.deleteMany({where:{organizationId:{in:ids}}});await db.obligation.deleteMany({where:{organizationId:{in:ids}}});await db.membership.deleteMany({where:{organizationId:{in:ids}}});await db.organization.deleteMany({where:{id:{in:ids}}});await db.user.deleteMany({where:{id:{in:userIds}}});await db.$disconnect();
+ }
+});
+
+test('task handoff retains content review after file approval and advances only on current independent proof',async()=>{
+ const suffix=randomUUID(),users=await Promise.all(['maker','reviewer','uploader','viewer'].map(name=>db.user.create({data:{externalId:name+suffix,email:name+suffix+'@example.invalid'}})));
+ const org=await db.organization.create({data:{name:'Fictional task handoff '+suffix}}),previous=process.env.REGPILOT_AI_ALLOWED_EMAILS;
+ process.env.REGPILOT_AI_ALLOWED_EMAILS=users.map(user=>user.email).join(',');
+ const maker:AuthorizedContext={organizationId:org.id,userId:users[0].id,role:'OWNER'},reviewer:AuthorizedContext={...maker,userId:users[1].id,role:'ADMIN'},uploader:AuthorizedContext={...maker,userId:users[2].id,role:'ADMIN'},viewer:AuthorizedContext={...maker,userId:users[3].id,role:'VIEWER'};
+ const objects=new Map<string,Uint8Array>();let downloads=0;
+ const store:EvidenceObjectStore={async put(key,bytes){objects.set(key,Uint8Array.from(bytes));},async get(key){downloads++;const bytes=objects.get(key);if(!bytes)throw new Error('Fictional file missing');return Uint8Array.from(bytes);},async remove(key){objects.delete(key);}};
+ const scan=async()=>({status:'CLEAN' as const,engine:'fixture-only'}),notes='Independently checked the fictional requirement, original records, business scope and remaining limitations.';
+ const text='Fictional widget staff must complete documented training before working alone. This fictional publication describes the retained staff training records used in the test.',record='Widget staff completed documented training on 4 November 2026 with a supervisor.';
+ const query={view:'review' as const,q:'',page:1},until=new Date(Date.now()+30*86400000).toISOString().slice(0,10);
+ try{
+  await db.membership.createMany({data:[maker,reviewer,uploader,viewer]});
+  await saveBusinessProfile(maker,{activities:['personal-data'],jurisdictions:['Scotland']},0);
+  const source=await db.regulatorySnapshot.create({data:{organizationId:org.id,sourceId:'uk-data-protection',title:'Fictional training source',url:'https://www.gov.uk/data-protection-your-business',bodyText:text,contentHash:sourceTextHash(text),capturedById:maker.userId,reviewStatus:'REVIEWED',reviewerId:reviewer.userId,reviewedAt:new Date()}});
+  const run=await createIntelligenceRun(maker,source.id),saved=await db.intelligenceRun.findUniqueOrThrow({where:{id:run.id}}),candidate=(saved.result as unknown as Analysis).candidates[0];
+  const decision=await decideCandidate(reviewer,run.id,{candidateKey:candidate.key,decision:'ACCEPTED',rationale:notes,title:'Fictional source-linked training task',assigneeId:maker.userId,ownerName:'Fictional owner',dueDate:'2027-01-31'}),taskId=decision.obligationId!;
+  assert.equal((await workTask(maker,taskId)).workflow.stage,'EVIDENCE_REQUIRED');
+  const file=await createEvidence(uploader,taskId,'fictional-training.pdf',fixturePdf([['FICTIONAL TRAINING RECORD',record]]),{storage:store,scan});
+  assert.equal((await workTask(reviewer,taskId)).workflow.stage,'FILE_REVIEW');
+  assert.equal((await workTask(uploader,taskId)).workflow.actor,'teammate');
+  assert.equal((await workInbox(reviewer,query)).total,1);
+  assert.equal((await workInbox(uploader,query)).total,0,'uploaders cannot review their own files');
+  await reviewEvidence(reviewer,file.id,{decision:'APPROVED',version:1,notes},store);
+  assert.equal((await workTask(maker,taskId)).workflow.stage,'ASSESSMENT_REQUIRED');
+  assert.equal((await workInbox(reviewer,query)).total,0);
+  const prepared=await prepareAssurance(maker,{taskId,evidenceIds:[file.id],method:'CONTENT_SEARCH',consent:true},{storage:store});
+  const pending=await workInbox(reviewer,query),row=pending.items[0];
+  assert.equal(pending.total,1);assert.equal(pending.counts.review,1);assert.equal(row.id,taskId);
+  assert.deepEqual(row.reviewKinds,{files:false,assessments:true});assert.equal(row.workflow.stage,'ASSESSMENT_REVIEW');
+  assert.equal(new URL(row.workflow.href,'https://example.invalid').searchParams.get('assessmentId'),prepared.id);
+  assert.equal((await workInbox(maker,query)).total,0,'assessment author does not get their own independent review action');
+  assert.equal((await workInbox(uploader,query)).total,0,'manifest uploaders cannot approve content assessments');
+  assert.equal((await workInbox(viewer,query)).total,1,'non-reviewers can track the handoff without approval rights');
+  assert.equal((await workTask(maker,taskId)).workflow.actor,'teammate');
+  const beforeReads=downloads,detail=await workTask(reviewer,taskId);
+  assert.equal(detail.workflow.stage,'ASSESSMENT_REVIEW');assert.equal(detail.workflow.actor,'you');assert.equal(detail.workflow.verified,true);
+  assert.equal(downloads,beforeReads,'reading task progress never downloads private bytes');
+  assert.doesNotMatch(JSON.stringify(detail),/storageKey|evidenceManifest|bodyText|resultHash/);
+  const assessment=await db.assuranceAssessment.findUniqueOrThrow({where:{id:prepared.id}}),result=assessment.result as unknown as AssuranceResult;
+  await db.assuranceAssessment.update({where:{id:prepared.id},data:{resultHash:'0'.repeat(64)}});
+  assert.equal((await workTask(reviewer,taskId)).workflow.stage,'ASSESSMENT_CHECK');
+  assert.equal((await workInbox(reviewer,query)).total,1,'invalid proof remains visible for recovery');
+  await db.assuranceAssessment.update({where:{id:prepared.id},data:{resultHash:assessment.resultHash}});
+  await db.evidence.update({where:{id:file.id},data:{reviewVersion:{increment:1}}});
+  assert.equal((await workTask(reviewer,taskId)).workflow.stage,'ASSESSMENT_CHECK','changed review invalidates the proposed handoff');
+  await db.evidence.update({where:{id:file.id},data:{reviewVersion:2}});
+  // Two outstanding review kinds still represent one task in the global count and page.
+  const extra=await createEvidence(uploader,taskId,'fictional-extra.pdf',fixturePdf([['FICTIONAL ADDITIONAL RECORD',record]]),{storage:store,scan});
+  const mixed=await workInbox(reviewer,query);assert.equal(mixed.total,1);assert.equal(mixed.items.length,1);assert.deepEqual(mixed.items[0].reviewKinds,{files:true,assessments:true});
+  await reviewEvidence(reviewer,extra.id,{decision:'APPROVED',version:1,notes},store);
+  assert.equal((await workInbox(reviewer,query)).total,1,'file approval must not remove the unfinished content review');
+  await db.membership.update({where:{organizationId_userId:{organizationId:org.id,userId:reviewer.userId}},data:{role:'VIEWER'}});
+  const revoked=await workTask(reviewer,taskId);assert.equal(revoked.workflow.actor,'reviewer');assert.equal(revoked.workflow.canAct,false,'current membership overrides stale ADMIN context');
+  await db.membership.update({where:{organizationId_userId:{organizationId:org.id,userId:reviewer.userId}},data:{role:'ADMIN'}});
+  await reviewAssurance(reviewer,prepared.id,{decision:'ACCEPTED',version:1,notes,passageKeys:[result.passages[0].key],validUntil:until,scopeConfirmed:true,originalsChecked:true},{storage:store});
+  assert.equal((await workInbox(reviewer,query)).total,0);
+  assert.equal((await workInbox(maker,{view:'open',q:taskId,page:1})).items.length,0,'search remains title/category/owner scoped');
+  const ready=await workTask(maker,taskId);assert.equal(ready.workflow.stage,'READY_TO_COMPLETE');assert.equal(ready.workflow.verified,true);
+  const list=await workInbox(maker,{view:'open',q:'source-linked training',page:1});assert.equal(list.items[0].workflow.stage,'COMPLETION_CHECK','a list does not advertise readiness from an accepted status alone');
+  const proof=await workCompletion(maker,taskId);assert.equal(proof.ready,true);
+  await completeWork(maker,taskId,{token:proof.token!,evidenceIds:proof.evidence.map(e=>e.id),confirm:true,notes},{storage:store});
+  assert.equal((await workTask(maker,taskId)).workflow.stage,'COMPLETED');
+ }finally{
+  if(previous===undefined)delete process.env.REGPILOT_AI_ALLOWED_EMAILS;else process.env.REGPILOT_AI_ALLOWED_EMAILS=previous;
+  await db.assuranceAssessment.deleteMany({where:{organizationId:org.id}});await db.intelligenceDecision.deleteMany({where:{organizationId:org.id}});await db.intelligenceRun.deleteMany({where:{organizationId:org.id}});await db.businessProfile.deleteMany({where:{organizationId:org.id}});await db.auditEvent.deleteMany({where:{organizationId:org.id}});await db.evidence.deleteMany({where:{organizationId:org.id}});await db.obligation.deleteMany({where:{organizationId:org.id}});await db.regulatorySnapshot.deleteMany({where:{organizationId:org.id}});await db.membership.deleteMany({where:{organizationId:org.id}});await db.organization.delete({where:{id:org.id}});await db.user.deleteMany({where:{id:{in:users.map(user=>user.id)}}});
+ }
+});

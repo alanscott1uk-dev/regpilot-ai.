@@ -1,0 +1,50 @@
+.sidebar{background:#181a2c;color:#e1dced;padding:25px 16px 18px;min-width:0;position:sticky;top:0;height:100dvh;overflow-y:auto;box-sizing:border-box;display:flex;flex-direction:column;border-right:1px solid #2d2d43}
+.navTop{display:grid;gap:20px;margin-bottom:24px}
+.brand{display:flex;align-items:center;gap:11px;text-decoration:none;color:#fff;padding:3px 9px}
+.brand>span{width:37px;height:39px;display:grid;place-items:center;background:#a895ea;color:#201932;border-radius:11px;font-size:24px;font-weight:850;flex-shrink:0}
+.brand strong{font-size:21px;letter-spacing:-.65px}
+.findButton{display:flex;align-items:center;gap:9px;min-height:44px;padding:9px 13px;border:1px solid #625572;background:#302a40;color:white;border-radius:9px;font:inherit;font-size:14px;font-weight:650;cursor:pointer}
+.findButton svg{width:18px;height:18px}
+.caption,.workspace h2{font-size:11px;color:#c1bacf;letter-spacing:.7px;text-transform:uppercase;font-weight:650;margin:0 12px 9px}
+.primary,.workspace{display:grid;gap:4px}
+.sidebar nav a{color:#ded9e7;text-decoration:none;padding:12px;border-radius:9px;font-size:13px;line-height:1.4;min-height:44px;box-sizing:border-box;display:flex;align-items:center;gap:11px}
+.sidebar nav a svg{width:18px;height:18px;flex-shrink:0;color:#afa7c6}
+.sidebar nav a:hover,.findButton:hover{background:#373143;color:white}
+.sidebar nav a[aria-current=page]{background:#363049;color:white;font-weight:750;box-shadow:inset 3px 0 #b99de9}
+.workspace{border-top:1px solid #ffffff20;margin-top:22px;padding-top:20px}
+.location{font-size:12px;color:#c1bacf;margin:16px 9px 0}.location strong{color:white;margin-left:6px}
+.sidebar :focus-visible{outline:3px solid #c4adff;outline-offset:2px}
+.pilot{margin-top:auto;padding:25px 11px 0;display:flex;gap:9px;align-items:flex-start}
+.pilot>span{width:6px;height:6px;margin-top:5px;flex-shrink:0;background:#baa1df;border-radius:50%}
+.pilot strong{color:#d1cade;font-size:11px}.pilot p{color:#b6aec6;font-size:11px;line-height:1.5;margin:4px 0}
+.finder{box-sizing:border-box;width:min(34rem,calc(100% - 24px));max-height:min(78dvh,44rem);padding:0;border:1px solid #d5cfdf;border-radius:15px;background:#fff;color:#242133;box-shadow:0 16px 60px #16112545;margin:auto;overflow:hidden}
+.finder[open]{display:flex;flex-direction:column}.finder::backdrop{background:#16112599}
+.finderTop{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:15px 20px 2px}
+.finderTop h2{font-size:20px;line-height:1.25;margin:0}
+.finder button{font:inherit;color:#453466;background:#f4f0fa;border:1px solid #d4cbe3;padding:7px 13px;min-height:44px;border-radius:8px;cursor:pointer}
+.finder :focus-visible{outline:3px solid #6850a0;outline-offset:-2px}
+.searchLabel{display:grid;gap:5px;margin:12px 20px 16px;font-size:13px;font-weight:650}
+.searchLabel input{width:100%;box-sizing:border-box;font:inherit;font-size:16px;padding:10px 12px;min-height:44px;border:1px solid #91869e;border-radius:8px;color:#242133;background:white}
+.directory{border-top:1px solid #ded9e6;min-height:0;overflow:auto;overscroll-behavior:contain;padding:0 20px 16px;scrollbar-gutter:stable}
+.directory summary,.directory h3{font-size:14px;font-weight:700;padding:13px 2px;margin:0}
+.directory summary{cursor:pointer;min-height:44px;box-sizing:border-box}
+.directory details,.directory section{border-bottom:1px solid #ebe7f1}
+.directory ul{list-style:none;margin:0;padding:0 0 8px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}
+.directory a{display:flex;align-items:center;min-height:44px;padding:8px 10px;box-sizing:border-box;border-radius:6px;text-decoration:none;background:#f6f4f9;color:#49376a;font-size:14px;line-height:1.4}
+.directory a:hover,.directory a[aria-current=page]{background:#e8e1f2;color:#302044}
+.directory p{font-size:14px;margin:12px 0}
+@media(max-width:1050px){
+ .sidebar{position:relative;height:auto;overflow:visible;padding:10px 14px;display:block}
+ .navTop{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 6px}.brand{padding:2px}
+ .brand>span{width:30px;height:32px;font-size:19px;border-radius:8px}.brand strong{font-size:18px}
+ .caption,.pilot,.workspace{display:none}
+ .primary{display:flex;gap:4px}.sidebar .primary a{justify-content:center}
+ .sidebar nav a[aria-current=page]{box-shadow:inset 0 -2px #b99de9}
+ .location{margin:7px 2px 0}
+}
+@media(max-width:600px){
+ .sidebar{padding:8px}.primary{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:2px}
+ .sidebar .primary a{padding:5px 1px;flex-direction:column;gap:3px;text-align:center;font-size:12px;line-height:1.2;overflow-wrap:anywhere}
+ .sidebar .primary a svg{width:16px;height:16px}
+}
+@media(max-width:360px){.directory ul{grid-template-columns:1fr}}

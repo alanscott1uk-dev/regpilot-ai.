@@ -1,0 +1,567 @@
+import {bindPartnerModel,partnerFollowUp} from '../lib/server/partner-follow-up';
+import {inventoryAction,inventoryWorkspace} from '../lib/server/ai-inventory-service';
+import {createQualityCase,addQualityAction,exportQualityCase} from '../lib/server/capa-service';
+import {workTask} from '../lib/server/work-hub-service';
+import {createAuditRoom,changeAuditRoom,guestAuditAction,openAuditRoom} from '../lib/server/auditor-service';
+import {attachBuyerAnnex,buyerAnnexOptions} from '../lib/server/buyer-annex';
+import {purgeExpiredPartnerRecords} from '../lib/server/partner-retention';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {readFile} from 'node:fs/promises';
+import {db} from '../lib/server/db';
+import {assuranceFixture,rejects,future} from './helpers/assurance-fixture';
+import {CUSTOMER_API_SCOPES,type CustomerApiScope} from '../lib/customer-api';
+import {authenticateCustomerApi,secretHash,type CustomerApiSession} from '../lib/server/customer-api-auth';
+import {resourceFindingReport,searchPartnerReports,createCustomerCredential,changeCustomerCredential,developerWorkspace,groupObservationFollowUps,listCustomerApiResource,submitCustomerApiObservation,reviewCustomerApiObservation} from '../lib/server/customer-api-service';
+import {hashValue} from '../lib/regulatory/intelligence';
+import {GET as getControls} from '../app/api/v1/controls/route';
+import {GET as getObservations,POST as postObservation} from '../app/api/v1/observations/route';
+
+type Created={id:string;version:number;requestKey:string;secret:string|null;reused:boolean;secretUnavailable:boolean};
+const notes='Independently inspect the customer-reported result and document the scope, exceptions and follow-up outcome.';
+async function fixture(primaryId?:string){
+ const x=await assuranceFixture();Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:'true',REGPILOT_CUSTOMER_API_ENABLED:'true',REGPILOT_EVIDENCE_ENABLED:'true',SUPABASE_URL:'https://example.invalid',SUPABASE_PUBLISHABLE_KEY:'fixture',SUPABASE_SECRET_KEY:'fixture',REGPILOT_EVIDENCE_BUCKET:'fixture',REGPILOT_CLAMD_HOST:'fixture'});
+ async function control(organizationId=x.a.id,ownerId=x.ed.userId,creatorId=x.o.userId,id?:string){const programme=await db.programmeImport.create({data:{organizationId,createdById:creatorId,inputHash:randomUUID(),method:'FIXTURE',status:'ACCEPTED',evidenceManifest:[]}});return db.managedControl.create({data:{id,organizationId,importId:programme.id,proposalKey:randomUUID(),title:'Fictional customer integration control',description:notes,testProcedure:notes,theme:'security',ownerId,scheduledById:creatorId,intervalDays:30,nextReviewAt:new Date(Date.now()+86400000)}});}
+ const primary=await control(x.a.id,x.ed.userId,x.o.userId,primaryId),ungranted=await control(),foreignControl=await control(x.b.id,x.out.userId,x.out.userId);
+ const input=(scopes:readonly CustomerApiScope[]=CUSTOMER_API_SCOPES,controlIds=[primary.id])=>({name:'Fictional inventory client',scopes:[...scopes],controlIds,expiresAt:new Date(Date.now()+30*86400000).toISOString(),requestKey:randomUUID(),confirm:true});
+ const create=async(scopes:readonly CustomerApiScope[]=CUSTOMER_API_SCOPES,controlIds=[primary.id])=>await createCustomerCredential(x.o,input(scopes,controlIds)) as Created;
+ const request=(token:string,resource='controls')=>new Request('https://example.invalid/api/v1/'+resource,{headers:{authorization:'Bearer '+token}});
+ const session=async(token:string,scope:CustomerApiScope='controls:read')=>authenticateCustomerApi(request(token),scope);
+ const observation=(controlId=primary.id,status:'PASS'|'FAIL'|'UNKNOWN'='FAIL')=>({controlId,externalId:'fictional/'+randomUUID(),observedAt:new Date().toISOString(),validUntil:new Date(Date.now()+86400000).toISOString(),summary:'The fictional customer inventory reported a result that requires an administrator decision.',checks:[{key:'inventory-control',label:'Reported control observation',status,observed:'Customer supplied aggregate result',detail:'This is an unverified customer observation, not independently approved evidence.'}]});
+ return {...x,primary,ungranted,foreignControl,control,input,create,request,session,observation};
+}
+
+test('customer credential lifecycle is administrator-only, hashed, company-bound and exactly recoverable without repeating secrets',async()=>{
+ const x=await fixture();try{
+  const input=x.input();await assert.rejects(()=>createCustomerCredential(x.ed,input),rejects(403));await assert.rejects(()=>createCustomerCredential(x.st,input),rejects(403));await assert.rejects(()=>createCustomerCredential(x.out,input),rejects(409));await assert.rejects(()=>createCustomerCredential(x.o,{...input,controlIds:[x.foreignControl.id]}),rejects(409));await assert.rejects(()=>createCustomerCredential(x.o,{...input,expiresAt:new Date(Date.now()+91*86400000).toISOString()}),rejects(400));
+  const created=await createCustomerCredential(x.o,input) as Created;assert.ok(created.secret);const stored=await db.customerApiCredential.findUniqueOrThrow({where:{id:created.id}});assert.equal(stored.secretHash,secretHash(created.secret!));assert.notEqual(stored.secretHash,created.secret);assert.equal(stored.organizationId,x.a.id);
+  const replay=await createCustomerCredential(x.o,input) as Created;assert.equal(replay.id,created.id);assert.equal(replay.secret,null);assert.equal(replay.secretUnavailable,true);assert.equal(await db.customerApiCredential.count({where:{organizationId:x.a.id}}),1);
+  await assert.rejects(()=>createCustomerCredential(x.o,{...input,name:'Changed integration identity'}),rejects(409));await assert.rejects(()=>createCustomerCredential(x.ad,input),rejects(409));
+  const recovered=await developerWorkspace(x.o,{requestKey:input.requestKey});assert.equal(recovered.operation?.entityId,created.id);assert.equal((await developerWorkspace(x.ad,{requestKey:input.requestKey})).operation,null);assert.equal((await developerWorkspace(x.out,{requestKey:input.requestKey})).operation,null);assert.equal((await developerWorkspace(x.o,{requestKey:randomUUID()})).operation,null);
+  const safe=JSON.stringify({workspace:recovered,operations:await db.customerApiOperation.findMany({where:{organizationId:x.a.id}}),audit:await db.auditEvent.findMany({where:{organizationId:x.a.id}})});assert.ok(!safe.includes(created.secret!));assert.ok(!safe.includes(stored.secretHash));assert.ok(!safe.includes('secretHash'));
+  const oldSession=await x.session(created.secret!),rotation={action:'ROTATE',version:1,requestKey:randomUUID(),confirm:true},rotated=await changeCustomerCredential(x.o,created.id,rotation) as Created;assert.ok(rotated.secret);assert.notEqual(rotated.secret,created.secret);assert.equal(rotated.version,2);
+  await assert.rejects(()=>x.session(created.secret!),rejects(401));await assert.rejects(()=>listCustomerApiResource(oldSession,'controls','https://example.invalid/api/v1/controls'),rejects(401));assert.equal((await x.session(rotated.secret!)).version,2);
+  const repeatRotation=await changeCustomerCredential(x.o,created.id,rotation) as Created;assert.equal(repeatRotation.secret,null);assert.equal(repeatRotation.version,2);assert.equal((await developerWorkspace(x.o,{requestKey:rotation.requestKey})).operation?.action,'ROTATED');
+  const revoke={action:'REVOKE',version:2,requestKey:randomUUID(),confirm:true};await changeCustomerCredential(x.ad,created.id,revoke);await changeCustomerCredential(x.ad,created.id,revoke);await assert.rejects(()=>x.session(rotated.secret!),rejects(401));assert.equal((await db.customerApiCredential.findUniqueOrThrow({where:{id:created.id}})).version,3);assert.equal(await db.customerApiOperation.count({where:{organizationId:x.a.id}}),3);
+  await assert.rejects(()=>changeCustomerCredential(x.o,created.id,{...rotation,version:3,requestKey:randomUUID()}),rejects(409));await assert.rejects(()=>developerWorkspace(x.ed),rejects(403));
+ }finally{await x.cleanup();}
+});
+
+test('machine admission rechecks the issuer, key expiry, company identity, grant scope and environment on every operation',async()=>{
+ const x=await fixture();try{
+  const key=await x.create(['controls:read']),session=await x.session(key.secret!);await assert.rejects(()=>x.session(key.secret!,'observations:write'),rejects(403));await assert.rejects(()=>listCustomerApiResource({...session,organizationId:x.b.id},'controls','https://example.invalid/api/v1/controls'),rejects(401));
+  await db.membership.update({where:{organizationId_userId:{organizationId:x.a.id,userId:x.o.userId}},data:{role:'EDITOR'}});await assert.rejects(()=>x.session(key.secret!),rejects(401));assert.equal((await developerWorkspace(x.ad)).credentials[0].status,'ISSUER_UNAVAILABLE');await db.membership.update({where:{organizationId_userId:{organizationId:x.a.id,userId:x.o.userId}},data:{role:'OWNER'}});
+  const allowed=process.env.REGPILOT_AI_ALLOWED_EMAILS!;process.env.REGPILOT_AI_ALLOWED_EMAILS=x.admin.email;await assert.rejects(()=>listCustomerApiResource(session,'controls','https://example.invalid/api/v1/controls'),rejects(401));process.env.REGPILOT_AI_ALLOWED_EMAILS=allowed;
+  await db.customerApiCredential.update({where:{id:key.id},data:{createdAt:new Date(Date.now()-2*86400000),expiresAt:new Date(Date.now()-86400000)}});await assert.rejects(()=>x.session(key.secret!),rejects(401));assert.equal((await developerWorkspace(x.ad)).credentials[0].status,'EXPIRED');
+  await db.customerApiCredential.update({where:{id:key.id},data:{expiresAt:new Date(Date.now()+86400000)}});process.env.REGPILOT_CUSTOMER_API_ENABLED='false';await assert.rejects(()=>x.session(key.secret!),rejects(503));process.env.REGPILOT_CUSTOMER_API_ENABLED='true';
+  await db.membership.delete({where:{organizationId_userId:{organizationId:x.a.id,userId:x.o.userId}}});await assert.rejects(()=>x.session(key.secret!),rejects(401));await db.membership.create({data:x.o});
+ }finally{await x.cleanup();}
+});
+
+test('customer reads enforce control grants and bounded cursor pagination without private storage or cross-company records',async()=>{
+ const x=await fixture();try{
+  const key=await x.create(),session=await x.session(key.secret!),createdAt=new Date(Date.now()-10000);
+  const tasks=await Promise.all([x.primary,x.primary,x.ungranted,x.foreignControl].map((control,index)=>db.obligation.create({data:{organizationId:control.organizationId,title:'Fictional scoped task '+index,category:'Internal',ownerName:'Private owner label',assigneeId:control.ownerId,controlId:control.id,dueDate:new Date(),createdAt,notes:'Private task details are not part of this API'}})));
+  const file=await x.file(),savedFile=await db.evidence.findUniqueOrThrow({where:{id:file.id}});await db.obligation.update({where:{id:savedFile.obligationId},data:{controlId:x.primary.id}});
+  const snapshot=await db.regulatorySnapshot.create({data:{organizationId:x.a.id,sourceId:'fictional-source',title:'Reviewed fictional source metadata',url:'https://example.invalid/source',contentHash:hashValue('fictional source body'),bodyText:'Private source text is not part of the API',capturedById:x.o.userId,reviewStatus:'REVIEWED',reviewerId:x.ad.userId,reviewedAt:new Date()}});
+  const controls=await listCustomerApiResource(session,'controls','https://example.invalid/api/v1/controls');assert.deepEqual(controls.data.map(row=>row.id),[x.primary.id]);
+  const first=await listCustomerApiResource(session,'tasks','https://example.invalid/api/v1/tasks?limit=1'),second=await listCustomerApiResource(session,'tasks','https://example.invalid/api/v1/tasks?limit=1&cursor='+first.pagination.nextCursor);assert.equal(first.data.length,1);assert.equal(second.data.length,1);assert.notEqual(first.data[0].id,second.data[0].id);assert.ok(tasks.slice(0,2).some(row=>row.id===first.data[0].id));assert.ok(tasks.slice(0,2).some(row=>row.id===second.data[0].id));
+  await assert.rejects(()=>listCustomerApiResource(session,'tasks','https://example.invalid/api/v1/tasks?controlId='+x.ungranted.id),rejects(404));await assert.rejects(()=>listCustomerApiResource(session,'tasks','https://example.invalid/api/v1/tasks?organizationId='+x.b.id),rejects(400));await assert.rejects(()=>listCustomerApiResource(session,'evidence','https://example.invalid/api/v1/evidence?cursor='+first.pagination.nextCursor),rejects(400));
+  const metadata=await listCustomerApiResource(session,'evidence','https://example.invalid/api/v1/evidence'),sources=await listCustomerApiResource(session,'regulatory-sources','https://example.invalid/api/v1/regulatory-sources');assert.deepEqual(metadata.data.map(row=>row.id),[file.id]);assert.deepEqual(sources.data.map(row=>row.id),[snapshot.id]);const serial=JSON.stringify({metadata,sources,tasks:first});assert.ok(!serial.includes(savedFile.storageKey));assert.ok(!serial.includes('storageKey'));assert.ok(!serial.includes('Private source text'));assert.ok(!serial.includes('Private owner label'));assert.ok(!serial.includes('Private task details'));
+  const other=await x.create(),otherSession=await x.session(other.secret!);await assert.rejects(()=>listCustomerApiResource(otherSession,'tasks','https://example.invalid/api/v1/tasks?limit=1&cursor='+first.pagination.nextCursor),rejects(400));
+ }finally{await x.cleanup();}
+});
+
+test('typed machine observations ingest once, retain machine attribution and need explicit administrator-owned follow-up',async()=>{
+ const x=await fixture();try{
+  const key=await x.create(),session=await x.session(key.secret!,'observations:write'),payload=x.observation(),requestKey=randomUUID(),beforeTasks=await db.obligation.count({where:{organizationId:x.a.id}}),beforeAudit=await db.auditEvent.count({where:{organizationId:x.a.id}});
+  const [first,replayed]=await Promise.all([submitCustomerApiObservation(session,requestKey,payload),submitCustomerApiObservation(session,requestKey,payload)]);assert.equal(first.id,replayed.id);assert.equal(first.source.kind,'CUSTOMER_API_CLIENT');assert.equal(first.source.credentialId,key.id);assert.equal(first.status,'PENDING');assert.equal(first.current,true);assert.equal(first.reportedOutcome,'REPORTED_FAILURE');assert.equal(await db.customerApiObservation.count({where:{organizationId:x.a.id}}),1);assert.equal(await db.obligation.count({where:{organizationId:x.a.id}}),beforeTasks);assert.equal(await db.auditEvent.count({where:{organizationId:x.a.id}}),beforeAudit);
+  await assert.rejects(()=>submitCustomerApiObservation(session,requestKey,{...payload,summary:notes}),rejects(409));await assert.rejects(()=>submitCustomerApiObservation(session,randomUUID(),payload),rejects(409));await assert.rejects(()=>submitCustomerApiObservation(session,randomUUID(),x.observation(x.foreignControl.id)),rejects(404));
+  const exact=await listCustomerApiResource(session,'observations','https://example.invalid/api/v1/observations?requestKey='+requestKey);assert.equal(exact.data[0].id,first.id);assert.equal((await listCustomerApiResource(session,'observations','https://example.invalid/api/v1/observations?requestKey='+randomUUID())).data.length,0);
+  const input={decision:'FOLLOW_UP',version:1,notes,ownerId:x.ed.userId,dueDate:future(7),requestKey:randomUUID(),confirm:true};await assert.rejects(()=>reviewCustomerApiObservation(x.ed,first.id,input),rejects(403));await assert.rejects(()=>reviewCustomerApiObservation(x.out,first.id,input),rejects(404));await assert.rejects(()=>reviewCustomerApiObservation(x.o,first.id,{decision:'ACKNOWLEDGE',version:1,notes,requestKey:randomUUID(),confirm:true}),rejects(409));
+  const reviewed=await reviewCustomerApiObservation(x.ad,first.id,input) as {id:string;followUpTaskId:string;reused:boolean};assert.ok(reviewed.followUpTaskId);const task=await db.obligation.findUniqueOrThrow({where:{id:reviewed.followUpTaskId}});assert.equal(task.status,'OPEN');assert.equal(task.assigneeId,x.ed.userId);assert.equal(task.controlId,x.primary.id);assert.equal(task.category,'Customer integration follow-up');assert.match(task.notes,/customer-submitted/);assert.equal((await reviewCustomerApiObservation(x.ad,first.id,input) as {followUpTaskId:string}).followUpTaskId,task.id);assert.equal(await db.obligation.count({where:{organizationId:x.a.id}}),beforeTasks+1);
+  const receipt=(await developerWorkspace(x.ad,{requestKey:input.requestKey})).operation;assert.equal(receipt?.action,'OBSERVATION_REVIEWED');const audit=await db.auditEvent.findMany({where:{organizationId:x.a.id,entityId:first.id}});assert.equal(audit.length,1);assert.equal(audit[0].actorId,x.ad.userId);assert.equal(audit[0].action,'customer_api.observation_reviewed');assert.equal(await db.evidence.count({where:{organizationId:x.a.id}}),0);
+  const other=await x.create(),otherSession=await x.session(other.secret!);assert.equal((await listCustomerApiResource(otherSession,'observations','https://example.invalid/api/v1/observations')).data.length,0);
+ }finally{await x.cleanup();}
+});
+
+test('observation freshness tracks control scope, owners, reviewer authority, credential revocation and real expiry',async()=>{
+ const x=await fixture();try{
+  const key=await x.create(),session=await x.session(key.secret!,'observations:write');const report=await submitCustomerApiObservation(session,randomUUID(),x.observation(x.primary.id,'PASS'));
+  await db.managedControl.update({where:{id:x.primary.id},data:{version:{increment:1},testProcedure:'Changed review procedure makes the prior context stale'}});let view=(await developerWorkspace(x.ad)).observations.find(row=>row.id===report.id)!;assert.equal(view.current,false);assert.match(view.reason,/configuration/);await assert.rejects(()=>reviewCustomerApiObservation(x.ad,report.id,{decision:'FOLLOW_UP',version:1,notes,ownerId:x.ed.userId,dueDate:future(),requestKey:randomUUID(),confirm:true}),rejects(409));await reviewCustomerApiObservation(x.ad,report.id,{decision:'REJECT',version:1,notes,requestKey:randomUUID(),confirm:true});
+  const fresh=await submitCustomerApiObservation(session,randomUUID(),x.observation(x.primary.id,'PASS'));
+  await db.membership.update({where:{organizationId_userId:{organizationId:x.a.id,userId:x.ed.userId}},data:{role:'VIEWER'}});view=(await developerWorkspace(x.ad)).observations.find(row=>row.id===fresh.id)!;assert.equal(view.current,false);assert.match(view.reason,/owner/);await db.membership.update({where:{organizationId_userId:{organizationId:x.a.id,userId:x.ed.userId}},data:{role:'EDITOR'}});
+  const acknowledgement={decision:'ACKNOWLEDGE',version:1,notes,requestKey:randomUUID(),confirm:true};await reviewCustomerApiObservation(x.ad,fresh.id,acknowledgement);assert.equal((await developerWorkspace(x.o,{observationId:fresh.id})).observations.find(row=>row.id===fresh.id)!.current,true);
+  await db.membership.update({where:{organizationId_userId:{organizationId:x.a.id,userId:x.ad.userId}},data:{role:'EDITOR'}});view=(await developerWorkspace(x.o,{observationId:fresh.id})).observations.find(row=>row.id===fresh.id)!;assert.equal(view.current,false);assert.match(view.reason,/administrator/);await db.membership.update({where:{organizationId_userId:{organizationId:x.a.id,userId:x.ad.userId}},data:{role:'ADMIN'}});
+  const expiry=await submitCustomerApiObservation(session,randomUUID(),x.observation());const expiredPayload={...expiry.payload!,observedAt:new Date(Date.now()-2*86400000).toISOString(),validUntil:new Date(Date.now()-86400000).toISOString()};await db.customerApiObservation.update({where:{id:expiry.id},data:{observedAt:new Date(expiredPayload.observedAt),validUntil:new Date(expiredPayload.validUntil),payload:expiredPayload,payloadHash:hashValue(expiredPayload)}});view=(await developerWorkspace(x.o)).observations.find(row=>row.id===expiry.id)!;assert.equal(view.current,false);assert.match(view.reason,/expired/);const replay=await submitCustomerApiObservation(session,expiry.requestKey,expiredPayload);assert.equal(replay.id,expiry.id);assert.equal(replay.reused,true);assert.equal(replay.current,false);
+  const scoped=await submitCustomerApiObservation(session,randomUUID(),x.observation());await db.customerApiControlGrant.delete({where:{credentialId_controlId:{credentialId:key.id,controlId:x.primary.id}}});view=(await developerWorkspace(x.o)).observations.find(row=>row.id===scoped.id)!;assert.equal(view.current,false);assert.match(view.reason,/permission/);await db.customerApiControlGrant.create({data:{organizationId:x.a.id,credentialId:key.id,controlId:x.primary.id}});
+  await changeCustomerCredential(x.o,key.id,{action:'REVOKE',version:1,requestKey:randomUUID(),confirm:true});view=(await developerWorkspace(x.o)).observations.find(row=>row.id===scoped.id)!;assert.equal(view.current,false);assert.match(view.reason,/credential/);await assert.rejects(()=>listCustomerApiResource(session,'observations','https://example.invalid/api/v1/observations'),rejects(401));
+ }finally{await x.cleanup();}
+});
+
+test('persisted key and company rate budgets reserve atomically at concurrency boundaries and prune only old windows',async()=>{
+ const x=await fixture(),originalNow=Date.now;try{
+  const key=await x.create(),other=await x.create(['controls:read']),frozen=originalNow();Date.now=()=>frozen;const minute=new Date(Math.floor(frozen/60000)*60000);
+  await db.customerApiBudget.createMany({data:[{organizationId:x.a.id,bucket:'key:'+key.id,minute,count:59},{organizationId:x.a.id,bucket:'company',minute,count:299},{organizationId:x.a.id,bucket:'company',minute:new Date(minute.getTime()-2*86400000),count:100}]});
+  const attempts=await Promise.allSettled([x.session(key.secret!),x.session(key.secret!)]);assert.equal(attempts.filter(result=>result.status==='fulfilled').length,1);assert.equal(attempts.filter(result=>result.status==='rejected'&&result.reason.status===429&&result.reason.code==='rate_limited').length,1);
+  const windows=await db.customerApiBudget.findMany({where:{organizationId:x.a.id}});assert.equal(windows.length,2);assert.equal(windows.find(row=>row.bucket==='company')!.count,300);assert.equal(windows.find(row=>row.bucket.startsWith('key:'))!.count,60);
+  await assert.rejects(()=>x.session(other.secret!),rejects(429));assert.equal(await db.customerApiBudget.count({where:{organizationId:x.a.id,bucket:'key:'+other.id}}),0,'failed company reservation must roll back its key unit');
+  Date.now=()=>frozen+60000;await assert.rejects(()=>x.session(other.secret!,'observations:write'),rejects(403));const next=new Date(minute.getTime()+60000);assert.equal((await db.customerApiBudget.findUniqueOrThrow({where:{organizationId_bucket_minute:{organizationId:x.a.id,bucket:'company',minute:next}}})).count,1,'authenticated scope rejection consumes the persisted rate unit');const admitted=await x.session(other.secret!);assert.equal(admitted.rate.remaining,58);assert.equal(admitted.rate.reset,next.getTime()/1000+60);
+ }finally{Date.now=originalNow;await x.cleanup();}
+});
+
+test('real HTTP handlers enforce strict bodies and idempotent recovery while recording rate consumption',async()=>{
+ const x=await fixture();try{
+  const key=await x.create(),token=key.secret!,body=x.observation(),requestKey=randomUUID(),send=(payload:unknown=body,keyValue:string=requestKey,query='')=>postObservation(new Request('https://example.invalid/api/v1/observations'+query,{method:'POST',headers:{authorization:'Bearer '+token,'Content-Type':'application/json','Idempotency-Key':keyValue},body:JSON.stringify(payload)}));
+  const first=await send();assert.equal(first.status,201);assert.equal(first.headers.get('cache-control'),'no-store');assert.equal(first.headers.get('x-ratelimit-remaining'),'59');const result=await first.json();assert.equal(result.source.kind,'CUSTOMER_API_CLIENT');assert.equal((await (await send()).json()).id,result.id);assert.equal((await send({...body,organizationId:x.b.id})).status,400);assert.equal((await send(body,'')).status,400);assert.equal((await send(body,requestKey,'?organizationId='+x.b.id)).status,400);assert.equal((await send({...body,summary:'x'.repeat(40000)})).status,413);
+  const recovered=await getObservations(new Request('https://example.invalid/api/v1/observations?requestKey='+requestKey,{headers:{authorization:'Bearer '+token}}));assert.equal(recovered.status,200);assert.equal((await recovered.json()).data[0].id,result.id);
+  const readOnly=await x.create(['controls:read']);const denied=await postObservation(new Request('https://example.invalid/api/v1/observations',{method:'POST',headers:{authorization:'Bearer '+readOnly.secret,'Content-Type':'application/json'},body:'bad JSON'}));assert.equal(denied.status,403);assert.equal((await denied.json()).error.code,'insufficient_scope');
+  const wrongQuery=await getControls(new Request('https://example.invalid/api/v1/controls?organizationId='+x.b.id,{headers:{authorization:'Bearer '+token}}));assert.equal(wrongQuery.status,400);assert.equal(await db.customerApiObservation.count({where:{organizationId:x.a.id}}),1);
+ }finally{await x.cleanup();}
+});
+
+test('historical credentials do not exhaust active capacity and administrator review pages recover older exact records',async()=>{
+ const x=await fixture();try{
+  const old=new Date(Date.now()-86400000);await db.customerApiCredential.createMany({data:Array.from({length:105},(_,i)=>({id:randomUUID(),organizationId:x.a.id,issuedById:x.o.userId,name:'Historical integration '+i,scopes:['regulatory:read'],secretHash:'a'.repeat(64),hint:'aaaaaaaa',expiresAt:new Date(Date.now()+86400000),createdAt:old,revokedAt:old}))});
+  const key=await x.create(),session=await x.session(key.secret!,'observations:write'),first=await submitCustomerApiObservation(session,randomUUID(),x.observation()),template=await db.customerApiObservation.findUniqueOrThrow({where:{id:first.id}});
+  const history=Array.from({length:52},(_,i)=>{const payload={...first.payload!,externalId:'historical/'+i};return {id:randomUUID(),organizationId:x.a.id,credentialId:key.id,credentialVersion:1,controlId:x.primary.id,requestKey:randomUUID(),externalId:payload.externalId,payload,payloadHash:hashValue(payload),context:template.context!,contextHash:template.contextHash,observedAt:template.observedAt,validUntil:template.validUntil,receivedAt:new Date(Date.now()-1000*(i+1))};});await db.customerApiObservation.createMany({data:history});
+  const current=await developerWorkspace(x.o);assert.ok(current.credentials.some(row=>row.id===key.id));assert.equal(current.observationPage.pendingCount,53);assert.equal(current.observations.length,50);assert.equal(current.observationPage.hasMore,true);
+  const next=await developerWorkspace(x.o,{beforeId:current.observationPage.beforeId!});assert.equal(next.observations.length,3);assert.equal(next.observationPage.hasMore,false);assert.equal(new Set([...current.observations,...next.observations].map(row=>row.id)).size,53);
+  const oldest=history.at(-1)!;assert.ok((await developerWorkspace(x.o,{observationId:oldest.id})).observations.some(row=>row.id===oldest.id));await assert.rejects(()=>developerWorkspace(x.out,{observationId:oldest.id}),rejects(404));
+  await assert.rejects(()=>db.customerApiControlGrant.create({data:{organizationId:x.b.id,credentialId:key.id,controlId:x.foreignControl.id}}),error=>(error as {code?:string}).code==='P2003');
+ }finally{await x.cleanup();}
+});
+
+test('partner receipts retain revision history through credential rotation, retry and dispute',async()=>{
+ const x=await fixture();
+ try{
+  const key=await x.create(),s=await x.session(key.secret!,'observations:write');
+  const record={schemaVersion:1,revision:1,recordId:'company-relationship-7',sourceSystem:'Buyer procurement',sourceVersion:'2026-11',decisionOwnerRef:'buyer-office',state:'CURRENT',record:{kind:'SUPPLIER_RELATION',permittedBuyers:[x.foreign.email],buyerRef:'buyer',supplierRef:'primary',upstreamRef:'tier-two',consentRef:'consent-044',consentExpiresAt:new Date(Date.now()+86400000).toISOString()}};
+  const body={...x.observation(x.primary.id,'PASS'),partnerRecord:record};
+  const first=await submitCustomerApiObservation(s,randomUUID(),body);
+  assert.equal(first.current,true);assert.equal(first.reportedOutcome,'REPORTED_PASS');assert.match(first.receiptHash,/^[a-f0-9]{64}$/);
+  await assert.rejects(()=>reviewCustomerApiObservation(x.o,first.id,{decision:'ACKNOWLEDGE',version:1,notes,confirm:true,requestKey:randomUUID()}),rejects(403));
+  await reviewCustomerApiObservation(x.ad,first.id,{decision:'ACKNOWLEDGE',version:1,notes,confirm:true,requestKey:randomUUID()});
+  const lookup=(ctx:typeof x.o)=>db.$transaction(tx=>searchPartnerReports(tx,ctx,'tier two supply chain','primary'));
+  const matched=await lookup(x.o);assert.equal(matched[0].id,first.id);assert.equal(matched[0].receiptHash,first.receiptHash);
+  assert.ok(!JSON.stringify(matched).includes(x.foreign.email));assert.deepEqual(await lookup(x.out),[]);
+  await assert.rejects(()=>lookup(x.ed),rejects(403));
+  const file=await x.file(),room=await createAuditRoom(x.o,{title:'Buyer fixture share',purpose:'Validate explicitly consented partner source records in this named room.',expiresAt:new Date(Date.now()+86400000).toISOString(),evidenceIds:[file.id]});
+  await changeAuditRoom(x.o,room.id,{action:'PUBLISH',version:1,manifestHash:room.manifestHash,acknowledgeDisclosure:true});
+  const g=await changeAuditRoom(x.o,room.id,{action:'INVITE',version:2,email:x.foreign.email}) as {id:string},wrong=await changeAuditRoom(x.o,room.id,{action:'INVITE',version:2,email:x.staff.email}) as {id:string};
+  const b={externalId:x.foreign.externalId,email:x.foreign.email};
+  assert.equal((await buyerAnnexOptions(x.o,room.id,g.id)).receipts.length,1);assert.equal((await buyerAnnexOptions(x.o,room.id,wrong.id)).receipts.length,0);
+  await assert.rejects(()=>attachBuyerAnnex(x.o,room.id,{grantId:wrong.id,observationId:first.id,receiptHash:first.receiptHash,confirm:true}),rejects(409));
+  await attachBuyerAnnex(x.o,room.id,{grantId:g.id,observationId:first.id,receiptHash:first.receiptHash,confirm:true});await guestAuditAction(b,g.id,{action:'ACCEPT',version:1});
+  const annex=(await openAuditRoom(b,g.id)).partnerRecords;assert.equal(annex.length,1);assert.equal('permittedBuyers' in annex[0].record,false);
+  const rotate=await changeCustomerCredential(x.o,key.id,{action:'ROTATE',version:1,requestKey:randomUUID(),confirm:true}) as Created;
+  const active=await x.session(rotate.secret!,'observations:write');
+  await assert.rejects(()=>submitCustomerApiObservation(s,randomUUID(),body),rejects(401));
+  const again=await submitCustomerApiObservation(active,randomUUID(),body);assert.equal(again.id,first.id);assert.equal(again.reused,true);
+  const next={...x.observation(x.primary.id,'PASS'),partnerRecord:{...record,revision:2,previousHash:first.receiptHash,state:'DISPUTED'}};
+  await assert.rejects(()=>submitCustomerApiObservation(active,randomUUID(),{...next,partnerRecord:{...next.partnerRecord,previousHash:'0'.repeat(64)}}),rejects(409));
+  await assert.rejects(()=>submitCustomerApiObservation(active,randomUUID(),{...next,controlId:x.foreignControl.id}),rejects(404));
+  const attempts=await Promise.all([submitCustomerApiObservation(active,randomUUID(),next),submitCustomerApiObservation(active,randomUUID(),next)]);
+  assert.equal(attempts[0].id,attempts[1].id);assert.equal(attempts[0].current,false);
+  assert.equal((await openAuditRoom(b,g.id)).partnerRecords.length,0);
+  assert.deepEqual(await lookup(x.o),[]);
+  const list=await developerWorkspace(x.o,{all:true});assert.match(list.observations.find(v=>v.id===first.id)!.reason,/superseded/);
+  assert.match(list.observations.find(v=>v.id===attempts[0].id)!.reason,/disputed/);
+  await assert.rejects(()=>reviewCustomerApiObservation(x.ad,first.id,{decision:'ACKNOWLEDGE',notes,version:1,requestKey:randomUUID(),confirm:true}),rejects(409));
+ }finally{await x.cleanup();}
+});
+
+test('specialist retention withholds expired detail and the worker removes the underlying payload once',async()=>{
+ const x=await fixture();try{
+  const k=await x.create(),s=await x.session(k.secret!,'observations:write');
+  const body={...x.observation(x.primary.id,'PASS'),summary:'Specialist decision supplied by the authorised source.',checks:[{key:'specialist-decision',label:'Specialist decision',observed:'APPROVED',status:'PASS',detail:''}],partnerRecord:{schemaVersion:1,revision:1,state:'CURRENT',recordId:'case-reference-7',sourceSystem:'Specialist system',sourceVersion:'v4',decisionOwnerRef:'privacy-team',record:{kind:'SPECIALIST_ATTESTATION',subject:'PRIVACY',scopeRef:'team-seven',decisionRef:'review-1',decision:'APPROVED',retainUntil:'2025-01-01'}}};
+  const response=await submitCustomerApiObservation(s,randomUUID(),body);assert.equal(response.current,false);assert.equal(response.payload,null);
+  assert.ok(await purgeExpiredPartnerRecords()>=1);assert.equal(await purgeExpiredPartnerRecords(),0);
+  const stored=await db.customerApiObservation.findUniqueOrThrow({where:{id:response.id}});assert.ok(stored.purgedAt);assert.deepEqual(stored.payload,{retention:'ended'});assert.equal(stored.payloadHash,response.receiptHash);
+ }finally{await x.cleanup();}
+});
+
+test('a reviewed model feed reopens the linked inventory on revision and preserves the earlier approval',async()=>{
+ const x=await fixture();
+ try{
+  const key=await x.create(),session=await x.session(key.secret!,'observations:write');
+  const vendor=await db.vendor.create({data:{organizationId:x.a.id,name:'Fictional model publisher',service:'Model version source',criticality:'HIGH',dataAccess:'LIMITED',ownerId:x.ed.userId,nextReviewAt:new Date(future())}});
+  const profile={purpose:'Prepare draft quality procedures for review.',safeguards:'A qualified human reviews each draft before use.',dataClass:'SENSITIVE',access:'DRAFT',impact:'HEALTH'};
+  await inventoryAction(x.ed,{action:'CREATE',requestKey:randomUUID(),name:'Fictional model',kind:'MODEL',ownerId:x.ed.userId,controlId:x.primary.id,vendorId:vendor.id,profile});
+  const inventory=async()=>(await inventoryWorkspace(x.o)).systems[0];
+  const original=await inventory(),file=await x.file();
+  const decision=(version:number)=>({action:'DECIDE',id:original.id,version,evidenceId:file.id,verdict:'RESTRICTED',validUntil:future(),rationale:'Independent review limits the use to drafts for a qualified person.'});
+  await inventoryAction(x.o,decision(original.version),x.store);
+  const record={schemaVersion:1,recordId:'model-series-1',revision:1,state:'CURRENT',sourceSystem:'Fictional model publisher',sourceVersion:'v1',decisionOwnerRef:'publisher',record:{kind:'MODEL_CHANGE',vendorRef:'vendor-1',systemRef:'system-1',modelRef:'quality-model',modelVersion:'1.0',approval:'APPROVED',decisionRef:'change-1'}};
+  const first=await submitCustomerApiObservation(session,randomUUID(),{...x.observation(x.primary.id,'PASS'),partnerRecord:record});
+  const bind={systemId:original.id,systemVersion:original.version,receiptHash:first.receiptHash,confirm:true};
+  const ack=(id:string)=>reviewCustomerApiObservation(x.ad,id,{decision:'ACKNOWLEDGE',version:1,notes,confirm:true,requestKey:randomUUID()});
+  await assert.rejects(()=>bindPartnerModel(x.o,first.id,bind),rejects(409));
+  await ack(first.id);
+  assert.equal((await partnerFollowUp(x.o,first.id)).systems[0].id,original.id);
+  await assert.rejects(()=>bindPartnerModel(x.out,first.id,bind),rejects(409));
+  await bindPartnerModel(x.o,first.id,bind);await bindPartnerModel(x.o,first.id,bind);
+  const bound=await inventory();assert.equal(bound.version,2);assert.equal(bound.history[0].version,1);assert.equal(bound.status,'Awaiting review');
+  await inventoryAction(x.o,decision(bound.version),x.store);assert.equal((await inventory()).status,'Restricted');
+  const changed={...x.observation(x.primary.id,'PASS'),partnerRecord:{...record,revision:2,previousHash:first.receiptHash,record:{...record.record,modelVersion:'2.1',decisionRef:'change-2'}}};
+  const next=await submitCustomerApiObservation(session,randomUUID(),changed);
+  assert.equal((await submitCustomerApiObservation(session,randomUUID(),changed)).id,next.id);
+  const pending=await inventory();assert.equal(pending.version,3);assert.equal(pending.status,'Partner source needs review');
+  assert.deepEqual(pending.history.map(h=>h.version),[2,1]);assert.equal(pending.partnerChange?.observationId,next.id);
+  await assert.rejects(()=>inventoryAction(x.o,decision(3),x.store),rejects(409));await ack(next.id);
+  await inventoryAction(x.o,decision(3),x.store);assert.equal((await inventory()).status,'Restricted');
+  await changeCustomerCredential(x.o,key.id,{action:'REVOKE',version:1,confirm:true,requestKey:randomUUID()});
+  assert.equal((await inventory()).status,'Partner source needs review');
+ }finally{await x.cleanup();}
+});
+
+test('group follow-up is atomic across controls, survives retries and links a calibrated excursion and hazard to one investigation',async()=>{
+ const x=await fixture();
+ try{
+  const key=await x.create(undefined,[x.primary.id,x.ungranted.id]),session=await x.session(key.secret!,'observations:write');
+  const source={schemaVersion:1,revision:1,state:'CURRENT',sourceSystem:'Fictional facilities',sourceVersion:'2026-11',decisionOwnerRef:'site-quality'};
+  const sensor={kind:'CALIBRATED_READING',siteRef:'site1',sensorRef:'s1',calibrationRef:'cert1',calibratedAt:new Date(Date.now()-86400000).toISOString(),calibrationDue:new Date(Date.now()+86400000).toISOString(),unit:'CELSIUS',minimum:2,maximum:8,reading:10,followUpRef:'exc-01'};
+  const first=await submitCustomerApiObservation(session,randomUUID(),{...x.observation(x.primary.id,'PASS'),partnerRecord:{...source,recordId:'s1-reading',record:sensor}});
+  const second=await submitCustomerApiObservation(session,randomUUID(),{...x.observation(x.primary.id,'PASS'),partnerRecord:{...source,recordId:'food-1',record:{kind:'FOOD_HAZARD',siteRef:'site1',hazardRef:'cold-store',result:'DEVIATION',correctiveActionRef:'exc-01'}}});
+  const third=await submitCustomerApiObservation(session,randomUUID(),x.observation(x.ungranted.id));
+  for(const row of [first,second])assert.equal(row.reportedOutcome,'REPORTED_FAILURE');
+  const records=[first,second,third].map(({id,version,receiptHash})=>({id,version,receiptHash}));
+  const input={records,ownerId:x.ed.userId,dueDate:future(),notes,requestKey:randomUUID(),confirm:true};
+  const count=()=>db.obligation.count({where:{organizationId:x.a.id,category:'Customer integration follow-up'}});
+  await assert.rejects(()=>groupObservationFollowUps(x.ed,input),rejects(403));
+  await assert.rejects(()=>groupObservationFollowUps(x.out,{...input,ownerId:x.out.userId}),rejects(404));
+  await assert.rejects(()=>groupObservationFollowUps(x.ad,{...input,records:[records[0],records[1],{...records[2],version:4}]}),rejects(409));
+  assert.equal(await count(),0);assert.equal(await db.customerApiObservation.count({where:{organizationId:x.a.id,status:'PENDING'}}),3);
+  const [done,replay]=await Promise.all([groupObservationFollowUps(x.ad,input),groupObservationFollowUps(x.ad,{...input,records:[...records].reverse()})]);
+  assert.notEqual(done.reused,replay.reused);assert.equal(await count(),2);
+  const rows=(await developerWorkspace(x.o,{all:true})).observations;
+  const taskId=rows.find(r=>r.id===first.id)!.followUpTaskId!;
+  const bySite=(site:string)=>db.$transaction(tx=>searchPartnerReports(tx,x.ad,'temperature food hazard',site));
+  const reports=await bySite('site1');assert.equal(reports.length,2);assert.ok(reports.every(r=>r.taskId===taskId&&r.outcome==='REPORTED_FAILURE'));
+  assert.match(reports.find(r=>r.id===first.id)!.summary,/10 °C/);
+  assert.deepEqual(await bySite('site10'),[]);
+  assert.equal(rows.find(r=>r.id===second.id)!.followUpTaskId,taskId);assert.notEqual(rows.find(r=>r.id===third.id)!.followUpTaskId,taskId);
+  assert.deepEqual((await workTask(x.o,taskId)).integrationReceipts.map(r=>r.id).sort(),[first.id,second.id].sort());assert.deepEqual((await workTask(x.st,taskId)).integrationReceipts,[]);
+  await assert.rejects(()=>groupObservationFollowUps(x.ad,{...input,notes:notes+' Revised.'}),rejects(409));
+  const quality=await createQualityCase(x.ed,{requestKey:randomUUID(),title:'Cold-store investigation',kind:'DEVIATION',classification:'MAJOR',description:notes,impact:notes,containment:notes,occurredAt:new Date().toISOString().slice(0,10),ownerId:x.ed.userId});
+  await addQualityAction(x.ed,quality.id,{requestKey:randomUUID(),version:quality.version,taskId,kind:'CORRECTIVE',purpose:notes});
+  for(const id of [first.id,second.id])assert.equal((await partnerFollowUp(x.ad,id)).qualityActions[0].qualityCase.id,quality.id);
+  await assert.rejects(()=>partnerFollowUp(x.out,first.id),rejects(404));
+ }finally{await x.cleanup();}
+});
+
+test('a logger window with missing samples reaches quality review with its original timestamps and digest',async()=>{
+ const f=await fixture();
+ try {
+  const key=await f.create(),session=await f.session(key.secret!,'observations:write');
+  const end=new Date(Date.now()-60000).toISOString(),start=new Date(Date.parse(end)-600000).toISOString();
+  const source={schemaVersion:1,revision:1,recordId:'logger-window-01',state:'CURRENT',sourceSystem:'Fictional storage logger',sourceVersion:'csv1',decisionOwnerRef:'quality',
+    record:{kind:'LOGGER_WINDOW',siteRef:'warehouse',sensorRef:'logger7',calibrationRef:'certificate7',calibratedAt:start,calibrationDue:future()+'T00:00:00Z',
+      windowStart:start,windowEnd:end,unit:'CELSIUS',minimum:2,maximum:8,maxGapSeconds:300,rawFileSha256:'a'.repeat(64),samples:[{at:start,value:3},{at:end,value:4}]}};
+  const payload={...f.observation(f.primary.id,'PASS'),observedAt:end,partnerRecord:source};
+  const requestKey=randomUUID(),receipt=await submitCustomerApiObservation(session,requestKey,payload);
+  assert.equal(receipt.reportedOutcome,'REPORTED_UNKNOWN');
+  assert.equal((await submitCustomerApiObservation(session,requestKey,payload)).id,receipt.id);
+  const record=receipt.payload?.partnerRecord?.record;
+  assert.ok(record?.kind==='LOGGER_WINDOW');assert.equal(record.rawFileSha256,source.record.rawFileSha256);
+  assert.deepEqual(record.samples,source.record.samples);
+ } finally {await f.cleanup();}
+});
+
+test('shipment discrepancies produce owned follow-up and exact serial lookup recognises only current reviewed receipts',async()=>{
+ const f=await fixture();
+ try{
+  const {epcisFile,pack}=await import('./helpers/epcis-documents');
+  const grant=await f.create(),session=await f.session(grant.secret!,'observations:write');
+  const at=new Date(Date.now()-60000).toISOString(),shipping=epcisFile('shipping',['Case-A','Case-B'],at),receiving=epcisFile('receiving',['Case-B'],at);
+  const source={schemaVersion:1,revision:1,recordId:'transfer-7',state:'CURRENT',sourceSystem:'Fictional trading partner',sourceVersion:'EPCIS-2.0',decisionOwnerRef:'goods-in',record:{kind:'EPCIS_TRANSFER',shipping,receiving}};
+  const body={...f.observation(f.primary.id,'PASS'),partnerRecord:source};
+  const receipt=await submitCustomerApiObservation(session,randomUUID(),body);
+  const lookup=(id:string,who=f.o)=>db.$transaction(tx=>searchPartnerReports(tx,who,'shipment serialised packs',id));
+  assert.equal(receipt.reportedOutcome,'REPORTED_FAILURE');assert.deepEqual(await lookup(pack('Case-A')),[]);
+  await assert.rejects(reviewCustomerApiObservation(f.ad,receipt.id,{decision:'ACKNOWLEDGE',version:1,notes,confirm:true,requestKey:randomUUID()}),rejects(409));
+  await reviewCustomerApiObservation(f.ad,receipt.id,{decision:'FOLLOW_UP',version:1,notes,ownerId:f.ed.userId,dueDate:future(),confirm:true,requestKey:randomUUID()});
+  const found=await lookup(pack('Case-A'));assert.equal(found[0].receiptHash,receipt.receiptHash);assert.ok(found[0].taskId);assert.match(found[0].summary,/1 missing/);
+  assert.deepEqual(await lookup(pack('case-a')),[]);assert.deepEqual(await lookup(pack('Case-A'),f.out),[]);
+  await submitCustomerApiObservation(session,randomUUID(),{...f.observation(f.primary.id,'PASS'),partnerRecord:{...source,revision:2,previousHash:receipt.receiptHash,state:'WITHDRAWN'}});
+  assert.deepEqual(await lookup(pack('Case-A')),[]);
+ }finally{await f.cleanup();}
+});
+
+test('private AI client negotiates MCP, sees granted tools only, reads scoped data and loses access immediately after revocation',async()=>{
+ const {POST}=await import('../app/api/v1/mcp/route');
+ const {GET:plugin}=await import('../app/api/v1/mcp/plugin/route');
+ const f=await fixture();
+ try{
+  const key=await f.create(['controls:read']);
+  const call=(rpc:object,token=key.secret,origin='')=>POST(new Request('https://regpilot.example/api/v1/mcp',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token,...(origin?{Origin:origin}:{})},body:JSON.stringify({jsonrpc:'2.0',...rpc})}));
+  const init={id:1,method:'initialize',params:{protocolVersion:'2025-11-25'}};
+  assert.equal((await (await call(init)).json()).result.protocolVersion,'2025-11-25');
+  assert.equal((await call({method:'notifications/initialized'})).status,202);
+  const list=await (await call({id:2,method:'tools/list'})).json();
+  assert.deepEqual(list.result.tools.map((r:{name:string})=>r.name),['list_controls']);
+  const read=await (await call({id:3,method:'tools/call',params:{name:'list_controls',arguments:{limit:5}}})).json();
+  assert.deepEqual(JSON.parse(read.result.content[0].text).data.map((row:{id:string})=>row.id),[f.primary.id]);
+  assert.equal((await (await call({id:4,method:'tools/call',params:{name:'list_tasks'}})).json()).error.code,-32602);
+  assert.equal((await call(init,key.secret,'https://foreign.example')).status,403);
+  const archive=plugin(new Request('https://regpilot.example/api/v1/mcp/plugin'));
+  assert.equal(archive.headers.get('content-type'),'application/zip');
+  const bytes=Buffer.from(await archive.arrayBuffer());assert.equal(bytes.readUInt32LE(0),0x04034b50);assert.ok(bytes.includes(Buffer.from('https://regpilot.example/api/v1/mcp')));assert.ok(!bytes.includes(Buffer.from(key.secret!)));
+  await changeCustomerCredential(f.o,key.id,{action:'REVOKE',version:key.version,requestKey:randomUUID(),confirm:true});
+  assert.equal((await call(init)).status,401);
+ }finally{await f.cleanup();}
+});
+
+for(const instrument of [
+ {kind:'opcua',python:process.env.REGPILOT_INSTRUMENT_PYTHON,title:'site reader delivers a real encrypted OPC UA excursion through authenticated HTTPS intake and recovers the identical receipt'},
+ {kind:'mqtt',python:process.env.REGPILOT_MQTT_PYTHON,title:'MQTT site logger recovers buffered instrument evidence and delivers complete, missing and excursion windows through authenticated HTTPS'}
+] as const)test(instrument.title,{skip:!instrument.python},async()=>{
+ const {createServer}=await import('node:https'),{mkdtemp,readFile,writeFile,rm}=await import('node:fs/promises');
+ const {tmpdir}=await import('node:os'),{join}=await import('node:path'),{execFile}=await import('node:child_process'),{promisify}=await import('node:util');
+ const exec=promisify(execFile),folder=await mkdtemp(join(tmpdir(),'regpilot-intake-')),x=await fixture();
+ const pem=join(folder,'server.pem'),key=join(folder,'server.key'),report=join(folder,'capture.json'),envelope=join(folder,'excursion.json');
+ let server:ReturnType<typeof createServer>|undefined;
+ let dropNext=false,lostResponse:{key:string;id:string}|undefined;
+ try{
+  if(instrument.kind==='mqtt'){
+   await exec(instrument.python!,['scripts/check-live-mqtt-logger.py','--control',x.primary.id,'--output',report,'--site',join(folder,'site')]);
+  }else{
+   await exec(instrument.python!,['scripts/check-live-instrument.py'],{env:{...process.env,REGPILOT_TEST_CONTROL_ID:x.primary.id,REGPILOT_INSTRUMENT_REPORT:report}});
+  }
+  const results=JSON.parse(await readFile(report,'utf8')),sample=results.excursion;
+  await writeFile(envelope,JSON.stringify(sample));
+  await exec('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj','/CN=localhost','-addext','subjectAltName=IP:127.0.0.1','-keyout',key,'-out',pem]);
+  server=createServer({cert:await readFile(pem),key:await readFile(key)},async(req,res)=>{
+   try{
+    assert.equal(req.method,'POST');assert.equal(req.url,'/api/v1/observations');
+    const chunks=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
+    const headers=new Headers();for(const [name,value] of Object.entries(req.headers))if(typeof value==='string')headers.set(name,value);
+    const received=await postObservation(new Request('https://regpilot.test/api/v1/observations',{method:'POST',headers,body:Buffer.concat(chunks).toString('utf8')}));
+    const response=await received.text();
+    if(dropNext&&received.status===201){dropNext=false;lostResponse={key:headers.get('Idempotency-Key')!,id:JSON.parse(response).id};res.destroy();return;}
+    res.writeHead(received.status,{'Content-Type':'application/json'}).end(response);
+   }catch{res.writeHead(500).end();}
+  });
+  await new Promise<void>(resolve=>server!.listen(0,'127.0.0.1',resolve));
+  const addr=server.address();assert.ok(addr&&typeof addr==='object');
+  const send=(token:string)=>exec(instrument.python!,['public/instrument-bridge/deliver.py',envelope,'--workspace','https://127.0.0.1:'+addr.port],{env:{...process.env,SSL_CERT_FILE:pem,REGPILOT_OBSERVATION_TOKEN:token}});
+  const unauthorised=await x.create(['observations:write'],[x.ungranted.id]);
+  await assert.rejects(send(unauthorised.secret!),/HTTP 404/);
+  const writer=await x.create(['observations:write','observations:read'],[x.primary.id]);
+  const first=JSON.parse((await send(writer.secret!)).stdout),second=JSON.parse((await send(writer.secret!)).stdout);
+  assert.equal(first.reused,false);assert.equal(second.id,first.id);assert.equal(second.reused,true);
+  const stored=await db.customerApiObservation.findUniqueOrThrow({where:{id:first.id}});
+  assert.equal(stored.organizationId,x.a.id);assert.equal(stored.controlId,x.primary.id);
+  const readOutcome=async(requestKey:string,id:string)=>{
+   const result=await getObservations(new Request('https://regpilot.test/api/v1/observations?requestKey='+requestKey,{headers:{authorization:'Bearer '+writer.secret!}}));
+   assert.equal(result.status,200);
+   const body=await result.json();assert.equal(body.data.length,1);assert.equal(body.data[0].id,id);
+   return body.data[0].reportedOutcome as string;
+  };
+  const outcome=await readOutcome(sample.idempotencyKey,first.id);
+  assert.equal(outcome,'REPORTED_FAILURE');
+  if(instrument.kind==='mqtt'){
+   const record=(stored.payload as typeof sample.body).partnerRecord.record;
+   assert.equal(record.kind,'LOGGER_WINDOW');assert.deepEqual(record,sample.body.partnerRecord.record);
+   const receipts:{window:string;outcome:string;receiptId:string}[]=[{window:'excursion',outcome,receiptId:first.id}];
+   for(const [window,expected] of [['baseline','REPORTED_PASS'],['missing','REPORTED_UNKNOWN'],['late','REPORTED_FAILURE']] as const){
+    await writeFile(envelope,JSON.stringify(results[window]));
+    const ack=JSON.parse((await send(writer.secret!)).stdout);
+    const row=await db.customerApiObservation.findUniqueOrThrow({where:{id:ack.id}});
+    assert.equal(row.controlId,x.primary.id);
+    const reported=await readOutcome(results[window].idempotencyKey,ack.id);assert.equal(reported,expected);
+    receipts.push({window,outcome:reported,receiptId:row.id});
+   }
+   const site=join(folder,'site'),archive=join(site,'archive');
+   const forward=(token:string)=>exec(instrument.python!,['public/instrument-bridge/mqtt_forward.py','--once','--config',join(site,'config.json'),
+    '--spool',join(site,'spool.sqlite'),'--archive',archive,'--workspace','https://127.0.0.1:'+addr.port,'--interval-seconds','2'],
+    {env:{...process.env,SSL_CERT_FILE:pem,REGPILOT_OBSERVATION_TOKEN:token}});
+   await assert.rejects(forward(unauthorised.secret!),/HTTP 404/);
+   dropNext=true;
+   await assert.rejects(forward(writer.secret!),/Could not confirm workspace delivery/);
+   assert.ok(lostResponse);
+   await new Promise(resolve=>setTimeout(resolve,2200));
+   const recovered=JSON.parse((await forward(writer.secret!)).stdout);
+   assert.ok(recovered.acknowledged>=2);assert.equal(recovered.pending,0);
+   const saved=await exec(instrument.python!,['-c',
+    'import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("SELECT count(*) FROM windows WHERE ack=? AND status=\'ACKNOWLEDGED\'", (sys.argv[2],)).fetchone()[0])',
+    join(archive,'delivery.sqlite'),lostResponse.id]);
+   assert.equal(saved.stdout.trim(),'1');
+   assert.equal(await db.customerApiObservation.count({where:{requestKey:lostResponse.key}}),1);
+   if(process.env.REGPILOT_MQTT_REPORT)await writeFile(process.env.REGPILOT_MQTT_REPORT,JSON.stringify({...results,receipts,automaticDelivery:recovered,
+    lostWorkspaceAcknowledgementRecovered:true,duplicateReceiptRecovered:true,ungrantedControlRejected:true},null,2));
+  }else{
+   assert.equal((stored.payload as typeof sample.body).checks.find((c:{key:string})=>c.key==='temperature-limits').status,'FAIL');
+  }
+ }finally{server?.closeAllConnections();if(server?.listening)await new Promise<void>(resolve=>server!.close(()=>resolve()));await x.cleanup();await rm(folder,{recursive:true,force:true});}
+});
+
+test('database connector receipts reach the control review queue and recover idempotently',
+ {skip:!process.env.REGPILOT_DATABASE_ACCEPTANCE_ENVELOPES},async()=>{
+  const file=process.env.REGPILOT_DATABASE_ACCEPTANCE_ENVELOPES!;
+  const envelopes=JSON.parse(await readFile(file,'utf8')) as {idempotencyKey:string;body:{controlId:string;externalId:string}}[];
+  assert.equal(envelopes.length,2);
+  const x=await fixture(envelopes[0].body.controlId);
+  try {
+    const key=await x.create(['observations:read','observations:write']);
+    const headers={authorization:'Bearer '+key.secret!,'Content-Type':'application/json'};
+    let qualityId='';
+    for(const [index,envelope] of envelopes.entries()){
+      const send=()=>postObservation(new Request('https://example.invalid/api/v1/observations',{method:'POST',
+        headers:{...headers,'Idempotency-Key':envelope.idempotencyKey},body:JSON.stringify(envelope.body)}));
+      const first=await send();
+      assert.equal(first.status,201);
+      const receipt=await first.json();
+      assert.equal(receipt.reportedOutcome,index===0?'REPORTED_FAILURE':'REPORTED_PASS');
+      assert.equal(receipt.status,'PENDING');
+      assert.equal(receipt.controlId,x.primary.id);
+      assert.equal(receipt.externalId,envelope.body.externalId);
+      const replay=await (await send()).json();
+      assert.equal(replay.reused,true);
+      assert.equal(replay.id,receipt.id);
+      const review=await developerWorkspace(x.ad,{observationId:receipt.id});
+      assert.equal(review.observations[0].receiptHash,receipt.receiptHash);
+      await assert.rejects(()=>developerWorkspace(x.out,{observationId:receipt.id}),rejects(404));
+      const findings=await resourceFindingReport(x.ad,receipt.id);
+      assert.equal(findings.targetDays,7);
+      assert.equal(findings.rows.length,3);
+      assert.equal(findings.reads.length,index+1);
+      assert.equal(findings.rows.filter(row=>row.status==='FAIL').length,index===0?1:0);
+      const recovered=findings.rows.filter(row=>row.passedAfterFailure);
+      assert.equal(recovered.length,index===0?0:1);
+      if(index===1)assert.deepEqual(recovered[0].history.map(event=>event.status),['FAIL','PASS']);
+      await assert.rejects(()=>resourceFindingReport(x.out,receipt.id),rejects(404));
+      if(index===0){
+       const reviewed=await reviewCustomerApiObservation(x.ad,receipt.id,{decision:'FOLLOW_UP',version:1,ownerId:x.ed.userId,dueDate:future(7),notes,requestKey:randomUUID(),confirm:true});
+       assert.ok('followUpTaskId' in reviewed&&reviewed.followUpTaskId);
+       const quality=await createQualityCase(x.ed,{requestKey:randomUUID(),title:'Held release decision',kind:'DEVIATION',classification:'MAJOR',description:notes,impact:notes,containment:notes,occurredAt:future(0),ownerId:x.ed.userId});
+       qualityId=quality.caseId;
+       await addQualityAction(x.ed,qualityId,{requestKey:randomUUID(),version:quality.version,taskId:reviewed.followUpTaskId,kind:'CORRECTIVE',purpose:notes});
+      }else{
+       const pending=(await exportQualityCase(x.ed,qualityId)).databaseMonitoring!;
+       assert.equal(pending[0].recovered,false,'A new SQL receipt needs a human review');
+       await reviewCustomerApiObservation(x.ad,receipt.id,{decision:'ACKNOWLEDGE',version:1,notes,requestKey:randomUUID(),confirm:true});
+      }
+      const trace=(await exportQualityCase(x.ed,qualityId)).databaseMonitoring!;
+      assert.equal(trace.length,1);assert.equal(trace[0].recovered,index===1);
+      assert.equal(index===0?trace[0].receiptHash:trace[0].latest?.receiptHash,receipt.receiptHash);
+
+    }
+  } finally {await x.cleanup();}
+});
+
+test('database connector receipts report due, missed and recovered stock, identity and document checks to the assigned workspace',
+ {skip:!process.env.REGPILOT_CADENCE_ENVELOPES},async()=>{
+  type Envelope={idempotencyKey:string;body:{controlId:string;checks:{key:string;status:string}[]}};
+  const attempts=JSON.parse(await readFile(process.env.REGPILOT_CADENCE_ENVELOPES!,'utf8')) as {availability:Envelope;source:Envelope|null}[];
+  assert.equal(attempts.length,4);
+  const x=await fixture(attempts[0].availability.body.controlId);
+  try{
+   const key=await x.create(['observations:read','observations:write']);
+   async function admit(e:Envelope){
+    const response=await postObservation(new Request('https://example.invalid/api/v1/observations',{method:'POST',
+     headers:{authorization:'Bearer '+key.secret,'Content-Type':'application/json','Idempotency-Key':e.idempotencyKey},body:JSON.stringify(e.body)}));
+    const receipt=await response.json();assert.equal(response.status,201,JSON.stringify(receipt));return receipt;
+   }
+   let incident='';
+   for(const [i,attempt] of attempts.entries()){
+    const availability=await admit(attempt.availability);
+    assert.equal(availability.reportedOutcome,i===2?'REPORTED_FAILURE':'REPORTED_PASS');
+    if(i===2){
+     assert.equal(attempt.source,null);
+     const reviewed=await reviewCustomerApiObservation(x.ad,availability.id,{decision:'FOLLOW_UP',version:1,notes,ownerId:x.ed.userId,dueDate:future(2),requestKey:randomUUID(),confirm:true});
+     assert.ok('followUpTaskId' in reviewed&&reviewed.followUpTaskId);incident=reviewed.followUpTaskId;const task=await db.obligation.findUniqueOrThrow({where:{id:incident}});
+     assert.equal(task.assigneeId,x.ed.userId);assert.equal(task.controlId,x.primary.id);
+    }else{
+     const receipt=await admit(attempt.source!);assert.equal(receipt.reportedOutcome,i===1?'REPORTED_FAILURE':'REPORTED_PASS');
+     const resource=await resourceFindingReport(x.ad,receipt.id);assert.equal(resource.rows.length,3);
+     if(i===3){assert.equal(resource.rows.filter(row=>row.passedAfterFailure).length,3);assert.equal(resource.reads.length,3);}
+     await assert.rejects(()=>resourceFindingReport(x.out,receipt.id),rejects(404));
+    }
+   }
+   assert.equal((await db.obligation.findUniqueOrThrow({where:{id:incident}})).status,'OPEN');
+  }finally{await x.cleanup();}
+});
+
+test('timed database recovery receipts preserve the failed step, reviewed control and restored source', {skip:!process.env.REGPILOT_SCHEDULED_DATABASE},async()=>{
+ type Envelope={idempotencyKey:string;body:{externalId:string;controlId:string;checks:{key:string;status:string;observed:string;detail:string}[]}};
+ type Attempt={summary:{slot:number;state:string;failureStage?:string;recoveredAfterSlot?:number};availability:Envelope;source:Envelope|null};
+ const report=JSON.parse(await readFile(process.env.REGPILOT_SCHEDULED_DATABASE!,'utf8')) as {format:string;attempts:Attempt[];intervalSeconds:number};
+ assert.equal(report.format,'regpilot-database-scheduled-recovery-v1');assert.equal(report.intervalSeconds,60);
+ const [before,failed,restored]=report.attempts;assert.equal(report.attempts.length,3);
+ assert.ok(before.summary.slot<failed.summary.slot&&failed.summary.slot<restored.summary.slot);
+ assert.equal(restored.summary.recoveredAfterSlot,failed.summary.slot);assert.equal(failed.source,null);
+ assert.equal(failed.availability.body.checks[0].observed,failed.summary.failureStage);
+ const x=await fixture(before.availability.body.controlId);
+ try{
+  const key=await x.create(['observations:read','observations:write']);
+  const ingest=async(envelope:Envelope)=>{
+   const send=()=>postObservation(new Request('https://example.invalid/api/v1/observations',{method:'POST',headers:{authorization:'Bearer '+key.secret,'Content-Type':'application/json','Idempotency-Key':envelope.idempotencyKey},body:JSON.stringify(envelope.body)}));
+   const response=await send(),receipt=await response.json();assert.equal(response.status,201);assert.equal(receipt.controlId,x.primary.id);assert.equal(receipt.status,'PENDING');
+   const replay=await (await send()).json();assert.equal(replay.id,receipt.id);assert.equal(replay.reused,true);
+   return receipt;
+  };
+  for(const event of report.attempts){
+   const availability=await ingest(event.availability);
+   if(event===failed){assert.equal(availability.reportedOutcome,'REPORTED_FAILURE');assert.ok(failed.availability.body.checks[0].detail.length>15);}
+   if(event.source){const source=await ingest(event.source);assert.equal(source.reportedOutcome,event===before?'REPORTED_FAILURE':'REPORTED_PASS');
+    if(event===restored){const history=await resourceFindingReport(x.ad,source.id);assert.equal(history.rows.filter(r=>r.passedAfterFailure).length,1);}}
+  }
+ }finally{await x.cleanup();}
+});
+
+test('a SQL corrective action accepts reviewed recovery only for its original rule, records and exact current receipt',async()=>{
+ const x=await fixture();
+ try{
+  const key=await x.create(['observations:write']),session=await x.session(key.secret!,'observations:write');
+  const definition=randomUUID(),scope='a'.repeat(32),affected='item-'+'1'.repeat(64),base=Date.now()-60000;
+  async function send(index:number,source:string,value:'PASS'|'FAIL',includeItem=true){
+   return submitCustomerApiObservation(session,randomUUID(),{controlId:x.primary.id,externalId:'dbsync/'+definition+'/'+source+'/'+randomUUID(),
+    summary:'Warehouse release control evaluated the approved site records.',observedAt:new Date(base+index*1000).toISOString(),
+    validUntil:new Date(base+86400000).toISOString(),checks:[{key:'row-rule',label:'Release control',status:value,observed:value,detail:'Source row rule'},
+    ...(includeItem?[{key:affected,label:'Stock record 3',status:value,observed:value,detail:'Monitored stock identity'}]:[])]});
+  }
+  const acknowledge=(id:string)=>reviewCustomerApiObservation(x.ad,id,{decision:'ACKNOWLEDGE',version:1,notes,requestKey:randomUUID(),confirm:true});
+  const failed=await send(0,scope,'FAIL');
+  const reviewed=await reviewCustomerApiObservation(x.ad,failed.id,{decision:'FOLLOW_UP',version:1,ownerId:x.ed.userId,dueDate:future(7),notes,requestKey:randomUUID(),confirm:true});
+  assert.ok('followUpTaskId' in reviewed&&reviewed.followUpTaskId);
+  const quality=await createQualityCase(x.ed,{requestKey:randomUUID(),title:'Warehouse control investigation',kind:'DEVIATION',classification:'MAJOR',description:notes,impact:notes,containment:notes,occurredAt:future(0),ownerId:x.ed.userId});
+  await addQualityAction(x.ed,quality.id,{requestKey:randomUUID(),version:quality.version,taskId:reviewed.followUpTaskId,kind:'CORRECTIVE',purpose:notes});
+  const trace=async()=>(await exportQualityCase(x.ed,quality.id)).databaseMonitoring![0];
+  assert.equal((await trace()).recovered,false);assert.deepEqual((await exportQualityCase(x.st,quality.id)).databaseMonitoring,[]);
+  await acknowledge((await send(1,'b'.repeat(32),'PASS')).id);assert.equal((await trace()).latest,null);
+  await acknowledge((await send(2,scope,'PASS',false)).id);assert.equal((await trace()).recovered,false);
+  const pass=await send(3,scope,'PASS');assert.equal((await trace()).recovered,false);
+  await acknowledge(pass.id);assert.equal((await trace()).recovered,true);assert.equal((await trace()).latest?.receiptHash,pass.receiptHash);
+  const duplicate=await send(3,scope,'PASS');await acknowledge(duplicate.id);assert.equal((await trace()).recovered,false);
+  const subsequent=await send(4,scope,'FAIL');assert.equal((await trace()).latest?.receiptId,subsequent.id);assert.equal((await trace()).recovered,false);
+  await assert.rejects(()=>exportQualityCase(x.out,quality.id),rejects(404));
+ }finally{await x.cleanup();}
+});
+
+test('executed infrastructure policies enter only their granted control and replay without duplicate receipts',
+ {skip:!process.env.REGPILOT_POLICY_SCAN_RECEIPTS},async()=>{
+ const {observations,summary}=JSON.parse(await readFile(process.env.REGPILOT_POLICY_SCAN_RECEIPTS!,'utf8')) as {
+  observations:{idempotencyKey:string;body:{controlId:string;externalId:string;checks:{key:string;status:string}[]}}[];
+  summary:{policiesWithResults:number;executedPolicies:number}};
+ assert.ok(summary.executedPolicies>0&&observations.length>1);
+ const x=await fixture(observations[0].body.controlId);
+ try{
+  const allowed=await x.create(['observations:write']),other=await x.create(['observations:write'],[x.ungranted.id]);
+  const submit=(credential:string,envelope:typeof observations[number])=>postObservation(new Request('https://example.invalid/api/v1/observations',{
+   method:'POST',headers:{authorization:'Bearer '+credential,'content-type':'application/json','idempotency-key':envelope.idempotencyKey},
+   body:JSON.stringify(envelope.body)}));
+  assert.equal((await submit(other.secret!,observations[0])).status,404);
+  const ids=new Set<string>(),policies=new Set<string>();
+  for(const envelope of observations){
+   const first=await submit(allowed.secret!,envelope),replay=await submit(allowed.secret!,envelope);
+   assert.equal(first.status,201);assert.equal(replay.status,201);
+   const fresh=await first.json(),again=await replay.json();assert.equal(fresh.id,again.id);assert.equal(again.reused,true);
+   assert.equal(fresh.controlId,x.primary.id);assert.equal(fresh.externalId,envelope.body.externalId);ids.add(fresh.id);
+   for(const check of envelope.body.checks.slice(1))policies.add(check.key);
+  }
+  assert.equal(ids.size,observations.length);assert.equal(policies.size,summary.policiesWithResults);
+  assert.equal(await db.customerApiObservation.count({where:{organizationId:x.a.id,controlId:x.primary.id}}),observations.length);
+ }finally{await x.cleanup();}
+});

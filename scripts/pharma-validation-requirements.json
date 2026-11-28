@@ -1,0 +1,80 @@
+[
+  {
+    "id": "PH-01",
+    "requirement": "Bind cold-chain site acceptance to the release, independently confirmed customer logger, serial, calibration, affected stock, independent retrieval and signed disposition. Recover the four originals and the calibrated temperature history tied to the disposition from the site inspection ZIP.",
+    "file": "tests/operational-records.integration.test.ts",
+    "test": "repeated logger collection checks the physical serial, rotated key and current certificate review on each collection"
+  },
+  {
+    "id": "PH-02",
+    "requirement": "Reconcile affected stock and retain the independent recount",
+    "file": "tests/capa.integration.test.ts",
+    "test": "independent controlled-stock review retains discrepancies and every recount in the case export"
+  },
+  {
+    "id": "PH-03",
+    "requirement": "Keep excursion ownership until the recipient accepts the handover",
+    "file": "tests/capa.integration.test.ts",
+    "test": "a temperature excursion retains accountability until the named recipient accepts the outstanding checks"
+  },
+  {
+    "id": "PH-04",
+    "requirement": "Require independent closure supported by reviewed evidence",
+    "file": "tests/capa.integration.test.ts",
+    "test": "closure needs actual action proof, verified bytes, the planned observation and an independent decision"
+  },
+  {
+    "id": "PH-05",
+    "requirement": "Require the exact retained supplier release and independently reviewed site tests before sign-off, then retrieve the signed decision, signatory authority and original evidence together",
+    "file": "tests/trial-support.integration.test.ts",
+    "test": "a site decision binds the live build, the named configuration, reviewed tests and signatory authority"
+  },
+  {
+    "id": "PH-06",
+    "requirement": "Retain the operator’s excursion actions and an independently retrievable record",
+    "file": "tests/trial-support.integration.test.ts",
+    "test": "an internal first-time excursion trial requires the participant’s own case action and accounts for corrections and help"
+  },
+  {
+    "id": "PH-07",
+    "requirement": "Enforce independent, current and tenant-scoped document authorisation",
+    "file": "tests/policy-effectivity.integration.test.ts",
+    "test": "exact authenticated authorisation is tenant-scoped, independent, fresh, immutable and recoverable after a lost response"
+  },
+  {
+    "id": "PH-08",
+    "requirement": "Retain and reverify the exact supplier validation archive within the site workspace after the upstream download expires",
+    "file": "tests/trial-support.integration.test.ts",
+    "test": "the workspace retains only the exact supplier release archive and retrieves its bytes after the upstream download expires"
+  },
+  {
+    "id": "PH-09",
+    "requirement": "Trace a T&D WebStorage Celsius channel and its instrument serial through credential rejection and renewal, independently reviewed calibration, a stock disposition and retrieval of the site inspection archive.",
+    "file": "tests/operational-records.integration.test.ts",
+    "test": "a T&D WebStorage logger recovers after credential rejection and carries its serial and channel into the signed site inspection"
+  },
+  {
+    "id": "PH-10",
+    "requirement": "Detect an instrument-identified excursion between collections. Retain the reported hour, sample count, minimum and maximum through the stock decision and independent retrieval.",
+    "file": "tests/operational-records.integration.test.ts",
+    "test": "an instrument-identified hourly excursion carries its reported range and stock decision through a signed site inspection even after the current reading recovers"
+  },
+  {
+    "id": "PH-11",
+    "requirement": "Link a monitored control failure to one deviation and its owned corrective work. Independently authorise closure only after verified recovery of the same check, including after credential rotation.",
+    "file": "tests/capa.integration.test.ts",
+    "test": "a failed monitored control opens one deviation and requires a fresh same-target recovery and independent effectiveness decision"
+  },
+  {
+    "id": "PH-12",
+    "requirement": "Bind affected database records and the specific SQL control test to corrective work. Require a reviewed later observation covering every failed check from the same source before accepting recovery.",
+    "file": "tests/customer-api.integration.test.ts",
+    "test": "a SQL corrective action accepts reviewed recovery only for its original rule, records and exact current receipt"
+  },
+  {
+    "id": "PH-13",
+    "requirement": "Keep customer inventories scoped to the authorised site workspace. Detect a changed sample and exercise a scheduled collection after grant renewal on the original controlled source.",
+    "file": "tests/product-monitors.integration.test.ts",
+    "test": "an hourly product monitor rejects another tenant, detects inventory drift and recovers the original grant for the same control"
+  }
+]

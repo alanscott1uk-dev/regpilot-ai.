@@ -1,0 +1,65 @@
+name: Cloud control verification
+on:
+  pull_request:
+    paths:
+      - 'public/cloud-controls/**'
+      - 'public/infrastructure-policy/collect.py'
+      - 'public/instrument-bridge/deliver.py'
+      - 'scripts/*cloud*'
+      - '.github/workflows/cloud-control-verification.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  exercise:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: prowler-cloud/prowler
+          ref: dea664572ca5b3795c25bbf10ad291766a08ca59
+          path: upstream-scenarios
+          sparse-checkout: |
+            tests
+            pyproject.toml
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the released policy engine and test transports
+        run: |
+          python -m venv "$RUNNER_TEMP/cloud-engine"
+          "$RUNNER_TEMP/cloud-engine/bin/python" -m pip install -r public/cloud-controls/requirements.txt 'pytest==9.0.3' 'mock==5.2.0' 'moto[all]==5.1.11' 'freezegun==1.5.1' 'flask-cors==6.0.5' 'openapi-schema-validator==0.9.0' 'openapi-spec-validator==0.9.0'
+      - name: Execute native policy resource scenarios
+        run: |
+          set -euo pipefail
+          py="$RUNNER_TEMP/cloud-engine/bin/python"
+          mkdir -p "$RUNNER_TEMP/cloud-proof"
+          "$py" scripts/verify-cloud-policy-fixtures.py --suite upstream-scenarios --workers 3 --output "$RUNNER_TEMP/cloud-proof/results.json"
+          "$py" scripts/publish-cloud-policy-proof.py "$RUNNER_TEMP/cloud-proof/verification.json" "$RUNNER_TEMP/cloud-proof/results.json"
+          "$py" - "$RUNNER_TEMP/cloud-proof/verification.json" <<'PY'
+          import json,sys
+          from pathlib import Path
+          def ids(path):
+              value=json.loads(Path(path).read_bytes())
+              return {(p,row[0]) for p,rows in value['cases'].items() for row in rows}
+          if not ids('public/cloud-controls/verification.json') <= ids(sys.argv[1]):
+              raise SystemExit('A previously verified policy did not pass its resource scenario.')
+          PY
+      - name: Test native account-scoped scanning and receipt delivery
+        run: '"$RUNNER_TEMP/cloud-engine/bin/python" scripts/check-cloud-control-runner.py'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: cloud-control-executions-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/cloud-proof/results.json
+            ${{ runner.temp }}/cloud-proof/verification.json
+            ${{ runner.temp }}/cloud-proof/*.log
+          retention-days: 30
+          if-no-files-found: warn

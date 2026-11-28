@@ -1,0 +1,294 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {collectHorizon,boundedJson} from '../lib/horizon/collector';
+import {emptyHorizonView, matchingPhrase, matchesHorizonView, searchPhrases, watchlistFilters} from '../lib/horizon/watchlists';
+import {PUBLISHERS,describeFeedIssue,rankItem,reportState,validateReport} from '../lib/horizon/model';
+const now=new Date('2026-11-12T02:00:00Z');
+const isGov=(id:string)=>!['eu-ema','us-fda','uksi','ssi','wsi','nisr'].includes(id);
+const ukCount=PUBLISHERS.filter(p=>isGov(p.id)).length;
+const runRequests=ukCount+2+31;
+function daily(day:string,contents='',page=1){
+ return '<feed xmlns="http://www.w3.org/2005/Atom" xmlns:leg="http://www.legislation.gov.uk/namespaces/legislation"><id>http://www.legislation.gov.uk/new/'+day+'</id><leg:page>'+page+'</leg:page>'+contents+'</feed>';
+}
+function fixture(change='',fail='',total=1){const calls:string[]=[];return {calls,fetch:(async(url:any,init:any)=>{const u=new URL(String(url)),slug=u.searchParams.get('filter_organisations')!,start=Number(u.searchParams.get('start'));calls.push(u.href);if(u.hostname==='www.ema.europa.eu')return Response.json({meta:{total_records:0},data:[]});if(u.hostname==='www.legislation.gov.uk')return new Response(daily(u.pathname.split('/')[2]));if(u.origin==='https://api.fda.gov')return Response.json({meta:{results:{skip:0,total:0}},results:[]});assert.equal(u.origin,'https://www.gov.uk');assert.equal(u.pathname,'/api/search.json');assert.equal(init.redirect,'error');if(slug===fail)return new Response(null,{status:503});return Response.json({total,results:Array.from({length:Math.min(Number(u.searchParams.get('count')),Math.max(0,total-start))},(_,n)=>({title:'Fictional guidance '+change,description:'Fictional test metadata only.',link:'/guidance/'+slug+'-'+(start+n),public_timestamp:'2026-11-11T12:00:00Z',content_store_document_type:'detailed_guide',organisations:[{slug}] }))});}) as typeof fetch};}
+test('horizon verifies publishers, bounds requests and compares persisted metadata without inventing legal changes',async()=>{
+ const f=fixture(),first=await collectHorizon(null,f.fetch,now);assert.equal(first.items.length,ukCount);assert.ok(first.items.every(i=>i.discovery==='BASELINE'));assert.equal(reportState(first,now.getTime()),'current');
+ const next=await collectHorizon(first,fixture().fetch,new Date(now.getTime()+60000));assert.ok(next.items.every(i=>i.discovery==='UNCHANGED'));
+ const changed=await collectHorizon(first,fixture('revised').fetch,new Date(now.getTime()+60000));assert.ok(changed.items.every(i=>i.discovery==='METADATA_UPDATED'));
+ assert.equal(f.calls.length,runRequests);assert.match(first.limitations.join(' '),/not legal effective dates/);
+});
+test('the medicines-only list keeps mixed and individual alerts, and its independent category check exposes misses, overlap and unavailable data',async()=>{
+ const {compareMedicineAlertRouting}=await import('../lib/horizon/medicine-alert-routing');
+ const {scottishPharmaReason,weeklyDeviceCircular}=await import('../lib/horizon/watchlists');
+ const report=await collectHorizon(null,fixture().fetch,now);
+ const whole=(slug:string,title:string,summary:string)=>({...report.items[0],id:slug,path:'/drug-device-alerts/'+slug,url:'https://www.gov.uk/drug-device-alerts/'+slug,
+  title,summary,documentType:'medical_safety_alert',kind:'Safety alert' as const,publisherIds:['mhra']});
+ const device=whole('field-safety-notices-2-to-6-november-2026','Field Safety Notices: 2 to 6 November 2026','List of Field Safety Notices from 2 to 6 November 2026.');
+ const medicine=whole('fictional-medicines-recall','Medicines recall','Review the relevant holdings.'),mixed=whole('mixed-roundup','Medicines and devices','Includes a medicine and a device.');
+ report.items=[device,medicine,mixed];
+ assert.equal(weeklyDeviceCircular(device),true);assert.equal(scottishPharmaReason(device,'scottish-medicines-only'),null);assert.ok(scottishPharmaReason(device));
+ for(const row of [mixed,{...device,summary:'List of Field Safety Notices for medicines and devices, November 2026.'},{...device,title:'Individual device correction'},{...device,path:'/drug-device-alerts/individual'}])assert.ok(scottishPharmaReason(row,'scottish-medicines-only'));
+ const entry=(url:string)=>'<entry><id>'+url+'</id><link rel="alternate" href="'+url+'"/><updated>2026-11-11T12:00:00Z</updated><title>Official index label</title></entry>';
+ const atom=(urls:string[])=>new Response('<feed xmlns="http://www.w3.org/2005/Atom">'+urls.map(entry).join('')+'</feed>');
+ const read=(medicines:string[],devices:string[],deviceOffline=false):typeof fetch=>async url=>new URL(String(url)).searchParams.get('alert_type[]')==='field-safety-notices'?(deviceOffline?new Response(null,{status:503}):atom(devices)):atom(medicines);
+ const missing='https://www.gov.uk/drug-device-alerts/missing';
+ const result=await compareMedicineAlertRouting(report,read([medicine.url,missing],[device.url]),+now);
+ assert.deepEqual(result.counts,{medicines:2,kept:1,devices:1,listedSeparately:1,devicesInBroadView:1,devicesInMedicinesView:0,missing:1});
+ assert.equal(result.indexes.every(x=>x.sha256?.length===64),true);
+ const overlap=await compareMedicineAlertRouting(report,read([medicine.url],[device.url,medicine.url]),+now);
+ assert.deepEqual(overlap.ambiguous,[medicine.url]);assert.equal(overlap.counts?.medicines,0);
+ assert.equal((await compareMedicineAlertRouting(report,read([medicine.url],[device.url],true),+now)).counts,null);
+});
+test('EMA shortage notices keep their EU source, status and revision and reject an incomplete or misdirected register',async()=>{
+ const row={category:'Human',medicine_affected:'Fictional medicine',supply_shortage_status:'Shortage ongoing',shortage_url:'https://www.ema.europa.eu/en/medicines/human/shortages/fictional',first_published_date:'08/11/2026',last_updated_date:''};
+ const read=(rows:unknown[],total=rows.length):typeof fetch=>(u,i)=>String(u).startsWith('https://www.ema.europa.eu/')?Promise.resolve(Response.json({meta:{total_records:total},data:rows})):fixture().fetch(u,i);
+ const first=await collectHorizon(null,read([row]),now);
+ const item=first.items.find(i=>i.publisherIds.includes('eu-ema'))!;assert.equal(item.url,row.shortage_url);assert.equal(item.kind,'Medicine shortage');
+ const updated=await collectHorizon(first,read([{...row,supply_shortage_status:'Shortage resolved',last_updated_date:'11/11/2026'}]),now);
+ assert.equal(updated.items.find(i=>i.id===item.id)?.discovery,'METADATA_UPDATED');
+ assert.throws(()=>validateReport({...first,items:[{...item,kind:'Safety alert'}]},+now));
+ const oldManifest={...first,feeds:first.feeds.filter(f=>f.id!=='eu-ema'),items:first.items.filter(i=>i!==item)};
+ assert.doesNotThrow(()=>validateReport(oldManifest,+now));
+ for(const bad of [read([row],2),read([{...row,shortage_url:'https://wrong.example/record'}]),read([{...row,first_published_date:'31/02/2026'}])]){
+  const failed=await collectHorizon(null,bad,now);assert.equal(failed.feeds.find(f=>f.id==='eu-ema')?.state,'unavailable');
+ }
+});
+test('horizon retains known metadata through outages without refreshing its observation time',async()=>{
+ const first=await collectHorizon(null,fixture().fetch,now),later=new Date(now.getTime()+13*3600000);
+ const next=await collectHorizon(first,fixture('',PUBLISHERS[0].slug).fetch,later);
+ assert.equal(next.feeds[0].state,'unavailable');assert.equal(reportState(next,later.getTime()),'degraded');
+ assert.equal(next.items.find(i=>i.publisherIds.includes('mhra'))?.observedAt,first.generatedAt);
+ assert.equal(reportState(next,later.getTime()+13*3600000),'stale');
+});
+test('result caps remain visible and malicious publisher, path, date and duplicate data cannot enter the feed',async()=>{
+ const f=fixture('','',2001),r=await collectHorizon(null,f.fetch,now);assert.equal(f.calls.length,ukCount*2+2+31);assert.ok(r.feeds.filter(f=>isGov(f.id)).every(x=>x.state==='limited'));assert.ok(r.items.length>1500&&r.items.length<=10000);assert.ok(Buffer.byteLength(JSON.stringify(r))<4_000_000);assert.equal(r.pipeline?.retentionLimited,true);
+ for(const change of [{link:'https://evil.invalid/'},{organisations:[{slug:'other-authority'}]},{public_timestamp:'2099-01-01T00:00:00Z'}]){
+  const base=fixture();const bad=(async(url:any,init:any)=>{if(new URL(String(url)).hostname==='www.legislation.gov.uk')return new Response('no index',{status:400});const body=await (await base.fetch(url,init)).json();Object.assign(body.results[0],change);return Response.json(body);}) as typeof fetch;
+  const report=await collectHorizon(null,bad,now);assert.equal(report.items.length,0);assert.ok(report.feeds.every(x=>x.state==='unavailable'));
+ }
+});
+test('report validation rejects unsafe links, duplicate publisher identity and future reports',async()=>{
+ const r=await collectHorizon(null,fixture().fetch,now);
+ assert.throws(()=>validateReport({...r,generatedAt:'2099-01-01T00:00:00Z'},now.getTime()));
+ assert.throws(()=>validateReport({...r,feeds:r.feeds.map(()=>r.feeds[0])},now.getTime()));
+ assert.throws(()=>validateReport({...r,items:[{...r.items[0],url:'https://evil.invalid'}]},now.getTime()));
+ const mhra=r.items.find(i=>i.publisherIds.includes('mhra'))!;
+ assert.equal(rankItem(mhra,['medicines']).suggested,true);assert.match(rankItem(mhra,['medicines']).reasons.join(' '),/selected activity/);
+});
+test('public reader refuses oversized, redirected and non-JSON responses',async()=>{
+ for(const r of [new Response('x'.repeat(51)),new Response('no json'),new Response(null,{status:302})])await assert.rejects(()=>boundedJson('https://www.gov.uk/api/search.json',(async()=>r) as typeof fetch,50));
+});
+
+test('expanded horizon completes more than 100 results and records prior published runs',async()=>{
+ const first=await collectHorizon(null,fixture('','',120).fetch,now);
+ assert.equal(first.items.length,120*ukCount);assert.ok(first.feeds.every(f=>f.state==='available'&&f.retrieved===(isGov(f.id)?120:0)));assert.equal(first.pipeline?.requests,runRequests);
+ const next=await collectHorizon(first,fixture().fetch,new Date(now.getTime()+60000));
+ assert.equal(next.pipeline?.history[0].publications,120*ukCount);assert.equal(next.pipeline?.history[0].generatedAt,first.generatedAt);
+ assert.equal(reportState(next,now.getTime()+4*3600000),'stale');
+ assert.throws(()=>validateReport({...next,pipeline:{...next.pipeline,history:[next.pipeline!.history[0],next.pipeline!.history[0]]}},now.getTime()+60000));
+});
+test('changing provider totals never claim complete collection',async()=>{
+ const f=fixture('','',1501);const report=await collectHorizon(null,async(u,o)=>{const response=await f.fetch(u,o);if(new URL(String(u)).hostname==='www.legislation.gov.uk')return response;const data=await response.json();if(new URL(String(u)).searchParams.get('start')==='1500'){data.total=1500;data.results=[];}return Response.json(data);},now);
+ assert.ok(report.feeds.filter(f=>isGov(f.id)).every(f=>f.state==='limited'&&f.reason==='INDEX_CHANGED'));
+});
+
+test('publisher cooldown survives published checkpoints and skips early retry while preserving old observation time',async()=>{
+ const initial=await collectHorizon(null,fixture().fetch,now),f=fixture();
+ const failed=await collectHorizon(initial,async(u,o)=>new URL(String(u)).searchParams.get('filter_organisations')===PUBLISHERS[0].slug?new Response(null,{status:429,headers:{'retry-after':'7200'}}):f.fetch(u,o),new Date(now.getTime()+60000));
+ assert.equal(failed.feeds[0].failureCount,1);assert.equal(failed.feeds[0].reason,'RATE_LIMITED');
+ const next=fixture();const recovered=await collectHorizon(failed,next.fetch,new Date(now.getTime()+3600000));
+ assert.equal(next.calls.length,runRequests-1);assert.equal(recovered.feeds[0].checkedAt,failed.generatedAt);assert.equal(recovered.items.find(i=>i.publisherIds.includes('mhra'))?.observedAt,initial.generatedAt);
+ const due=fixture();const fresh=await collectHorizon(recovered,due.fetch,new Date(now.getTime()+3*3600000));assert.equal(due.calls.length,runRequests);assert.equal(fresh.feeds[0].failureCount,0);assert.equal(fresh.feeds[0].state,'available');
+});
+
+test('discovery diagnostics distinguish safe failure reasons without accepting partial data or refreshing old observations',async()=>{
+ const baseline=await collectHorizon(null,fixture().fetch,now),later=new Date(now.getTime()+60000);
+ const cases:{reason:string;change:(data:any)=>Response}[]=[
+  {reason:'HTTP_STATUS_403',change:()=>new Response('Private provider error secret',{status:403})},
+  {reason:'INVALID_JSON',change:()=>new Response('Private provider error secret')},
+  {reason:'INVALID_RESPONSE_SHAPE',change:data=>Response.json({...data,results:{secret:'Private provider error'}})},
+  {reason:'INVALID_PUBLICATION_PATH',change:data=>{data.results[0].link='https://secret.invalid/private';return Response.json(data);}},
+  {reason:'INVALID_PUBLICATION_TIMESTAMP',change:data=>{data.results[0].public_timestamp='invalid-private-date';return Response.json(data);}},
+  {reason:'UNVERIFIED_PUBLISHER',change:data=>{data.results[0].organisations=[{slug:'private-unknown-publisher'}];return Response.json(data);}},
+  {reason:'INVALID_PUBLICATION_METADATA',change:data=>{data.results[0].title='';return Response.json(data);}},
+  {reason:'DUPLICATE_PAGE',change:data=>Response.json({...data,total:2,results:[data.results[0],data.results[0]]})}
+ ];
+ for(const scenario of cases){
+  const base=fixture();
+  const result=await collectHorizon(baseline,async(url,options)=>{
+   const response=await base.fetch(url,options);
+   return new URL(String(url)).searchParams.get('filter_organisations')==='hm-revenue-customs'?scenario.change(await response.json()):response;
+  },later);
+  const feed=result.feeds.find(f=>f.id==='hmrc')!;
+  assert.equal(feed.state,'unavailable');assert.equal(feed.reason,scenario.reason);assert.equal(feed.retrieved,0);
+  assert.equal(feed.failureCount,1);assert.equal(feed.retryAt,new Date(later.getTime()+900000).toISOString());
+  assert.equal(result.feeds.filter(f=>f.state==='available').length,PUBLISHERS.length-1);
+  assert.deepEqual(result.items.filter(i=>i.publisherIds.includes('hmrc')),baseline.items.filter(i=>i.publisherIds.includes('hmrc')));
+  assert.doesNotMatch(JSON.stringify(result),/secret|Private provider|private-unknown|invalid-private/);
+ }
+});
+
+test('larger reads avoid unstable offset boundaries and oversized pages retry at the same offset', async () => {
+ const base=fixture('','',120), seen:string[]=[];
+ const result=await collectHorizon(null,async(url,opts)=>{
+  const u=new URL(String(url)), response=await base.fetch(url,opts);
+  if(u.searchParams.get('filter_organisations')!=='hm-revenue-customs') return response;
+  seen.push(u.searchParams.get('start')+':'+u.searchParams.get('count'));
+  if(Number(u.searchParams.get('count'))>100) return new Response('x'.repeat(2_000_001));
+  return response;
+ },now);
+ assert.deepEqual(seen,['0:1500','0:750','0:375','0:187','0:93','93:93']);
+ assert.equal(result.feeds.find(f=>f.id==='hmrc')?.state,'available');
+ assert.equal(result.feeds.find(f=>f.id==='hmrc')?.retrieved,120);
+ assert.equal(result.pipeline?.requests,runRequests+5);
+});
+
+test('an incorrect offset or truncated publisher page cannot replace a previously observed feed', async () => {
+ const base=fixture(),previous=await collectHorizon(null,base.fetch,now);
+ for(const reason of ['PAGE_OFFSET_MISMATCH','INCOMPLETE_PAGE']){
+  const next=await collectHorizon(previous,async(url,options)=>{
+   const response=await base.fetch(url,options);
+   if(new URL(String(url)).searchParams.get('filter_organisations')!=='environment-agency')return response;
+   const raw=await response.json();return Response.json({...raw,...(reason==='INCOMPLETE_PAGE'?{total:2}:{start:30})});
+  },new Date(now.getTime()+60_000));
+  const feed=next.feeds.find(f=>f.id==='environment-agency')!;
+  assert.equal(feed.state,'unavailable'); assert.equal(feed.reason,reason); assert.equal(feed.retrieved,0);
+  assert.equal(next.items.find(i=>i.publisherIds.includes(feed.id))?.observedAt,previous.generatedAt);
+ }
+});
+
+test('shared horizon filters match whole phrases within a single metadata field', async () => {
+ const report = await collectHorizon(null, fixture().fetch, now);
+ const item = {...report.items.find(row=>row.publisherIds.includes('mhra'))!, title:'Good practice for GMPs and GMPX', summary:'Guidance on the cold-chain and batch release.'};
+ const phrases = searchPhrases(' GMP, cold chain,  gMp, , BATCH release ');
+ assert.deepEqual(phrases, ['gmp','cold chain','batch release']);
+ assert.equal(matchingPhrase(item, phrases), 'cold chain');
+ const view = {...emptyHorizonView, publisher:'mhra', topic:'medicines', kind:'Guidance' as const, phrases};
+ assert.equal(matchesHorizonView(item, view, report.generatedAt, false), true);
+ for (const other of [{publisher:'hmrc'}, {topic:'commercial-waste'}, {kind:'Policy' as const}, {phrases:['gmp']}, {phrases:['gmpx guidance']}, {onlyOpen:true}]) {
+   assert.equal(matchesHorizonView(item, {...view,...other}, report.generatedAt, true), false);
+ }
+ assert.equal(matchesHorizonView({...item,title:'GMP: updated'}, {...view,phrases:['gmp']}, report.generatedAt, false), true);
+});
+
+test('watchlists distinguish publisher update windows and changes observed in the latest collection', async () => {
+ const report = await collectHorizon(null, fixture().fetch, now), item = report.items[0];
+ const changeView = {...emptyHorizonView, changedOnly:true};
+ for (const discovery of ['FIRST_SEEN','METADATA_UPDATED'] as const) {
+   assert.ok(matchesHorizonView({...item,discovery}, changeView, report.generatedAt, false));
+   assert.equal(matchesHorizonView({...item,discovery,observedAt:item.updatedAt}, changeView, report.generatedAt, false), false);
+ }
+ assert.equal(matchesHorizonView(item, changeView, report.generatedAt, false), false);
+ assert.equal(matchesHorizonView({...item,discovery:'UNCHANGED'}, changeView, report.generatedAt, false), false);
+ for (const [updatedWithin,days] of [['day',1],['week',7]] as const) {
+   const cutoff=now.getTime()-days*86400000;
+   assert.ok(matchesHorizonView({...item,updatedAt:new Date(cutoff).toISOString()}, {...emptyHorizonView,updatedWithin}, report.generatedAt, false));
+   assert.equal(matchesHorizonView({...item,updatedAt:new Date(cutoff-1).toISOString()}, {...emptyHorizonView,updatedWithin}, report.generatedAt, false), false);
+ }
+});
+
+test('saved filters validate vocabulary, reject oversized terms, and keep provider diagnostics public', () => {
+ for (const invalid of [{phrases:['-']},{phrases:['a'.repeat(81)]},{phrases:Array(9).fill('gmp')},{publisher:'unknown'},{topic:'unknown'},{kind:'unknown'},{updatedWithin:'month'},{secret:'hidden'}]) {
+   assert.equal(watchlistFilters.safeParse({...emptyHorizonView,...invalid}).success,false);
+ }
+ assert.deepEqual(watchlistFilters.parse({...emptyHorizonView, phrases:['  GMP ','gmp','COLD-CHAIN']}).phrases,['gmp','cold chain']);
+ assert.match(describeFeedIssue('DUPLICATE_PAGE'),/duplicate publication/);
+ assert.match(describeFeedIssue('HTTP_STATUS_403'),/HTTP 403/);
+ assert.equal(describeFeedIssue('private error detail'),describeFeedIssue('__proto__'));
+});
+
+test('FDA recalls enter the same review filters with publisher-bound record links and survive an upstream outage',async()=>{
+ const gb=fixture();
+ const fake=async(input:Parameters<typeof fetch>[0],init?:RequestInit)=>{
+  if(new URL(String(input)).hostname!=='api.fda.gov')return gb.fetch(input,init);
+  const u=new URL(String(input));assert.match(u.searchParams.get('search')!,/^report_date:\[/);
+  return Response.json({meta:{results:{skip:0,total:1}},results:[{recall_number:'D-123-2026',report_date:'20261110',product_type:'Drugs',status:'Ongoing',product_description:'Fictional tablets',reason_for_recall:'Fictional stability result'}]});
+ };
+ const report=await collectHorizon(null,fake,now),fda=report.items.find(i=>i.publisherIds.includes('us-fda'))!;
+ assert.equal(fda.kind,'Safety alert');assert.match(fda.url,/^https:\/\/api\.fda\.gov\/drug\/enforcement\.json/);
+ assert.ok(matchesHorizonView(fda,{...emptyHorizonView,publisher:'us-fda',topic:'medicines'},report.generatedAt,false));
+ assert.throws(()=>validateReport({...report,items:[{...fda,publisherIds:['mhra']}]},now.getTime()));
+ const old={...report,feeds:report.feeds.slice(0,12),items:report.items.filter(i=>report.feeds.slice(0,12).some(f=>i.publisherIds.includes(f.id)))};
+ assert.doesNotThrow(()=>validateReport(old,now.getTime()));
+ assert.throws(()=>validateReport({...old,feeds:[...old.feeds.slice(1),report.feeds.at(-1)]},now.getTime()));
+ const later=await collectHorizon(report,(u,i)=>new URL(String(u)).hostname==='api.fda.gov'?Promise.resolve(new Response(null,{status:403})):gb.fetch(u,i),new Date(+now+60_000));
+ assert.equal(later.feeds.find(f=>f.id==='us-fda')?.state,'unavailable');assert.equal(later.items.find(i=>i.id===fda.id)?.observedAt,report.generatedAt);
+});
+
+test('FDA records awaiting a recall number are grouped under their official event and changes remain detectable',async()=>{
+ const read=(reverse=false,reason='First observation')=>async(u:Parameters<typeof fetch>[0],i?:RequestInit)=>{
+  if(new URL(String(u)).hostname!=='api.fda.gov')return fixture().fetch(u,i);
+  const records=['first','second'].map(product=>({event_id:'99896',recall_number:'',product_type:'Drugs',product_description:product,code_info:'A',status:'Ongoing',report_date:'20261111',reason_for_recall:reason}));
+  return Response.json({meta:{results:{skip:0,total:2}},results:reverse?records.reverse():records});
+ };
+ const first=await collectHorizon(null,read(),now),record=first.items.find(i=>i.publisherIds.includes('us-fda'))!;
+ assert.equal(first.feeds.find(f=>f.id==='us-fda')?.retrieved,2);assert.equal(record.url,'https://api.fda.gov/drug/enforcement.json?search=event_id:99896');assert.match(record.summary,/2 unnumbered/);
+ const again=await collectHorizon(first,read(true),new Date(+now+60000));assert.equal(again.items.find(i=>i.id===record.id)?.discovery,'UNCHANGED');
+ const changed=await collectHorizon(first,read(false,'Revised reason'),new Date(+now+60000));assert.equal(changed.items.find(i=>i.id===record.id)?.discovery,'METADATA_UPDATED');
+});
+
+
+test('dated legislation indexes preserve instrument identity, bilingual titles and correction PDFs and expose a missed index',async()=>{
+ const {parseInstrumentPage}=await import('../lib/horizon/instruments');
+ const {instrumentReference}=await import('../lib/horizon/instrument-series');
+ const {coverageSample,measureCoverage}=await import('../lib/horizon/coverage-sample');
+ const d='2026-11-11',entry=(id:string,title:string)=>'<entry><id>'+id+'</id><title>'+title+'</title><published>'+d+'T14:45:00Z</published></entry>';
+ const issued='http://www.legislation.gov.uk/id/ssi/2026/336',correction='http://www.legislation.gov.uk/ssi/2026/115/pdfs/ssics_20260115_en_002.pdf',welsh='http://www.legislation.gov.uk/id/wsi/2026/111';
+ const bilingualSlip='https://www.legislation.gov.uk/wsi/2026/85/pdfs/wsics_20260085_mi_001.pdf';
+ assert.equal(instrumentReference(bilingualSlip,'wsi'),bilingualSlip);
+ const contents=entry(issued,'Fictional Scottish instrument')+entry(correction,'Correction slip')+entry(welsh,'<div xmlns="http://www.w3.org/1999/xhtml"><span>Welsh</span> / <span>Cymraeg</span></div>');
+ assert.equal(parseInstrumentPage(daily(d,contents),d,1).rows[2].title,'Welsh / Cymraeg');
+ assert.throws(()=>parseInstrumentPage(daily(d,contents),d,2));
+ assert.throws(()=>parseInstrumentPage(daily(d,entry(correction.replace('0115_en','0116_en'),'Correction slip')),d,1));
+ assert.throws(()=>parseInstrumentPage(daily(d,'<link rel="next" href="https://example.invalid/?page=2"/>'),d,1));
+ const simulate=(unavailable:boolean)=>async(input:Parameters<typeof fetch>[0],opts?:RequestInit)=>{
+  const u=new URL(String(input));if(u.hostname!=='www.legislation.gov.uk')return fixture().fetch(input,opts);
+  const day=u.pathname.split('/')[2];if(unavailable&&day===d)return new Response(null,{status:403});
+  return new Response(daily(day,day===d?contents:''));
+ };
+ const first=await collectHorizon(null,simulate(false),now),source=first.feeds.find(f=>f.id==='ssi')!;
+ assert.equal(source.state,'available');assert.equal(source.retrieved,2);const slip=first.items.find(i=>i.url.endsWith('.pdf'))!;
+ assert.equal(slip.url,correction.replace('http:','https:'));assert.equal(instrumentReference(slip.url,'wsi'),null);
+ const sample=coverageSample.parse({title:'Scottish publication review',publisher:'ssi',method:'Use an official public index checked independently.',entries:[{on:d,url:slip.url}]});
+ assert.equal(measureCoverage(sample,first,+now).found,1);
+ const later=await collectHorizon(first,simulate(true),new Date(+now+60000));
+ assert.equal(later.feeds.find(f=>f.id==='ssi')?.state,'limited');assert.equal(later.items.find(i=>i.id===slip.id)?.observedAt,first.generatedAt);
+ assert.equal(measureCoverage(sample,later,+now+60000).indeterminate,1);
+ const businessView=watchlistFilters.parse({...emptyHorizonView,siteView:'scottish-pharma-wholesale'});
+ const namedDrug={...slip,path:'/drug-safety-update/named-substance',publisherIds:['mhra'],kind:'Guidance' as const,title:'Named substance',summary:'Revised advice for prescribers'};
+ assert.ok(matchesHorizonView(namedDrug,businessView,first.generatedAt,false));
+ assert.equal(matchesHorizonView({...namedDrug,publisherIds:['dhsc']},businessView,first.generatedAt,false),false);
+ const {indexEntries}=await import('../lib/horizon/official-indexes');
+ const independent=indexEntries('<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>http://www.legislation.gov.uk/id/ssi/2026/2</id><updated>2026-11-23</updated><published>2026-11-01</published></entry></feed>',{name:'Scottish index',publisher:'ssi',url:'https://www.legislation.gov.uk/ssi/2026/data.feed?sort=published'});
+ assert.equal(independent.references.get('https://www.legislation.gov.uk/ssi/2026/2/made'),'2026-11-01');
+ assert.ok(matchesHorizonView({...slip,title:'Human Medicines Amendment Regulations'},businessView,first.generatedAt,false));
+ assert.equal(matchesHorizonView({...slip,title:'Temporary trunk road closure'},businessView,first.generatedAt,false),false);
+ assert.equal(matchesHorizonView({...slip,publisherIds:['wsi'],title:'Human medicines'},businessView,first.generatedAt,false),false);
+ const old={...first,feeds:first.feeds.slice(0,16),items:first.items.filter(i=>i.publisherIds.every(id=>isGov(id)||id==='us-fda'))};assert.doesNotThrow(()=>validateReport(old,+now));
+});
+
+test('a Scottish wholesaler can trace an England-only medicines instrument to its own opening clause while uncertain instruments stay in review',async()=>{
+ const {readApplicationClause}=await import('../lib/horizon/instrument-application');
+ const {applicationProvisionUrl}=await import('../lib/horizon/instrument-series');
+ const {otherNationMedicine}=await import('../lib/horizon/watchlists');
+ const source='https://www.legislation.gov.uk/uksi/2026/1184/made',wording='These Regulations extend to England and Wales and apply in relation to England only.';
+ const provision=source.replace('/made','/regulation/1/made'),xml=(text:string,extra='')=>'<Legislation xmlns="http://www.legislation.gov.uk/namespaces/legislation" DocumentURI="'+source+'"><Secondary><Body><P1group><P1 id="regulation-1" DocumentURI="'+provision+'"><P1para><P2><P2para><Text>'+text+'</Text>'+extra+'</P2para></P2></P1para></P1></P1group></Body></Secondary></Legislation>';
+ const explicit=xml(wording.replace('only.','only<FootnoteRef Ref="f2"/>.'));
+ assert.deepEqual(readApplicationClause(explicit,source),{provision:'regulation',wording});
+ assert.throws(()=>readApplicationClause(explicit,source.replace('1184','1185')));
+ for(const ambiguous of [xml('These Regulations extend to England and Wales.'),xml(wording.replace('only.','only, except for regulation 3.')),xml(wording,'<Text>Regulation 4 applies in Scotland.</Text>'),xml('<BlockAmendment>'+wording+'</BlockAmendment>'),explicit.replace('id="regulation-1"','id="regulation-2"'),explicit.replace('<Body>','<Schedules>').replace('</Body>','</Schedules>')])assert.equal(readApplicationClause(ambiguous,source),undefined);
+ const d='2026-11-11',instrument='<entry><id>http://www.legislation.gov.uk/id/uksi/2026/1184</id><title>Pharmaceutical services amendment</title><published>'+d+'T12:00:00Z</published></entry>';
+ const simulation=(verified:boolean)=>async(input:Parameters<typeof fetch>[0],opts?:RequestInit)=>{
+  const u=new URL(String(input));if(u.hostname!=='www.legislation.gov.uk')return fixture().fetch(input,opts);
+  if(u.href===source+'/data.xml')return verified?new Response(explicit):new Response(null,{status:404});
+  return new Response(daily(u.pathname.split('/')[2],u.pathname.includes(d)?instrument:''));
+ };
+ const report=await collectHorizon(null,simulation(true),now),item=report.items.find(i=>i.url===source)!;
+ const view=watchlistFilters.parse({...emptyHorizonView,siteView:'scottish-pharma-wholesale'});
+ assert.equal(applicationProvisionUrl(item.url,item.asMadeApplication!),provision);assert.equal(otherNationMedicine(item),'England');
+ assert.equal(matchesHorizonView(item,view,report.generatedAt,false),false);assert.ok(matchesHorizonView(item,emptyHorizonView,report.generatedAt,false));
+ const next=await collectHorizon(report,simulation(false),new Date(+now+60000)),unknown=next.items.find(i=>i.url===source)!;
+ assert.equal(unknown.asMadeApplication,undefined);assert.equal(unknown.discovery,'METADATA_UPDATED');assert.ok(matchesHorizonView(unknown,view,next.generatedAt,false));
+ const unrelated=report.items.find(i=>!i.url.includes('legislation.gov.uk'))!;
+ assert.throws(()=>validateReport({...report,items:[{...unrelated,asMadeApplication:item.asMadeApplication}]},+now));
+});

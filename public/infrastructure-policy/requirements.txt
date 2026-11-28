@@ -1,0 +1,1 @@
+checkov @ https://files.pythonhosted.org/packages/19/6f/a353940c3dea7065157c7e55a52586c083babcaed1c0cc1b657e38c7702d/checkov-3.4.11-py3-none-any.whl#sha256=0428beda741db4fa056731f76c1b2145a31ea518081a72d8d8af403e539a6df7

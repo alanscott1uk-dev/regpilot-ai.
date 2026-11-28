@@ -1,0 +1,9 @@
+@media print {
+  :global(body):has(.report) * { visibility: hidden; }
+  :global(body):has(.report) *:not(:has(.report)):not(.report):not(.report *) { display: none !important; }
+  .report, .report * { visibility: visible !important; }
+  .report { display: block !important; margin: 0; padding: 0; border: 0; color: #111; background: white; }
+  .report button { display: none !important; }
+  .report h2, .report h3, .report h4, .report summary { break-after: avoid; }
+  .report p { overflow-wrap: anywhere; }
+}

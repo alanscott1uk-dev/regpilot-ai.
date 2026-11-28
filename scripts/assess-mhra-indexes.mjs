@@ -1,0 +1,14 @@
+import {readFile,writeFile} from 'node:fs/promises';
+import * as model from '../lib/horizon/model.ts';
+import * as indexes from '../lib/horizon/official-indexes.ts';
+import * as medicine from '../lib/horizon/medicine-alert-routing.ts';
+const {compareMedicineAlertRouting}=medicine.default??medicine;
+const {validateReport}=model.default??model,{assessOfficialIndexes}=indexes.default??indexes;
+const report=validateReport(JSON.parse(await readFile(process.argv[2]??'artifacts/horizon.json','utf8')));
+const [result,routing]=await Promise.all([assessOfficialIndexes(report),compareMedicineAlertRouting(report)]),mhra=result.indexes.filter(i=>i.publisher==='mhra');
+await writeFile('artifacts/mhra-medicine-alert-routing.json',JSON.stringify(routing,null,2)+'\n');
+console.log('Scottish medicines-only routing',JSON.stringify(routing.counts??{available:false}));
+await writeFile(process.argv[3]??'artifacts/mhra-index-coverage.json',JSON.stringify({...result,indexes:mhra},null,2)+'\n');
+await writeFile(process.argv[4]??'artifacts/official-index-coverage.json',JSON.stringify(result,null,2)+'\n');
+for(const item of result.indexes)console.log(item.name,item.state,item.result?JSON.stringify({sampled:item.selected,found:item.result.found,missing:item.result.missing,wrongPublisher:item.result.wrongPublisher,indeterminate:item.result.indeterminate,inScottishReview:item.inScottishReview}):'No measurable reference set');
+if(mhra.every(i=>i.state==='UNAVAILABLE')||result.indexes.filter(i=>i.publisher!=='mhra').every(i=>i.state==='UNAVAILABLE'))process.exitCode=1;

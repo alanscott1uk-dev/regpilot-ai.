@@ -1,0 +1,43 @@
+name: Pharmaceutical release validation
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: regpilot
+          POSTGRES_PASSWORD: regpilot-test-only
+          POSTGRES_DB: regpilot
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DATABASE_URL: postgresql://regpilot:regpilot-test-only@localhost:5432/regpilot?schema=public
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+      - run: bash scripts/init-ci-database.sh
+      - run: node scripts/execute-pharma-validation.mjs
+        env:
+          REGPILOT_VALIDATION_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pharma-validation-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: artifacts/pharma-validation/
+          if-no-files-found: error
+          retention-days: 90

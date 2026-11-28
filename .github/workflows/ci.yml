@@ -1,22 +1,174 @@
 name: CI
 on:
-  push:
   pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: regpilot-ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: regpilot
+          POSTGRES_PASSWORD: regpilot-test-only
+          POSTGRES_DB: regpilot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U regpilot -d regpilot"
+          --health-interval 5s --health-timeout 5s --health-retries 12
     env:
-      DATABASE_URL: postgresql://regpilot:dummy@localhost:5432/regpilot?schema=public
+      DATABASE_URL: postgresql://regpilot:regpilot-test-only@localhost:5432/regpilot?schema=public
+      REGPILOT_AI_DAILY_USER_LIMIT: "2"
+      REGPILOT_AI_DAILY_ORG_LIMIT: "3"
+      REGPILOT_AI_ENABLED: "false"
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      - run: npm install --no-audit --no-fund
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+      - run: npm audit --audit-level=high
       - run: npm run test
+      - run: python -m unittest discover -s tests -p 'test_worker_invoker.py'
+      - run: python -m unittest discover -s tests -p 'test_database_bridge.py'
       - run: npm run db:validate
       - run: npm run db:generate
+      - run: npx tsc --noEmit
+      # Isolated disposable CI database only, not a live migration.
+      - run: bash scripts/init-ci-database.sh
+      - run: npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+      # Protect Prisma tables from Supabase Data API roles and test the policy
+      # using a disposable PostgreSQL 17 instance; NEVER run this fixture on Supabase.
+      - run: npx prisma db execute --file security/test-role-setup.sql --schema prisma/schema.prisma
+      - run: npx prisma db execute --file security/supabase-private-tables.sql --schema prisma/schema.prisma
+      - run: node --import tsx --test tests/private-tables.integration.test.ts
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install instrument acceptance dependencies
+        run: python -m venv "$RUNNER_TEMP/opcua-env" && "$RUNNER_TEMP/opcua-env/bin/python" -m pip install asyncua==1.1.8 paho-mqtt==2.1.0
+      - name: Verify the site MQTT collector and automatic delivery against Eclipse Mosquitto
+        env:
+          REGPILOT_MQTT_BROKER_IMAGE: eclipse-mosquitto:2.0.21@sha256:94f5a3d7deafa59fa3440d227ddad558f59d293c612138de841eec61bfa4d353
+          REGPILOT_MQTT_PYTHON: ${{ runner.temp }}/opcua-env/bin/python
+          REGPILOT_MQTT_REPORT: ${{ runner.temp }}/mqtt-evidence.json
+        run: |
+          docker pull "$REGPILOT_MQTT_BROKER_IMAGE"
+          node --import tsx --test --test-name-pattern='MQTT site logger' tests/customer-api.integration.test.ts
+      - name: Save authenticated MQTT logger benchmark
+        uses: actions/upload-artifact@v4
+        with:
+          name: mqtt-logger-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/mqtt-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Execute pinned infrastructure policies on committed definitions
+        run: |
+          python -m venv "$RUNNER_TEMP/iac-env"
+          "$RUNNER_TEMP/iac-env/bin/python" -m pip install -r public/infrastructure-policy/requirements.txt
+          "$RUNNER_TEMP/iac-env/bin/python" scripts/verify-infrastructure-policies.py --output "$RUNNER_TEMP/iac-evidence"
+      - name: Inspect the checked-out release infrastructure
+        id: release_policy
+        run: |
+          "$RUNNER_TEMP/iac-env/bin/python" public/infrastructure-policy/collect.py inspect --repo . --source regpilot-repository --framework github_actions --output "$RUNNER_TEMP/iac-evidence/repository.json"
+          python - "$RUNNER_TEMP/iac-evidence/repository.json" <<'PYTHON'
+          import json, subprocess, sys
+          report = json.load(open(sys.argv[1]))
+          revision = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          assert report["summary"]["revision"] == revision and report["summary"]["executedPolicies"] > 0
+          assert report["status"] == "PASS", report["summary"]
+          PYTHON
+      - name: Save executed infrastructure policy benchmark
+        if: ${{ !cancelled() && steps.release_policy.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrastructure-policies-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/iac-evidence/benchmark.json
+            ${{ runner.temp }}/iac-evidence/repository.json
+          if-no-files-found: error
+          retention-days: 30
+      - run: npm run test:integration
+        env:
+          REGPILOT_FLEET_BENCHMARK_OUTPUT: connector-fleet-benchmark.json
+          REGPILOT_INSTRUMENT_PYTHON: ${{ runner.temp }}/opcua-env/bin/python
+          REGPILOT_POLICY_SCAN_RECEIPTS: ${{ runner.temp }}/iac-evidence/observations.json
+      - name: Save executed connector capacity benchmark
+        uses: actions/upload-artifact@v4
+        with:
+          name: connector-fleet-${{ github.event.pull_request.head.sha || github.sha }}
+          path: connector-fleet-benchmark.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Trace three live publication changes into a private workspace
+        env:
+          REGPILOT_PUBLIC_REGISTER_ACCEPTANCE: 'true'
+        run: node --import tsx --test --test-name-pattern='live publication changes' tests/operational-records.integration.test.ts
       - run: npm run build
+      - run: npm run test:pdf-runtime
+      - run: npm run test:smoke
+  evidence-recovery:
+    name: Restore private database and evidence fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Locate disposable PostgreSQL server tools
+        run: |
+          server=$(find /usr/lib/postgresql -path '*/bin/initdb' 2>/dev/null | sort -V | tail -1 || true)
+          if [[ -z "$server" ]]; then
+            sudo apt-get update -qq && sudo apt-get install -y postgresql
+            server=$(find /usr/lib/postgresql -path '*/bin/initdb' 2>/dev/null | sort -V | tail -1 || true)
+          fi
+          test -x "$server"
+          echo "REGPILOT_TEST_PG_BIN=$(dirname "$server")" >> "$GITHUB_ENV"
+      - run: npm run test:recovery
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: synthetic-evidence-recovery
+          path: artifacts/recovery-drill.json
+          retention-days: 14
+  research-evaluation:
+    name: UK research answer benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            evals/research/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm --prefix evals/research ci --ignore-scripts --no-audit --no-fund
+      - run: npm --prefix evals/research audit --audit-level=high
+      - run: npm run eval:research
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: uk-research-evaluation
+          path: artifacts/research-evaluation.json
+          retention-days: 14

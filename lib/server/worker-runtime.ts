@@ -1,0 +1,170 @@
+import {myCsfOrganisations,runDueMyCsf} from './mycsf-service';
+import {maxConnectorEventsPerTick,runAutomationBatch,finalizeAutomationTick} from './automation-queue';
+import {finalizeCollectionTick,collectionAttention} from './collection-health';
+import {Prisma} from '@prisma/client';
+import {z} from 'zod';
+import {db} from './db';
+import {runStagingProductProbe,stagingProbeTarget} from './staging-product-probe';
+import {pdConfig,pdProjectHealth} from '../connectors/pipedream-client';
+import {CollectionError} from '../connectors/collection-error';
+import {workspaceConfigured} from './ai-auth';
+import {executeScheduledTick} from '../cron-tick.mjs';
+import {monitoringEnabled,runMonitoringBatch} from './monitoring-service';
+import {connectorsEnabled,maxConnectorReadsPerTick,runConnectorBatch} from './connector-service';
+import {runReviewBatch} from './control-service';
+import {executeWithMaintenance,runWorkerMaintenance} from './worker-maintenance';
+import {runIntegrationDeliveryBatch,finalizeIntegrationDeliveryTick,integrationDeliveryHealth} from './integration-delivery-queue';
+import {outboundIntegrationsEnabled} from './integration-delivery-events';
+import {runDuePolicyReleaseBatch} from './policy-effectivity-service';
+
+export const workerEnabled=()=>workspaceConfigured()&&process.env.REGPILOT_WORKER_ENABLED==='true'&&process.env.REGPILOT_AUTOMATION_ENABLED==='true';
+export const cronEnabled=()=>workspaceConfigured()&&process.env.REGPILOT_CRON_ENABLED==='true'&&process.env.REGPILOT_AUTOMATION_ENABLED==='true';
+const LEASE_MS=180000,STALE_MS=90*60000;
+type TickResult=Awaited<ReturnType<typeof executeScheduledTick>>;
+type RuntimeResult={status:number;body:{ok:boolean;state:string;reused?:boolean;modules?:TickResult['modules'];maintenance?:unknown}};
+export function workerSlotCount(){
+ const raw=process.env.REGPILOT_WORKER_SLOTS??'1';
+ if(!/^[1-8]$/.test(raw))throw Error('Invalid worker capacity');
+ return Number(raw);
+}
+export async function claimWorker(invocationKey:string,slot=0){
+ if(!/^github:\d{1,20}:\d{1,5}$/.test(invocationKey))throw Error('Invalid worker invocation');
+ const capacity=workerSlotCount();
+ if(!Number.isInteger(slot)||slot<0||slot>=capacity)throw Error('Invalid worker slot');
+ // Preserve historical single-slot invocation keys during an eventual rollout.
+ const key=slot===0?invocationKey:invocationKey+':slot:'+slot;
+ return claimRuntime(key,slot,capacity);
+}
+/** Cron and dedicated workers share leases: two schedulers must not own slot zero. */
+async function claimRuntime(key:string,slot:number,capacity:number){
+ return db.$transaction(async tx=>{
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(710241114)`;
+  const now=new Date();
+  await tx.workerRun.updateMany({where:{state:'RUNNING',leaseUntil:{lte:now}},data:{state:'INTERRUPTED',finishedAt:now}});
+  const earlier=await tx.workerRun.findUnique({where:{invocationKey:key}});
+  if(earlier)return {kind:'reused' as const,run:earlier};
+  // Reduced capacity drains retired slots before admitting replacement work.
+  const running=await tx.workerRun.findFirst({where:{OR:[{slot},{slot:{gte:capacity}}],state:'RUNNING',leaseUntil:{gt:now}}});
+  if(running)return {kind:'busy' as const,run:running};
+  const run=await tx.workerRun.create({data:{invocationKey:key,slot,leaseUntil:new Date(now.getTime()+LEASE_MS),codeCommit:process.env.VERCEL_GIT_COMMIT_SHA||null}});
+  // Operational metadata only; bound retention while preserving all live leases.
+  await tx.workerRun.deleteMany({where:{startedAt:{lt:new Date(now.getTime()-30*86400000)},state:{not:'RUNNING'}}});
+  return {kind:'claimed' as const,run};
+ },{timeout:10000});
+}
+export async function runPrivateWorker(invocationKey:string,execute?:()=>Promise<TickResult>,slot=0):Promise<RuntimeResult>{
+ if(!workerEnabled())return {status:503,body:{ok:false,state:'disabled'}};
+ const claim=await claimWorker(invocationKey,slot);
+ return runClaimedRuntime(claim,execute,slot,!execute);
+}
+export async function runDatabaseWorker(bucket:number):Promise<RuntimeResult>{
+ if(!workerEnabled())return {status:503,body:{ok:false,state:'disabled'}};
+ if(!connectorsEnabled()||pdConfig()?.environment!=='development'||process.env.VERCEL_ENV!=='preview')return {status:503,body:{ok:false,state:'unconfigured'}};
+ const claim=await claimRuntime('dbclock:'+bucket,0,workerSlotCount());
+ if(claim.kind==='busy')return {status:409,body:{ok:false,state:'busy'}};
+ if(claim.kind==='reused'){
+  const state=claim.run.state;
+  return {status:state==='COMPLETED'?200:state==='RUNNING'?409:503,body:{ok:state==='COMPLETED',state:state.toLowerCase(),reused:true}};
+ }
+ // The configured pilot keeps its two collection opportunities per hour.
+ // Other deliveries only admit hourly monitors already approved in Company integrations.
+ const pilotSlot=bucket%6===1;
+ const [pilot,batch]=await Promise.allSettled([
+  pilotSlot?dueStagingProductProbe():Promise.resolve(null),
+  runConnectorBatch(maxConnectorReadsPerTick,4,Date.now()+12000,'hosted-hourly')
+ ]);
+ const product=pilot.status==='fulfilled'?pilot.value:null;
+ const outcomes=batch.status==='fulfilled'?batch.value.outcomes:[];
+ const hostedQueue=batch.status==='fulfilled'?{state:'completed',processed:batch.value.processed,peakInFlight:batch.value.peakInFlight,
+  elapsedMs:batch.value.elapsedMs,maxQueueLagMs:batch.value.maxQueueLagMs,limitReached:batch.value.limitReached,budgetExhausted:batch.value.budgetExhausted,outcomes:outcomes.reduce<Record<string,number>>((counts,outcome)=>{
+   counts[outcome]=(counts[outcome]??0)+1;return counts;
+  },{})}:{state:'failed'};
+ const ok=pilot.status==='fulfilled'&&batch.status==='fulfilled'&&product?.state!=='attention';
+ const skipped=!pilotSlot?'queue_only':pilot.status==='rejected'?'pilot_error':!stagingProbeTarget()?'pilot_unconfigured':'already_read_this_hour';
+ const summary={hostedQueue,...(product?{stagingProduct:product}:{skipped})};
+ const saved=await db.workerRun.updateMany({where:{id:claim.run.id,state:'RUNNING',leaseUntil:{gt:new Date()}},
+  data:{state:ok?'COMPLETED':'FAILED',finishedAt:new Date(),summary:summary as Prisma.InputJsonValue}});
+ if(!saved.count)return {status:503,body:{ok:false,state:'interrupted'}};
+ return {status:ok?200:503,body:{ok,state:ok?(product?.state??skipped):'attention'}};
+
+}
+/** Vercel supplies no invocation identifier. Deduplicate deliveries within five
+ * minutes; persisted queue leases/checkpoints protect work across later retries.
+ * The configured cron remains daily at 06:00 UTC, not a thirty-minute worker. */
+export async function runCronWorker(execute?:()=>Promise<TickResult>,now=new Date()):Promise<RuntimeResult>{
+ if(!cronEnabled())return {status:503,body:{ok:false,state:'disabled'}};
+ if(!Number.isFinite(now.getTime()))throw Error('Invalid cron invocation time');
+ const capacity=workerEnabled()?workerSlotCount():1;
+ const claim=await claimRuntime('cron:'+Math.floor(now.getTime()/300000),0,capacity);
+ return runClaimedRuntime(claim,execute,0,true);
+}
+async function dueStagingProductProbe(){
+ const target=stagingProbeTarget();
+ if(!target)return null;
+ const hourStart=new Date(Math.floor(Date.now()/3600000)*3600000);
+ const thisHour=await db.workerRun.findFirst({where:{slot:0,startedAt:{gte:new Date(hourStart.getTime()-LEASE_MS)},AND:[
+  {summary:{path:['stagingProduct','checkedAt'],gte:hourStart.toISOString()}},
+  {summary:{path:['stagingProduct','scopeHash'],equals:target.scopeHash}},
+  {summary:{path:['stagingProduct','policyRevision'],equals:target.policyRevision}},
+  {summary:{path:['stagingProduct','state'],equals:'read'}}
+ ]},select:{id:true}});
+ if(thisHour)return null;
+ const reading=await runStagingProductProbe(target);
+ if(reading.state!=='read')return reading;
+ const prev=await db.workerRun.findFirst({where:{slot:0,AND:[
+  {summary:{path:['stagingProduct','checkedAt'],lt:hourStart.toISOString()}},
+  {summary:{path:['stagingProduct','scopeHash'],equals:target.scopeHash}},{summary:{path:['stagingProduct','state'],equals:'read'}}
+ ]},orderBy:{startedAt:'desc'},select:{summary:true}});
+ const previous=z.object({stagingProduct:z.object({checkedAt:z.string(),digest:z.string()})}).safeParse(prev?.summary);
+ return {...reading,inventory:previous.success?(previous.data.stagingProduct.digest===reading.digest?'unchanged':'changed'):'first',
+  previousReadAt:previous.success?previous.data.stagingProduct.checkedAt:null};
+}
+async function runClaimedRuntime(claim:Awaited<ReturnType<typeof claimRuntime>>,execute:(()=>Promise<TickResult>)|undefined,slot:number,checkCollections:boolean):Promise<RuntimeResult>{
+ if(claim.kind==='busy')return {status:409,body:{ok:false,state:'busy'}};
+ if(claim.kind==='reused')return {status:claim.run.state==='COMPLETED'?200:claim.run.state==='RUNNING'?409:503,body:{ok:claim.run.state==='COMPLETED',state:claim.run.state.toLowerCase(),reused:true}};
+ let result:TickResult&{maintenance?:unknown};
+ // Stop admitting new provider work early enough to finish bounded reads and writes.
+ const admissionDeadline=Date.now()+20000;
+ const checkHosted=!execute&&slot===0&&connectorsEnabled()&&!!pdConfig();
+ const productRead=checkHosted?dueStagingProductProbe().catch(()=>({state:'attention',code:'INVALID_CONFIGURATION',checkedAt:new Date().toISOString()})):null;
+ const projectRead=checkHosted
+  ?pdProjectHealth().then(receipt=>({state:'verified' as const,...receipt})).catch((error:unknown)=>({
+   state:'error' as const,checkedAt:new Date().toISOString(),code:error instanceof CollectionError?error.code:'NETWORK_ERROR'
+  })):null;
+ try{
+  result=await executeWithMaintenance(execute||(()=>executeScheduledTick({
+   ...(monitoringEnabled()?{sources:()=>runMonitoringBatch(12,3,admissionDeadline)}:{}),
+   ...(connectorsEnabled()?{connectors:()=>runConnectorBatch(maxConnectorReadsPerTick,4,admissionDeadline),automations:()=>runAutomationBatch(maxConnectorEventsPerTick,2,Math.min(Date.now()+20000,admissionDeadline+20000))}:{}),
+   ...(outboundIntegrationsEnabled()?{deliveries:()=>runIntegrationDeliveryBatch(12,2,admissionDeadline)}:{}),
+   // One slot owns recurring review generation. Collection slots share fair queues.
+   ...(slot===0&&myCsfOrganisations().length?{myCsf:()=>runDueMyCsf(admissionDeadline)}:{}),
+   ...(slot===0?{controlReviews:()=>runReviewBatch(admissionDeadline),policyReleases:()=>runDuePolicyReleaseBatch(5,admissionDeadline)}:{})
+  })),slot===0?runWorkerMaintenance:undefined);
+  result=await finalizeAutomationTick(result);
+  result=await finalizeIntegrationDeliveryTick(result);
+  if(checkCollections)result=await finalizeCollectionTick(result);
+ }catch{const failed={state:'failed' as const,processed:0,attention:1};result={ok:false,modules:{sources:failed,connectors:failed,controlReviews:failed}};}
+ const [project,product]=await Promise.all([projectRead,productRead]);
+ const summary={...result,...(project?{pipedreamProject:project}:{}),...(product?{stagingProduct:product}:{})};
+ const state=result.ok?'COMPLETED':'FAILED';
+ const finished=await db.workerRun.updateMany({where:{id:claim.run.id,state:'RUNNING',leaseUntil:{gt:new Date()}},data:{state,finishedAt:new Date(),summary:summary as unknown as Prisma.InputJsonValue}});
+ if(finished.count!==1)return {status:503,body:{ok:false,state:'interrupted'}};
+ return {status:result.ok?200:503,body:{...result,state:state.toLowerCase(),reused:false}};
+}
+/** Deliberately excludes tenant, provider target, credentials and task details. */
+export async function workerHealth(){
+ if(!workerEnabled())return {state:'disabled',ok:false,slots:undefined};
+ const capacity=workerSlotCount();
+ const [runs,success,attention,deliveries]=await Promise.all([
+  Promise.all(Array.from({length:capacity},(_,slot)=>db.workerRun.findFirst({where:{slot,invocationKey:{startsWith:'github:'}},orderBy:{startedAt:'desc'},select:{slot:true,state:true,startedAt:true,finishedAt:true,leaseUntil:true}}))),
+  db.workerRun.findFirst({where:{state:'COMPLETED',invocationKey:{startsWith:'github:'}},orderBy:{finishedAt:'desc'},select:{finishedAt:true}}),
+  collectionAttention(),integrationDeliveryHealth()
+ ]);
+ const now=Date.now();
+ const slots=runs.map((run,slot)=>({slot,state:!run||now-run.startedAt.getTime()>STALE_MS?'stale':run.state==='RUNNING'?(run.leaseUntil.getTime()>now?'running':'interrupted'):run.state.toLowerCase()}));
+ const unhealthy=slots.find(s=>!['completed','running'].includes(s.state));
+ const needsAttention=(monitoringEnabled()&&attention.sources>0)||(connectorsEnabled()&&attention.connectors>0)||(outboundIntegrationsEnabled()&&(deliveries.dead>0||!!deliveries.oldestPendingAt&&now-new Date(deliveries.oldestPendingAt).getTime()>STALE_MS));
+ const state=unhealthy?.state||(needsAttention?'attention':slots.some(s=>s.state==='running')?'running':'completed');
+ const latest=runs.filter(r=>r!==null).sort((a,b)=>b.startedAt.getTime()-a.startedAt.getTime())[0];
+ return {ok:!unhealthy&&!needsAttention,state,capacity,slots,attention,...(outboundIntegrationsEnabled()?{deliveries}:{}),cadenceMinutes:30,staleAfterMinutes:90,lastStartedAt:latest?.startedAt.toISOString()||null,lastFinishedAt:latest?.finishedAt?.toISOString()||null,lastSuccessfulAt:success?.finishedAt?.toISOString()||null};
+}

@@ -1,0 +1,46 @@
+{
+  "postgres": {
+    "format": "regpilot-native-sql-v1",
+    "name": "PostgreSQL",
+    "engine": "postgres",
+    "driver": "psycopg",
+    "driverVersion": "3.3.9",
+    "install": "psycopg[binary]==3.3.9",
+    "version": "1.0.0",
+    "definitionId": "9cad2744-19bb-5168-856c-a413e4a29e83",
+    "artifactDigest": "sha256:fc8d2665473602e82e20212ce85cea65eebe6792fa72d01053fea2011e19b22e"
+  },
+  "mysql": {
+    "format": "regpilot-native-sql-v1",
+    "name": "MySQL",
+    "engine": "mysql",
+    "driver": "PyMySQL",
+    "driverVersion": "1.2.4",
+    "install": "PyMySQL[rsa]==1.2.4",
+    "version": "1.0.0",
+    "definitionId": "cca751b5-143e-5150-805b-cd0879744c63",
+    "artifactDigest": "sha256:fc8d2665473602e82e20212ce85cea65eebe6792fa72d01053fea2011e19b22e"
+  },
+  "mssql": {
+    "format": "regpilot-native-sql-v1",
+    "name": "Microsoft SQL Server",
+    "engine": "mssql",
+    "driver": "python-tds",
+    "driverVersion": "1.17.1",
+    "install": "python-tds==1.17.1 pyOpenSSL==26.4.0",
+    "version": "1.0.0",
+    "definitionId": "c33cb372-a51b-530e-b83f-886d62b9baba",
+    "artifactDigest": "sha256:fc8d2665473602e82e20212ce85cea65eebe6792fa72d01053fea2011e19b22e"
+  },
+  "clickhouse": {
+    "format": "regpilot-native-sql-v1",
+    "name": "ClickHouse",
+    "engine": "clickhouse",
+    "driver": "clickhouse-connect",
+    "driverVersion": "1.13.0",
+    "install": "clickhouse-connect==1.13.0",
+    "version": "1.0.0",
+    "definitionId": "5a63caca-1066-57f2-a7c6-1f825e82fa97",
+    "artifactDigest": "sha256:fc8d2665473602e82e20212ce85cea65eebe6792fa72d01053fea2011e19b22e"
+  }
+}

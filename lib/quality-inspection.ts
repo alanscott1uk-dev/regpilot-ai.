@@ -1,0 +1,103 @@
+import {trainingOutcome} from './quality-training';
+import type {exportQualityCase} from './server/capa-service';
+
+type CaseExport = Awaited<ReturnType<typeof exportQualityCase>>;
+
+function timestamp(value: Date | string | null) {
+ return value ? new Date(value).toISOString() : 'Unrecorded';
+}
+
+export function qualityInspectionText(record: CaseExport) {
+ const row = record.case;
+ if (!row) throw new Error('A saved quality case is required');
+ const lines = [
+  'RegPilot quality case inspection summary', row.title,
+  `Case ${row.id} · Organisation ${record.organizationId}`,
+  `Exported ${record.exportedAt} · Case version ${row.version} · Cycle ${row.cycle}`,
+  `Status: ${row.status} · Classification: ${row.classification} · Current owner: ${row.ownerName}`,
+  '', 'Occurrence and containment', `Occurrence date: ${timestamp(row.occurredAt).slice(0,10)}`,
+  row.description, `Impact: ${row.impact}`, `Containment: ${row.containment}`,
+  '', 'Handover', row.handoverRecipientId
+   ? `Awaiting acceptance by ${row.handoverRecipientId}. Outstanding checks: ${row.handoverNotes}`
+   : 'No pending handover.',
+  '', 'Investigation', row.investigationNotes || 'Findings pending.',
+  `Root cause: ${row.rootCause || 'Pending'}`, `Effectiveness criteria: ${row.effectivenessCriteria || 'Pending'}`,
+  '', 'Actions'
+ ];
+ for (const action of [...(record.previousActions ?? []), ...(record.actions ?? [])]) {
+  lines.push(`Cycle ${action.cycle} · ${action.kind} · ${action.task.title} · ${action.task.status}`,
+   `Task ${action.task.id} · Owner: ${action.task.ownerName}`, action.purpose);
+ }
+ if (!record.previousActions?.length && !record.actions?.length) lines.push('No recorded actions.');
+ for(const item of record.databaseMonitoring??[]){
+  lines.push('', 'Database control evidence',item.sourceName+' · '+item.controlTitle,'Original receipt '+item.receiptId+' · SHA-256 '+item.receiptHash,
+   item.recovered?'Same-source recovery reviewed':'Same-source recovery pending');
+  if(item.latest)lines.push('Latest receipt '+item.latest.receiptId+' · SHA-256 '+item.latest.receiptHash+' · '+item.latest.review);
+ }
+ if(record.monitoring){
+  const {source,latest}=record.monitoring;
+  lines.push('', 'Monitored control',source.controlTitle+' · '+source.label,'Original failure · '+source.observed,
+   source.capturedAt+' · Receipt '+source.runId+' · SHA-256 '+source.resultHash);
+  if(latest)lines.push('Later reading · '+latest.status+' · '+latest.observed,latest.capturedAt+' · Receipt '+latest.runId+' · SHA-256 '+latest.resultHash);
+  if(source.taskId)lines.push('Original follow-up '+source.taskId);
+ }
+ if(record.emailRecords?.length){
+  lines.push('','Email correspondence');
+  for(const mail of record.emailRecords){
+   lines.push(mail.source.subject,'From '+mail.source.sender,'Outlook item created '+mail.source.createdAt,
+    'Message ID '+mail.source.messageId,'Recorded '+mail.at+' by '+mail.actor+' in cycle '+mail.cycle);
+   if(mail.source.excerpt)lines.push('Selected text',mail.source.excerpt);
+   for(const file of mail.files)lines.push('Attachment '+file.filename+' · '+file.id+' · SHA-256 '+file.sha256);
+  }
+ }
+ if(record.trainingRecords?.length){
+  lines.push('','Operator training evidence');
+  for(const {key,cycle,recordedBy,recordedAt,finding:r} of record.trainingRecords){
+   lines.push(`Cycle ${cycle} · ${r.purpose} · Record ${key}`,`Operator: ${r.learner} (${r.learnerId}) · As of ${r.asOf}`,
+    `Procedure: ${r.procedure} · Assignment revision ${r.revision} · Revision ID ${r.revisionId} · File SHA-256 ${r.procedureSha256}`,
+    `Latest published revision by that time: ${r.publishedRevision??'None recorded'}`,
+    `Assignment ${r.assignmentId} · Created ${r.assignedAt} · Acknowledged by that time: ${r.acknowledgedAt??'No'}`,
+    `Assessment: ${trainingOutcome[r.outcome]}`,r.notes,`Recorded by ${recordedBy} at ${recordedAt}`);
+   if(r.issuedFromCase)lines.push('Retraining assigned through this quality case.');
+   if(r.incidentKey)lines.push('Follow-up to incident record '+r.incidentKey);
+   if(r.attemptId)lines.push(`Attempt ${r.attemptId} · Assessor ${r.assessorId} · Decided ${r.decisionAt} · Valid until ${r.validUntil??'N/A'}`);
+   for(const file of r.evidence)lines.push(`Assessment evidence: ${file.filename} · ${file.id} · SHA-256 ${file.sha256}`);
+  }
+ }
+ if(record.stockRecords?.length){
+  lines.push('', 'Controlled-stock reconciliation');
+  for(const {key,cycle,actor,at,count,totals,files,review} of record.stockRecords){
+   lines.push(`Cycle ${cycle} · Count ${key} · Recorded by ${actor} at ${at}`,
+    `${count.site} · ${count.product} · Batch ${count.batch} · Unit ${count.unit}`,
+    `Opening at ${count.openedAt}: ${count.opening} · Received ${totals.received} · Supplied ${totals.supplied}`,
+    `Counted at ${count.countedAt}: expected ${totals.expected}, physical ${count.physical}, difference ${totals.difference} ${count.unit}`,
+    `Result: ${totals.matched?'Matched':'Discrepancy'}${totals.negative?' · Negative running balance':''}`,count.notes);
+   for(const m of count.movements)lines.push(`Movement ${m.reference} · ${m.at} · ${m.direction} ${m.quantity} ${count.unit}`);
+   for(const f of files)lines.push(`${f.id===count.registerId?'Register extract':'Physical count'}: ${f.filename} · ${f.id} · SHA-256 ${f.sha256}`);
+   lines.push(review?`Independent review: ${review.decision} · ${review.actor} · ${review.at} · ${review.notes}`:'Independent review pending.');
+  }
+ }
+ lines.push('', 'Effectiveness reviews');
+ for (const review of record.reviews ?? []) {
+  lines.push(`Cycle ${review.cycle} · ${review.status} · Observed ${timestamp(review.observedAt).slice(0,10)} · Author ${review.authorId}`,
+   review.notes, `Assessment at export: ${review.reason}`);
+  if (review.reviewerId) lines.push(`Reviewer ${review.reviewerId} · ${timestamp(review.reviewedAt)}`, review.reviewNotes);
+  for (const file of review.evidence) lines.push(`Evidence: ${file.filename} · ${file.id} · SHA-256 ${file.sha256}`);
+ }
+ if (!record.reviews?.length) lines.push('No effectiveness assessment recorded.');
+ if (record.reviewsLimited) lines.push('Only the latest 40 reviews are included.');
+ if (record.blockers?.length) lines.push('', 'Outstanding effectiveness checks', ...record.blockers);
+ lines.push('', 'Recorded chronology (UTC)');
+ for (const item of record.history ?? []) {
+  lines.push(`${timestamp(item.createdAt)} · ${item.action} · Actor ${item.actorId ?? 'unrecorded'}`);
+  const details = item.details;
+  if (!details || typeof details !== 'object' || Array.isArray(details)) continue;
+  for (const [key,label] of [['previousOwnerId','Previous owner'],['recipientId','Recipient'],['outstandingChecks','Outstanding checks'],['purpose','Purpose'],['decision','Decision'],['reason','Reason'],['notes','Notes']]) {
+   const value=details[key];
+   if (typeof value==='string' && value && !(key==='notes' && value===details.outstandingChecks)) lines.push(`  ${label}: ${value}`);
+  }
+ }
+ if (record.historyLimited) lines.push('Only the first 1,000 recorded events are included.');
+ lines.push('',record.scope);
+ return lines.join('\n')+'\n';
+}

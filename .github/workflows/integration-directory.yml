@@ -1,0 +1,285 @@
+name: Live integration catalogue
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  catalogue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+      - run: node --import tsx scripts/check-live-integration-directory.ts
+      - name: Read and evaluate public pharmaceutical registers twice
+        run: node --import tsx scripts/check-live-pharma-registers.ts
+      - name: Read GLEIF and OpenSSF public source records twice
+        run: node --import tsx scripts/check-live-public-evidence.ts
+      - name: Read actual repository workflow decisions and jobs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node --import tsx scripts/check-live-workflow-evidence.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: public-provider-evidence
+          path: |
+            live-pharma-registers.json
+            live-public-evidence.json
+            live-workflow-evidence.json
+          retention-days: 14
+  hosted-dispatch-fixture:
+    name: Hosted monitor dispatch with fixture accounts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: regpilot
+          POSTGRES_PASSWORD: regpilot-test-only
+          POSTGRES_DB: regpilot
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U regpilot -d regpilot" --health-interval 3s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://regpilot:regpilot-test-only@localhost:5432/regpilot?schema=public
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+      - run: bash scripts/init-ci-database.sh
+      - name: Approve all distinct products and verify healthy and changed resource settings
+        env:
+          REGPILOT_SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node --import tsx scripts/benchmark-hosted-dispatch.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hosted-dispatch-fixture-${{ github.event.pull_request.head.sha || github.sha }}
+          path: hosted-dispatch-fixture.json
+          if-no-files-found: error
+          retention-days: 30
+  monitored-applications:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: regpilot
+          POSTGRES_PASSWORD: regpilot-test-only
+          POSTGRES_DB: regpilot
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U regpilot -d regpilot" --health-interval 3s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://regpilot:regpilot-test-only@localhost:5432/regpilot?schema=public
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+      - run: bash scripts/init-ci-database.sh
+      - name: Monitor Gitea and Grafana through timed changes and credential renewal
+        env:
+          REGPILOT_SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export REGPILOT_TEST_APP_PASSWORD="$(openssl rand -hex 28)"
+          docker run -d --name rp-gitea -p 127.0.0.1:8193:3000 -e GITEA__security__INSTALL_LOCK=true -e GITEA__database__DB_TYPE=sqlite3 gitea/gitea:1.23.8
+          docker run -d --name rp-grafana -p 127.0.0.1:8194:3000 -e GF_SECURITY_ADMIN_PASSWORD="$REGPILOT_TEST_APP_PASSWORD" grafana/grafana:12.2.1
+          trap 'docker rm -f rp-gitea rp-grafana >/dev/null' EXIT
+          curl -fsS --retry 30 --retry-all-errors --retry-delay 2 http://127.0.0.1:8193/api/v1/version -o /dev/null
+          curl -fsS --retry 30 --retry-all-errors --retry-delay 2 http://127.0.0.1:8194/api/health -o /dev/null
+          docker exec --user git rp-gitea gitea admin user create --username quality-reader --password "$REGPILOT_TEST_APP_PASSWORD" --email quality@example.invalid --must-change-password=false
+          node --import tsx scripts/check-live-business-apps.ts
+      - name: Verify managed grant renewal and upstream sync freshness
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --import tsx --test --test-reporter tap --test-name-pattern='a hosted monitor resumes only' tests/operational-records.integration.test.ts | tee managed-grant-recovery.tap
+      - uses: actions/upload-artifact@v4
+        with:
+          name: managed-grant-recovery-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: managed-grant-recovery.tap
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: business-application-recovery-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: business-application-recovery.json
+          retention-days: 30
+      - name: Verify Prometheus alert changes and credential recovery
+        env:
+          REGPILOT_SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          archive=prometheus-3.5.0.linux-amd64.tar.gz
+          curl -fsSL --retry 3 "https://github.com/prometheus/prometheus/releases/download/v3.5.0/$archive" -o "$RUNNER_TEMP/$archive"
+          (cd "$RUNNER_TEMP" && echo "e811827af26d822afb09a4f28314f61b618b12cff5369835a67f674d8b46f39a  $archive" | sha256sum -c - && tar -xzf "$archive" prometheus-3.5.0.linux-amd64/prometheus)
+          REGPILOT_TEST_PROMETHEUS_BIN="$RUNNER_TEMP/prometheus-3.5.0.linux-amd64/prometheus" node --import tsx scripts/check-live-prometheus.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prometheus-monitoring-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: prometheus-monitoring.json
+          if-no-files-found: error
+          retention-days: 30
+  identity-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+      - name: Verify credential rotation and policy drift on a real identity server
+        shell: bash
+        run: |
+          set -euo pipefail
+          export KC_BOOTSTRAP_ADMIN_PASSWORD="$(openssl rand -hex 32)"
+          docker run -d --name regpilot-idp -p 127.0.0.1:8180:8080 -e KC_BOOTSTRAP_ADMIN_USERNAME=regpilot-test-admin -e KC_BOOTSTRAP_ADMIN_PASSWORD quay.io/keycloak/keycloak:26.3.5 start-dev
+          trap 'docker rm -f regpilot-idp >/dev/null' EXIT
+          curl --fail --silent --retry 30 --retry-connrefused --retry-delay 2 --retry-all-errors http://127.0.0.1:8180/realms/master/.well-known/openid-configuration -o /dev/null
+          node --import tsx scripts/check-live-keycloak.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: identity-server-monitoring-evidence
+          path: live-keycloak-evidence.json
+          retention-days: 14
+  instrument-protocol:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install asyncua==1.1.8
+      - run: python scripts/check-live-instrument.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: instrument-protocol-evidence
+          path: live-instrument-evidence.json
+          retention-days: 14
+  private-inference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+      - name: Verify a running model before and after credential rotation
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision=c6f2d396a5faa22c9722908d47e8da81a5d8cebc
+          file=SmolLM2-135M-Instruct-Q4_K_M.gguf
+          base=https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF
+          expected=$(curl -fsSL --retry 2 "$base/raw/$revision/$file" | sed -nE 's/^oid sha256:([a-f0-9]{64})$/\1/p')
+          test "${#expected}" = 64
+          curl -fsSL --retry 2 "$base/resolve/$revision/$file" -o "$RUNNER_TEMP/regpilot-model.gguf"
+          echo "$expected  $RUNNER_TEMP/regpilot-model.gguf" | sha256sum -c -
+          docker run -d --name regpilot-model -p 127.0.0.1:8186:8080 -v "$RUNNER_TEMP/regpilot-model.gguf:/models/test.gguf:ro" ghcr.io/ggml-org/llama.cpp:server-b8840@sha256:1a706b41321c3d3e570b9a63cc768039f7bfe0487070ff6cf790f892b8e74831 -m /models/test.gguf --alias regpilot-test --host 0.0.0.0 --port 8080 -c 4096 -t 2
+          trap 'docker rm -f regpilot-model >/dev/null' EXIT
+          curl -fsS --retry 30 --retry-all-errors --retry-delay 2 http://127.0.0.1:8186/health -o /dev/null
+          node --import tsx scripts/check-live-private-model.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: private-model-evidence
+          path: live-private-model.json
+          retention-days: 14
+  database-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [postgres, mysql, clickhouse, cockroachdb, mongodb, tidb, mssql]
+    permissions:
+      contents: read
+    services:
+      workspace-db:
+        image: postgres:17
+        env:
+          POSTGRES_USER: regpilot
+          POSTGRES_PASSWORD: acceptance-only
+          POSTGRES_DB: regpilot
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U regpilot" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DATABASE_URL: postgresql://regpilot:acceptance-only@localhost:5432/regpilot?schema=public
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the native SQL driver named in the source plan
+        if: contains(fromJSON('["postgres","mysql","mssql","clickhouse"]'), matrix.engine)
+        env:
+          DATABASE_ENGINE: ${{ matrix.engine }}
+        run: |
+          python -c "import os,sys; sys.path.insert(0,'public/database-bridge'); from native_sql import plan_for; print(*plan_for(os.environ['DATABASE_ENGINE'])['install'].split(),sep='\n')" > "$RUNNER_TEMP/sql-driver.txt"
+          python -m pip install -r "$RUNNER_TEMP/sql-driver.txt"
+      - name: Install MongoDB fixture driver
+        if: matrix.engine == 'mongodb'
+        run: python -m pip install pymongo==4.13.2
+      - name: Read real database rows and rotate the source credential
+        run: python3 scripts/check-database-source.py ${{ matrix.engine }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+      - run: npx prisma db push
+      - name: Admit the real collector receipts through the RegPilot observations API
+        env:
+          REGPILOT_DATABASE_ACCEPTANCE_ENVELOPES: database-acceptance-envelopes.json
+          REGPILOT_CADENCE_ENVELOPES: ${{ matrix.engine == 'postgres' && 'pilot-cadence-envelopes.json' || '' }}
+        run: node --import tsx --test --test-name-pattern='database connector receipts' tests/customer-api.integration.test.ts
+      - name: Verify timed source failure and recovery through the workspace API
+        env:
+          REGPILOT_SCHEDULED_DATABASE: database-scheduled-recovery.json
+        run: node --import tsx --test --test-concurrency=1 --test-name-pattern='timed database recovery receipts|scheduled database proof' tests/customer-api.integration.test.ts tests/database-schedule-proof.test.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scheduled-database-${{ matrix.engine }}-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: database-scheduled-recovery.json
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: database-source-${{ matrix.engine }}
+          path: |
+            live-${{ matrix.engine }}-evidence.json
+            pilot-cadence-report.json
+          retention-days: 14
