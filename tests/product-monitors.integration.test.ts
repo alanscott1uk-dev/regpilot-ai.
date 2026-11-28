@@ -268,6 +268,10 @@ test('an hourly product monitor rejects another tenant, detects inventory drift 
   const preview=await call('PREVIEW');
   assert.ok('digest' in preview);
   await assert.rejects(productMonitorCommand(f.out,{op:'PREVIEW',...desired,account}));
+  const {recordTrial,operatorReceiptOptions}=await import('../lib/server/capability-trial-service');
+  const id=crypto.randomUUID(),setupPlan={action:'START',track:'operator_pilot',environment:'PARTNER_SANDBOX',ukExternal:false,requestKey:id,steps:['connect-first','find-failure'],release:'b'.repeat(40),firstTime:true,intendedUse:'Review the selected product and its first successful collection.',operatorProduct:product.app+'/'+product.action};
+  await recordTrial(f.o,setupPlan);
+  const other=crypto.randomUUID();await recordTrial(f.o,{...setupPlan,requestKey:other,operatorProduct:'DAILYMED_LABEL'});
   const approve={controlId:control.id,consent:true,digest:preview.digest};
   const saved=await call('APPROVE',approve);assert.ok('id' in saved&&'version' in saved);
   assert.deepEqual(await call('APPROVE',approve),saved);
@@ -281,6 +285,10 @@ test('an hourly product monitor rejects another tenant, detects inventory drift 
    return executeConnector(job!);
   }
   assert.equal(await scheduled(),'OBSERVED');
+  const choices=await operatorReceiptOptions(f.o,id);
+  assert.equal(choices.options.length,1);assert.deepEqual(choices.options[0].steps,['connect-first']);
+  assert.deepEqual((await operatorReceiptOptions(f.o,other)).options,[]);
+  await assert.rejects(operatorReceiptOptions(f.ad,id));await assert.rejects(operatorReceiptOptions(f.out,id));
   rows=[{id:'account-resource-b'}];assert.equal(await scheduled(),'FOLLOW_UP');
   await assert.rejects(call('APPROVE',approve));
   healthy=false;await scheduled();
@@ -352,4 +360,44 @@ test('an hourly product monitor rejects another tenant, detects inventory drift 
   }
 
  }finally{globalThis.fetch=original;await f.cleanup();}
+});
+
+test('GitHub trial pins yesterday’s scoped worker receipt for independent review across refreshes',async()=>{
+ setup();
+ const {randomUUID}=await import('node:crypto');
+ const {recordTrial,trialWorkspace}=await import('../lib/server/capability-trial-service');
+ const f=await assuranceFixture(),revision='d'.repeat(40),ids:string[]=[];
+ const keys=['VERCEL_ENV','VERCEL_GIT_COMMIT_SHA','REGPILOT_PIPEDREAM_STAGING_PROBE'];
+ const saved=keys.map(k=>process.env[k]);
+ try{
+  Object.assign(process.env,{VERCEL_ENV:'preview',VERCEL_GIT_COMMIT_SHA:revision,REGPILOT_PIPEDREAM_STAGING_PROBE:JSON.stringify({org:f.a.id,account:'apn_trial',app:'github',action:'list-repositories'})});
+  const target=stagingProbeTarget()!,start=Math.floor(Date.now()/86400000)*86400000-86400000;
+  async function insert(offset:number,scopeHash=target.scopeHash){
+   const time=new Date(start+offset);
+   const row=await db.workerRun.create({data:{invocationKey:'trial-'+randomUUID(),state:'COMPLETED',startedAt:time,finishedAt:time,leaseUntil:time,codeCommit:revision,
+    summary:{stagingProduct:{app:'github',action:'list-repositories',scopeHash,state:'read',checkedAt:time.toISOString(),count:1,digest:'e'.repeat(64),
+     checks:[{id:'repository_secret_scanning_enabled',status:'UNKNOWN'}],providerHealth:false}}}});
+   ids.push(row.id);return row.id;
+  }
+  const selected=await insert(10000);await insert(15000,'wrong-scope');
+  const id=randomUUID(),step='inspect-receipt';
+  const plan={action:'START',track:'github_receipt_review',environment:'PROTECTED_PILOT',ukExternal:false,requestKey:id,steps:[step],release:revision,receiptWindow:'previous_day',intendedUse:'Review the actual GitHub reading with an independent assessor.'};
+  await assert.rejects(recordTrial(f.out,plan));await assert.rejects(recordTrial(f.ed,plan));
+  await assert.rejects(recordTrial(f.o,{...plan,receiptWindow:'today'}));
+  await recordTrial(f.o,plan);await insert(20000);await recordTrial(f.o,plan);
+  const fetchView=async()=> (await trialWorkspace(f.ad,{trialId:id})).trials[0];
+  const trial=await fetchView();assert.equal(trial.receipt?.id,selected);
+  assert.equal(trial.receipt.providerHealth,false);assert.equal(trial.receipt.checks[0].status,'UNKNOWN');
+  assert.equal((await trialWorkspace(f.out,{trialId:id})).trials.length,0);
+  await recordTrial(f.o,{action:'CHECKPOINT',key:randomUUID(),id,step,kind:'COMPLETED',note:'Identified the warning and the unobservable setting.'});
+  await recordTrial(f.o,{action:'STOP',id});
+  await recordTrial(f.o,{action:'FINISH',id,results:[{step,outcome:'PASS',evidenceId:null,unsupported:0,edits:0,assisted:false,notes:'Interpreted a successful read with a separate broker warning.'}]},f.store);
+  const review={action:'REVIEW',id,decision:'ACCEPT',notes:'Verified the retained collection time, warning and unavailable checks.'};
+  await assert.rejects(recordTrial(f.o,review,f.store));
+  await recordTrial(f.ad,review,f.store);
+  assert.equal((await fetchView()).accepted,true);assert.equal((await fetchView()).receipt?.id,selected);
+ }finally{
+  for(const [i,k] of keys.entries()){if(saved[i]===undefined)delete process.env[k];else process.env[k]=saved[i];}
+  await db.workerRun.deleteMany({where:{id:{in:ids}}});await f.cleanup();
+ }
 });

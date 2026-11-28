@@ -1,3 +1,5 @@
+import type {Prisma} from '@prisma/client';
+import {pilotReceipt,type PilotWindow} from '../pilot-receipt';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {pdConfig} from '../connectors/pipedream-client';
@@ -74,3 +76,29 @@ export async function stagingProductHistory(org:string){
   reads:reads.length,lastReadAt:last?.checkedAt??null,count:last?.count??null,latestError:latest?.state==='attention'?latest.code:null};
 }
 export type StagingProductHistory=NonNullable<Awaited<ReturnType<typeof stagingProductHistory>>>;
+
+/** Select only a completed upstream read inside the requested UTC day and authorised account. */
+export async function trialPilotReceipt(tx:Prisma.TransactionClient,org:string,window:PilotWindow,now=Date.now()){
+ const target=stagingProbeTarget();
+ if(!target||target.org!==org||target.recipe.app!=='github'||target.recipe.action!=='list-repositories')return null;
+ const day=86400000,start=Math.floor(now/day)*day-(window==='previous_day'?day:0);
+ const from=new Date(start).toISOString(),until=new Date(start+day).toISOString();
+ const rows=await tx.workerRun.findMany({where:{slot:0,finishedAt:{not:null},AND:[
+  {summary:{path:['stagingProduct','scopeHash'],equals:target.scopeHash}},
+  {summary:{path:['stagingProduct','state'],equals:'read'}},
+  {summary:{path:['stagingProduct','app'],equals:'github'}},
+  {summary:{path:['stagingProduct','action'],equals:'list-repositories'}},
+  {summary:{path:['stagingProduct','checkedAt'],gte:from}},
+  {summary:{path:['stagingProduct','checkedAt'],lt:until}}
+ ]},orderBy:[{startedAt:'desc'},{id:'desc'}],select:{id:true,startedAt:true,finishedAt:true,summary:true,codeCommit:true}});
+ const receipts=rows.flatMap(row=>{
+  const parsed=z.object({stagingProduct:receiptSchema}).safeParse(row.summary);
+  if(!parsed.success||parsed.data.stagingProduct.state!=='read')return [];
+  const r=parsed.data.stagingProduct,time=Date.parse(r.checkedAt);
+  if(!row.finishedAt||time>now||time<row.startedAt.getTime()-1000||time>row.finishedAt.getTime()+1000)return [];
+  return [pilotReceipt.parse({id:row.id,checkedAt:r.checkedAt,revision:row.codeCommit,action:'list-repositories',
+   count:r.count,digest:r.digest,providerHealth:r.providerHealth??null,
+   checks:(r.checks??[]).map(c=>({...c,label:githubInventoryLabels.get(c.id)!}))})];
+ });
+ return receipts.sort((a,b)=>b.checkedAt.localeCompare(a.checkedAt))[0]??null;
+}

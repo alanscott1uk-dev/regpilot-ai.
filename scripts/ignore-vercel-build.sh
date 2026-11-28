@@ -38,6 +38,7 @@ if [ "$VERCEL_GIT_COMMIT_REF" = "feature/traceability-benchmark-batch-20261106" 
       'Verify exported cold-chain readings against the approved excursion|69be3db19ef6fc79f8ec334ae70b07c743712c1c') exit 1 ;;
       'Dispatch approved hosted hourly monitors on the independent staging clock|a1aa3666507e9e208fc318433f4c6d38b95c158c') exit 1 ;;
       'Verify hosted dispatch across every distinct product family|4e3a69fe19856f237ab87758e8bdeeac71a4318c') exit 1 ;;
+      'Pin trial evidence and route operators to their selected integration|81fdd79fd1f762c11cb2ec777de1191485e2448b') exit 1 ;;
     esac
   fi
   exit 0

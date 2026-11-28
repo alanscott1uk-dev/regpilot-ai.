@@ -1,3 +1,4 @@
+import {githubTrialTrack} from './pilot-receipt';
 import {benchmarkProductById} from './benchmark-products';
 import {z} from 'zod';
 import {siteProtocol,siteTests} from './site-qualification';
@@ -5,8 +6,9 @@ export type TrialStep={id:string;title:string;row:number};
 type Track={title:string;steps:TrialStep[]};
 const step=(row:number,id:string,title:string)=>({row,id,title});
 export const isExcursionTrial=(track:string)=>track==='excursion_operator'||track==='excursion_assessor';
-export const isTimedPilot=(track:string)=>isExcursionTrial(track)||track==='operator_pilot'||track==='assessor_pilot';
+export const isTimedPilot=(track:string)=>track===githubTrialTrack||isExcursionTrial(track)||track==='operator_pilot'||track==='assessor_pilot';
 const pilotTracks:Record<string,Track>={
+ [githubTrialTrack]:{title:'GitHub monitoring · operator and assessor handoff',steps:[step(26,'inspect-receipt','Inspect the GitHub read, interpret its health and settings, and hand the receipt to an assessor.')]},
  excursion_operator:{title:'First-time operator · temperature excursion',steps:[
   step(25,'link-stock','Identify the out-of-range reading and the affected stock.'),
   step(25,'investigate-stock','Record the investigation and its findings on the assigned case.')]},
@@ -56,7 +58,7 @@ export const trialTracks:Record<string,Track>={
 };
 export const allTrialTracks={...trialTracks,...pilotTracks};
 export const trialEnvironments=['FIXTURE','PARTNER_SANDBOX','PROTECTED_PILOT'] as const;
-export const trialStart=z.object({action:z.literal('START'),requestKey:z.uuid(),track:z.string().refine(k=>Object.hasOwn(allTrialTracks,k)),steps:z.array(z.string().max(30)).min(1).max(6),release:z.string().regex(/^[a-f0-9]{40}$/),environment:z.enum(trialEnvironments),intendedUse:z.string().trim().min(15).max(360),ukExternal:z.boolean(),firstTime:z.boolean().optional(),caseId:z.uuid().optional(),siteProtocol:siteProtocol.optional()}).strict();
+export const trialStart=z.object({action:z.literal('START'),requestKey:z.uuid(),track:z.string().refine(k=>Object.hasOwn(allTrialTracks,k)),steps:z.array(z.string().max(30)).min(1).max(6),release:z.string().regex(/^[a-f0-9]{40}$/),environment:z.enum(trialEnvironments),intendedUse:z.string().trim().min(15).max(360),ukExternal:z.boolean(),firstTime:z.boolean().optional(),caseId:z.uuid().optional(),operatorProduct:z.string().min(1).max(200).optional(),receiptWindow:z.enum(['previous_day','today']).optional(),siteProtocol:siteProtocol.optional()}).strict();
 export const trialResult=z.object({step:z.string().max(30),outcome:z.enum(['PASS','FAIL','UNOBSERVED']),evidenceId:z.uuid().nullable(),runId:z.uuid().optional(),notes:z.string().trim().min(10).max(600),unsupported:z.number().int().min(0).max(1000),edits:z.number().int().min(0).max(1000),assisted:z.boolean()}).strict();
 const comparison=z.object({
  productId:z.string().refine(id=>benchmarkProductById.has(id),'Choose a workbook comparator').optional(),

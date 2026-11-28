@@ -3,6 +3,7 @@
  * Fictional demo data only; no account secrets, customer uploads or billable services.
  * This is independent-of-component automated acceptance, not a recruited human study.
  */
+import {trialReceiptJourney} from './trial-receipt-browser-journey.mjs';
 import {spawn} from "node:child_process";
 import {createServer} from "node:net";
 import {setTimeout as delay} from "node:timers/promises";
@@ -155,6 +156,7 @@ try{
   try{observations.push(await sharedEvidenceJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"shared-evidence-"+name,passed:false,error:e.message});}
   try{observations.push(await changeResponseJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"change-response-"+name,passed:false,error:e.message});}
   try{observations.push(await portalBrowserJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"portal-handoff-"+name,passed:false,error:e.message});}
+  try{observations.push(await trialReceiptJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"trial-receipt-"+name,passed:false,error:e.message});}
   try{observations.push(await setupJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"setup-"+name,passed:false,error:e.message});}
   try{observations.push(await assuranceRenewalJourney(browser,base,viewport,name));}catch(e){observations.push({scenario:"assurance-renewal-"+name,passed:false,error:e.message});}
  }

@@ -1,4 +1,5 @@
 'use client';
+import RepositoryResults from './repository-results';
 import {useEffect,useState} from 'react';
 import type {useWorkspaceContext} from '../../../lib/client/workspace-context';
 import type {StagingProductHistory} from '../../../lib/server/staging-product-probe';
@@ -32,17 +33,21 @@ export default function ProductMonitors({workspace,controls}:{workspace:ReturnTy
   finally{if(valid())setBusy(false);}
  }
  const utc=(value:string)=>new Date(value).toISOString().replace('T',' ').slice(0,19);
+ const [linkedProduct,setLinkedProduct]=useState('');
+ useEffect(()=>{const key=new URLSearchParams(window.location.search).get('monitorProduct');
+  if(key&&key.length<=200&&key.split('/').length===2){setLinkedProduct(key);setQuery(key.replace('/',' '));}
+ },[organizationId]);
  const current=products.find(p=>p.app+'/'+p.action===selected);
  function clearSelection(){setCreated(null);setProfile('');setMapping({});setAccounts([]);setAccount('');setLink('');setSample(null);setRenewal(null);setNotice('');setError('');}
  useEffect(()=>{
   let stale=false;const valid=capture();
   const timer=window.setTimeout(async()=>{
    try{const r=await request('/api/workspace/product-monitors',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({organizationId,op:'SEARCH',q:query})});
-    if(stale||!valid())return;setProducts(r.products);setLatest(r.history?{org:organizationId,value:r.history}:null);setEnabled(r.enabled);setPaused(r.paused);setSelected(r.products[0]?r.products[0].app+'/'+r.products[0].action:'');clearSelection();
+    if(stale||!valid())return;setProducts(r.products);setLatest(r.history?{org:organizationId,value:r.history}:null);setEnabled(r.enabled);setPaused(r.paused);setSelected(linkedProduct?(r.products.some((p:ProductRead)=>p.app+'/'+p.action===linkedProduct)?linkedProduct:''):(r.products[0]?r.products[0].app+'/'+r.products[0].action:''));clearSelection();
    }catch(e){if(!stale&&valid())setError(e instanceof Error?e.message:'Could not load product reads.');}
   },200);
   return ()=>{stale=true;window.clearTimeout(timer);};
- },[query,organizationId,request,capture]);
+ },[query,linkedProduct,organizationId,request,capture]);
  async function operate(op:string,target?:Paused){
   const valid=capture();setBusy(true);setNotice('');setError('');
   const data={organizationId,op,...(op==='START_RENEWAL'?{id:target?.id,version:target?.version}:op==='VERIFY_RENEWAL'?renewal:
@@ -69,10 +74,9 @@ export default function ProductMonitors({workspace,controls}:{workspace:ReturnTy
     Latest inventory at {new Date(history.lastReadAt).toLocaleString('en-GB',{timeZone:'UTC'})} UTC contained {history.count} {history.count===1?'record':'records'}.</p>:<p>Awaiting the first successful worker read.</p>}
    <p>{history.previousDay.date} UTC · {history.previousDay.hours}/24 hours observed · {history.previousDay.failures} failed reads · {history.previousDay.changed} inventory changes · {history.previousDay.providerWarnings} provider warnings.
     {!!history.previousDay.missing.length&&<> Missing hours (UTC): {history.previousDay.missing.join(', ')}.</>}</p>
-   {history.providerHealth===false&&<p role="status">Pipedream flagged the account on the latest successful inventory read.</p>}
-   {!!history.checks.length&&<table><caption>Latest repository checks</caption><thead><tr><th scope="col">Setting</th><th scope="col">Result</th></tr></thead>
-    <tbody>{history.checks.map(row=><tr key={row.id}><td>{row.label}</td><td>{row.status}</td></tr>)}</tbody></table>}
-   {history.latestError&&<p role="status">The latest read needs attention ({history.latestError}).</p>}
+   {history.lastReadAt&&<RepositoryResults checks={history.checks} health={history.providerHealth}/>}
+   {history.latestError&&<p role="status">The latest attempt failed ({history.latestError}). {history.latestError==='CREDENTIAL_REJECTED'?'Review the grant and renew the original account.':'Inspect the failure and next scheduled attempt in the connection history.'}</p>}
+   {history.action==='list-repositories'&&<a href={'/team/trials?'+new URLSearchParams({organizationId,participant:'github'})}>Review a GitHub receipt with an assessor</a>}
   </section>}
   <button type="button" disabled={busy} onClick={()=>loadSchedules()}>{page?'Refresh hourly schedules':'View approved hourly schedules'}</button>
   {page&&<section aria-label="Approved hourly schedules"><h3>Approved hourly schedules</h3>
@@ -80,7 +84,7 @@ export default function ProductMonitors({workspace,controls}:{workspace:ReturnTy
     <tbody>{page.rows.map(row=><tr key={row.id}><td><a href={'/team/operations?'+new URLSearchParams({organizationId,view:'connections',connectionId:row.id})}>{row.product} · {row.action}</a><br/>{row.control}</td>
      <td>{row.state}{row.failureCode&&' · '+row.failureCode}</td><td>{row.lastSuccessAt?utc(row.lastSuccessAt):'Awaiting first read'}</td><td>{row.nextRunAt?utc(row.nextRunAt):'Paused'}</td></tr>)}</tbody></table>
     {page.next&&<button type="button" disabled={busy} onClick={()=>loadSchedules(page.next!)}>Next schedules</button>}</>:<p>No approved hourly product monitors in this workspace.</p>}</section>}
-  <fieldset disabled={busy}><label>Find a product <input value={query} maxLength={100} onChange={e=>{clearSelection();setSelected('');setProducts([]);setQuery(e.target.value);}}/></label>
+  <fieldset disabled={busy}><label>Find a product <input value={query} maxLength={100} onChange={e=>{clearSelection();setLinkedProduct('');setSelected('');setProducts([]);setQuery(e.target.value);}}/></label>
   <label>Inventory read <select value={selected} onChange={e=>{clearSelection();setSelected(e.target.value);}}>{products.map(p=><option key={p.app+'/'+p.action} value={p.app+'/'+p.action}>{p.name} · {p.action}</option>)}</select></label>
   {enabled&&current?<><button type="button" onClick={()=>operate('CONNECT')}>Authorise account</button> <button type="button" onClick={()=>operate('ACCOUNTS')}>Refresh linked accounts</button></>:<p>Hosted reads require a Pipedream Connect project in this deployment. <a href="/product-monitors/setup.txt">Set up a project</a></p>}
   {!!accounts.length&&<><label>Customer account <select value={account} onChange={e=>{setAccount(e.target.value);setSample(null);}}>{accounts.filter(g=>g.canVerify).map(g=><option key={g.id} value={g.id}>{g.name}{g.healthy?'':' · verify with a read'}</option>)}</select></label>
