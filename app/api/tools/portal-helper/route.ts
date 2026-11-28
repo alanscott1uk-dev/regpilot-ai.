@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {makeAuditZip} from '../../../../lib/audit-archive';
@@ -15,5 +16,10 @@ export async function GET(request:Request){
   }
   return {name,bytes};
  }));
- return new Response(new Uint8Array(makeAuditZip(entries)),{headers:{'Content-Type':'application/zip','Content-Disposition':'attachment; filename="regpilot-portal-helper.zip"','Cache-Control':'private, no-store'}});
+ const archive=makeAuditZip(entries),digest=createHash('sha256').update(archive).digest();
+ const etag='"'+digest.toString('hex')+'"';
+ const headers={'ETag':etag,'Content-Digest':'sha-256=:'+digest.toString('base64')+':','Cache-Control':'private, no-cache'};
+ if(request.headers.get('if-none-match')?.split(',').some(tag=>tag.trim().replace(/^W\//,'')===etag||tag.trim()==='*'))
+  return new Response(null,{status:304,headers:{ETag:etag,'Cache-Control':headers['Cache-Control']}});
+ return new Response(new Uint8Array(archive),{headers:{...headers,'Content-Type':'application/zip','Content-Disposition':'attachment; filename="regpilot-portal-helper.zip"'}});
 }

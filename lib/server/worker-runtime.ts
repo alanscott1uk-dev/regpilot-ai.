@@ -57,6 +57,24 @@ export async function runPrivateWorker(invocationKey:string,execute?:()=>Promise
  const claim=await claimWorker(invocationKey,slot);
  return runClaimedRuntime(claim,execute,slot,!execute);
 }
+export async function runDatabaseWorker(bucket:number):Promise<RuntimeResult>{
+ if(!workerEnabled())return {status:503,body:{ok:false,state:'disabled'}};
+ if(!connectorsEnabled()||!stagingProbeTarget())return {status:503,body:{ok:false,state:'unconfigured'}};
+ const claim=await claimRuntime('dbclock:'+bucket,0,workerSlotCount());
+ if(claim.kind==='busy')return {status:409,body:{ok:false,state:'busy'}};
+ if(claim.kind==='reused'){
+  const state=claim.run.state;
+  return {status:state==='COMPLETED'?200:state==='RUNNING'?409:503,body:{ok:state==='COMPLETED',state:state.toLowerCase(),reused:true}};
+ }
+ const product=await dueStagingProductProbe();
+ const ok=product?.state!=='attention';
+ const summary=product?{stagingProduct:product}:{skipped:'already_read_this_hour'};
+ const saved=await db.workerRun.updateMany({where:{id:claim.run.id,state:'RUNNING',leaseUntil:{gt:new Date()}},
+  data:{state:ok?'COMPLETED':'FAILED',finishedAt:new Date(),summary:summary as Prisma.InputJsonValue}});
+ if(!saved.count)return {status:503,body:{ok:false,state:'interrupted'}};
+ return {status:ok?200:503,body:{ok,state:product?.state??'already_read'}};
+
+}
 /** Vercel supplies no invocation identifier. Deduplicate deliveries within five
  * minutes; persisted queue leases/checkpoints protect work across later retries.
  * The configured cron remains daily at 06:00 UTC, not a thirty-minute worker. */
@@ -71,14 +89,17 @@ async function dueStagingProductProbe(){
  const target=stagingProbeTarget();
  if(!target)return null;
  const hourStart=new Date(Math.floor(Date.now()/3600000)*3600000);
- const thisHour=await db.workerRun.findFirst({where:{slot:0,startedAt:{gte:hourStart},AND:[
+ const thisHour=await db.workerRun.findFirst({where:{slot:0,startedAt:{gte:new Date(hourStart.getTime()-LEASE_MS)},AND:[
+  {summary:{path:['stagingProduct','checkedAt'],gte:hourStart.toISOString()}},
   {summary:{path:['stagingProduct','scopeHash'],equals:target.scopeHash}},
-  {summary:{path:['stagingProduct','policyRevision'],equals:target.policyRevision}}
+  {summary:{path:['stagingProduct','policyRevision'],equals:target.policyRevision}},
+  {summary:{path:['stagingProduct','state'],equals:'read'}}
  ]},select:{id:true}});
  if(thisHour)return null;
  const reading=await runStagingProductProbe(target);
  if(reading.state!=='read')return reading;
- const prev=await db.workerRun.findFirst({where:{slot:0,startedAt:{lt:hourStart},AND:[
+ const prev=await db.workerRun.findFirst({where:{slot:0,AND:[
+  {summary:{path:['stagingProduct','checkedAt'],lt:hourStart.toISOString()}},
   {summary:{path:['stagingProduct','scopeHash'],equals:target.scopeHash}},{summary:{path:['stagingProduct','state'],equals:'read'}}
  ]},orderBy:{startedAt:'desc'},select:{summary:true}});
  const previous=z.object({stagingProduct:z.object({checkedAt:z.string(),digest:z.string()})}).safeParse(prev?.summary);

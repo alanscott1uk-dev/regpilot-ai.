@@ -171,12 +171,13 @@ test('scheduled inventory history is visible only in the authorised workspace an
   const {scopeHash}=stagingProbeTarget()!;
   const previousHour=Math.floor(Date.now()/3600000)*3600000-3600000;
   for(const [instant,state] of [[previousHour+10000,'read'],[previousHour+20000,'read'],[Date.now()-1,'attention']] as const){
-   const time=new Date(instant),receipt=state==='read'?{count:2,digest:'a'.repeat(64)}:{code:'CREDENTIAL_REJECTED'};
+   const time=new Date(instant),receipt=state==='read'?{count:2,digest:'a'.repeat(64),providerHealth:false}:{code:'CREDENTIAL_REJECTED'};
    const row=await db.workerRun.create({data:{invocationKey:'history-'+f.a.id+'-'+instant,startedAt:time,finishedAt:time,leaseUntil:time,state:'COMPLETED',
     summary:{stagingProduct:{scopeHash,state,checkedAt:time.toISOString(),...receipt}}}});
    ids.push(row.id);
   }
   const result=await stagingProductHistory(f.a.id);
+  assert.equal(result?.providerHealth,false);assert.equal(result?.previousDay.missing.length,24-result!.previousDay.hours);
   assert.equal(result?.reads,2);assert.equal(result?.hours,1);assert.equal(result?.count,2);assert.equal(result?.latestError,'CREDENTIAL_REJECTED');
   assert.equal(await stagingProductHistory(f.b.id),null);assert.ok(!JSON.stringify(result).includes(scopeHash));
  }finally{

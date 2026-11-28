@@ -139,6 +139,7 @@ test('independent site applicability assessment keeps the shortlist blind until 
    const entries=[items[0].url,items[2].url,missing].map((url,i)=>'<entry><id>'+url+'</id><title>Publisher notice '+i+'</title><updated>'+day+'</updated><link href="'+url+'"/></entry>');
    return new Response('<feed xmlns="http://www.w3.org/2005/Atom">'+entries.join('')+'</feed>');
   });
+  const partial=await compare(report);assert.equal(partial.coverage.available,1);assert.ok(partial.coverage.expected>1);assert.equal(partial.coverage.sampled,3);
   const indexStart={...start,method:'INDEX',requestKey:randomUUID()};
   const fromIndex=await changeApplicabilityAssessment(f.o,indexStart,async()=>report,compare);
   const blind=(await applicabilityAssessment(f.ad,fromIndex.id)).selected!;

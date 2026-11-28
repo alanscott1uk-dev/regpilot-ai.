@@ -24,6 +24,6 @@ export default async function Frameworks({searchParams}:{searchParams:Promise<{q
     </article>;})}</div>
     {!result.total&&<p>Try a different name or <a href="/audit-programmes/frameworks">clear the filters</a>.</p>}
     <nav className={css.nav} aria-label="Framework pages">{result.page>1&&<a href={href(result.page-1)}>Previous page</a>}{result.page<result.pages&&<a href={href(result.page+1)}>Next page</a>}</nav>
-    <footer><CatalogueNotice/></footer>
+    <footer><a href={'/api/audit-programmes/frameworks'+href(result.page)}>Download this catalogue page with version and source details</a><CatalogueNotice/></footer>
   </main>;
 }

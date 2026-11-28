@@ -36,7 +36,7 @@ export async function runStagingProductProbe(target:NonNullable<ReturnType<typeo
 
 const checkSchema=z.object({id:z.string().refine(id=>githubInventoryLabels.has(id)),status:z.enum(['PASS','FAIL','UNKNOWN'])});
 const receiptSchema=z.discriminatedUnion('state',[
- z.object({state:z.literal('read'),checkedAt:z.iso.datetime(),count:z.number().int().nonnegative(),digest:z.string().regex(/^[a-f0-9]{64}$/),checks:z.array(checkSchema).max(5).optional()}),
+ z.object({state:z.literal('read'),checkedAt:z.iso.datetime(),count:z.number().int().nonnegative(),digest:z.string().regex(/^[a-f0-9]{64}$/),checks:z.array(checkSchema).max(5).optional(),providerHealth:z.boolean().nullable().optional(),inventory:z.enum(['first','unchanged','changed']).optional()}),
  z.object({state:z.literal('attention'),checkedAt:z.iso.datetime(),code:z.string().regex(/^[A-Z_]{2,40}$/)})
 ]);
 
@@ -45,19 +45,31 @@ export async function stagingProductHistory(org:string){
  const target=stagingProbeTarget();
  if(!target||target.org!==org)return null;
  const {db}=await import('./db');
- const since=new Date(Date.now()-24*3600000);
+ const now=Date.now(),day=86400000;
+ const midnight=Math.floor(now/day)*day,yesterday=midnight-day;
+ // A worker can start before midnight and finish its read inside the reporting window.
+ const since=new Date(yesterday-180000);
  const runs=await db.workerRun.findMany({where:{slot:0,startedAt:{gte:since},finishedAt:{not:null},
   summary:{path:['stagingProduct','scopeHash'],equals:target.scopeHash}},
-  orderBy:{startedAt:'desc'},take:48,select:{summary:true,startedAt:true,finishedAt:true}});
+  orderBy:{startedAt:'desc'},select:{summary:true,startedAt:true,finishedAt:true}});
  const receipts=runs.flatMap(r=>{
   const row=z.object({stagingProduct:receiptSchema}).safeParse(r.summary);
   if(!row.success||!r.finishedAt)return [];
   const item=row.data.stagingProduct,time=Date.parse(item.checkedAt);
   return time>=r.startedAt.getTime()-1000&&time<=r.finishedAt.getTime()+1000?[item]:[];
  });
- const reads=receipts.filter(r=>r.state==='read');
- const last=reads[0],latest=receipts[0];
- return {product:target.recipe.name,action:target.recipe.action,hours:new Set(reads.map(r=>r.checkedAt.slice(0,13))).size,
+ receipts.sort((a,b)=>Date.parse(b.checkedAt)-Date.parse(a.checkedAt));
+ const previous=receipts.filter(r=>Date.parse(r.checkedAt)>=yesterday&&Date.parse(r.checkedAt)<midnight);
+ const priorReads=previous.filter(r=>r.state==='read');
+ const observed=new Set(priorReads.map(r=>r.checkedAt.slice(11,13)));
+ const previousDay={date:new Date(yesterday).toISOString().slice(0,10),hours:observed.size,
+  missing:Array.from({length:24},(_,i)=>String(i).padStart(2,'0')).filter(h=>!observed.has(h)),
+  failures:previous.filter(r=>r.state==='attention').length,providerWarnings:priorReads.filter(r=>r.providerHealth===false).length,
+  changed:priorReads.filter(r=>r.inventory==='changed').length};
+ const rolling=receipts.filter(r=>Date.parse(r.checkedAt)>=now-day&&Date.parse(r.checkedAt)<=now);
+ const reads=rolling.filter(r=>r.state==='read');
+ const last=reads[0],latest=rolling[0];
+ return {previousDay,providerHealth:last?.providerHealth??null,product:target.recipe.name,action:target.recipe.action,hours:new Set(reads.map(r=>r.checkedAt.slice(0,13))).size,
   checks:last?.checks?.map(c=>({id:c.id,status:c.status,label:githubInventoryLabels.get(c.id)!}))??[],
   reads:reads.length,lastReadAt:last?.checkedAt??null,count:last?.count??null,latestError:latest?.state==='attention'?latest.code:null};
 }

@@ -46,18 +46,27 @@ export function myCsfApi(credential:ApiCredentials,fetcher:typeof fetch=fetch){
  }
  async function json(path:string){const response=await request(path);try{return await readBoundedJson(response,10_000_000);}catch{throw bad();}}
  async function list(path:string,keys:string[]){
-  let page=path;const seen=new Set<string>(),rows:Record<string,unknown>[]=[];
+  let page=path,expectedTotal:number|undefined;const seen=new Set<string>(),rows:Record<string,unknown>[]=[];
   while(page){
    if(seen.has(page)||seen.size>=30)throw bad();seen.add(page);const data=await json(page);
    const d=Array.isArray(data)?null:obj(data);
    const a=d?keys.map(k=>d[k]).find(Array.isArray):data;
    if(!Array.isArray(a)||rows.length+a.length>6000)throw bad();
-   rows.push(...a.map(obj));if(!d)break;
+   const total=d?.total??d?.Total;
+   if(total!==undefined){
+    const count=typeof total==='string'&&/^\d+$/.test(total)?Number(total):total;
+    if(typeof count!=='number'||!Number.isSafeInteger(count)||count<0||count>6000||(expectedTotal!==undefined&&count!==expectedTotal))throw bad();
+    expectedTotal=count;
+   }
+   rows.push(...a.map(obj));
+   if(expectedTotal!==undefined&&rows.length>expectedTotal)throw bad();
+   if(!d)break;
    const next=d.next??d.Next??d.nextLink??d.NextLink??(d._links as Record<string,unknown>|undefined)?.next;
-   if(!next){if(d.hasMore===true||d.HasMore===true||Number(d.total??d.Total??rows.length)>rows.length)throw bad();break;}
+   if(!next){if(d.hasMore===true||d.HasMore===true)throw bad();break;}
    const target=new URL(str(typeof next==='object'?obj(next).href:next,2000),origin+path);
    if(target.origin!==origin||target.pathname!==path||target.username||target.password||target.hash)throw bad();page=target.pathname+target.search;
   }
+  if(expectedTotal!==undefined&&rows.length!==expectedTotal)throw bad();
   return rows;
  }
  async function assessments(subscriber:number){

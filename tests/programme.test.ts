@@ -62,6 +62,10 @@ test('MyCSF keeps scoped boundaries in the requirement revision and rejects part
  detail.TYPE='e1 or r2';
  await assert.rejects(()=>api.snapshot(7,123,'e1'));
  listing={Items:[],Total:1};await assert.rejects(()=>api.assessments(7));
+ const partial=myCsfApi({username:'test',key:'test'},async url=>Response.json(new URL(String(url)).search
+  ?[{Id:2,Name:'Two'}]:{Items:[{Id:1,Name:'One'}],Total:3,Next:'?page=2'}));
+ await assert.rejects(()=>partial.assessments(7));
+ listing={Items:[],Total:'invalid'};await assert.rejects(()=>api.assessments(7));
  listing={Items:[],Next:'https://fictional.example.invalid/next'};
  const before=requests;await assert.rejects(()=>api.assessments(7));assert.equal(requests,before+1);
 });

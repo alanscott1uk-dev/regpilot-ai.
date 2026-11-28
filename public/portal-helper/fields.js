@@ -65,6 +65,10 @@ export async function questionnaireFields(expected,answers){
    return {el,property:'selectedIndex',value:matching[0].index};
   }
   if(el.value.trim()||el.maxLength>=0&&answer.answer.length>el.maxLength)throw Error('A field already has an answer or cannot hold the approved answer.');
+  const probe=el.cloneNode(false);
+  probe.value=answer.answer;
+  if(probe.value!==answer.answer||!probe.validity.valid||(el.minLength>0&&answer.answer.length<el.minLength))
+   throw Error('The approved answer does not fit the buyer field format. Review the question before filling.');
   return {el,property:'value',value:answer.answer};
  });
  for(const {el,property,value} of plan){

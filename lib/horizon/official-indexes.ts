@@ -70,5 +70,8 @@ export async function assessOfficialIndexes(report:HorizonReport,fetcher:typeof 
     unrecognised,eligible:eligible.length,selected:entries.length,inScottishReview,result:result?{...result,rows:result.rows.map(row=>({...row,title:titles.get(row.url)||row.url}))}:null};
   }catch{return {index:index.url,name:index.name,publisher:index.publisher,state:'UNAVAILABLE' as const};}
  }));
- return {method,verifiedAt:new Date(now).toISOString(),snapshot:report.generatedAt,revision:report.codeCommit,runId:report.runId,indexes};
+ const read=indexes.filter(i=>i.state==='READ');
+ const coverage={expected:indexes.length,available:read.length,sampled:read.reduce((n,i)=>n+i.selected,0),
+  unrecognised:read.reduce((n,i)=>n+i.unrecognised,0),withoutSample:read.filter(i=>!i.selected).length};
+ return {coverage,method,verifiedAt:new Date(now).toISOString(),snapshot:report.generatedAt,revision:report.codeCommit,runId:report.runId,indexes};
 }

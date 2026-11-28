@@ -15,6 +15,10 @@ export async function portalBrowserJourney(browser,base,viewport,name){
   const fill=answers=>page.evaluate(([c,a])=>globalThis.questionnaireFields(c,a),[capture,answers]);
   const one=[{label:'How is access reviewed?',answer:'Approved fixture answer about access.'}];
   await assert.rejects(()=>page.evaluate(([c,a])=>globalThis.questionnaireFields(c,a),[{...capture,pageHash:'a'.repeat(64)},one]));
+  const second=page.getByLabel('Which unsupported statement applies?');
+  await second.evaluate(el=>el.minLength=20);
+  await assert.rejects(()=>fill([...one,{label:'Which unsupported statement applies?',answer:'Short'}]));
+  assert.equal(await page.getByLabel('How is access reviewed?').inputValue(),'');
   await assert.rejects(()=>fill([...one,{...choice,answer:'Generally yes'}]));
   await assert.rejects(()=>fill([...one,{label:'Which site?',answer:'Existing site'}]));
   assert.equal(await page.getByLabel('How is access reviewed?').inputValue(),'');
