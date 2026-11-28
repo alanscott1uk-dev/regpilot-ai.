@@ -34,6 +34,7 @@ if [ "$VERCEL_GIT_COMMIT_REF" = "feature/traceability-benchmark-batch-20261106" 
       'Monitor the two private MyCSF assessment tables on staging|98645934ddc6222af9ebf0334b3fd46624fa19a4') exit 1 ;;
       'Release independent staging collection and cross-programme evidence checks|c9f86a7edf1b2d1bd295dc3724517edaaf7d3587') exit 1 ;;
       'Export joint audit mappings and verify the consolidated REACH edition|a543696f4ed06635e1c7c5e0c86aa0ed40275fb5') exit 1 ;;
+      'Run approved resource controls on hosted product inventory|f3cc2170668a305be42e059dd7f56264c6eb3843') exit 1 ;;
     esac
   fi
   exit 0

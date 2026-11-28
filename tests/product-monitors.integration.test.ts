@@ -7,10 +7,11 @@ import {productMonitorCommand} from '../lib/server/product-monitor-service';
 import {productReads,productTotal} from '../lib/connectors/product-recipes';
 import {generateKeyPairSync} from 'node:crypto';
 import {jwtVerify} from 'jose';
-import {pdSample,readProduct,pdLink} from '../lib/connectors/pipedream';
+import {pdAccounts,pdSample,readProduct,pdLink} from '../lib/connectors/pipedream';
 import {githubInventoryChecks} from '../lib/connectors/github-inventory-checks';
 import {runStagingProductProbe,stagingProbeTarget,stagingProductHistory} from '../lib/server/staging-product-probe';
 import {pdConfig,pdProjectHealth} from '../lib/connectors/pipedream-client';
+import {profiles,profileFields,type ResourcePolicy} from '../lib/connectors/resource-control';
 import {monitoringProduct} from '../lib/connectors/monitoring-product';
 
 const setup=()=>Object.assign(process.env,{REGPILOT_WORKSPACE_ENABLED:'true',REGPILOT_CONNECTORS_ENABLED:'true',REGPILOT_CONNECTOR_ENCRYPTION_KEY:'ef'.repeat(32),
@@ -113,6 +114,58 @@ test('the GitHub monitor verifies bounded single-repository settings using the s
  assert.equal(policy.status,'FAIL');assert.equal(policy.observed,'2 passed, 1 failed, 2 unknown across 5 repositories.');
  substitute=true;await assert.rejects(readProduct(org,account,recipe,fetcher),(e:{code:string})=>e.code==='TARGET_MISMATCH');
 });
+test('an incomplete hosted grant list cannot falsely revoke a later account',async()=>{
+ setup();
+ const org='794e38e1-b6aa-40ab-9b5f-925f87138d6a',row=(id:string)=>({id,app:{name_slug:'github'}});
+ let failure='';let reads=0;
+ const fetcher:typeof fetch=async input=>{
+  const u=new URL(String(input));if(u.pathname.endsWith('/oauth/token'))return Response.json({access_token:'page-test',expires_in:300});
+  reads++;
+  if(!u.searchParams.has('after'))return Response.json({data:[row('apn_first')],page_info:{total_count:2,...(failure==='cursor'?{}:{end_cursor:'next'})}});
+  return Response.json({data:[row(failure==='duplicate'?'apn_first':'apn_second')],page_info:failure==='total'?{total_count:3}:{}});
+ };
+ assert.deepEqual((await pdAccounts(org,'github',fetcher)).map(r=>r.id),['apn_first','apn_second']);assert.equal(reads,2);
+ for(failure of ['cursor','duplicate','total'])await assert.rejects(pdAccounts(org,'github',fetcher),(e:{code:string})=>e.code==='INVALID_RESPONSE');
+});
+
+test('a mapped product policy detects a settings failure with unchanged inventory and preserves unknown values',()=>{
+ setup();
+ const org='794e38e1-b6aa-40ab-9b5f-925f87138d6a',product=productReads[0];
+ const policy={profile:'supplierPayment' as const,mapping:{verified:'payment.verified',approverId:'approver',requesterId:'requester',paidAt:'paid',approvedAt:'approved'}};
+ const payment={payment:{verified:true},approver:'private-approver',requester:'private-requester',paid:'2026-01-02T00:00:00Z',approved:'2026-01-01T00:00:00Z'};
+ const sample=(rows:unknown[])=>pdSample(rows,org,product,policy);
+ const suggested=pdSample([{id:'p',attributes:{approver_id:'private-name'},approvedAt:'x',payment:{approved_at:'y'},
+  'privateCustomer':{requester_id:'private-person'}}],org,product,'supplierPayment').suggestions;
+ assert.deepEqual(suggested,{approverId:'attributes.approver_id'});
+ const good={...payment,id:'private-payment-a'},bad={...payment,id:'private-payment-b',approver:payment.requester};
+ const before=sample([good,bad]),after=sample([{...bad,id:good.id},{...good,id:bad.id}]);
+ assert.equal(before.digest,after.digest);assert.notEqual(before.mapped!.digest,after.mapped!.digest);
+ assert.notEqual(before.mapped!.checks[1].observed,after.mapped!.checks[1].observed);
+ assert.equal(before.mapped!.digest,sample([bad,good]).mapped!.digest);
+ assert.deepEqual(before.mapped!.checks.map(r=>r.status),['PASS','FAIL','PASS']);
+ assert.equal(sample([{...good,payment:{verified:'yes'}}]).mapped!.checks[0].status,'UNKNOWN');
+ assert.equal(sample([]).mapped!.observable,false);
+ assert.ok(!JSON.stringify(before).includes('private-'));
+});
+
+test('all nine mapped control profiles execute on pinned product samples',()=>{
+ setup();
+ const org='794e38e1-b6aa-40ab-9b5f-925f87138d6a',product=productReads[0];
+ const now=Date.now(),past=new Date(now-60000).toISOString(),future=new Date(now+86400000).toISOString();
+ const fields={mfaEnabled:true,orphaned:false,accessReviewedAt:past,encrypted:true,supported:true,lastSeenAt:past,lastBackupAt:past,
+  restoredAt:past,certificateId:'fixture-certificate',validUntil:future,inRange:true,sampledAt:past,approved:true,authorisedReviewer:true,
+  reviewerId:'reviewer',authorId:'author',decidedAt:past,modifiedAt:past,approverId:'approver',deployedAt:past,approvedAt:past,
+  verified:true,requesterId:'requester',paidAt:past,qualified:true,qualificationExpiresAt:future,operatorId:'operator',
+  completed:true,assessed:true,expiresAt:future};
+ for(const profile of Object.keys(profiles) as ResourcePolicy['profile'][]){
+  const mapping=Object.fromEntries(profileFields(profile).map(field=>[field,'source.'+field]));
+  const sample=pdSample([{id:'private-fixture',source:fields}],org,product,{profile,mapping});
+  assert.equal(sample.mapped?.observable,true,profile);
+  assert.ok(sample.mapped!.checks.every(c=>c.status==='PASS'),profile);
+  const missing=pdSample([{id:'private-fixture',source:{}}],org,product,{profile,mapping});
+  assert.equal(missing.mapped?.observable,false);assert.ok(missing.mapped!.checks.every(c=>c.status==='UNKNOWN'));
+ }
+});
 test('the staging probe validates its precise grant on both sides of a read and records no source identifiers',async()=>{
  setup();
  const org='794e38e1-b6aa-40ab-9b5f-925f87138d6a',account='apn_probe';
@@ -189,7 +242,7 @@ test('scheduled inventory history is visible only in the authorised workspace an
 test('an hourly product monitor rejects another tenant, detects inventory drift and recovers the original grant for the same control',async()=>{
  setup();const f=await assuranceFixture(),original=globalThis.fetch;
  const product=productReads[0],desired={app:product.app,action:product.action},account='apn_fictionalA';
- let healthy=true,updatedAt=new Date(0).toISOString(),rows=[{id:'account-resource-a'}];
+ let healthy=true,updatedAt=new Date(0).toISOString(),rows:Record<string,unknown>[]=[{id:'account-resource-a'}];
  globalThis.fetch=async(url,options)=>{
   const path=new URL(String(url)).pathname;
   if(path.endsWith('/oauth/token'))return Response.json({access_token:'fixture-token',expires_in:3000});
@@ -237,5 +290,20 @@ test('an hourly product monitor rejects another tenant, detects inventory drift 
   const renewed=await productMonitorCommand(f.o,verify);assert.ok('version' in renewed);assert.equal(renewed.version,failed.version+1);
   assert.equal(await scheduled(),'OBSERVED');
   assert.equal(await db.connectorRun.count({where:{connectorId:saved.id}}),3);
+  const policy={profile:'endpoint',mapping:{encrypted:'disk.encrypted',supported:'supported',lastSeenAt:'lastSeen'}};
+  rows=[{id:'account-resource-a',disk:{encrypted:true},supported:true,lastSeen:new Date().toISOString()}];
+  const mapped=await call('PREVIEW',{policy});assert.ok('reviewDigest' in mapped&&mapped.reviewDigest&&mapped.observable);
+  const approval={...approve,policy,reviewDigest:mapped.reviewDigest};
+  rows[0].supported=false;await assert.rejects(call('APPROVE',approval));
+  rows[0].supported=true;
+  const configured=await call('APPROVE',approval);assert.ok('id' in configured&&configured.id!==saved.id);
+  const bound=await db.evidenceConnector.findUniqueOrThrow({where:{id:configured.id}});
+  const collect=()=>collectConfiguredConnector(bound,'');
+  const check=(o:Awaited<ReturnType<typeof collect>>,field:string)=>o.checks.find(c=>c.id==='mapped-endpoint-'+field)?.status;
+  assert.equal(check(await collect(),'encrypted'),'PASS');
+  rows[0].disk={encrypted:false};assert.equal(check(await collect(),'encrypted'),'FAIL');
+  delete rows[0].disk;assert.equal(check(await collect(),'encrypted'),'UNKNOWN');
+  const incomplete=await call('PREVIEW',{policy});assert.ok('observable' in incomplete&&!incomplete.observable);
+  await assert.rejects(call('APPROVE',{...approval,reviewDigest:incomplete.reviewDigest}));
  }finally{globalThis.fetch=original;await f.cleanup();}
 });

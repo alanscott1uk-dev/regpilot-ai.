@@ -16,10 +16,32 @@ export const profiles:Record<string,{name:string;rules:Rule[]}>={
 };
 export const profileFields=(profile:string)=>[...new Set((profiles[profile]?.rules??[]).flatMap(rule=>rule.other?[rule.field,rule.other]:[rule.field]))];
 const path=z.string().max(150).regex(/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*){0,4}$/).refine(v=>v.split('.').every(k=>!['constructor','prototype','__proto__'].includes(k)));
-export const resourcePolicy=z.object({profile:z.enum(['identity','endpoint','recovery','calibration','laboratory','training','changeApproval','supplierPayment','equipment']),mapping:z.record(z.string().max(40),path)}).strict().refine(p=>{
+export const resourceProfile=z.enum(['identity','endpoint','recovery','calibration','laboratory','training','changeApproval','supplierPayment','equipment']);
+export const resourcePolicy=z.object({profile:resourceProfile,mapping:z.record(z.string().max(40),path)}).strict().refine(p=>{
  const fields=profileFields(p.profile);return Object.keys(p.mapping).length===fields.length&&fields.every(k=>Object.hasOwn(p.mapping,k))&&new Set(Object.values(p.mapping)).size===fields.length;
 },'Map every field to a distinct source field');
 export type ResourcePolicy=z.infer<typeof resourcePolicy>;
+
+/** Only return recognised schema paths. Dynamic dictionary keys can be customer identifiers. */
+export function suggestResourceFields(rows:unknown[],profile:ResourcePolicy['profile']){
+ const fields=profileFields(profile),paths=new Map(fields.map(f=>[f,new Set<string>()]));
+ const normal=(field:string)=>field.replaceAll('_','').toLowerCase();
+ const byName=new Map(fields.map(field=>[normal(field),field]));
+ const groups=new Set(['settings','security','attributes','properties','data','device','account','user','backup','calibration','payment','training','quality','approval','record','metadata','source','disk']);
+ function inspect(value:unknown,prefix:string,depth:number){
+  if(!value||typeof value!=='object'||Array.isArray(value))return;
+  for(const [key,item] of Object.entries(value)){
+   if(!/^[a-zA-Z][a-zA-Z0-9_]{0,49}$/.test(key))continue;
+   const name=normal(key),path=prefix+key,match=byName.get(name);
+   if(match&&path.length<=150&&(typeof item==='boolean'||typeof item==='string'))paths.get(match)!.add(path);
+   if(depth<4&&groups.has(name))inspect(item,path+'.',depth+1);
+  }
+ }
+ for(const row of rows.slice(0,100))inspect(row,'',0);
+ const mapping:Record<string,string>={};
+ for(const [field,candidates] of paths)if(candidates.size===1)mapping[field]=[...candidates][0];
+ return mapping;
+}
 export type RuleState='PASS'|'FAIL'|'UNKNOWN';
 function read(row:unknown,path:string){
  let current=row;
