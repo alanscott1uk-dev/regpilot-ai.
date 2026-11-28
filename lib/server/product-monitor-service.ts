@@ -121,7 +121,7 @@ export async function productMonitorCommand(ctx:AuthorizedContext,input:unknown,
   await requireMember(tx,ctx,ADMIN);
   if(!await tx.managedControl.findFirst({where:{id:cmd.controlId,organizationId:org,enabled:true},select:{id:true}}))throw new IntelligenceError('Select an active control in this workspace.',409);
   await tx.auditEvent.createMany({data:[{id:reference,organizationId:org,actorId:ctx.userId,entityType:'ProductReadBaseline',entityId:reference,action:'product.baseline-approved',details:{...snapshot,...(sample.mapped?{review:{digest:reviewDigest!,checks:sample.mapped.checks}}:{})}}],skipDuplicates:true});
- });
+ },8);
  const {saveConnector}=await import('./connector-service');
  return saveConnector(ctx,{provider:'PIPEDREAM_READ',scope:recipe.app,record:recipe.action,reference,controlId:cmd.controlId,consent:true,version:0,enabled:true,intervalHours:1});
 }

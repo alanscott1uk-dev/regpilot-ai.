@@ -34,6 +34,41 @@ jobs:
             live-public-evidence.json
             live-workflow-evidence.json
           retention-days: 14
+  hosted-dispatch-fixture:
+    name: Hosted monitor dispatch with fixture accounts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: regpilot
+          POSTGRES_PASSWORD: regpilot-test-only
+          POSTGRES_DB: regpilot
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U regpilot -d regpilot" --health-interval 3s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://regpilot:regpilot-test-only@localhost:5432/regpilot?schema=public
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+      - run: bash scripts/init-ci-database.sh
+      - name: Approve all distinct products and verify healthy and changed resource settings
+        env:
+          REGPILOT_SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node --import tsx scripts/benchmark-hosted-dispatch.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hosted-dispatch-fixture-${{ github.event.pull_request.head.sha || github.sha }}
+          path: hosted-dispatch-fixture.json
+          if-no-files-found: error
+          retention-days: 30
   monitored-applications:
     runs-on: ubuntu-latest
     timeout-minutes: 10
