@@ -24,6 +24,7 @@ const profiles:Profile[] = [
   ...scfIndex.profiles.map(p=>({...p,source:'scf' as const,digest:source.sha256})),
   ...regulatoryIndex as Profile[],...hitrustProfiles
 ];
+export const mappedProfileChoices=profiles.filter(p=>p.source==='scf').map(({id,label})=>({id,label})).sort((a,b)=>a.label.localeCompare(b.label,'en'));
 const byId = new Map(profiles.map(p=>[p.id,p]));
 const families = new Map<string,Profile[]>();
 for (const p of profiles) {

@@ -1,5 +1,5 @@
 import {notFound} from 'next/navigation';
-import {frameworkPage,getProfile,variantsOf} from '../../../../lib/audit-catalogue/catalogue';
+import {frameworkPage,getProfile,mappedProfileChoices,variantsOf} from '../../../../lib/audit-catalogue/catalogue';
 import {CatalogueNotice} from '../../../../lib/audit-catalogue/notice';
 import css from '../../../integration-directory/directory.module.css';
 export const metadata={title:'Framework controls and evidence · RegPilot'};
@@ -13,6 +13,11 @@ export default async function FrameworkDetail({params,searchParams}:{params:Prom
       {p.source==='preparation'?<p>Use these workpapers to prepare your own evidence. Your licensed MyCSF assessment determines the official requirements in scope. <a href={p.url}>HITRUST MyCSF</a></p>:<p>{p.source==='scf'?'The published crosswalk ties each control to the source references it addresses.':p.sampleCount+' provisions have prepared evidence samples. '+(p.passageCount??0)+' provisions include an opening passage from the source. Review applicability before assigning evidence.'} <a href={p.url}>Read the source instrument</a></p>}
       {p.source==='eu'&&<p>Source edition · {p.url.includes('/oj/')?'Original Official Journal publication':'Consolidated text dated 22 June 2026'}. Check subsequent amendments for the period under audit.</p>}
     </header>
+    {p.source==='scf'&&<form className={css.form} action="/api/audit-programmes/crosswalk">
+      <input type="hidden" name="first" value={p.id}/>
+      <label>Compare published controls with another audit<select name="second" required defaultValue=""><option value="" disabled>Select a framework profile</option>
+        {mappedProfileChoices.filter(v=>v.id!==p.id).map(v=><option key={v.id} value={v.id}>{v.label}</option>)}</select></label>
+      <button type="submit">Download joint control and evidence matrix</button></form>}
     {alternatives.length>1&&<details className={css.panel}><summary>Versions and assessment profiles</summary><ul>{alternatives.map(v=><li key={v.id}><a href={'/audit-programmes/frameworks/'+v.id}>{v.label}</a></li>)}</ul></details>}
     <form className={css.form}><label>Find a control or provision<input type="search" name="q" maxLength={150} defaultValue={q} placeholder="Control ID, article or subject"/></label><button type="submit">Search</button></form>
     <p>{result.total} results · Page {result.page} of {result.pages}</p>

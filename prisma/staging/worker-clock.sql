@@ -23,14 +23,16 @@ GRANT EXECUTE ON FUNCTION regpilot_verification.verify_worker_clock(bigint,text)
 
 CREATE FUNCTION regpilot_verification.invoke_worker_clock() RETURNS integer
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog
-SET http.curlopt_timeout_ms='125000' SET http.curlopt_connecttimeout_ms='6000' SET http.curlopt_followlocation='0' AS $$
+AS $$
 DECLARE bucket bigint := floor(extract(epoch FROM clock_timestamp())/300)::bigint;
         status_code integer;
 BEGIN
+ PERFORM regpilot_staging_fetch.http_set_curlopt('CURLOPT_TIMEOUT_MS','45000');
  SELECT status INTO status_code FROM regpilot_staging_fetch.http((
    'POST','https://regpilot-ai-qnx6-git-feature-traceabil-2f0b3f-alanscott1uk-5933.vercel.app/api/internal/staging-worker',
    ARRAY[regpilot_staging_fetch.http_header('Authorization','Bearer ' || bucket || '.' || regpilot_verification.worker_clock_token(bucket))],
    'application/json','{}')::regpilot_staging_fetch.http_request);
+ PERFORM regpilot_staging_fetch.http_reset_curlopt();
  IF status_code NOT IN (200,409) THEN RAISE EXCEPTION 'Staging worker returned HTTP %',status_code; END IF;
  RETURN status_code;
 END $$;

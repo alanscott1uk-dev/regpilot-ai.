@@ -2,6 +2,7 @@ import {execFileSync,spawnSync} from 'node:child_process';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {resolve} from 'node:path';
+import {csvEscape} from '../lib/obligations.mjs';
 import {validationReviewPdf} from './validation-review-pdf.mjs';
 
 const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
@@ -29,8 +30,7 @@ const pack={format:'regpilot-pharma-validation-v1',revision:sha,parent,startedAt
  commitSubject:git('show','-s','--format=%s',sha),command:[process.execPath,...args]};
 const dir='artifacts/pharma-validation';mkdirSync(dir,{recursive:true});
 const columns=['id','requirement','test','file','line','testFileSha256','result','durationMs','revision'];
-const csvCell=value=>'"'+String(value).replace(/^(?=\s*[=+@-])/,"'").replaceAll('"','""')+'"';
-const traceability=[columns.join(','),...rows.map(row=>columns.map(key=>csvCell(key==='revision'?sha:row[key])).join(','))].join('\r\n')+'\r\n';
+const traceability=[columns.join(','),...rows.map(row=>columns.map(key=>csvEscape(key==='revision'?sha:row[key])).join(','))].join('\r\n')+'\r\n';
 const files={'traceability.csv':traceability,'release-review.pdf':await validationReviewPdf(pack),'validation.json':JSON.stringify(pack,null,2)+'\n','execution.ndjson':result.stdout,
  'review.md':['# Pharmaceutical release validation','',sha,'',pack.environment,'',pack.scope,'',...rows.map(r=>'- '+r.id+' · '+r.result+' · '+r.requirement+' ('+r.file+':'+r.line+')'),'','## Changes since '+parent,'',...pack.changes.map(path=>'- '+path),''].join('\n')};
 const checksums=[];for(const [name,value] of Object.entries(files)){writeFileSync(dir+'/'+name,value);checksums.push(createHash('sha256').update(value).digest('hex')+'  '+name);}

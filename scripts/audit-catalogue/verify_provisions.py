@@ -5,14 +5,23 @@ import json
 import re
 import time
 import urllib.request
+from urllib.parse import urlsplit, urlunsplit
 from pathlib import Path
 from lxml import etree, html
 
 ROOT = Path(__file__).resolve().parent
 UA = 'RegPilot-Framework-Verification/1.0'
+class PublisherRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        target = urlsplit(newurl)
+        if target.scheme == 'http' and target.hostname == 'publications.europa.eu':
+            newurl = urlunsplit(target._replace(scheme='https'))
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+publisher = urllib.request.build_opener(PublisherRedirect())
 def download(url, accept='*/*'):
     request = urllib.request.Request(url, headers={'User-Agent': UA, 'Accept': accept, 'Accept-Language': 'en'})
-    with urllib.request.urlopen(request, timeout=24) as response:
+    with publisher.open(request, timeout=24) as response:
         return response.read(24_000_000)
 def words(element):
     return ' '.join(''.join(element.itertext()).split())
@@ -71,9 +80,11 @@ def eu_headings(key, refs):
             f'https://eur-lex.europa.eu/eli/{key}/oj/eng',
             f'https://publications.europa.eu/resource/celex/{celex}']
     if key=='reg/2006/1907':
-        urls.insert(0,'https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:02006R1907-20260622')
-    found, passages, anchors = {}, {}, {}
+        # Only the consolidated edition supplies this catalogue entry.
+        urls = ['https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:02006R1907-20260622',
+                'https://publications.europa.eu/resource/celex/02006R1907-20260622']
     for url in urls:
+        found, passages, anchors = {}, {}, {}
         try:
             tree = html.fromstring(download(url,'application/xhtml+xml,text/html;q=0.9'))
             for item in tree.xpath('//p | //h3 | //h4 | //b | //strong'):

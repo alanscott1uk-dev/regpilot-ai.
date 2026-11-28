@@ -78,3 +78,17 @@ test('first-import suggestions distinguish requirement IDs, linked control tests
   {...file,id:'c',filename:'FAKE.123.pdf'},{...file,id:'d',filename:'FAKEx12.pdf'},{...file,id:'e',test:'Buildings',procedure:'Check inspection dates'}]);
  assert.deepEqual(hits.map(h=>h.id),['a','b']);assert.ok(hits[0].exact);assert.ok(hits[1].matched.includes('privileged'));assert.equal(hits[1].test,'Privileged access controls');
 });
+
+test('joint audit matrix carries both published references for a shared control and rejects a preparation profile',async()=>{
+ const {GET}=await import('../app/api/audit-programmes/crosswalk/route');
+ const {referenceFor,getProfile}=await import('../lib/audit-catalogue/catalogue');
+ const {csvEscape}=await import('../lib/obligations.mjs');
+ const first='general-iso-27001-2022',second='general-aicpa-tsc-2017';
+ const download=(other:string)=>GET(new Request('https://regpilot.example/api/audit-programmes/crosswalk?'+new URLSearchParams({first,second:other})));
+ assert.equal(download(first).status,400);
+ assert.equal(download('hitrust-e1').status,400);
+ const id='GOV-02',refs=[first,second].map(key=>referenceFor(getProfile(key)!,id));
+ assert.ok(refs.every(Boolean));
+ const response=download(second);assert.equal(response.status,200);
+ const content=await response.text();assert.ok(content.includes(refs.map(csvEscape).join(',')));
+});
